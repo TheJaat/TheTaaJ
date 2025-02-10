@@ -21,6 +21,9 @@ STAGE2_BUILD_DIR = $(BOOTLOADER_BUILD_DIR)/stage2
 STAGE1_BIN = $(STAGE1_BUILD_DIR)/stage1.bin
 STAGE2_BIN = $(STAGE2_BUILD_DIR)/stage2.bin
 
+KERNEL_BUILD = kernel/$(BUILD_DIR)
+KERNEL_ELF = $(KERNEL_BUILD)/kernel.elf
+
 # Ensure the build directory exists
 $(BUILD_DIR):
 	@echo "Creating build directory..."
@@ -44,6 +47,7 @@ iso: $(STAGE1_BIN) $(STAGE2_BIN)
 	mkdir -p $(ISO_DIR)/saample
 	cp $(STAGE1_BIN) $(ISO_DIR)/
 	cp $(STAGE2_BIN) $(ISO_DIR)/
+	cp $(KERNEL_ELF) $(ISO_DIR)/kernel/
 	xorriso -as mkisofs -R -J -b stage1.bin -iso-level 3 -no-emul-boot -boot-load-size 4 -o $(ISO_IMG) $(ISO_DIR)
 
 # Run the bootloader in QEMU
