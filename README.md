@@ -1,6 +1,4 @@
 # **The TaaJ OS**
-
-## **Overview**
 The TaaJ OS is an open-source operating system developed by [The Jaat](https://github.com/TheJaat). This repository serves as the core OS repository, integrating components such as the bootloader and kernel. It aims to provide a modular, lightweight, and efficient environment for learning and experimentation in systems programming.
 
 ## **Repository Structure**
