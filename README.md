@@ -22,12 +22,14 @@ Follow these steps to set up and build the OS:
    git clone --recurse-submodules git@github.com:TheJaat/TheTaaJ.git
    cd TheTaaJ
    ```
-2. **Build the OS:**
+2. **Build the Toolchain:**
+   Navigate to the toolchain directory and follow the instructions provided in the `README.md` file to build the toolchain.
+3. **Build the OS:**
    Use the provided `Makefile` to build the bootloader and kernel:
    ```bash
    make
    ```
-3. **Run the OS:**
+4. **Run the OS:**
    After building, you can test the OS using an emulator like QEMU:
    ```bash
    make run
