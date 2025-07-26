@@ -28,9 +28,7 @@ Follow these steps to set up and build the OS:
    ```
 3. **Prereuisite:**
 ```bash
-sudo apt install build-essential bison flex libgmp3-dev libmpc-dev libmpfr-dev texinfo \
-                 libisl-dev libzstd-dev zlib1g-dev libexpat1-dev \
-                 python3 gawk wget curl git xorriso
+sudo apt install build-essential bison flex libgmp3-dev libmpc-dev libmpfr-dev texinfo libisl-dev libzstd-dev zlib1g-dev libexpat1-dev python3 gawk wget curl git xorriso
 ```
 4. **Build the Toolchain:**
    Navigate to the toolchain directory and follow the instructions provided in the `README.md` file to build the toolchain.
