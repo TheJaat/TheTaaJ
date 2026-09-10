@@ -2,7 +2,7 @@
 BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
-.PHONY: all clean run iso
+.PHONY: all clean run iso ramdisk
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso
@@ -39,8 +39,26 @@ build-kernel: $(BUILD_DIR)
 	@echo "Building kernel..."
 	$(MAKE) -C $(KERNEL_DIR)
 
+# Ramdisk.
+#
+# The packing tool is built by kernel/tools/ramdisk as part of the kernel
+# build, so the path below points at where that puts it. The tool is a
+# HOST binary (plain gcc), not a cross-compiled one - it runs here, on
+# the build machine.
+RD_TOOL = $(KERNEL_DIR)/build/tools/ramdisk/ramdisk
+RAMDISK_IMG = $(BUILD_DIR)/RAMDISK.MDR
+RAMDISK_SRC = $(wildcard ramdisk-src/*)
+
+# Depends on build-kernel rather than on $(RD_TOOL) directly: the tool
+# does not exist until the kernel build has run, and there is no rule
+# here that knows how to make it.
+ramdisk: build-kernel
+	@echo "Packing ramdisk..."
+	mkdir -p $(BUILD_DIR)
+	$(RD_TOOL) $(RAMDISK_IMG) $(RAMDISK_SRC)
+
 # Create the ISO image
-iso: $(STAGE1_BIN) $(STAGE2_BIN)
+iso: $(STAGE1_BIN) $(STAGE2_BIN) ramdisk
 	@echo "Creating ISO image..."
 	mkdir -p $(ISO_DIR)/boot
 	mkdir -p $(ISO_DIR)/kernel
@@ -48,6 +66,7 @@ iso: $(STAGE1_BIN) $(STAGE2_BIN)
 	cp $(STAGE1_BIN) $(ISO_DIR)/
 	cp $(STAGE2_BIN) $(ISO_DIR)/
 	cp $(KERNEL_ELF) $(ISO_DIR)/kernel/
+	cp $(RAMDISK_IMG) $(ISO_DIR)/
 	xorriso -as mkisofs -R -J -b stage1.bin -iso-level 3 -no-emul-boot -boot-load-size 4 -o $(ISO_IMG) $(ISO_DIR)
 
 # Run the bootloader in QEMU
@@ -64,4 +83,3 @@ clean:
 	@echo "Cleaning build directory..."
 	rm -rf $(BUILD_DIR)
 	rm -rf $(ISO_DIR)
-
