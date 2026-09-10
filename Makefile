@@ -2,7 +2,7 @@
 BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
-.PHONY: all clean run iso ramdisk
+.PHONY: all clean run iso ramdisk modules
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso
@@ -47,15 +47,23 @@ build-kernel: $(BUILD_DIR)
 # the build machine.
 RD_TOOL = $(KERNEL_DIR)/build/tools/ramdisk/ramdisk
 RAMDISK_IMG = $(BUILD_DIR)/RAMDISK.MDR
+MODULE_DIR = $(BUILD_DIR)/modules
+MODULE_BINS = $(MODULE_DIR)/hello.mod
 RAMDISK_SRC = $(wildcard ramdisk-src/*)
+
+# Loadable modules. Cross-compiled, but only to .o - they are relocated
+# by the kernel at load time, never linked.
+modules:
+	@echo "Building modules..."
+	$(MAKE) -C modules ROOT_DIR=$(abspath .)
 
 # Depends on build-kernel rather than on $(RD_TOOL) directly: the tool
 # does not exist until the kernel build has run, and there is no rule
 # here that knows how to make it.
-ramdisk: build-kernel
+ramdisk: build-kernel modules
 	@echo "Packing ramdisk..."
 	mkdir -p $(BUILD_DIR)
-	$(RD_TOOL) $(RAMDISK_IMG) $(RAMDISK_SRC)
+	$(RD_TOOL) $(RAMDISK_IMG) $(RAMDISK_SRC) $(MODULE_BINS)
 
 # Create the ISO image
 iso: $(STAGE1_BIN) $(STAGE2_BIN) ramdisk
