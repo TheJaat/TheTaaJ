@@ -1,6 +1,6 @@
 # modules/Makefile
 ROOT_DIR ?= $(abspath ..)
-SUBDIRS = hello
+SUBDIRS = hello user
 
 all: $(SUBDIRS)
 
