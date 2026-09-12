@@ -2,7 +2,7 @@
 BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
-.PHONY: all clean run iso ramdisk modules
+.PHONY: all clean run iso ramdisk modules servers librt
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso
@@ -48,12 +48,22 @@ build-kernel: $(BUILD_DIR)
 RD_TOOL = $(KERNEL_DIR)/build/tools/ramdisk/ramdisk
 RAMDISK_IMG = $(BUILD_DIR)/RAMDISK.MDR
 MODULE_DIR = $(BUILD_DIR)/modules
-MODULE_BINS = $(MODULE_DIR)/hello.mod $(MODULE_DIR)/user.mod
+MODULE_BINS = $(MODULE_DIR)/hello.mod $(MODULE_DIR)/user.mod \
+              $(MODULE_DIR)/echo.mod $(MODULE_DIR)/talker.mod
 RAMDISK_SRC = $(wildcard ramdisk-src/*)
 
 # Loadable modules. Cross-compiled, but only to .o - they are relocated
 # by the kernel at load time, never linked.
-modules:
+# The user-space runtime must exist before any server links against it.
+librt:
+	@echo "Building librt..."
+	$(MAKE) -C librt ROOT_DIR=$(abspath .)
+
+servers: librt
+	@echo "Building servers..."
+	$(MAKE) -C servers ROOT_DIR=$(abspath .)
+
+modules: servers
 	@echo "Building modules..."
 	$(MAKE) -C modules ROOT_DIR=$(abspath .)
 
