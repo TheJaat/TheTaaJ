@@ -44,6 +44,19 @@ int          SysPipeAvailable(int Handle);
 int          SysRegisterName(const char *Name, int PipeHandle);
 int          SysLookupName(const char *Name);
 
+/* -- hardware, servers only ----------------------------------------- */
+int          SysIrqRegister(int Line);
+int          SysIrqWait(int Handle);
+int          SysIrqAck(int Handle);
+int          SysIoRequest(unsigned Port, unsigned Count);
+
+/* Port access, once SysIoRequest has granted the range. These are plain
+ * in/out instructions - the cpu checks the I/O permission bitmap, so
+ * there is no syscall and no cost per access. Executing one on a port
+ * that was not granted is a general protection fault. */
+unsigned char SysInB(unsigned short Port);
+void          SysOutB(unsigned short Port, unsigned char Value);
+
 /* -- minimal string helpers ----------------------------------------- */
 unsigned     SysStringLength(const char *Text);
 void         SysMemSet(void *Destination, int Value, unsigned Length);

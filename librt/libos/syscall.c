@@ -113,6 +113,40 @@ int SysLookupName(const char *Name)
     return SysCall(SYS_LOOKUP_NAME, (unsigned)Name, 0, 0);
 }
 
+/* -- hardware -------------------------------------------------------- */
+
+int SysIrqRegister(int Line)
+{
+    return SysCall(SYS_IRQ_REGISTER, (unsigned)Line, 0, 0);
+}
+
+int SysIrqWait(int Handle)
+{
+    return SysCall(SYS_IRQ_WAIT, (unsigned)Handle, 0, 0);
+}
+
+int SysIrqAck(int Handle)
+{
+    return SysCall(SYS_IRQ_ACK, (unsigned)Handle, 0, 0);
+}
+
+int SysIoRequest(unsigned Port, unsigned Count)
+{
+    return SysCall(SYS_IO_REQUEST, Port, Count, 0);
+}
+
+unsigned char SysInB(unsigned short Port)
+{
+    unsigned char Value;
+    __asm__ volatile ("inb %1, %0" : "=a"(Value) : "Nd"(Port));
+    return Value;
+}
+
+void SysOutB(unsigned short Port, unsigned char Value)
+{
+    __asm__ volatile ("outb %0, %1" :: "a"(Value), "Nd"(Port));
+}
+
 /* -- string helpers -------------------------------------------------- */
 
 unsigned SysStringLength(const char *Text)

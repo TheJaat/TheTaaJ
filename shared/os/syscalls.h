@@ -39,7 +39,13 @@
 #define SYS_SET_REPLY              14   /* ebx = pipe handle           */
 #define SYS_OPEN_REPLY             15   /* ebx = pid -> handle         */
 
-#define SYS_MAX                    16
+/* -- hardware, servers only ---------------------------------------- */
+#define SYS_IRQ_REGISTER           16   /* ebx = line -> handle        */
+#define SYS_IRQ_WAIT               17   /* ebx = handle, blocks        */
+#define SYS_IRQ_ACK                18   /* ebx = handle                */
+#define SYS_IO_REQUEST             19   /* ebx = port, ecx = count     */
+
+#define SYS_MAX                    20
 
 /* Errors. Syscalls return a negative value on failure so a caller can
  * distinguish "0 bytes" from "failed". */
