@@ -35,7 +35,11 @@
 #define SYS_REGISTER_NAME          12   /* ebx = name, ecx = pipe      */
 #define SYS_LOOKUP_NAME            13   /* ebx = name -> handle        */
 
-#define SYS_MAX                    14
+/* -- rpc ----------------------------------------------------------- */
+#define SYS_SET_REPLY              14   /* ebx = pipe handle           */
+#define SYS_OPEN_REPLY             15   /* ebx = pid -> handle         */
+
+#define SYS_MAX                    16
 
 /* Errors. Syscalls return a negative value on failure so a caller can
  * distinguish "0 bytes" from "failed". */
@@ -50,6 +54,7 @@
 /* Pipe flags, mirroring the kernel's. */
 #define PIPE_FLAG_NOBLOCK_READ      0x1
 #define PIPE_FLAG_NOBLOCK_WRITE     0x2
+#define PIPE_FLAG_ATOMIC            0x4
 
 #define NAME_MAX_LENGTH             32
 

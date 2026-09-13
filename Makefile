@@ -49,7 +49,8 @@ RD_TOOL = $(KERNEL_DIR)/build/tools/ramdisk/ramdisk
 RAMDISK_IMG = $(BUILD_DIR)/RAMDISK.MDR
 MODULE_DIR = $(BUILD_DIR)/modules
 MODULE_BINS = $(MODULE_DIR)/hello.mod $(MODULE_DIR)/user.mod \
-              $(MODULE_DIR)/echo.mod $(MODULE_DIR)/talker.mod
+              $(MODULE_DIR)/echo.mod $(MODULE_DIR)/talker.mod \
+              $(MODULE_DIR)/mathsrv.mod $(MODULE_DIR)/mathcli.mod
 RAMDISK_SRC = $(wildcard ramdisk-src/*)
 
 # Loadable modules. Cross-compiled, but only to .o - they are relocated

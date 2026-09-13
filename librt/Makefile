@@ -17,7 +17,7 @@ CFLAGS = -m32 -fno-pie -ffreestanding -nostdlib -O2 -Wall -Wextra \
          -fno-builtin -fno-asynchronous-unwind-tables \
          -I include -I $(SHARED)
 
-OBJECTS = $(BUILD_DIR)/syscall.o
+OBJECTS = $(BUILD_DIR)/syscall.o $(BUILD_DIR)/rpc.o
 
 all: $(BUILD_DIR) $(OBJECTS)
 

@@ -7,7 +7,7 @@
 
 ROOT_DIR ?= $(abspath ..)
 BUILD_DIR = $(ROOT_DIR)/build/modules
-LIBRT     = $(ROOT_DIR)/build/librt/syscall.o
+LIBRT     = $(ROOT_DIR)/build/librt/syscall.o $(ROOT_DIR)/build/librt/rpc.o
 SHARED    = $(ROOT_DIR)/shared
 
 TOOLCHAIN_DIR ?= $(ROOT_DIR)/toolchain/i686
@@ -19,7 +19,7 @@ CFLAGS = -m32 -fno-pie -ffreestanding -nostdlib -O2 -Wall -Wextra \
          -fno-builtin -fno-asynchronous-unwind-tables \
          -I $(ROOT_DIR)/librt/include -I $(SHARED)
 
-SERVERS = echo talker
+SERVERS = echo talker mathsrv mathcli
 TARGETS = $(SERVERS:%=$(BUILD_DIR)/%.mod)
 
 all: $(BUILD_DIR) $(TARGETS)
