@@ -5,6 +5,7 @@
  * kernel - which is the property that makes a microkernel possible. */
 
 #include <os/syscall.h>
+#include <os/registry.h>
 
 static void Send(int Handle, const char *Text)
 {
@@ -27,8 +28,7 @@ int ModuleMain(void)
     /* The server may not have registered yet - it is a separate process
      * and the scheduler decides the order. Retry rather than assume. */
     for (Attempt = 0; Attempt < 20; Attempt++) {
-        Echo = SysLookupName("echo");
-        if (Echo >= 0) {
+        if (SysLookup("echo", &Echo, 0) == 0) {
             break;
         }
         SysSleep(50);

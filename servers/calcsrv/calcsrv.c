@@ -50,8 +50,12 @@ int ModuleMain(void)
     SysPrint("[calc] shm mapped at 0x");
     SysPrintNumber(ShmBase);
     SysPrint("\n");
-    SysRegisterEndpoint(CALCSRV_NAME, Endpoint, ShmHandle);
-    SysPrintLine("[calc] published as 'calc', receiving");
+    /* Publishing now means talking to init, not to the kernel. */
+    if (SysPublish(CALCSRV_NAME, Endpoint, ShmHandle) != 0) {
+        SysPrintLine("[calc] the registry refused the name");
+        SysExit(1);
+    }
+    SysPrintLine("[calc] published as 'calc' via the registry, receiving");
 
     for (;;) {
         unsigned Opcode = 0, Badge = 0;

@@ -41,8 +41,9 @@ int          SysPipeRead(int Handle, void *Buffer, unsigned Length);
 int          SysPipeAvailable(int Handle);
 
 /* -- naming --------------------------------------------------------- */
-int          SysRegisterName(const char *Name, int PipeHandle);
-int          SysLookupName(const char *Name);
+/* SysSetConsole
+ * Nominates a pipe as the shell's keystroke source. Servers only. */
+int          SysSetConsole(int PipeHandle);
 
 /* -- hardware, servers only ----------------------------------------- */
 int          SysIrqRegister(int Line);
@@ -93,11 +94,25 @@ int  SysCall2(int Endpoint, unsigned Opcode,
  * Blocks for the next call. Fills in the opcode and the badge of the
  * capability that was invoked - the badge is stamped by the kernel and
  * cannot be forged by the caller. */
+/* SysCallTimed
+ * As SysCall2, but gives up after TimeoutMs if nothing has taken the
+ * message. Once a server has accepted it the call waits regardless -
+ * the reply buffer must outlive the call. */
+int  SysCallTimed(int Endpoint, unsigned Opcode,
+                  const void *Send, unsigned SendLength,
+                  void *Recv, unsigned RecvLength, unsigned TimeoutMs);
+
 int  SysRecv(int Endpoint, void *Buffer, unsigned Length,
              unsigned *Opcode, unsigned *Badge);
 
 /* SysReply
  * Answers the call currently outstanding on this thread. */
+/* SysRecvTimed
+ * As SysRecv, but returns negative after TimeoutMs with nothing
+ * received. A server that also has periodic work needs this. */
+int  SysRecvTimed(int Endpoint, void *Buffer, unsigned Length,
+                  unsigned *Opcode, unsigned *Badge, unsigned TimeoutMs);
+
 int  SysReply(const void *Buffer, unsigned Length);
 
 /* SysCapGrant
@@ -109,8 +124,22 @@ int  SysCapGrant(int Process, int Handle, unsigned Badge);
  * Publish and find a call-style service. Lookup returns a badged
  * capability; the badge is the caller's pid, stamped by the kernel.
  * Pass Shm = -1 when the service has no shared region. */
-int  SysRegisterEndpoint(const char *Name, int Endpoint, int Shm);
-int  SysLookupEndpoint(const char *Name, int *Endpoint, int *Shm);
+/* SysSetRegistry / SysGetPpid
+ * Bootstrap. SysSetRegistry nominates this process's endpoint as the
+ * one every later process inherits at HANDLE_REGISTRY. */
+int  SysSetRegistry(int Endpoint);
+int  SysGetPpid(void);
+
+/* SysPublish / SysLookup
+ * Thin clients of the registry SERVER - these are ordinary calls on
+ * HANDLE_REGISTRY, not syscalls. The kernel has no idea names exist. */
+/* SysRegistryPid
+ * Who the registry is. Needed because publishing means granting it a
+ * capability, and a grant is addressed by process id. */
+int  SysRegistryPid(void);
+
+int  SysPublish(const char *Name, int Endpoint, int Shm);
+int  SysLookup(const char *Name, int *Endpoint, int *Shm);
 
 /* -- shared memory ---------------------------------------------------- */
 

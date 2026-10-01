@@ -7,7 +7,8 @@
 
 ROOT_DIR ?= $(abspath ..)
 BUILD_DIR = $(ROOT_DIR)/build/modules
-LIBRT     = $(ROOT_DIR)/build/librt/syscall.o $(ROOT_DIR)/build/librt/rpc.o
+LIBRT     = $(ROOT_DIR)/build/librt/syscall.o $(ROOT_DIR)/build/librt/rpc.o \
+            $(ROOT_DIR)/build/librt/registry.o
 SHARED    = $(ROOT_DIR)/shared
 
 TOOLCHAIN_DIR ?= $(ROOT_DIR)/toolchain/i686

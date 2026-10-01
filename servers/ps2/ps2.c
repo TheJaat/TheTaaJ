@@ -56,8 +56,17 @@ int ModuleMain(void)
     }
 
     Output = SysPipeCreate(256, PIPE_FLAG_NOBLOCK_WRITE);
-    if (Output < 0 || SysRegisterName("keyboard", Output) != SYSCALL_OK) {
-        SysPrintLine("[ps2] could not publish 'keyboard'");
+    if (Output < 0) {
+        SysPrintLine("[ps2] could not create the keystroke pipe");
+        SysExit(1);
+    }
+
+    /* Hand the pipe to the kernel directly. The shell is kernel code
+     * and cannot be a registry client, and reintroducing a kernel name
+     * table to serve one caller would undo the point of moving naming
+     * out. One explicit nomination instead. */
+    if (SysSetConsole(Output) != SYSCALL_OK) {
+        SysPrintLine("[ps2] could not become the console input");
         SysExit(1);
     }
 

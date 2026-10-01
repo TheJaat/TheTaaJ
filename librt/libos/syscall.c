@@ -103,16 +103,6 @@ int SysPipeAvailable(int Handle)
     return SysCall(SYS_PIPE_AVAILABLE, (unsigned)Handle, 0, 0);
 }
 
-int SysRegisterName(const char *Name, int PipeHandle)
-{
-    return SysCall(SYS_REGISTER_NAME, (unsigned)Name, (unsigned)PipeHandle, 0);
-}
-
-int SysLookupName(const char *Name)
-{
-    return SysCall(SYS_LOOKUP_NAME, (unsigned)Name, 0, 0);
-}
-
 /* -- hardware -------------------------------------------------------- */
 
 int SysIrqRegister(int Line)
@@ -195,6 +185,14 @@ int SysCall2(int Endpoint, unsigned Opcode,
              const void *Send, unsigned SendLength,
              void *Recv, unsigned RecvLength)
 {
+    return SysCallTimed(Endpoint, Opcode, Send, SendLength,
+                        Recv, RecvLength, 0);
+}
+
+int SysCallTimed(int Endpoint, unsigned Opcode,
+                 const void *Send, unsigned SendLength,
+                 void *Recv, unsigned RecvLength, unsigned TimeoutMs)
+{
     SysCallArgs_t Args;
 
     Args.Endpoint   = Endpoint;
@@ -203,12 +201,19 @@ int SysCall2(int Endpoint, unsigned Opcode,
     Args.RecvLength = RecvLength;
     Args.SendBuffer = (void*)Send;
     Args.RecvBuffer = Recv;
+    Args.Timeout    = TimeoutMs;
 
     return SysCall(SYS_CALL, (unsigned)&Args, 0, 0);
 }
 
 int SysRecv(int Endpoint, void *Buffer, unsigned Length,
             unsigned *Opcode, unsigned *Badge)
+{
+    return SysRecvTimed(Endpoint, Buffer, Length, Opcode, Badge, 0);
+}
+
+int SysRecvTimed(int Endpoint, void *Buffer, unsigned Length,
+                 unsigned *Opcode, unsigned *Badge, unsigned TimeoutMs)
 {
     SysRecvArgs_t Args;
     int Result;
@@ -218,6 +223,7 @@ int SysRecv(int Endpoint, void *Buffer, unsigned Length,
     Args.Buffer   = Buffer;
     Args.Opcode   = 0;
     Args.Badge    = 0;
+    Args.Timeout  = TimeoutMs;
 
     Result = SysCall(SYS_RECV, (unsigned)&Args, 0, 0);
 
@@ -249,26 +255,19 @@ int SysCapGrant(int Process, int Handle, unsigned Badge)
     return SysCall(SYS_CAP_GRANT, (unsigned)&Args, 0, 0);
 }
 
-int SysRegisterEndpoint(const char *Name, int Endpoint, int Shm)
+int SysSetConsole(int PipeHandle)
 {
-    SysServiceArgs_t Args;
-    Args.Name = Name; Args.Endpoint = Endpoint; Args.Shm = Shm;
-    return SysCall(SYS_REGISTER_ENDPOINT, (unsigned)&Args, 0, 0);
+    return SysCall(SYS_SET_CONSOLE, (unsigned)PipeHandle, 0, 0);
 }
 
-int SysLookupEndpoint(const char *Name, int *Endpoint, int *Shm)
+int SysSetRegistry(int Endpoint)
 {
-    SysServiceArgs_t Args;
-    int Result;
+    return SysCall(SYS_SET_REGISTRY, (unsigned)Endpoint, 0, 0);
+}
 
-    Args.Name = Name; Args.Endpoint = -1; Args.Shm = -1;
-    Result = SysCall(SYS_LOOKUP_ENDPOINT, (unsigned)&Args, 0, 0);
-
-    if (Result == SYSCALL_OK) {
-        if (Endpoint != 0) { *Endpoint = Args.Endpoint; }
-        if (Shm != 0)      { *Shm = Args.Shm; }
-    }
-    return Result;
+int SysGetPpid(void)
+{
+    return SysCall(SYS_GETPPID, 0, 0, 0);
 }
 
 /* -- shared memory ---------------------------------------------------- */

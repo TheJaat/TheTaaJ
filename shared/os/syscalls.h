@@ -32,8 +32,12 @@
 #define SYS_PIPE_AVAILABLE         11   /* ebx = handle                */
 
 /* -- naming -------------------------------------------------------- */
-#define SYS_REGISTER_NAME          12   /* ebx = name, ecx = pipe      */
-#define SYS_LOOKUP_NAME            13   /* ebx = name -> handle        */
+/* 12 and 13 were SYS_REGISTER_NAME and SYS_LOOKUP_NAME. Naming moved to
+ * the registry server; the numbers are left reserved rather than reused
+ * so an old binary gets "unknown call" instead of silently invoking
+ * something else. */
+#define SYS_RESERVED_12            12
+#define SYS_RESERVED_13            13
 
 /* -- rpc ----------------------------------------------------------- */
 #define SYS_SET_REPLY              14   /* ebx = pipe handle           */
@@ -64,10 +68,22 @@
 #define SYS_SHM_MAP                29   /* ebx = handle -> address      */
 #define SYS_SHM_SIZE               30   /* ebx = handle -> bytes        */
 
-#define SYS_REGISTER_ENDPOINT      31   /* ebx = args block             */
-#define SYS_LOOKUP_ENDPOINT        32   /* ebx = args block             */
+/* -- bootstrap ------------------------------------------------------ */
+/* The kernel no longer keeps a name registry. It knows one thing about
+ * naming: which endpoint every new process should be handed at startup.
+ * That single pointer is the bootstrap - a process with no capabilities
+ * can reach nothing, so something has to be given to it, and that is a
+ * mechanism rather than a policy. Everything above it - names,
+ * uniqueness, ownership, lifetime - lives in the registry server. */
+#define SYS_SET_REGISTRY           31   /* ebx = endpoint handle        */
+#define SYS_GETPPID                32
+#define SYS_SET_CONSOLE            33   /* ebx = pipe handle            */
 
-#define SYS_MAX                    33
+#define SYS_MAX                    34
+
+/* Every user process starts with this handle already populated, if a
+ * registry has been nominated. Nothing else is inherited. */
+#define HANDLE_REGISTRY             0
 
 /* A call carries more than three arguments, so they are passed as a
  * block rather than in registers. The kernel validates the block like
@@ -79,6 +95,14 @@ typedef struct _SysCallArgs {
     unsigned int RecvLength;
     void        *SendBuffer;
     void        *RecvBuffer;
+
+    /* Milliseconds to wait for a reply; 0 waits forever.
+     *
+     * Synchronous IPC has a failure mode that buffered IPC does not: a
+     * server that hangs - not crashes, hangs - holds every client
+     * forever. EndpointDestroy covers a server that exits; nothing
+     * covers one stuck in a loop. */
+    unsigned int Timeout;
 } SysCallArgs_t;
 
 typedef struct _SysRecvArgs {
@@ -87,6 +111,11 @@ typedef struct _SysRecvArgs {
     void        *Buffer;
     unsigned int Opcode;        /* out */
     unsigned int Badge;         /* out - who called, kernel-stamped */
+
+    /* Milliseconds to wait; 0 waits forever. A server that must also do
+     * something other than answer calls - a supervisor, say - cannot
+     * block indefinitely on receive, or it never gets a turn. */
+    unsigned int Timeout;
 } SysRecvArgs_t;
 
 typedef struct _SysReplyArgs {

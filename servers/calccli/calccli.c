@@ -13,7 +13,7 @@ int ModuleMain(void)
     SysPrint("\n");
 
     for (Attempt = 0; Attempt < 20; Attempt++) {
-        if (SysLookupEndpoint(CALCSRV_NAME, &Endpoint, &Shm) == SYSCALL_OK) {
+        if (SysLookup(CALCSRV_NAME, &Endpoint, &Shm) == 0) {
             break;
         }
         SysSleep(50);

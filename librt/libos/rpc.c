@@ -1,4 +1,5 @@
 #include <os/rpc.h>
+#include <os/registry.h>
 
 static int RpcReadMessage(int Handle, RpcMessage_t *Message);
 
@@ -35,10 +36,12 @@ int RpcCreateService(const char *Name)
         return Pipe;
     }
 
-    Status = SysRegisterName(Name, Pipe);
-    if (Status != SYSCALL_OK) {
+    /* Publishing a pipe is the same operation as publishing an
+     * endpoint: grant the capability to the registry, then name it. */
+    Status = SysPublish(Name, Pipe, -1);
+    if (Status != 0) {
         SysHandleClose(Pipe);
-        return Status;
+        return SYSCALL_ERROR;
     }
     return Pipe;
 }
@@ -46,7 +49,12 @@ int RpcCreateService(const char *Name)
 /* RpcConnect */
 int RpcConnect(const char *Name)
 {
-    return SysLookupName(Name);
+    int Handle = -1;
+
+    if (SysLookup(Name, &Handle, 0) != 0) {
+        return SYSCALL_NOTFOUND;
+    }
+    return Handle;
 }
 
 /* RpcExecute */

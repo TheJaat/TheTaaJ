@@ -8,6 +8,7 @@
  * the kernel later. */
 
 #include <os/syscall.h>
+#include <os/registry.h>
 
 #define COM1            0x3F8
 #define REG_DATA        0
@@ -69,12 +70,12 @@ int ModuleMain(void)
      * matter what the IER says. */
 
     Output = SysPipeCreate(256, PIPE_FLAG_NOBLOCK_WRITE);
-    if (Output < 0 || SysRegisterName("serial-in", Output) != SYSCALL_OK) {
+    if (Output < 0 || SysPublish("serial-in", Output, -1) != 0) {
         SysPrintLine("[serial] could not publish 'serial-in'");
         SysExit(1);
     }
     Input = SysPipeCreate(256, 0);
-    if (Input < 0 || SysRegisterName("serial-out", Input) != SYSCALL_OK) {
+    if (Input < 0 || SysPublish("serial-out", Input, -1) != 0) {
         SysPrintLine("[serial] could not publish 'serial-out'");
         SysExit(1);
     }

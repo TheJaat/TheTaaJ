@@ -8,6 +8,7 @@
  * can be delegated - a loop around a blocking read on a pipe. */
 
 #include <os/syscall.h>
+#include <os/registry.h>
 
 #define REQUEST_MAX     64
 
@@ -27,7 +28,7 @@ int ModuleMain(void)
         SysExit(1);
     }
 
-    if (SysRegisterName("echo", Pipe) != SYSCALL_OK) {
+    if (SysPublish("echo", Pipe, -1) != 0) {
         SysPrintLine("[echo] could not register the name");
         SysExit(1);
     }
