@@ -50,7 +50,65 @@
 #define SYS_SPAWN                  21   /* ebx = module name -> pid     */
 #define SYS_PROCESS_ALIVE          22   /* ebx = pid -> 1 or 0          */
 
-#define SYS_MAX                    23
+/* -- synchronous ipc ------------------------------------------------ */
+#define SYS_ENDPOINT_CREATE        23   /* -> handle                    */
+#define SYS_CALL                   24   /* ebx = args block             */
+#define SYS_RECV                   25   /* ebx = args block, blocks     */
+#define SYS_REPLY                  26   /* ebx = args block             */
+
+/* -- capabilities --------------------------------------------------- */
+#define SYS_CAP_GRANT              27   /* ebx = args block             */
+
+/* -- shared memory -------------------------------------------------- */
+#define SYS_SHM_CREATE             28   /* ebx = size -> handle         */
+#define SYS_SHM_MAP                29   /* ebx = handle -> address      */
+#define SYS_SHM_SIZE               30   /* ebx = handle -> bytes        */
+
+#define SYS_REGISTER_ENDPOINT      31   /* ebx = args block             */
+#define SYS_LOOKUP_ENDPOINT        32   /* ebx = args block             */
+
+#define SYS_MAX                    33
+
+/* A call carries more than three arguments, so they are passed as a
+ * block rather than in registers. The kernel validates the block like
+ * any other user pointer before reading it. */
+typedef struct _SysCallArgs {
+    int          Endpoint;      /* capability being invoked        */
+    unsigned int Opcode;
+    unsigned int SendLength;
+    unsigned int RecvLength;
+    void        *SendBuffer;
+    void        *RecvBuffer;
+} SysCallArgs_t;
+
+typedef struct _SysRecvArgs {
+    int          Endpoint;
+    unsigned int Length;        /* buffer size in, message size out */
+    void        *Buffer;
+    unsigned int Opcode;        /* out */
+    unsigned int Badge;         /* out - who called, kernel-stamped */
+} SysRecvArgs_t;
+
+typedef struct _SysReplyArgs {
+    unsigned int Length;
+    void        *Buffer;
+} SysReplyArgs_t;
+
+typedef struct _SysGrantArgs {
+    int          Process;       /* target process id      */
+    int          Handle;        /* capability to hand over */
+    unsigned int Badge;         /* stamped on the copy     */
+} SysGrantArgs_t;
+
+typedef struct _SysServiceArgs {
+    const char  *Name;
+    int          Endpoint;      /* in on register, out on lookup */
+    int          Shm;           /* in on register, out on lookup; -1 none */
+} SysServiceArgs_t;
+
+/* The largest message a single call may carry. Small on purpose: this
+ * is a control path, and bulk data belongs in shared memory. */
+#define IPC_MESSAGE_MAX             256
 
 /* Errors. Syscalls return a negative value on failure so a caller can
  * distinguish "0 bytes" from "failed". */

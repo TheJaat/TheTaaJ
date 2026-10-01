@@ -75,6 +75,49 @@ void          SysOutL(unsigned short Port, unsigned int Value);
 unsigned int  SysMmioRead32(unsigned int Address);
 void          SysMmioWrite32(unsigned int Address, unsigned int Value);
 
+/* -- synchronous ipc ------------------------------------------------- */
+
+/* SysEndpointCreate
+ * A receive-capable endpoint. The creator is the only receiver; anyone
+ * granted a capability to it may call. */
+int  SysEndpointCreate(void);
+
+/* SysCall
+ * Sends and blocks for the reply. Returns reply bytes, or negative.
+ * Nothing is buffered: this blocks until a receiver takes the message. */
+int  SysCall2(int Endpoint, unsigned Opcode,
+              const void *Send, unsigned SendLength,
+              void *Recv, unsigned RecvLength);
+
+/* SysRecv
+ * Blocks for the next call. Fills in the opcode and the badge of the
+ * capability that was invoked - the badge is stamped by the kernel and
+ * cannot be forged by the caller. */
+int  SysRecv(int Endpoint, void *Buffer, unsigned Length,
+             unsigned *Opcode, unsigned *Badge);
+
+/* SysReply
+ * Answers the call currently outstanding on this thread. */
+int  SysReply(const void *Buffer, unsigned Length);
+
+/* SysCapGrant
+ * Hands a copy of a capability to another process with a badge of your
+ * choosing. Returns the handle index in the target, or negative. */
+int  SysCapGrant(int Process, int Handle, unsigned Badge);
+
+/* SysRegisterEndpoint / SysLookupEndpoint
+ * Publish and find a call-style service. Lookup returns a badged
+ * capability; the badge is the caller's pid, stamped by the kernel.
+ * Pass Shm = -1 when the service has no shared region. */
+int  SysRegisterEndpoint(const char *Name, int Endpoint, int Shm);
+int  SysLookupEndpoint(const char *Name, int *Endpoint, int *Shm);
+
+/* -- shared memory ---------------------------------------------------- */
+
+int      SysShmCreate(unsigned Length);   /* -> handle          */
+unsigned SysShmMap(int Handle);           /* -> address in me   */
+int      SysShmSize(int Handle);
+
 /* -- minimal string helpers ----------------------------------------- */
 unsigned     SysStringLength(const char *Text);
 void         SysMemSet(void *Destination, int Value, unsigned Length);

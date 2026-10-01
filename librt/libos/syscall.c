@@ -184,6 +184,110 @@ void SysOutL(unsigned short Port, unsigned int Value)
     __asm__ volatile ("outl %0, %1" :: "a"(Value), "Nd"(Port));
 }
 
+/* -- synchronous ipc ------------------------------------------------- */
+
+int SysEndpointCreate(void)
+{
+    return SysCall(SYS_ENDPOINT_CREATE, 0, 0, 0);
+}
+
+int SysCall2(int Endpoint, unsigned Opcode,
+             const void *Send, unsigned SendLength,
+             void *Recv, unsigned RecvLength)
+{
+    SysCallArgs_t Args;
+
+    Args.Endpoint   = Endpoint;
+    Args.Opcode     = Opcode;
+    Args.SendLength = SendLength;
+    Args.RecvLength = RecvLength;
+    Args.SendBuffer = (void*)Send;
+    Args.RecvBuffer = Recv;
+
+    return SysCall(SYS_CALL, (unsigned)&Args, 0, 0);
+}
+
+int SysRecv(int Endpoint, void *Buffer, unsigned Length,
+            unsigned *Opcode, unsigned *Badge)
+{
+    SysRecvArgs_t Args;
+    int Result;
+
+    Args.Endpoint = Endpoint;
+    Args.Length   = Length;
+    Args.Buffer   = Buffer;
+    Args.Opcode   = 0;
+    Args.Badge    = 0;
+
+    Result = SysCall(SYS_RECV, (unsigned)&Args, 0, 0);
+
+    if (Result >= 0) {
+        if (Opcode != 0) { *Opcode = Args.Opcode; }
+        if (Badge  != 0) { *Badge  = Args.Badge;  }
+    }
+    return Result;
+}
+
+int SysReply(const void *Buffer, unsigned Length)
+{
+    SysReplyArgs_t Args;
+
+    Args.Length = Length;
+    Args.Buffer = (void*)Buffer;
+
+    return SysCall(SYS_REPLY, (unsigned)&Args, 0, 0);
+}
+
+int SysCapGrant(int Process, int Handle, unsigned Badge)
+{
+    SysGrantArgs_t Args;
+
+    Args.Process = Process;
+    Args.Handle  = Handle;
+    Args.Badge   = Badge;
+
+    return SysCall(SYS_CAP_GRANT, (unsigned)&Args, 0, 0);
+}
+
+int SysRegisterEndpoint(const char *Name, int Endpoint, int Shm)
+{
+    SysServiceArgs_t Args;
+    Args.Name = Name; Args.Endpoint = Endpoint; Args.Shm = Shm;
+    return SysCall(SYS_REGISTER_ENDPOINT, (unsigned)&Args, 0, 0);
+}
+
+int SysLookupEndpoint(const char *Name, int *Endpoint, int *Shm)
+{
+    SysServiceArgs_t Args;
+    int Result;
+
+    Args.Name = Name; Args.Endpoint = -1; Args.Shm = -1;
+    Result = SysCall(SYS_LOOKUP_ENDPOINT, (unsigned)&Args, 0, 0);
+
+    if (Result == SYSCALL_OK) {
+        if (Endpoint != 0) { *Endpoint = Args.Endpoint; }
+        if (Shm != 0)      { *Shm = Args.Shm; }
+    }
+    return Result;
+}
+
+/* -- shared memory ---------------------------------------------------- */
+
+int SysShmCreate(unsigned Length)
+{
+    return SysCall(SYS_SHM_CREATE, Length, 0, 0);
+}
+
+unsigned SysShmMap(int Handle)
+{
+    return (unsigned)SysCall(SYS_SHM_MAP, (unsigned)Handle, 0, 0);
+}
+
+int SysShmSize(int Handle)
+{
+    return SysCall(SYS_SHM_SIZE, (unsigned)Handle, 0, 0);
+}
+
 /* -- string helpers -------------------------------------------------- */
 
 unsigned SysStringLength(const char *Text)
