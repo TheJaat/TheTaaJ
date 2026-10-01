@@ -45,7 +45,12 @@
 #define SYS_IRQ_ACK                18   /* ebx = handle                */
 #define SYS_IO_REQUEST             19   /* ebx = port, ecx = count     */
 
-#define SYS_MAX                    20
+/* -- device memory and process control, servers only ---------------- */
+#define SYS_IO_MAP                 20   /* ebx = phys, ecx = size -> va */
+#define SYS_SPAWN                  21   /* ebx = module name -> pid     */
+#define SYS_PROCESS_ALIVE          22   /* ebx = pid -> 1 or 0          */
+
+#define SYS_MAX                    23
 
 /* Errors. Syscalls return a negative value on failure so a caller can
  * distinguish "0 bytes" from "failed". */

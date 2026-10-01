@@ -54,8 +54,26 @@ int          SysIoRequest(unsigned Port, unsigned Count);
  * in/out instructions - the cpu checks the I/O permission bitmap, so
  * there is no syscall and no cost per access. Executing one on a port
  * that was not granted is a general protection fault. */
+unsigned int  SysIoMap(unsigned Physical, unsigned Length);
+int           SysSpawn(const char *ModuleName);
+int           SysProcessAlive(int Pid);
+
 unsigned char SysInB(unsigned short Port);
 void          SysOutB(unsigned short Port, unsigned char Value);
+
+/* 32-bit port access. Not a convenience: some registers are only
+ * addressable as a dword. The PCI configuration address register at
+ * 0xCF8 is the canonical example - four byte writes do not compose into
+ * one dword write, the hardware never latches a complete address, and
+ * every subsequent read returns whatever was already there. */
+unsigned int  SysInL(unsigned short Port);
+void          SysOutL(unsigned short Port, unsigned int Value);
+
+/* Volatile accessors for mapped device memory. The compiler must not
+ * cache, reorder or elide these - a device register is not RAM, and a
+ * read of it can have a side effect. */
+unsigned int  SysMmioRead32(unsigned int Address);
+void          SysMmioWrite32(unsigned int Address, unsigned int Value);
 
 /* -- minimal string helpers ----------------------------------------- */
 unsigned     SysStringLength(const char *Text);

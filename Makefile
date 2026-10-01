@@ -51,7 +51,9 @@ MODULE_DIR = $(BUILD_DIR)/modules
 MODULE_BINS = $(MODULE_DIR)/hello.mod $(MODULE_DIR)/user.mod \
               $(MODULE_DIR)/echo.mod $(MODULE_DIR)/talker.mod \
               $(MODULE_DIR)/mathsrv.mod $(MODULE_DIR)/mathcli.mod \
-              $(MODULE_DIR)/ps2.mod
+              $(MODULE_DIR)/ps2.mod \
+              $(MODULE_DIR)/pci.mod $(MODULE_DIR)/serial.mod \
+              $(MODULE_DIR)/init.mod
 RAMDISK_SRC = $(wildcard ramdisk-src/*)
 
 # Loadable modules. Cross-compiled, but only to .o - they are relocated

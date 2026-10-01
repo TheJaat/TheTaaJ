@@ -135,6 +135,31 @@ int SysIoRequest(unsigned Port, unsigned Count)
     return SysCall(SYS_IO_REQUEST, Port, Count, 0);
 }
 
+unsigned int SysIoMap(unsigned Physical, unsigned Length)
+{
+    return (unsigned)SysCall(SYS_IO_MAP, Physical, Length, 0);
+}
+
+int SysSpawn(const char *ModuleName)
+{
+    return SysCall(SYS_SPAWN, (unsigned)ModuleName, 0, 0);
+}
+
+int SysProcessAlive(int Pid)
+{
+    return SysCall(SYS_PROCESS_ALIVE, (unsigned)Pid, 0, 0);
+}
+
+unsigned int SysMmioRead32(unsigned int Address)
+{
+    return *(volatile unsigned int*)Address;
+}
+
+void SysMmioWrite32(unsigned int Address, unsigned int Value)
+{
+    *(volatile unsigned int*)Address = Value;
+}
+
 unsigned char SysInB(unsigned short Port)
 {
     unsigned char Value;
@@ -145,6 +170,18 @@ unsigned char SysInB(unsigned short Port)
 void SysOutB(unsigned short Port, unsigned char Value)
 {
     __asm__ volatile ("outb %0, %1" :: "a"(Value), "Nd"(Port));
+}
+
+unsigned int SysInL(unsigned short Port)
+{
+    unsigned int Value;
+    __asm__ volatile ("inl %1, %0" : "=a"(Value) : "Nd"(Port));
+    return Value;
+}
+
+void SysOutL(unsigned short Port, unsigned int Value)
+{
+    __asm__ volatile ("outl %0, %1" :: "a"(Value), "Nd"(Port));
 }
 
 /* -- string helpers -------------------------------------------------- */
