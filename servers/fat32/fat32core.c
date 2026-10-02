@@ -87,7 +87,8 @@ static int Fat32UpdateFsInfo(Fat32Volume_t *V)
     unsigned char Sector[FAT32_SECTOR_SIZE];
     unsigned Free;
 
-    if (V->ClustersAllocated == 0 || V->FsInfoSector == 0 || V->Write == 0) {
+    if ((V->ClustersAllocated == 0 && V->ClustersFreed == 0)
+        || V->FsInfoSector == 0 || V->Write == 0) {
         return FAT32_OK;
     }
     if (V->Read(V->Context, V->FsInfoSector, 1, Sector) != 0) {
@@ -109,6 +110,10 @@ static int Fat32UpdateFsInfo(Fat32Volume_t *V)
          | ((unsigned)Sector[490] << 16) | ((unsigned)Sector[491] << 24);
 
     if (Free != 0xFFFFFFFFu) {
+        /* Frees first, so a sequence that allocates and releases the
+         * same number of clusters cannot drive the count below zero on
+         * the way through. */
+        Free += V->ClustersFreed;
         Free = (Free >= V->ClustersAllocated) ? (Free - V->ClustersAllocated) : 0;
         Sector[488] = (unsigned char)(Free & 0xFF);
         Sector[489] = (unsigned char)((Free >> 8) & 0xFF);
@@ -121,6 +126,7 @@ static int Fat32UpdateFsInfo(Fat32Volume_t *V)
     }
 
     V->ClustersAllocated = 0;
+    V->ClustersFreed = 0;
     return FAT32_OK;
 }
 
@@ -799,6 +805,157 @@ int Fat32WriteFile(Fat32Volume_t *V, Fat32File_t *File, unsigned Offset,
     }
 
     return (int)Done;
+}
+
+/* Fat32FreeChain
+ * Releases every cluster from <Cluster> onward.
+ *
+ * Reading the next link BEFORE freeing the current one is the whole
+ * trick: once an entry is marked free the link it held is gone, and the
+ * rest of the chain becomes unreachable - allocated to nobody, invisible
+ * to any checker that walks directories rather than the FAT. */
+static int Fat32FreeChain(Fat32Volume_t *V, unsigned Cluster)
+{
+    unsigned Guard = 0;
+
+    if (V->Write == 0) {
+        return FAT32_ERR_READONLY;
+    }
+
+    while (Cluster >= 2) {
+        unsigned Next = Fat32NextCluster(V, Cluster);
+
+        if (Fat32SetCluster(V, Cluster, FAT32_CLUSTER_FREE) != FAT32_OK) {
+            return FAT32_ERR_WRITE;
+        }
+        V->ClustersFreed++;
+
+        if (++Guard > 65536) {
+            return FAT32_ERR_READ;      /* a loop in the FAT */
+        }
+        Cluster = Next;
+    }
+
+    return FAT32_OK;
+}
+
+int Fat32Truncate(Fat32Volume_t *V, Fat32File_t *File, unsigned NewSize)
+{
+    unsigned ClusterBytes, Keep, Cluster, Previous = 0;
+    int Status;
+
+    if (!V->Mounted)        { return FAT32_ERR_READ; }
+    if (V->Write == 0)      { return FAT32_ERR_READONLY; }
+    if (File->IsDirectory)  { return FAT32_ERR_NOTFOUND; }
+    if (NewSize > File->Size) { return FAT32_ERR_NOTFOUND; }
+
+    ClusterBytes = V->SectorsPerCluster * V->BytesPerSector;
+
+    /* How many clusters the new size still needs. A size that lands
+     * exactly on a boundary needs no partial cluster beyond it. */
+    Keep = (NewSize + ClusterBytes - 1) / ClusterBytes;
+
+    Cluster = File->FirstCluster;
+
+    if (Keep == 0) {
+        /* Nothing left: release everything and detach the chain. */
+        if (Cluster >= 2) {
+            Status = Fat32FreeChain(V, Cluster);
+            if (Status != FAT32_OK) { return Status; }
+        }
+        File->FirstCluster = 0;
+    }
+    else {
+        unsigned i;
+
+        for (i = 0; i < Keep && Cluster >= 2; i++) {
+            Previous = Cluster;
+            Cluster = Fat32NextCluster(V, Cluster);
+        }
+
+        /* Cut the chain before freeing the tail, so an interruption
+         * leaves orphaned clusters rather than a file still pointing at
+         * clusters that are now marked free. */
+        if (Cluster >= 2) {
+            Status = Fat32SetCluster(V, Previous, FAT32_CLUSTER_EOC);
+            if (Status != FAT32_OK) { return Status; }
+
+            Status = Fat32FreeChain(V, Cluster);
+            if (Status != FAT32_OK) { return Status; }
+        }
+    }
+
+    File->Size = NewSize;
+
+    if (Fat32FlushCache(V) != FAT32_OK) { return FAT32_ERR_WRITE; }
+    return Fat32UpdateEntry(V, File);
+}
+
+/* Fat32DirIsEmpty
+ * True when a directory holds nothing but "." and "..". */
+static int Fat32DirIsEmpty(Fat32Volume_t *V, unsigned Cluster)
+{
+    Fat32File_t Entries[4];
+    int n, i, Real = 0;
+
+    n = Fat32ListDirectory(V, Cluster, Entries, 4);
+    if (n < 0) { return 0; }
+
+    for (i = 0; i < n; i++) {
+        if (Entries[i].Name[0] == '.'
+            && (Entries[i].Name[1] == '\0'
+                || (Entries[i].Name[1] == '.' && Entries[i].Name[2] == '\0'))) {
+            continue;
+        }
+        Real++;
+    }
+    return (Real == 0) ? 1 : 0;
+}
+
+int Fat32Delete(Fat32Volume_t *V, const char *Path)
+{
+    unsigned char Sector[FAT32_SECTOR_SIZE];
+    Fat32File_t File;
+    FatDirEntry_t *E;
+    int Status;
+
+    if (!V->Mounted)   { return FAT32_ERR_READ; }
+    if (V->Write == 0) { return FAT32_ERR_READONLY; }
+
+    Status = Fat32Resolve(V, Path, &File);
+    if (Status != FAT32_OK) { return Status; }
+
+    if (File.EntrySector == 0) {
+        return FAT32_ERR_NOTFOUND;      /* the root has no entry */
+    }
+    if (File.IsDirectory && !Fat32DirIsEmpty(V, File.FirstCluster)) {
+        return FAT32_ERR_EXISTS;        /* not empty */
+    }
+
+    /* Free the data first. If this is interrupted the entry still points
+     * at the chain, so the file is intact and nothing is lost. Clearing
+     * the entry first would strand every cluster it referenced. */
+    if (File.FirstCluster >= 2) {
+        Status = Fat32FreeChain(V, File.FirstCluster);
+        if (Status != FAT32_OK) { return Status; }
+    }
+
+    if (V->Read(V->Context, File.EntrySector, 1, Sector) != 0) {
+        return FAT32_ERR_READ;
+    }
+
+    E = (FatDirEntry_t*)(Sector + File.EntryOffset);
+
+    /* 0xE5 marks the slot reusable. Writing 0x00 instead would mean
+     * "no entries follow", hiding every file after it in the
+     * directory. */
+    E->Name[0] = (char)(unsigned char)FAT_ENTRY_FREE;
+
+    if (V->Write(V->Context, File.EntrySector, 1, Sector) != 0) {
+        return FAT32_ERR_WRITE;
+    }
+
+    return Fat32FlushCache(V);
 }
 
 typedef struct {

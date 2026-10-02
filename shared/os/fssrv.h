@@ -10,6 +10,8 @@
 #define FS_OP_WRITE         5   /* FsIo_t     -> FsIoResult_t    */
 #define FS_OP_STAT          6   /* FsPath_t   -> FsStatResult_t  */
 #define FS_OP_SYNC          7   /* no payload -> FsStatus_t      */
+#define FS_OP_DELETE        8   /* FsPath_t   -> FsStatus_t      */
+#define FS_OP_TRUNCATE      9   /* FsTruncate_t -> FsStatus_t    */
 
 #define FS_PATH_MAX         64
 #define FS_NAME_MAX         13
@@ -49,6 +51,11 @@ typedef struct _FsIoResult {
     int          Status;
     unsigned int Length;
 } FsIoResult_t;
+
+typedef struct _FsTruncate {
+    char         Path[FS_PATH_MAX];
+    unsigned int Size;
+} FsTruncate_t;
 
 typedef struct _FsEntry {
     char         Name[FS_NAME_MAX];

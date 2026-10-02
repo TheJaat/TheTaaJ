@@ -329,6 +329,55 @@ int ModuleMain(void)
                 break;
             }
 
+            case FS_OP_DELETE: {
+                FsPath_t *q = (FsPath_t*)Message;
+                FsStatus_t r;
+
+                r.Status = -1;
+                if (Length >= (int)sizeof(FsPath_t)) {
+                    q->Path[FS_PATH_MAX - 1] = '\0';
+                    r.Status = (Fat32Delete(&Volume, q->Path) == FAT32_OK)
+                             ? 0 : -1;
+                    if (r.Status == 0) {
+                        /* Any handle still open on that path now refers
+                         * to a file that no longer exists. Closing them
+                         * is cruder than a real reference count, but it
+                         * is far better than leaving a handle that
+                         * writes into freed clusters. */
+                        int h;
+                        for (h = 0; h < HANDLE_MAX; h++) {
+                            if (Handles[h].Used
+                                && Handles[h].File.EntrySector != 0) {
+                                Fat32File_t Check;
+                                if (Fat32Resolve(&Volume, q->Path, &Check)
+                                    != FAT32_OK) {
+                                    Handles[h].Used = 0;
+                                }
+                            }
+                        }
+                    }
+                }
+                SysReply(&r, sizeof(r));
+                break;
+            }
+
+            case FS_OP_TRUNCATE: {
+                FsTruncate_t *q = (FsTruncate_t*)Message;
+                FsStatus_t r;
+                Fat32File_t File;
+
+                r.Status = -1;
+                if (Length >= (int)sizeof(FsTruncate_t)) {
+                    q->Path[FS_PATH_MAX - 1] = '\0';
+                    if (Fat32Resolve(&Volume, q->Path, &File) == FAT32_OK) {
+                        r.Status = (Fat32Truncate(&Volume, &File, q->Size)
+                                    == FAT32_OK) ? 0 : -1;
+                    }
+                }
+                SysReply(&r, sizeof(r));
+                break;
+            }
+
             case FS_OP_SYNC: {
                 FsStatus_t r;
                 r.Status = (Fat32Flush(&Volume) == FAT32_OK) ? 0 : -1;

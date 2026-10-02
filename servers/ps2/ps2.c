@@ -70,6 +70,13 @@ int ModuleMain(void)
         SysExit(1);
     }
 
+    /* Also publish it, so a ring-3 shell can read the same pipe. Only
+     * one reader should actually consume from it at a time - the kernel
+     * shell stands down when a user shell starts. */
+    if (SysPublish("keyboard", Output, -1) != 0) {
+        SysPrintLine("[ps2] could not publish 'keyboard' (no registry yet?)");
+    }
+
     /* Drain anything left in the controller before claiming the line.
      * The 8042 will not raise IRQ 1 again while its output buffer is
      * full, so a stale byte here means the first keypress is lost and

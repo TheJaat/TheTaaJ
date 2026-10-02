@@ -20,7 +20,7 @@ CFLAGS = -m32 -fno-pie -ffreestanding -nostdlib -O2 -Wall -Wextra \
          -fno-builtin -fno-asynchronous-unwind-tables \
          -I $(ROOT_DIR)/librt/include -I $(SHARED)
 
-SERVERS = echo talker mathsrv mathcli ps2 pci serial init regsrv calcsrv calccli ata fat32 fsls
+SERVERS = echo talker mathsrv mathcli ps2 pci serial init regsrv calcsrv calccli ata fat32 fsls sh
 TARGETS = $(SERVERS:%=$(BUILD_DIR)/%.mod)
 
 all: $(BUILD_DIR) $(TARGETS)

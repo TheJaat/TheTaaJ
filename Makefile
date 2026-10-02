@@ -55,7 +55,7 @@ MODULE_BINS = $(MODULE_DIR)/hello.mod $(MODULE_DIR)/user.mod \
               $(MODULE_DIR)/pci.mod $(MODULE_DIR)/serial.mod \
               $(MODULE_DIR)/init.mod $(MODULE_DIR)/regsrv.mod \
               $(MODULE_DIR)/calcsrv.mod $(MODULE_DIR)/calccli.mod \
-              $(MODULE_DIR)/ata.mod $(MODULE_DIR)/fat32.mod $(MODULE_DIR)/fsls.mod
+              $(MODULE_DIR)/ata.mod $(MODULE_DIR)/fat32.mod $(MODULE_DIR)/fsls.mod $(MODULE_DIR)/sh.mod
 RAMDISK_SRC = $(wildcard ramdisk-src/*)
 
 # Loadable modules. Cross-compiled, but only to .o - they are relocated

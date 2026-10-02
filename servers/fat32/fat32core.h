@@ -57,6 +57,7 @@ typedef struct _Fat32Volume {
      * many clusters we took is cheaper than recounting. */
     unsigned int   FsInfoSector;
     unsigned int   ClustersAllocated;
+    unsigned int   ClustersFreed;
 } Fat32Volume_t;
 
 typedef struct _Fat32File {
@@ -116,5 +117,17 @@ int  Fat32WriteFile(Fat32Volume_t *, Fat32File_t *, unsigned Offset,
  * Creates an empty file in the directory containing Path. Fails if the
  * name already exists. */
 int  Fat32Create(Fat32Volume_t *, const char *Path, Fat32File_t *File);
+
+/* Fat32Truncate
+ * Sets the file's length, releasing any clusters beyond it. Growing is
+ * not done here - a write does that, and allocating clusters a caller
+ * has not written to would hand out stale bytes. */
+int  Fat32Truncate(Fat32Volume_t *, Fat32File_t *, unsigned NewSize);
+
+/* Fat32Delete
+ * Frees the chain and marks the directory entry free. Refuses
+ * directories: removing one needs it to be empty, and that check is
+ * worth having before the operation exists. */
+int  Fat32Delete(Fat32Volume_t *, const char *Path);
 
 #endif
