@@ -3,28 +3,56 @@
 
 #define FSSRV_NAME          "fs"
 
-#define FS_OP_LIST          1   /* FsList_t    -> FsListResult_t   */
-#define FS_OP_STAT          2   /* FsPath_t    -> FsStat_t         */
-#define FS_OP_READ          3   /* FsRead_t    -> FsReadResult_t   */
+#define FS_OP_LIST          1   /* FsList_t   -> FsListResult_t  */
+#define FS_OP_OPEN          2   /* FsOpen_t   -> FsHandleResult_t */
+#define FS_OP_CLOSE         3   /* FsHandle_t -> FsStatus_t      */
+#define FS_OP_READ          4   /* FsIo_t     -> FsIoResult_t    */
+#define FS_OP_WRITE         5   /* FsIo_t     -> FsIoResult_t    */
+#define FS_OP_STAT          6   /* FsPath_t   -> FsStatResult_t  */
+#define FS_OP_SYNC          7   /* no payload -> FsStatus_t      */
 
+#define FS_PATH_MAX         64
 #define FS_NAME_MAX         13
-#define FS_LIST_MAX         8
-
-/* The file service keeps its own shared window, separate from the
- * disk's: a client should not be able to see the raw block cache of a
- * device it has no business touching. */
+#define FS_LIST_MAX         6
 #define FS_WINDOW_BYTES     4096
 
-typedef struct _FsPath { char Name[FS_NAME_MAX]; } FsPath_t;
+#define FS_OPEN_READ        0x1
+#define FS_OPEN_WRITE       0x2
+#define FS_OPEN_CREATE      0x4
 
-typedef struct _FsList {
-    unsigned int Cluster;       /* 0 for the root */
-} FsList_t;
+typedef struct _FsPath   { char Path[FS_PATH_MAX]; } FsPath_t;
+typedef struct _FsList   { char Path[FS_PATH_MAX]; } FsList_t;
+typedef struct _FsHandle { int Handle; } FsHandle_t;
+typedef struct _FsStatus { int Status; } FsStatus_t;
+
+typedef struct _FsOpen {
+    char         Path[FS_PATH_MAX];
+    unsigned int Flags;
+} FsOpen_t;
+
+typedef struct _FsHandleResult {
+    int          Status;
+    int          Handle;
+    unsigned int Size;
+} FsHandleResult_t;
+
+/* Data moves through the shared window; a request carries only an
+ * offset and a length. */
+typedef struct _FsIo {
+    int          Handle;
+    unsigned int Offset;
+    unsigned int Length;
+    unsigned int WindowOffset;
+} FsIo_t;
+
+typedef struct _FsIoResult {
+    int          Status;
+    unsigned int Length;
+} FsIoResult_t;
 
 typedef struct _FsEntry {
     char         Name[FS_NAME_MAX];
     unsigned int Size;
-    unsigned int Cluster;
     int          IsDirectory;
 } FsEntry_t;
 
@@ -34,20 +62,9 @@ typedef struct _FsListResult {
     FsEntry_t    Entries[FS_LIST_MAX];
 } FsListResult_t;
 
-typedef struct _FsStat {
+typedef struct _FsStatResult {
     int          Status;
     FsEntry_t    Entry;
-} FsStat_t;
-
-typedef struct _FsRead {
-    char         Name[FS_NAME_MAX];
-    unsigned int Offset;
-    unsigned int Length;        /* clamped to FS_WINDOW_BYTES */
-} FsRead_t;
-
-typedef struct _FsReadResult {
-    int          Status;
-    unsigned int Length;        /* bytes placed in the window */
-} FsReadResult_t;
+} FsStatResult_t;
 
 #endif

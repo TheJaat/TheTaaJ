@@ -53,7 +53,7 @@ MODULE_BINS = $(MODULE_DIR)/hello.mod $(MODULE_DIR)/user.mod \
               $(MODULE_DIR)/mathsrv.mod $(MODULE_DIR)/mathcli.mod \
               $(MODULE_DIR)/ps2.mod \
               $(MODULE_DIR)/pci.mod $(MODULE_DIR)/serial.mod \
-              $(MODULE_DIR)/init.mod \
+              $(MODULE_DIR)/init.mod $(MODULE_DIR)/regsrv.mod \
               $(MODULE_DIR)/calcsrv.mod $(MODULE_DIR)/calccli.mod \
               $(MODULE_DIR)/ata.mod $(MODULE_DIR)/fat32.mod $(MODULE_DIR)/fsls.mod
 RAMDISK_SRC = $(wildcard ramdisk-src/*)

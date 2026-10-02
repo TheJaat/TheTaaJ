@@ -1,99 +1,109 @@
-/* fsls - lists the disk and prints a file. A client of a client.
+/* fsls - exercises the file service: list, read, write, read back.
  *
  *   fsls -> fat32 -> ata -> hardware
  *
- * Four processes, four address spaces, and the only thing that crosses
- * between them is messages and a shared page. */
+ * Four processes, four address spaces, and the only things crossing
+ * between them are messages and a shared page. */
 
 #include <os/syscall.h>
 #include <os/registry.h>
 #include <os/fssrv.h>
 
-/* Mark
- * One character, written immediately, before and after each step.
- *
- * A register dump tells you where a fault happened; it does not tell you
- * what the program had already managed to do. These letters do, and the
- * last one printed brackets the failure to a single statement. */
-static void Mark(const char *Tag)
+static int Fs = -1;
+static unsigned Window = 0;
+
+static void SetPath(char *Dst, const char *Src)
 {
-    SysPrint("<");
-    SysPrint(Tag);
-    SysPrint(">");
+    unsigned i;
+    for (i = 0; i < FS_PATH_MAX - 1 && Src[i] != '\0'; i++) { Dst[i] = Src[i]; }
+    for (; i < FS_PATH_MAX; i++) { Dst[i] = '\0'; }
+}
+
+static int Open(const char *Path, unsigned Flags, unsigned *Size)
+{
+    FsOpen_t q;
+    FsHandleResult_t r;
+
+    SetPath(q.Path, Path);
+    q.Flags = Flags;
+    r.Status = -1; r.Handle = -1; r.Size = 0;
+
+    if (SysCallTimed(Fs, FS_OP_OPEN, &q, sizeof(q), &r, sizeof(r), 5000)
+        < (int)sizeof(r) || r.Status != 0) {
+        return -1;
+    }
+    if (Size) { *Size = r.Size; }
+    return r.Handle;
+}
+
+static int Io(int Handle, unsigned Offset, unsigned Length, int Write)
+{
+    FsIo_t q;
+    FsIoResult_t r;
+
+    q.Handle = Handle; q.Offset = Offset;
+    q.Length = Length; q.WindowOffset = 0;
+    r.Status = -1; r.Length = 0;
+
+    if (SysCallTimed(Fs, Write ? FS_OP_WRITE : FS_OP_READ,
+            &q, sizeof(q), &r, sizeof(r), 5000) < (int)sizeof(r)
+        || r.Status != 0) {
+        return -1;
+    }
+    return (int)r.Length;
+}
+
+static void Close(int Handle)
+{
+    FsHandle_t q; FsStatus_t r;
+    q.Handle = Handle;
+    SysCallTimed(Fs, FS_OP_CLOSE, &q, sizeof(q), &r, sizeof(r), 5000);
 }
 
 int ModuleMain(void)
 {
-    int Fs = -1, Shm = -1, Attempt, i, n;
-    unsigned Window;
+    int Shm = -1, Attempt, i;
 
     SysPrint("[fsls] starting, pid ");
     SysPrintNumber((unsigned)SysGetPid());
     SysPrint("\n");
 
-    Mark("lookup");
     for (Attempt = 0; Attempt < 60; Attempt++) {
-        if (SysLookup(FSSRV_NAME, &Fs, &Shm) == 0) {
-            break;
-        }
+        if (SysLookup(FSSRV_NAME, &Fs, &Shm) == 0) { break; }
         SysSleep(50);
     }
     if (Fs < 0) {
         SysPrintLine("[fsls] no file service");
         SysExit(1);
     }
-    Mark("got-fs");
-    SysPrint(" fs="); SysPrintNumber((unsigned)Fs);
-    SysPrint(" shm="); SysPrintNumber((unsigned)Shm); SysPrint(" ");
 
     Window = SysShmMap(Shm);
-    Mark("mapped");
-    SysPrintHex(Window);
     if (Window == 0) {
-        /* A mapping can fail - the region may belong to a process that
-         * has since exited. Carrying on would use zero as a base
-         * address, and the fault lands one whole struct size away from
-         * the mistake. */
-        SysPrintLine("[fsls] could not map the file service window");
+        SysPrintLine("[fsls] could not map the window");
         SysExit(1);
     }
 
+    /* list */
     {
         FsList_t q;
         FsListResult_t r;
+        int n;
 
-        q.Cluster = 0;
+        SetPath(q.Path, "/");
         r.Status = -1; r.Count = 0;
 
-        /* Check the CALL, not just the reply. A call to a dead service
-         * returns negative and never touches the reply buffer, so
-         * reading r at all would be reading whatever was on the stack. */
-        Mark("list-call");
         n = SysCallTimed(Fs, FS_OP_LIST, &q, sizeof(q), &r, sizeof(r), 5000);
-        Mark("list-returned");
-        SysPrintNumber((unsigned)n);
-        if (n < (int)sizeof(r)) {
-            SysPrint("[fsls] the file service did not answer (");
-            SysPrintNumber((unsigned)n);
-            SysPrintLine(")");
-            SysExit(1);
-        }
-        if (r.Status != 0) {
+        if (n < (int)sizeof(r) || r.Status != 0) {
             SysPrintLine("[fsls] listing failed");
             SysExit(1);
         }
         if (r.Count < 0 || r.Count > FS_LIST_MAX) {
-            SysPrintLine("[fsls] the reply claims an impossible entry count");
+            SysPrintLine("[fsls] impossible entry count");
             SysExit(1);
         }
 
-        Mark("checks-passed");
-        SysPrint(" count="); SysPrintNumber((unsigned)r.Count); SysPrint("\n");
-
         SysPrintLine("[fsls] root directory:");
         for (i = 0; i < r.Count; i++) {
-            Mark("entry");
-            SysPrintNumber((unsigned)i);
             SysPrint("    ");
             SysPrint(r.Entries[i].Name);
             SysPrint("  ");
@@ -102,37 +112,73 @@ int ModuleMain(void)
         }
     }
 
+    /* read an existing file */
     {
-        FsRead_t q;
-        FsReadResult_t r;
-        unsigned j;
+        unsigned Size = 0;
+        int h = Open("/HELLO.TXT", FS_OPEN_READ, &Size);
 
-        for (j = 0; j < FS_NAME_MAX; j++) { q.Name[j] = 0; }
-        q.Name[0]='H'; q.Name[1]='E'; q.Name[2]='L'; q.Name[3]='L';
-        q.Name[4]='O'; q.Name[5]='.'; q.Name[6]='T'; q.Name[7]='X';
-        q.Name[8]='T';
-        q.Offset = 0;
-        q.Length = 256;
-        Mark("read-call");
-
-        r.Status = -1; r.Length = 0;
-        n = SysCallTimed(Fs, FS_OP_READ, &q, sizeof(q), &r, sizeof(r), 5000);
-
-        Mark("read-returned");
-        SysPrintNumber((unsigned)n);
-
-        if (n >= (int)sizeof(r) && r.Status == 0
-            && r.Length <= FS_WINDOW_BYTES) {
-            Mark("about-to-write");
-            char *Data = (char*)Window;
-            SysPrint("[fsls] HELLO.TXT (");
-            SysPrintNumber(r.Length);
-            SysPrintLine(" bytes):");
-            SysPrint("    ");
-            SysWrite(Data, r.Length);
+        if (h < 0) {
+            SysPrintLine("[fsls] could not open HELLO.TXT");
         }
         else {
-            SysPrintLine("[fsls] could not read HELLO.TXT");
+            int n = Io(h, 0, Size, 0);
+            if (n > 0) {
+                SysPrint("[fsls] HELLO.TXT: ");
+                SysWrite((const char*)Window, (unsigned)n);
+            }
+            Close(h);
+        }
+    }
+
+    /* write a new file, then read it back through a fresh handle */
+    {
+        const char *Text = "written by TheTaaJ from ring 3\n";
+        unsigned Length = SysStringLength(Text);
+        unsigned i2;
+        int h;
+
+        h = Open("/TAAJ.TXT", FS_OPEN_WRITE | FS_OPEN_CREATE, 0);
+        if (h < 0) {
+            SysPrintLine("[fsls] could not create TAAJ.TXT");
+        }
+        else {
+            char *W = (char*)Window;
+            for (i2 = 0; i2 < Length; i2++) { W[i2] = Text[i2]; }
+
+            if (Io(h, 0, Length, 1) == (int)Length) {
+                SysPrint("[fsls] wrote ");
+                SysPrintNumber(Length);
+                SysPrintLine(" bytes to /TAAJ.TXT");
+            }
+            else {
+                SysPrintLine("[fsls] write failed");
+            }
+            Close(h);
+
+            {
+                FsStatus_t r; 
+                SysCallTimed(Fs, FS_OP_SYNC, 0, 0, &r, sizeof(r), 5000);
+            }
+
+            /* Read it back on a new handle - proves it reached the disk
+             * and came back through a fresh directory lookup, not out of
+             * anything still in memory. */
+            {
+                unsigned Size = 0;
+                int h2 = Open("/TAAJ.TXT", FS_OPEN_READ, &Size);
+
+                if (h2 < 0) {
+                    SysPrintLine("[fsls] could not reopen TAAJ.TXT");
+                }
+                else {
+                    int n = Io(h2, 0, Size, 0);
+                    SysPrint("[fsls] read back ");
+                    SysPrintNumber((unsigned)n);
+                    SysPrint(" bytes: ");
+                    if (n > 0) { SysWrite((const char*)Window, (unsigned)n); }
+                    Close(h2);
+                }
+            }
         }
     }
 
