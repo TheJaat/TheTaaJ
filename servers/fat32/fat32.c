@@ -168,31 +168,70 @@ int ModuleMain(void)
             case FS_OP_LIST: {
                 FsList_t *q = (FsList_t*)Message;
                 FsListResult_t r;
-                Fat32File_t Files[FS_LIST_MAX];
+                FsEntry_t *Out = (FsEntry_t*)FsWindow;
                 Fat32File_t Dir;
                 unsigned Cluster = 0;
-                int n, i;
+                int Count = 0;
 
-                r.Status = -1; r.Count = 0;
+                r.Status = -1; r.Count = 0; r.Truncated = 0;
 
                 if (Length >= (int)sizeof(FsList_t)) {
                     q->Path[FS_PATH_MAX - 1] = '\0';
+
+                    /* "", "/" and a path that resolves to a directory
+                     * all mean "list something"; everything else is an
+                     * error. Cluster 0 means the root to the core. */
+                    int Ok = 1;
+
                     if (q->Path[0] == '\0'
-                        || Fat32Resolve(&Volume, q->Path, &Dir) == FAT32_OK) {
-                        if (q->Path[0] != '\0') {
-                            Cluster = Dir.IsDirectory ? Dir.FirstCluster : 0;
-                        }
-                        n = Fat32ListDirectory(&Volume, Cluster,
-                                               Files, FS_LIST_MAX);
-                        if (n >= 0) {
-                            r.Status = 0;
-                            r.Count = n;
-                            for (i = 0; i < n; i++) {
-                                CopyName(r.Entries[i].Name, Files[i].Name,
-                                         FS_NAME_MAX);
-                                r.Entries[i].Size = Files[i].Size;
-                                r.Entries[i].IsDirectory = Files[i].IsDirectory;
+                        || (q->Path[0] == '/' && q->Path[1] == '\0')) {
+                        Cluster = 0;
+                    }
+                    else if (Fat32Resolve(&Volume, q->Path, &Dir) == FAT32_OK
+                             && Dir.IsDirectory) {
+                        Cluster = Dir.FirstCluster;
+                    }
+                    else {
+                        Ok = 0;
+                    }
+
+                    if (Ok) {
+
+                        /* Fill the window in batches. The core hands back
+                         * a fixed array, so walk it a chunk at a time
+                         * rather than demanding one big enough for any
+                         * directory - which is the assumption that put a
+                         * limit in the protocol in the first place. */
+                        {
+                            Fat32File_t Batch[16];
+                            int n = Fat32ListDirectory(&Volume, Cluster,
+                                        Batch, 16);
+                            int i, Skip = 0;
+
+                            while (n > 0) {
+                                for (i = 0; i < n; i++) {
+                                    if (Count >= FS_LIST_MAX) {
+                                        r.Truncated = 1;
+                                        break;
+                                    }
+                                    CopyName(Out[Count].Name, Batch[i].Name,
+                                             FS_NAME_MAX);
+                                    Out[Count].Size = Batch[i].Size;
+                                    Out[Count].IsDirectory = Batch[i].IsDirectory;
+                                    Count++;
+                                }
+                                if (n < 16 || r.Truncated) {
+                                    break;
+                                }
+                                /* The core has no cursor, so re-list and
+                                 * skip what we already have. Quadratic,
+                                 * and irrelevant at these sizes. */
+                                Skip += n;
+                                n = Fat32ListDirectorySkip(&Volume, Cluster,
+                                        Batch, 16, Skip);
                             }
+                            r.Status = 0;
+                            r.Count = Count;
                         }
                     }
                 }
@@ -373,6 +412,20 @@ int ModuleMain(void)
                         r.Status = (Fat32Truncate(&Volume, &File, q->Size)
                                     == FAT32_OK) ? 0 : -1;
                     }
+                }
+                SysReply(&r, sizeof(r));
+                break;
+            }
+
+            case FS_OP_MKDIR: {
+                FsPath_t *q = (FsPath_t*)Message;
+                FsStatus_t r;
+
+                r.Status = -1;
+                if (Length >= (int)sizeof(FsPath_t)) {
+                    q->Path[FS_PATH_MAX - 1] = '\0';
+                    r.Status = (Fat32MakeDirectory(&Volume, q->Path)
+                                == FAT32_OK) ? 0 : -1;
                 }
                 SysReply(&r, sizeof(r));
                 break;

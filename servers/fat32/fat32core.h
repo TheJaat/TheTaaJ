@@ -99,6 +99,14 @@ unsigned Fat32NextCluster(Fat32Volume_t *, unsigned Cluster);
 int  Fat32ListDirectory(Fat32Volume_t *, unsigned Cluster,
                         Fat32File_t *Files, int Max);
 
+/* Fat32ListDirectorySkip
+ * As above, ignoring the first <Skip> entries. There is no cursor into a
+ * directory - it is a chain, not an index - so paging means re-walking
+ * and discarding. At a few hundred entries that is cheaper than the
+ * bookkeeping a cursor would need. */
+int  Fat32ListDirectorySkip(Fat32Volume_t *, unsigned Cluster,
+                            Fat32File_t *Files, int Max, int Skip);
+
 /* Fat32Resolve
  * Walks a path such as "/sub/dir/file.txt" from the root. A leading
  * slash is optional. Returns FAT32_OK or an error. */
@@ -129,5 +137,10 @@ int  Fat32Truncate(Fat32Volume_t *, Fat32File_t *, unsigned NewSize);
  * directories: removing one needs it to be empty, and that check is
  * worth having before the operation exists. */
 int  Fat32Delete(Fat32Volume_t *, const char *Path);
+
+/* Fat32MakeDirectory
+ * Creates a directory, with the "." and ".." entries a directory is
+ * required to start with. */
+int  Fat32MakeDirectory(Fat32Volume_t *, const char *Path);
 
 #endif

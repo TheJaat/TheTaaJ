@@ -476,7 +476,9 @@ static int Fat32WalkDirectory(Fat32Volume_t *V, unsigned Cluster,
     return FAT32_OK;
 }
 
-typedef struct { Fat32File_t *Files; int Max; int Count; } ListCtx_t;
+typedef struct {
+    Fat32File_t *Files; int Max; int Count; int Skip; int Seen;
+} ListCtx_t;
 
 static int ListVisit(FatDirEntry_t *E, unsigned Sector, unsigned Offset,
                      void *Ctx)
@@ -486,6 +488,9 @@ static int ListVisit(FatDirEntry_t *E, unsigned Sector, unsigned Offset,
 
     if ((unsigned char)E->Name[0] == FAT_ENTRY_END
         || (unsigned char)E->Name[0] == FAT_ENTRY_FREE) {
+        return 0;
+    }
+    if (C->Seen++ < C->Skip) {
         return 0;
     }
     if (C->Count >= C->Max) {
@@ -502,12 +507,24 @@ static int ListVisit(FatDirEntry_t *E, unsigned Sector, unsigned Offset,
     return 0;
 }
 
+int Fat32ListDirectorySkip(Fat32Volume_t *V, unsigned Cluster,
+                           Fat32File_t *Files, int Max, int Skip)
+{
+    ListCtx_t C;
+
+    C.Files = Files; C.Max = Max; C.Count = 0; C.Skip = Skip; C.Seen = 0;
+    if (Fat32WalkDirectory(V, Cluster, ListVisit, &C) != FAT32_OK) {
+        return -1;
+    }
+    return C.Count;
+}
+
 int Fat32ListDirectory(Fat32Volume_t *V, unsigned Cluster,
                        Fat32File_t *Files, int Max)
 {
     ListCtx_t C;
 
-    C.Files = Files; C.Max = Max; C.Count = 0;
+    C.Files = Files; C.Max = Max; C.Count = 0; C.Skip = 0; C.Seen = 0;
     if (Fat32WalkDirectory(V, Cluster, ListVisit, &C) != FAT32_OK) {
         return -1;
     }
@@ -991,7 +1008,12 @@ static int CreateVisit(FatDirEntry_t *E, unsigned Sector, unsigned Offset,
     return 1;
 }
 
-int Fat32Create(Fat32Volume_t *V, const char *Path, Fat32File_t *File)
+/* Fat32CreateEntry
+ * The shared half of creating a file and creating a directory: split the
+ * path, find or make room in the parent, and write the entry. */
+static int Fat32CreateEntry(Fat32Volume_t *V, const char *Path,
+                            unsigned char Attributes, unsigned FirstCluster,
+                            Fat32File_t *File, unsigned *ParentCluster)
 {
     unsigned char Sector[FAT32_SECTOR_SIZE];
     char Short[11];
@@ -1003,10 +1025,9 @@ int Fat32Create(Fat32Volume_t *V, const char *Path, Fat32File_t *File)
     unsigned DirCluster;
     int i, last = -1, p = 0;
 
-    if (!V->Mounted) { return FAT32_ERR_READ; }
+    if (!V->Mounted)   { return FAT32_ERR_READ; }
     if (V->Write == 0) { return FAT32_ERR_READONLY; }
 
-    /* Split off the last component. */
     for (i = 0; Path[i] != '\0'; i++) {
         if (i >= FAT32_PATH_MAX - 1) { return FAT32_ERR_NAME; }
         if (Path[i] == '/') { last = i; }
@@ -1039,7 +1060,7 @@ int Fat32Create(Fat32Volume_t *V, const char *Path, Fat32File_t *File)
     C.FreeSector = 0; C.FreeOffset = 0;
     Fat32WalkDirectory(V, DirCluster, CreateVisit, &C);
 
-    if (C.Exists)    { return FAT32_ERR_EXISTS; }
+    if (C.Exists)     { return FAT32_ERR_EXISTS; }
     if (!C.FoundFree) { return FAT32_ERR_FULL; }
 
     if (V->Read(V->Context, C.FreeSector, 1, Sector) != 0) {
@@ -1049,36 +1070,103 @@ int Fat32Create(Fat32Volume_t *V, const char *Path, Fat32File_t *File)
     E = (FatDirEntry_t*)(Sector + C.FreeOffset);
     CoreSet(E, 0, sizeof(FatDirEntry_t));
     for (i = 0; i < 11; i++) { E->Name[i] = Short[i]; }
-    E->Attributes  = FAT_ATTR_ARCHIVE;
-
-    /* 1980-01-01. There is no clock to ask, but all-zero is month 0 and
-     * day 0 - a date that cannot exist, which tools display as
-     * 1980-00-00. The epoch itself is at least a real day. */
+    E->Attributes  = Attributes;
     E->CreateDate  = (0 << 9) | (1 << 5) | 1;
     E->WriteDate   = E->CreateDate;
     E->AccessDate  = E->CreateDate;
-    E->CreateTime  = 0;
-    E->WriteTime   = 0;
-
     E->FileSize    = 0;
-    E->ClusterLow  = 0;
-    E->ClusterHigh = 0;
-
-    /* An empty file owns no cluster. Allocating one here would waste a
-     * cluster per empty file and, worse, leave a chain the size field
-     * says is not there. */
+    E->ClusterLow  = (unsigned short)(FirstCluster & 0xFFFF);
+    E->ClusterHigh = (unsigned short)(FirstCluster >> 16);
 
     if (V->Write(V->Context, C.FreeSector, 1, Sector) != 0) {
         return FAT32_ERR_WRITE;
     }
 
     Fat32FormatName(Short, File->Name);
-    File->FirstCluster = 0;
+    File->FirstCluster = FirstCluster;
     File->Size         = 0;
-    File->IsDirectory  = 0;
+    File->IsDirectory  = (Attributes & FAT_ATTR_DIRECTORY) ? 1 : 0;
     File->EntrySector  = C.FreeSector;
     File->EntryOffset  = C.FreeOffset;
 
-    (void)Fat32ZeroCluster;
+    if (ParentCluster) { *ParentCluster = DirCluster; }
     return FAT32_OK;
+}
+
+/* Fat32MakeDirectory */
+int Fat32MakeDirectory(Fat32Volume_t *V, const char *Path)
+{
+    unsigned char Sector[FAT32_SECTOR_SIZE];
+    Fat32File_t Dir;
+    FatDirEntry_t *E;
+    unsigned Cluster, ParentCluster = 0;
+    int Status, i;
+
+    if (!V->Mounted)   { return FAT32_ERR_READ; }
+    if (V->Write == 0) { return FAT32_ERR_READONLY; }
+
+    Cluster = Fat32AllocateCluster(V);
+    if (Cluster == 0) { return FAT32_ERR_FULL; }
+
+    /* Zero it first. A fresh cluster holds whatever the last file left
+     * there, and for a directory those stale bytes parse as entries -
+     * the new directory would appear to contain garbage. */
+    Status = Fat32ZeroCluster(V, Cluster);
+    if (Status != FAT32_OK) { return Status; }
+
+    Status = Fat32CreateEntry(V, Path, FAT_ATTR_DIRECTORY, Cluster,
+                              &Dir, &ParentCluster);
+    if (Status != FAT32_OK) {
+        Fat32FreeChain(V, Cluster);     /* do not strand it */
+        return Status;
+    }
+
+    /* "." and "..", which every directory but the root must begin with.
+     *
+     * The subtlety is ".." when the parent is the root: it must be
+     * recorded as cluster 0, not the root's actual cluster number. The
+     * format says so, and tools that walk upward rely on it. */
+    if (V->Read(V->Context, Fat32ClusterToSector(V, Cluster), 1, Sector) != 0) {
+        return FAT32_ERR_READ;
+    }
+    CoreSet(Sector, 0, V->BytesPerSector);
+
+    E = (FatDirEntry_t*)Sector;
+    for (i = 0; i < 11; i++) { E->Name[i] = ' '; }
+    E->Name[0] = '.';
+    E->Attributes  = FAT_ATTR_DIRECTORY;
+    E->CreateDate  = (0 << 9) | (1 << 5) | 1;
+    E->WriteDate   = E->CreateDate;
+    E->ClusterLow  = (unsigned short)(Cluster & 0xFFFF);
+    E->ClusterHigh = (unsigned short)(Cluster >> 16);
+
+    E = (FatDirEntry_t*)(Sector + 32);
+    for (i = 0; i < 11; i++) { E->Name[i] = ' '; }
+    E->Name[0] = '.';
+    E->Name[1] = '.';
+    E->Attributes  = FAT_ATTR_DIRECTORY;
+    E->CreateDate  = (0 << 9) | (1 << 5) | 1;
+    E->WriteDate   = E->CreateDate;
+    if (ParentCluster == V->RootCluster) {
+        E->ClusterLow  = 0;
+        E->ClusterHigh = 0;
+    }
+    else {
+        E->ClusterLow  = (unsigned short)(ParentCluster & 0xFFFF);
+        E->ClusterHigh = (unsigned short)(ParentCluster >> 16);
+    }
+
+    if (V->Write(V->Context, Fat32ClusterToSector(V, Cluster), 1, Sector) != 0) {
+        return FAT32_ERR_WRITE;
+    }
+
+    return Fat32FlushCache(V);
+}
+
+int Fat32Create(Fat32Volume_t *V, const char *Path, Fat32File_t *File)
+{
+    /* An empty file owns no cluster: allocating one here would waste a
+     * cluster per empty file and leave a chain the size field says is
+     * not there. */
+    return Fat32CreateEntry(V, Path, FAT_ATTR_ARCHIVE, 0, File, 0);
 }

@@ -12,10 +12,17 @@
 #define FS_OP_SYNC          7   /* no payload -> FsStatus_t      */
 #define FS_OP_DELETE        8   /* FsPath_t   -> FsStatus_t      */
 #define FS_OP_TRUNCATE      9   /* FsTruncate_t -> FsStatus_t    */
+#define FS_OP_MKDIR        10   /* FsPath_t   -> FsStatus_t      */
 
 #define FS_PATH_MAX         64
 #define FS_NAME_MAX         13
-#define FS_LIST_MAX         6
+/* Entries are returned through the shared window, not in the reply.
+ *
+ * A directory listing has no natural size, and a reply has a hard one -
+ * six entries was all that fit in a message, so a directory with seven
+ * files silently showed six. The window holds 170, and the protocol
+ * stops deciding how many files a directory may usefully have. */
+#define FS_LIST_MAX         (FS_WINDOW_BYTES / 24)
 #define FS_WINDOW_BYTES     4096
 
 #define FS_OPEN_READ        0x1
@@ -65,8 +72,8 @@ typedef struct _FsEntry {
 
 typedef struct _FsListResult {
     int          Status;
-    int          Count;
-    FsEntry_t    Entries[FS_LIST_MAX];
+    int          Count;         /* entries written into the window */
+    int          Truncated;     /* more exist than the window holds */
 } FsListResult_t;
 
 typedef struct _FsStatResult {

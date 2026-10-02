@@ -106,7 +106,8 @@ static void CmdHelp(void)
     SysPrintLine("  cat <path>          print a file");
     SysPrintLine("  write <path> <text> create or overwrite a file");
     SysPrintLine("  append <path> <text>");
-    SysPrintLine("  rm <path>           delete a file");
+    SysPrintLine("  rm <path>           delete a file or empty directory");
+    SysPrintLine("  mkdir <path>        create a directory");
     SysPrintLine("  truncate <path> <n>");
     SysPrintLine("  stat <path>");
     SysPrintLine("  sync                flush the filesystem");
@@ -116,10 +117,11 @@ static void CmdHelp(void)
 static void CmdLs(const char *Path)
 {
     FsList_t q; FsListResult_t r;
+    FsEntry_t *E = (FsEntry_t*)Window;
     int n, i;
 
     SetPath(q.Path, (Path && *Path) ? Path : "/");
-    r.Status = -1; r.Count = 0;
+    r.Status = -1; r.Count = 0; r.Truncated = 0;
 
     n = SysCallTimed(Fs, FS_OP_LIST, &q, sizeof(q), &r, sizeof(r), 5000);
     if (n < (int)sizeof(r) || r.Status != 0) {
@@ -130,16 +132,19 @@ static void CmdLs(const char *Path)
         SysPrintLine("ls: the reply makes no sense");
         return;
     }
+
+    /* The entries are in the shared window; the reply only said how
+     * many. That is what lifts the old six-entry ceiling. */
     for (i = 0; i < r.Count; i++) {
         SysPrint("  ");
-        SysPrint(r.Entries[i].Name);
+        SysPrint(E[i].Name);
         SysPrint("  ");
-        SysPrintNumber(r.Entries[i].Size);
-        SysPrintLine(r.Entries[i].IsDirectory ? "  <DIR>" : "");
+        SysPrintNumber(E[i].Size);
+        SysPrintLine(E[i].IsDirectory ? "  <DIR>" : "");
     }
-    if (r.Count == FS_LIST_MAX) {
-        SysPrintLine("  (more entries exist than one reply can carry)");
-    }
+    SysPrint("  ");
+    SysPrintNumber((unsigned)r.Count);
+    SysPrintLine(r.Truncated ? " entries (more exist)" : " entries");
 }
 
 static void CmdCat(const char *Path)
@@ -235,6 +240,13 @@ static void Execute(char *Line)
     if (Equal(Line, "cat"))  { CmdCat(Argument); return; }
     if (Equal(Line, "stat")) { CmdStat(Argument); return; }
     if (Equal(Line, "sync")) { Sync(); SysPrintLine("synced"); return; }
+
+    if (Equal(Line, "mkdir")) {
+        if (Simple(FS_OP_MKDIR, Argument) == 0) SysPrintLine("created");
+        else SysPrintLine("mkdir: failed");
+        Sync();
+        return;
+    }
 
     if (Equal(Line, "rm")) {
         if (Simple(FS_OP_DELETE, Argument) == 0) SysPrintLine("removed");

@@ -87,10 +87,11 @@ int ModuleMain(void)
     {
         FsList_t q;
         FsListResult_t r;
+        FsEntry_t *E = (FsEntry_t*)Window;
         int n;
 
         SetPath(q.Path, "/");
-        r.Status = -1; r.Count = 0;
+        r.Status = -1; r.Count = 0; r.Truncated = 0;
 
         n = SysCallTimed(Fs, FS_OP_LIST, &q, sizeof(q), &r, sizeof(r), 5000);
         if (n < (int)sizeof(r) || r.Status != 0) {
@@ -105,10 +106,10 @@ int ModuleMain(void)
         SysPrintLine("[fsls] root directory:");
         for (i = 0; i < r.Count; i++) {
             SysPrint("    ");
-            SysPrint(r.Entries[i].Name);
+            SysPrint(E[i].Name);
             SysPrint("  ");
-            SysPrintNumber(r.Entries[i].Size);
-            SysPrintLine(r.Entries[i].IsDirectory ? "  <DIR>" : " bytes");
+            SysPrintNumber(E[i].Size);
+            SysPrintLine(E[i].IsDirectory ? "  <DIR>" : " bytes");
         }
     }
 
