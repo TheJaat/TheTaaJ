@@ -13,14 +13,14 @@
 #include <os/registry.h>
 
 #define SERVICE_MAX     8
-#define SUPERVISED_MAX  4
+#define SUPERVISED_MAX  6
 #define POLL_MS         500
 
 typedef struct _Service {
     char     Name[REGISTRY_NAME_MAX];
     int      Endpoint;          /* handle in THIS process */
     int      Shm;
-    unsigned Owner;             /* badge of whoever published it */
+    unsigned Owner;             /* pid of whoever published it */
     int      Used;
 } Service_t;
 
@@ -64,15 +64,31 @@ static void HandlePublish(RegistryPublish_t *Request, unsigned Badge)
 
     for (i = 0; i < SERVICE_MAX; i++) {
         if (Services[i].Used && NameMatches(Services[i].Name, Request->Name)) {
-            /* Taken. Only the original publisher may replace it - which
-             * is a policy decision, and exactly the sort that belongs
-             * here rather than in the kernel. */
+            /* Taken - but perhaps by a process that no longer exists.
+             * A name held forever by a dead publisher is worse than no
+             * registry at all: the service can never be restarted, and
+             * clients keep receiving capabilities to destroyed objects. */
+            if (Services[i].Owner != Badge
+                && SysProcessAlive((int)Services[i].Owner)) {
+                SysPrint("[init] '");
+                SysPrint(Request->Name);
+                SysPrint("' is held by pid ");
+                SysPrintNumber(Services[i].Owner);
+                SysPrintLine(", which is still running");
+                SysReply(&Reply, sizeof(Reply));
+                return;
+            }
+
             if (Services[i].Owner != Badge) {
                 SysPrint("[init] '");
                 SysPrint(Request->Name);
-                SysPrintLine("' is already taken");
-                SysReply(&Reply, sizeof(Reply));
-                return;
+                SysPrint("' was held by pid ");
+                SysPrintNumber(Services[i].Owner);
+                SysPrintLine(", which has exited - reclaiming");
+                SysHandleClose(Services[i].Endpoint);
+                if (Services[i].Shm >= 0) {
+                    SysHandleClose(Services[i].Shm);
+                }
             }
             Slot = i;
             break;
@@ -123,6 +139,21 @@ static void HandleLookup(RegistryLookup_t *Request, unsigned Badge)
     for (i = 0; i < SERVICE_MAX; i++) {
         if (!Services[i].Used || !NameMatches(Services[i].Name, Request->Name)) {
             continue;
+        }
+
+        /* Do not hand out a capability to a process that has exited.
+         * The object behind it is already destroyed, and the client
+         * would discover that several calls later with no idea why. */
+        if (!SysProcessAlive((int)Services[i].Owner)) {
+            SysPrint("[init] '");
+            SysPrint(Request->Name);
+            SysPrintLine("' is registered to a dead process - dropping it");
+            SysHandleClose(Services[i].Endpoint);
+            if (Services[i].Shm >= 0) {
+                SysHandleClose(Services[i].Shm);
+            }
+            Services[i].Used = 0;
+            break;
         }
 
         Reply.Endpoint = SysCapGrant((int)Badge, Services[i].Endpoint, Badge);
@@ -207,6 +238,8 @@ int ModuleMain(void)
 
     Supervise("pci.mod");
     Supervise("serial.mod");
+    Supervise("ata.mod");
+    Supervise("fat32.mod");
 
     for (i = 0; i < ChildCount; i++) {
         Start(&Children[i]);
@@ -245,6 +278,26 @@ int ModuleMain(void)
 
         /* Timed out - do the supervising. */
         Ticks++;
+
+        /* Reap registrations whose publisher has gone. Doing it here as
+         * well as on lookup means a name frees up even if nobody asks
+         * for it, so a restarted driver can publish again. */
+        for (i = 0; i < SERVICE_MAX; i++) {
+            if (!Services[i].Used
+                || SysProcessAlive((int)Services[i].Owner)) {
+                continue;
+            }
+            SysPrint("[init] reclaiming '");
+            SysPrint(Services[i].Name);
+            SysPrint("' from exited pid ");
+            SysPrintNumber(Services[i].Owner);
+            SysPrint("\n");
+            SysHandleClose(Services[i].Endpoint);
+            if (Services[i].Shm >= 0) {
+                SysHandleClose(Services[i].Shm);
+            }
+            Services[i].Used = 0;
+        }
         for (i = 0; i < ChildCount; i++) {
             Child_t *Child = &Children[i];
 

@@ -49,6 +49,21 @@ void SysPrint(const char *Text)
     SysWrite(Text, SysStringLength(Text));
 }
 
+void SysPrintHex(unsigned Value)
+{
+    const char *Digits = "0123456789abcdef";
+    char Out[11];
+    int i;
+
+    Out[0] = '0';
+    Out[1] = 'x';
+    for (i = 0; i < 8; i++) {
+        Out[2 + i] = Digits[(Value >> ((7 - i) * 4)) & 0xF];
+    }
+    Out[10] = '\0';
+    SysPrint(Out);
+}
+
 void SysPrintLine(const char *Text)
 {
     SysPrint(Text);
@@ -160,6 +175,18 @@ unsigned char SysInB(unsigned short Port)
 void SysOutB(unsigned short Port, unsigned char Value)
 {
     __asm__ volatile ("outb %0, %1" :: "a"(Value), "Nd"(Port));
+}
+
+unsigned short SysInW(unsigned short Port)
+{
+    unsigned short Value;
+    __asm__ volatile ("inw %1, %0" : "=a"(Value) : "Nd"(Port));
+    return Value;
+}
+
+void SysOutW(unsigned short Port, unsigned short Value)
+{
+    __asm__ volatile ("outw %0, %1" :: "a"(Value), "Nd"(Port));
 }
 
 unsigned int SysInL(unsigned short Port)

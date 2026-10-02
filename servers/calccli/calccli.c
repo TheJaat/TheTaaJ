@@ -43,16 +43,25 @@ int ModuleMain(void)
     {
         CalcArgs_t a; CalcResult_t r;
         a.A = 111; a.B = 222; r.Value = 0;
-        SysCall2(Endpoint, CALC_ADD, &a, sizeof(a), &r, sizeof(r));
-        SysPrint("[calccli] 111 + 222 = ");
-        SysPrintNumber((unsigned)r.Value);
-        SysPrint("\n");
+        if (SysCall2(Endpoint, CALC_ADD, &a, sizeof(a), &r, sizeof(r))
+            < (int)sizeof(r)) {
+            SysPrintLine("[calccli] add failed");
+        }
+        else {
+            SysPrint("[calccli] 111 + 222 = ");
+            SysPrintNumber((unsigned)r.Value);
+            SysPrint("\n");
+        }
     }
 
     /* the badge: the server is told who we are, we never said */
     {
         CalcWho_t w; w.Badge = 0;
-        SysCall2(Endpoint, CALC_WHOAMI, 0, 0, &w, sizeof(w));
+        if (SysCall2(Endpoint, CALC_WHOAMI, 0, 0, &w, sizeof(w))
+            < (int)sizeof(w)) {
+            SysPrintLine("[calccli] whoami failed");
+            SysExit(1);
+        }
         SysPrint("[calccli] server sees my badge as ");
         SysPrintNumber(w.Badge);
         SysPrint(" (my pid is ");
@@ -85,7 +94,11 @@ int ModuleMain(void)
 
             q.Count = 256;
             r.Value = 0;
-            SysCall2(Endpoint, CALC_SUM_SHM, &q, sizeof(q), &r, sizeof(r));
+            if (SysCall2(Endpoint, CALC_SUM_SHM, &q, sizeof(q), &r, sizeof(r))
+                < (int)sizeof(r)) {
+                SysPrintLine("[calccli] shared-memory sum failed");
+                SysExit(1);
+            }
 
             SysPrint("[calccli] server summed them to ");
             SysPrintNumber((unsigned)r.Value);

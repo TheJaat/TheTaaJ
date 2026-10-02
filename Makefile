@@ -2,10 +2,10 @@
 BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
-.PHONY: all clean run iso ramdisk modules servers librt
+.PHONY: all clean run iso ramdisk modules servers librt disk
 
 # Default target
-all: $(BUILD_DIR) build-bootloader build-kernel iso
+all: $(BUILD_DIR) build-bootloader build-kernel iso disk
 
 # Build directory
 BUILD_DIR = build
@@ -54,7 +54,8 @@ MODULE_BINS = $(MODULE_DIR)/hello.mod $(MODULE_DIR)/user.mod \
               $(MODULE_DIR)/ps2.mod \
               $(MODULE_DIR)/pci.mod $(MODULE_DIR)/serial.mod \
               $(MODULE_DIR)/init.mod \
-              $(MODULE_DIR)/calcsrv.mod $(MODULE_DIR)/calccli.mod
+              $(MODULE_DIR)/calcsrv.mod $(MODULE_DIR)/calccli.mod \
+              $(MODULE_DIR)/ata.mod $(MODULE_DIR)/fat32.mod $(MODULE_DIR)/fsls.mod
 RAMDISK_SRC = $(wildcard ramdisk-src/*)
 
 # Loadable modules. Cross-compiled, but only to .o - they are relocated
@@ -92,10 +93,32 @@ iso: $(STAGE1_BIN) $(STAGE2_BIN) ramdisk
 	cp $(RAMDISK_IMG) $(ISO_DIR)/
 	xorriso -as mkisofs -R -J -b stage1.bin -iso-level 3 -no-emul-boot -boot-load-size 4 -o $(ISO_IMG) $(ISO_DIR)
 
+# A FAT32 disk image, built with the host tools. Using mkfs.vfat rather
+# than writing our own formatter is deliberate: when a read comes back
+# wrong, an independent implementation settles whether the disk or the
+# driver is at fault.
+DISK_IMG = $(BUILD_DIR)/disk.img
+
+disk:
+	@command -v mkfs.vfat >/dev/null || { \
+	    echo "mkfs.vfat not found - install dosfstools and mtools"; exit 1; }
+	@command -v mcopy >/dev/null || { \
+	    echo "mcopy not found - install mtools"; exit 1; }
+	@echo "Building FAT32 disk image..."
+	mkdir -p $(BUILD_DIR)
+	dd if=/dev/zero of=$(DISK_IMG) bs=1M count=64 2>/dev/null
+	mkfs.vfat -F 32 -n TAAJDISK $(DISK_IMG) >/dev/null
+	echo "hello from a real FAT32 volume" > $(BUILD_DIR)/hello.txt
+	mcopy -i $(DISK_IMG) $(BUILD_DIR)/hello.txt ::HELLO.TXT
+	mcopy -i $(DISK_IMG) README.md ::README.MD
+	@echo "  disk image ready"
+
 # Run the bootloader in QEMU
 run: iso
 	@echo "Running the bootloader in QEMU..."
-	qemu-system-x86_64 -m 512M -cdrom $(ISO_IMG)
+	qemu-system-x86_64 -m 512M -cdrom $(ISO_IMG) -boot d \
+		-drive file=$(DISK_IMG),format=raw,if=ide,index=0,media=disk \
+		-serial stdio
 
 # Clean everything
 clean:

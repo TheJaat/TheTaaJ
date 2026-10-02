@@ -29,6 +29,11 @@ int          SysGetPid(void);
 int          SysWrite(const char *Text, unsigned Length);
 void         SysPrint(const char *Text);              /* NUL-terminated */
 void         SysPrintNumber(unsigned Value);
+
+/* SysPrintHex
+ * Prints with an "0x" prefix. Addresses printed as decimal after an
+ * "0x" are worse than useless - they look like hex and are not. */
+void         SysPrintHex(unsigned Value);
 void         SysPrintLine(const char *Text);
 
 /* -- handles -------------------------------------------------------- */
@@ -67,6 +72,11 @@ void          SysOutB(unsigned short Port, unsigned char Value);
  * 0xCF8 is the canonical example - four byte writes do not compose into
  * one dword write, the hardware never latches a complete address, and
  * every subsequent read returns whatever was already there. */
+/* 16-bit port access. The ATA data register is a 16-bit port: two byte
+ * reads are a different operation, not an equivalent one. */
+unsigned short SysInW(unsigned short Port);
+void           SysOutW(unsigned short Port, unsigned short Value);
+
 unsigned int  SysInL(unsigned short Port);
 void          SysOutL(unsigned short Port, unsigned int Value);
 

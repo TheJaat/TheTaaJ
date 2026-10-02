@@ -20,7 +20,7 @@ CFLAGS = -m32 -fno-pie -ffreestanding -nostdlib -O2 -Wall -Wextra \
          -fno-builtin -fno-asynchronous-unwind-tables \
          -I $(ROOT_DIR)/librt/include -I $(SHARED)
 
-SERVERS = echo talker mathsrv mathcli ps2 pci serial init calcsrv calccli
+SERVERS = echo talker mathsrv mathcli ps2 pci serial init calcsrv calccli ata fat32 fsls
 TARGETS = $(SERVERS:%=$(BUILD_DIR)/%.mod)
 
 all: $(BUILD_DIR) $(TARGETS)
@@ -34,8 +34,13 @@ $(BUILD_DIR)/%.mod: %/%.c
 define SERVER_RULE
 $(BUILD_DIR)/$(1).mod: $(1)/$(1).c $(LIBRT) | $(BUILD_DIR)
 	@echo "Building server $(1)..."
-	$(CC) $(CFLAGS) -c $(1)/$(1).c -o $(BUILD_DIR)/$(1).tmp.o
-	$(LD) -m elf_i386 -r -o $$@ $(BUILD_DIR)/$(1).tmp.o $(LIBRT)
+	$(CC) $(CFLAGS) -I$(1) -c $(1)/$(1).c -o $(BUILD_DIR)/$(1).tmp.o
+	@if [ -f $(1)/$(1)core.c ]; then \
+	    $(CC) $(CFLAGS) -I$(1) -c $(1)/$(1)core.c -o $(BUILD_DIR)/$(1).core.o; \
+	    $(LD) -m elf_i386 -r -o $$@ $(BUILD_DIR)/$(1).tmp.o $(BUILD_DIR)/$(1).core.o $(LIBRT); \
+	else \
+	    $(LD) -m elf_i386 -r -o $$@ $(BUILD_DIR)/$(1).tmp.o $(LIBRT); \
+	fi
 	rm -f $(BUILD_DIR)/$(1).tmp.o
 endef
 $(foreach s,$(SERVERS),$(eval $(call SERVER_RULE,$(s))))
