@@ -2,7 +2,7 @@
 BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
-.PHONY: all clean run iso ramdisk modules servers librt disk
+.PHONY: all clean run iso ramdisk modules servers librt disk tfstool
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk
@@ -76,7 +76,11 @@ modules: servers
 # Depends on build-kernel rather than on $(RD_TOOL) directly: the tool
 # does not exist until the kernel build has run, and there is no rule
 # here that knows how to make it.
-ramdisk: build-kernel modules
+tfstool:
+	@echo "Building the TaajFS host tool..."
+	$(MAKE) -C tools/tfs ROOT_DIR=$(abspath .)
+
+ramdisk: build-kernel modules tfstool
 	@echo "Packing ramdisk..."
 	mkdir -p $(BUILD_DIR)
 	$(RD_TOOL) $(RAMDISK_IMG) $(RAMDISK_SRC) $(MODULE_BINS)
