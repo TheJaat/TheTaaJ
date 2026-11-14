@@ -6,6 +6,7 @@ mod entry;
 mod gdt;
 mod idt;
 pub mod mmu;
+pub mod pci;
 mod pic;
 mod pit;
 pub mod platform;

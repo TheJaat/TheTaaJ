@@ -15,6 +15,7 @@
 #              A "/" waits until a new keyboard driver is ready (after a
 #              crash and restart) before typing on. The script then waits
 #              for the shell to echo a line.
+#   DISK       a raw disk image, attached as a virtio block device
 
 set -u
 
@@ -22,6 +23,11 @@ ISO=$1
 LOG=$2
 LIMIT=${3:-20}
 KEYS=${KEYS:-}
+DISK=${DISK:-}
+DISK_ARGS=
+if [ -n "$DISK" ]; then
+    DISK_ARGS="-drive file=$DISK,format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0"
+fi
 
 FINISHED="\[kernel\] idle|KERNEL PANIC|CPU EXCEPTION"
 MONITOR="$LOG.monitor"
@@ -31,7 +37,7 @@ rm -f "$LOG" "$LOG.ppm" "$LOG.hang.ppm" "$LOG.qemu" "$MONITOR"
 qemu-system-x86_64 -m 512M -cdrom "$ISO" -boot d \
     -display none -no-reboot -serial "file:$LOG" \
     -monitor "unix:$MONITOR,server,nowait" \
-    -d cpu_reset -D "$LOG.qemu" ${QEMU_ARGS:-} &
+    -d cpu_reset -D "$LOG.qemu" $DISK_ARGS ${QEMU_ARGS:-} &
 qemu=$!
 
 # Polls (ten times a second) until PATTERN appears in the log or the

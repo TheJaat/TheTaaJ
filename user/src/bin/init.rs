@@ -1,17 +1,19 @@
 //! init - the first process, and the supervisor of all the others.
 //!
-//! The kernel starts only this, with five startup handles:
+//! The kernel starts only this, with six startup handles:
 //!   1  the launcher: the right to start programs
 //!   2  the keyboard's interrupt line
 //!   3  I/O port 0x60
 //!   4  I/O port 0x64
-//!   5  a channel with a message per device the kernel found - for now
-//!      the framebuffer: its description and its memory object
+//!   5  a channel with a message per device the kernel found - the
+//!      framebuffer (its description and memory object), and a virtio
+//!      disk (its description, ports, DMA memory and interrupt)
 //!   6  the system handle: the right to look at memory and processes
 //! (all with every right but the launcher's, so init can share them out.)
 //!
-//! The services: display (the screen), fs (files, in memory), shell,
-//! and kbd (the keyboard driver).
+//! The services: display (the screen), fs (files, in memory), blk (the
+//! disk driver, if there is a disk), shell, and kbd (the keyboard
+//! driver).
 //!
 //! init also runs programs for the shell. The shell has no launcher; it
 //! sends "run NAME" on a channel to init, which starts the program - if
@@ -37,7 +39,7 @@
 #![no_std]
 #![no_main]
 
-use abi::FramebufferInfo;
+use abi::{FramebufferInfo, PciDeviceInfo};
 use taaj::rights::{DUPLICATE, READ, RECEIVE, SEND, TRANSFER, WRITE};
 use core::fmt::Write;
 
@@ -107,21 +109,52 @@ fn main() -> i64 {
     };
     let Ok((keys_out, keys_in)) = taaj::channel_create() else { return 2 };
 
-    // The screen, if the kernel found one: its description and memory.
-    let mut message = [0u8; 64];
-    let mut fb_memory = [0u64; 1];
-    let framebuffer = match taaj::receive(devices, &mut message, &mut fb_memory) {
-        Ok((n, 1)) if message[..n].starts_with(b"framebuffer") => {
-            FramebufferInfo::from_bytes(&message[b"framebuffer".len()..n])
+    // What the kernel found: a message per device, then the channel
+    // closes. The screen - its description and memory - and a disk: its
+    // description and its ports, DMA memory and interrupt.
+    let mut framebuffer = None;
+    let mut fb_memory = 0;
+    let mut disk: Option<(PciDeviceInfo, [Handle; 3], usize)> = None;
+    loop {
+        let mut message = [0u8; 64];
+        let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
+        let Ok((n, count)) = taaj::receive(devices, &mut message, &mut handles) else { break };
+        let message = &message[..n];
+        let mut used = false;
+        if let (Some(rest), 1) = (message.strip_prefix(b"framebuffer"), count) {
+            framebuffer = FramebufferInfo::from_bytes(rest);
+            fb_memory = handles[0];
+            used = true;
+        } else if let Some(info) = message.strip_prefix(b"pci").and_then(PciDeviceInfo::from_bytes) {
+            if info.device_id == virtio::PCI_DEVICE_BLOCK && disk.is_none() && (2..=3).contains(&count) {
+                disk = Some((info, [handles[0], handles[1], handles[2]], count));
+                used = true;
+            } else {
+                println!("[init] no driver for PCI device {:04x}:{:04x}", info.vendor_id, info.device_id);
+            }
         }
-        _ => None,
-    };
+        if !used {
+            for &handle in &handles[..count] {
+                let _ = taaj::close(handle);
+            }
+        }
+    }
+    let _ = taaj::close(devices);
     let Ok((display_tx, display_rx)) = taaj::channel_create() else { return 2 };
     let Ok((requests, shell_requests)) = taaj::channel_create() else { return 2 };
     // The file service's requests. init keeps both ends, as it does the
     // keyboard's: a restarted fs takes over the same queue, and clients
     // keep the channel they have.
     let Ok((files_in, files_out)) = taaj::channel_create() else { return 2 };
+    // The disk's: its description for each new driver, and requests.
+    let Ok((disk_info_tx, disk_info_rx)) = taaj::channel_create() else { return 2 };
+    let Ok((disk_in, disk_out)) = taaj::channel_create() else { return 2 };
+    if disk.is_none() {
+        // No disk: no one will ever answer, so say so at once - a
+        // client's send fails with PeerClosed instead of waiting forever.
+        let _ = taaj::close(disk_in);
+    }
+    let [disk_ports, disk_dma, disk_interrupt] = disk.map_or([0; 3], |(_, handles, _)| handles);
 
     // Everything a service may be given, and the rights it gets.
     let grants = [
@@ -130,13 +163,19 @@ fn main() -> i64 {
         Grant { handle: status_port, rights: 0 },        // 2
         Grant { handle: keys_out, rights: SEND },        // 3
         Grant { handle: keys_in, rights: RECEIVE },      // 4
-        Grant { handle: fb_memory[0], rights: READ | WRITE }, // 5
+        Grant { handle: fb_memory, rights: READ | WRITE },    // 5
         Grant { handle: display_rx, rights: RECEIVE },   // 6
         Grant { handle: display_tx, rights: SEND },      // 7: text to the screen
         Grant { handle: shell_requests, rights: SEND | RECEIVE }, // 8: requests to init
         Grant { handle: system, rights: 0 },             // 9: looking, not touching
         Grant { handle: files_in, rights: RECEIVE },     // 10: requests, for fs
         Grant { handle: files_out, rights: SEND },       // 11: requests, to fs
+        Grant { handle: disk_ports, rights: 0 },          // 12: the disk's ports
+        Grant { handle: disk_dma, rights: READ | WRITE }, // 13: its DMA memory
+        Grant { handle: disk_info_rx, rights: RECEIVE },  // 14: its description
+        Grant { handle: disk_in, rights: RECEIVE },       // 15: requests, for blk
+        Grant { handle: disk_out, rights: SEND },         // 16: requests, to blk
+        Grant { handle: disk_interrupt, rights: RECEIVE }, // 17: its interrupt
     ];
     debug_assert!(grants.iter().all(|g| g.rights & DUPLICATE == 0));
 
@@ -152,7 +191,18 @@ fn main() -> i64 {
             given_up: framebuffer.is_none(),
         },
         Service { name: "fs", grants: &[10], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
-        Service { name: "shell", grants: &[4, 7, 8, 9, 11], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
+        Service {
+            name: "blk",
+            grants: match disk {
+                Some((_, _, 3)) => &[12, 13, 14, 15, 17],
+                _ => &[12, 13, 14, 15], // no MSI-X: the driver polls
+            },
+            process: 0,
+            restarts: [0; MAX_RESTARTS],
+            restart_count: 0,
+            given_up: disk.is_none(),
+        },
+        Service { name: "shell", grants: &[4, 7, 8, 9, 11, 16], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
         Service { name: "kbd", grants: &[0, 1, 2, 3], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
     ];
     let launch = |service: &Service| {
@@ -167,6 +217,10 @@ fn main() -> i64 {
             info[0] = abi::display::INFO;
             info[1..].copy_from_slice(&fb.to_bytes());
             taaj::send(display_tx, &info, &[])?;
+        }
+        // And each new disk driver, what its device is.
+        if let (Some((info, _, _)), "blk") = (disk, service.name) {
+            taaj::send(disk_info_tx, &info.to_bytes(), &[])?;
         }
         Ok::<Handle, Error>(process)
     };

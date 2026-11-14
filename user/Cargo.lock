@@ -34,4 +34,9 @@ dependencies = [
  "heap",
  "input",
  "ramfs",
+ "virtio",
 ]
+
+[[package]]
+name = "virtio"
+version = "0.1.0"

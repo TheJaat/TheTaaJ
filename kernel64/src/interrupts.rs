@@ -5,7 +5,7 @@
 //! device interrupted and wake its driver. Device drivers run in user
 //! mode; the kernel never touches their hardware.
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use crate::threads::WaitQueue;
 
@@ -37,10 +37,11 @@ pub fn ticks() -> u64 {
 /// race-free: an interrupt that arrives while the driver is still busy
 /// with the last one is not lost - the next wait returns at once.
 ///
-/// This suits edge-triggered lines like the ISA keyboard's, where one
-/// interrupt is one event. A level-triggered line (most PCI devices)
-/// keeps interrupting until the device is serviced, so it will need to
-/// be masked here and unmasked by the driver's acknowledgement.
+/// This suits edge-triggered lines, where one interrupt is one event:
+/// the ISA keyboard's, and every MSI-X message. A level-triggered line
+/// (a PCI device's legacy pin) keeps interrupting until the device is
+/// serviced, so it would need masking here and unmasking by the
+/// driver's acknowledgement - which is why PCI devices get MSI-X.
 pub struct InterruptLine {
     pending: AtomicU64,
     waiters: WaitQueue,
@@ -81,3 +82,22 @@ impl InterruptLine {
 
 /// ISA IRQ 1.
 pub static KEYBOARD: InterruptLine = InterruptLine::new();
+
+/// Lines for devices that interrupt with messages (MSI-X): one per
+/// vector, handed out as devices are set up, never reused.
+pub const DEVICE_LINES: usize = 16;
+static DEVICES: [InterruptLine; DEVICE_LINES] = [const { InterruptLine::new() }; DEVICE_LINES];
+static DEVICES_USED: AtomicUsize = AtomicUsize::new(0);
+
+/// A free device line: its number and the line. None when all are out.
+pub fn allocate_device_line() -> Option<(usize, &'static InterruptLine)> {
+    let n = DEVICES_USED.fetch_add(1, Ordering::Relaxed);
+    DEVICES.get(n).map(|line| (n, line))
+}
+
+/// From the interrupt handler, for device line `n`.
+pub fn device_fired(n: usize) {
+    if let Some(line) = DEVICES.get(n) {
+        line.fire();
+    }
+}

@@ -99,7 +99,7 @@ static mut TSS_SEGMENT: TssBlock = TssBlock {
         // The bitmap starts right after the TSS proper.
         io_map_base: size_of::<TaskStateSegment>() as u16,
     },
-    io_bitmap: *PortBitmap::NONE.bytes(),
+    io_bitmap: [0xFF; ioports::BYTES],
     terminator: 0xFF,
 };
 
@@ -194,9 +194,24 @@ pub fn set_kernel_stack(top: u64) {
     }
 }
 
-/// Loads the ports the next thread's process may use.
+/// How far the bitmap in the TSS has bytes that are not 0xFF.
+static mut LOADED: usize = 0;
+
+/// Loads the ports the next thread's process may use: its bytes, and
+/// 0xFF over whatever the last process allowed beyond them.
 pub fn set_io_bitmap(map: &PortBitmap) {
-    // SAFETY: as for set_kernel_stack; the CPU reads the bitmap only on
-    // an `in` or `out` in ring 3.
-    unsafe { TSS_SEGMENT.io_bitmap = *map.bytes() };
+    let bytes = map.bytes();
+    // SAFETY: as for set_kernel_stack - written only with interrupts
+    // disabled, on this CPU; the CPU reads the bitmap only on an `in` or
+    // `out` in ring 3.
+    unsafe {
+        let tss = &raw mut TSS_SEGMENT;
+        let bitmap = &mut (*tss).io_bitmap;
+        let loaded = LOADED;
+        bitmap[..bytes.len()].copy_from_slice(bytes);
+        if loaded > bytes.len() {
+            bitmap[bytes.len()..loaded].fill(0xFF);
+        }
+        LOADED = bytes.len();
+    }
 }

@@ -5,6 +5,7 @@
 //!   0x00-0x1F  CPU exceptions (idt.rs)
 //!   0x20       local APIC timer
 //!   0x21       keyboard (ISA IRQ 1, through the I/O APIC)
+//!   0x30-0x3F  PCI devices' MSI-X messages, one vector per device line
 //!   0xE0-0xEF  the disabled 8259 PICs - only ever spurious
 //!   0xFF       local APIC spurious interrupt
 //!
@@ -23,6 +24,14 @@ use crate::mm;
 pub const TIMER_VECTOR: u8 = 0x20;
 pub const KEYBOARD_VECTOR: u8 = 0x21;
 pub const SPURIOUS_VECTOR: u8 = 0xFF;
+const DEVICE_VECTOR_BASE: u8 = 0x30;
+
+/// The vector device line `n` (interrupts::allocate_device_line) is
+/// raised by, and the local APIC id of the CPU to send it to - what an
+/// MSI-X message must name.
+pub fn device_vector(n: usize) -> (u8, u8) {
+    (DEVICE_VECTOR_BASE + n as u8, apic::local_id())
+}
 
 /// What `init` found and set up, for the boot log.
 pub struct Report {
@@ -108,6 +117,11 @@ pub fn handle_interrupt(vector: u8) {
             // Not even reading the device: that is the driver's job. The
             // kernel only tells it something happened.
             interrupts::KEYBOARD.fire();
+            apic::end_of_interrupt();
+            interrupts::interrupt_done();
+        }
+        v if (DEVICE_VECTOR_BASE..DEVICE_VECTOR_BASE + interrupts::DEVICE_LINES as u8).contains(&v) => {
+            interrupts::device_fired(usize::from(v - DEVICE_VECTOR_BASE));
             apic::end_of_interrupt();
             interrupts::interrupt_done();
         }

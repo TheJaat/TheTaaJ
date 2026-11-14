@@ -19,6 +19,8 @@ bench = false
 abi = { path = "../abi" }
 # The allocator, shared with user programs.
 heap = { path = "../heap" }
+# virtio constants: which PCI devices the kernel sets up for drivers.
+virtio = { path = "../virtio" }
 
 [features]
 # Deliberately fault after booting, to check that each protection holds

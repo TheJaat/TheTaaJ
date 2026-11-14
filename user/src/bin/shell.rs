@@ -6,6 +6,7 @@
 //!   3  the request channel to init: "run NAME"
 //!   4  the system handle: looking at memory and processes, not touching
 //!   5  the request channel to the file service (send only)
+//!   6  the request channel to the disk driver (send only)
 //!
 //! It has no launcher and no hardware. To run a program it asks init,
 //! which decides what may run, and replies with a handle to the new
@@ -20,6 +21,7 @@
 use core::fmt::Write;
 
 use abi::ProcessEntry;
+use taaj::disk::Disk;
 use taaj::files::Files;
 use taaj::{println, Buffer, Error, Handle};
 
@@ -33,6 +35,7 @@ struct Shell {
     init: Option<Handle>,
     system: Option<Handle>,
     files: Option<Files>,
+    disk: Option<Disk>,
 }
 
 /// Formats into a buffer, then writes it at once to screen and log.
@@ -75,7 +78,10 @@ impl Shell {
                   \x20 cat FILE     show a file\n\
                   \x20 write FILE TEXT    make FILE hold TEXT\n\
                   \x20 append FILE TEXT   add TEXT to the end of FILE\n\
-                  \x20 rm FILE      remove a file\n",
+                  \x20 rm FILE      remove a file\n\
+                  \x20 disk         the disk's size\n\
+                  \x20 disk read N        show sector N\n\
+                  \x20 disk write N TEXT  put TEXT in sector N\n",
             ),
             "echo" => say!(self, "{rest}\n"),
             "clear" => self.screen_only(b"\x0c"),
@@ -92,6 +98,7 @@ impl Shell {
             },
             "rm" if !rest.is_empty() => self.rm(rest),
             "cat" | "rm" => say!(self, "usage: {command} FILE\n"),
+            "disk" => self.disk(rest),
             _ => say!(self, "unknown command: {command} (try help)\n"),
         }
     }
@@ -209,6 +216,64 @@ impl Shell {
         }
     }
 
+    fn disk(&self, arguments: &str) {
+        let Some(disk) = &self.disk else {
+            return self.write(b"no disk service\n");
+        };
+        let mut words = arguments.splitn(3, ' ');
+        let (action, sector, text) = (words.next().unwrap_or(""), words.next().map(str::parse::<u64>), words.next());
+        match (action, sector, text) {
+            ("", None, None) => match disk.info() {
+                Ok((sectors, read_only)) => say!(
+                    self,
+                    "disk: {sectors} sectors of 512 bytes ({} KiB){}\n",
+                    sectors / 2,
+                    if read_only { ", read-only" } else { "" }
+                ),
+                Err(error) => say!(self, "disk: {}\n", error.describe()),
+            },
+            ("read", Some(Ok(sector)), None) => {
+                let mut data = [0u8; abi::block::SECTOR];
+                match disk.read(sector, &mut data) {
+                    Ok(()) => self.dump(&data),
+                    Err(error) => say!(self, "disk: sector {sector}: {}\n", error.describe()),
+                }
+            }
+            ("write", Some(Ok(sector)), Some(text)) => {
+                let mut data = [0u8; abi::block::SECTOR];
+                let n = text.len().min(data.len());
+                data[..n].copy_from_slice(&text.as_bytes()[..n]);
+                match disk.write(sector, &data) {
+                    Ok(()) => say!(self, "disk: wrote sector {sector}\n"),
+                    Err(error) => say!(self, "disk: sector {sector}: {}\n", error.describe()),
+                }
+            }
+            _ => self.write(b"usage: disk, disk read N, disk write N TEXT\n"),
+        }
+    }
+
+    /// A sector as hex and text, 16 bytes a line, up to the last line
+    /// that is not all zeros.
+    fn dump(&self, data: &[u8]) {
+        let lines = data.chunks(16).rposition(|line| line.iter().any(|&b| b != 0)).map_or(1, |n| n + 1);
+        for (n, line) in data.chunks(16).take(lines).enumerate() {
+            let mut text = Buffer::<96>::new();
+            let _ = write!(text, "{:04x} ", n * 16);
+            for byte in line {
+                let _ = write!(text, " {byte:02x}");
+            }
+            let _ = write!(text, "  ");
+            for &byte in line {
+                let _ = text.write_char(if (0x20..0x7F).contains(&byte) { byte as char } else { '.' });
+            }
+            let _ = writeln!(text);
+            self.write(text.as_bytes());
+        }
+        if lines < data.len() / 16 {
+            self.write(b"(the rest is zeros)\n");
+        }
+    }
+
     /// Asks init to start `name`, then waits for it - a foreground job.
     fn run_program(&self, name: &str) {
         let Some(init) = self.init else {
@@ -247,6 +312,7 @@ fn main() -> i64 {
         init: taaj::startup_handle(2),
         system: taaj::startup_handle(3),
         files: taaj::startup_handle(4).map(Files::new),
+        disk: taaj::startup_handle(5).map(Disk::new),
     };
     println!("[shell] ready - type a command (try help)");
     shell.screen_only(b"Welcome to TheTaaJ. Type help for the commands.\n\n");

@@ -97,6 +97,33 @@ impl FrameAllocator {
         None
     }
 
+    /// `count` frames side by side, lowest first - for a device that
+    /// reads memory itself (DMA) and needs one unbroken physical range.
+    /// Returns the first; None if there is no run that long.
+    pub fn allocate_contiguous(&mut self, count: usize) -> Option<PhysAddr> {
+        if count == 0 {
+            return None;
+        }
+        let mut start = self.hint;
+        let mut index = start;
+        while index < self.frames {
+            if self.is_used(index) {
+                start = index + 1;
+            } else if index + 1 - start == count {
+                for frame in start..=index {
+                    self.set_used(frame);
+                }
+                self.free -= count;
+                if start == self.hint {
+                    self.hint = index + 1;
+                }
+                return Some(PhysAddr::new(start as u64 * PAGE_SIZE));
+            }
+            index += 1;
+        }
+        None
+    }
+
     /// Returns a frame.
     ///
     /// Freeing a frame twice means two owners each think it is theirs -
@@ -202,6 +229,25 @@ mod tests {
             a.free(f);
         }
         assert_eq!(a.free_frames(), 256);
+    }
+
+    #[test]
+    fn contiguous_runs() {
+        let mut a = allocator(100);
+        a.free_range(frame(0), frame(100));
+        a.reserve_range(frame(3), frame(4)); // a hole at 3
+        a.reserve_range(frame(10), frame(11)); // and at 10
+        assert_eq!(a.allocate_contiguous(4), Some(frame(4)), "0-2 too short, 4-7 fits");
+        assert_eq!(a.allocate_contiguous(3), Some(frame(0)));
+        assert_eq!(a.allocate_contiguous(5), Some(frame(11)), "8-9 too short");
+        assert_eq!(a.allocate(), Some(frame(8)), "single frames still fill the gaps");
+        assert_eq!(a.allocate_contiguous(90), None);
+        assert_eq!(a.allocate_contiguous(0), None);
+        assert_eq!(a.free_frames(), 100 - 2 - 4 - 3 - 5 - 1);
+        for n in 4..8 {
+            a.free(frame(n));
+        }
+        assert_eq!(a.allocate_contiguous(4), Some(frame(4)), "freed and found again");
     }
 
     #[test]

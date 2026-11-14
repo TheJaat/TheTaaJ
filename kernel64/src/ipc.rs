@@ -43,7 +43,7 @@ pub enum Object {
     /// A device's interrupt line: lets its holder wait for it.
     Interrupt(&'static InterruptLine),
     /// A range of I/O ports its holder may enable for itself.
-    IoPorts(Range<u16>),
+    IoPorts(Range<u32>),
     /// Physical pages that can be mapped, and shared.
     Memory(Arc<MemoryObject>),
     /// The authority to start programs. Only init has one.

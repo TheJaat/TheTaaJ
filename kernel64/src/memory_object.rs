@@ -47,6 +47,18 @@ impl MemoryObject {
         Some(object)
     }
 
+    /// `pages` fresh, zeroed frames side by side, and where they start -
+    /// for DMA: a device that reads and writes memory itself knows only
+    /// physical addresses, and a buffer must be one unbroken range of
+    /// them. None if no run that long is free.
+    pub fn contiguous(pages: u64) -> Option<(MemoryObject, u64)> {
+        let start = mm::with_frames(|frames| frames.allocate_contiguous(pages as usize))?;
+        let frames: Vec<PhysAddr> = (0..pages).map(|n| PhysAddr::new(start.as_u64() + n * PAGE_SIZE)).collect();
+        // SAFETY: fresh frames, through the direct map.
+        unsafe { phys_to_virt(start).as_mut_ptr::<u8>().write_bytes(0, (pages * PAGE_SIZE) as usize) };
+        Some((MemoryObject { frames, owned: true, cache: Flags::NONE }, start.as_u64()))
+    }
+
     /// Fixed physical memory - a device's - starting at `physical`.
     pub fn device(physical: u64, bytes: u64, cache: Flags) -> MemoryObject {
         let first = physical & !(PAGE_SIZE - 1);

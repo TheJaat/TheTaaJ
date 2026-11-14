@@ -22,6 +22,7 @@ pub static SHELL: &[u8] = program!("shell");
 pub static INIT: &[u8] = program!("init");
 pub static DISPLAY: &[u8] = program!("display");
 pub static FS: &[u8] = program!("fs");
+pub static BLK: &[u8] = program!("blk");
 pub static FSCHECK: &[u8] = program!("fscheck");
 pub static MEMRO: &[u8] = program!("memro");
 pub static HEAPCHECK: &[u8] = program!("heapcheck");
@@ -32,6 +33,7 @@ static PROGRAMS: &[(&str, &[u8])] = &[
     ("shell", SHELL),
     ("display", DISPLAY),
     ("fs", FS),
+    ("blk", BLK),
     ("echod", ECHOD),
     ("echoc", ECHOC),
     ("hello", HELLO),

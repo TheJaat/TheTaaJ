@@ -16,6 +16,7 @@ input = { path = "../input" }
 console = { path = "../console" }
 heap = { path = "../heap" }
 ramfs = { path = "../ramfs" }
+virtio = { path = "../virtio" }
 
 [profile.dev]
 panic = "abort"

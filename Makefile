@@ -178,14 +178,25 @@ TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
                w r i t e spc n o t e s spc h e l l o ret \
                a p p e n d spc n o t e s spc w o r l d ret \
                c a t spc n o t e s ret l s ret \
-               r m spc n o t e s ret c a t spc n o t e s ret
+               r m spc n o t e s ret c a t spc n o t e s ret \
+               d i s k ret d i s k spc r e a d spc 0 ret \
+               d i s k spc w r i t e spc 5 spc p e r s i s t e d ret \
+               d i s k spc r e a d spc 5 ret d i s k spc r e a d spc 9 9 9 9 9 ret
 TEST_TYPED   = Hi there
 # What those commands must print (grep patterns, separated by ";").
 # (Joined on one line: a continued line would start each pattern with a
 # space.)
 EXPECT_SHELL = unknown command: Hi;  PID  NAME;init +running;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
 EXPECT_FILES = \[fs\] ready;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^1 file, 12 bytes;^cat: notes: no such file
-TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES)
+EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(4096 KiB\);^0000  54 68 65 54 61 61 4a .*TheTaaJ test dis;^disk: wrote sector 5;^0000  70 65 72 73 69 73 74 65 64 .*persisted;^disk: sector 99999: no such sector
+TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK)
+# The disk the boot tests attach: 4 MiB, a signature in sector 0 for the
+# driver to read back, and sector 5 for "disk write" to change.
+TEST_DISK_TEXT = TheTaaJ test disk
+TEST_WRITTEN   = persisted
+define make-test-disk
+	@printf '$(TEST_DISK_TEXT)\n' > $(1) && truncate -s 4M $(1)
+endef
 
 # The UEFI loader needs Clang and lld (`sudo apt install clang lld`).
 # Without them the ISO is built BIOS-only, and says so.
@@ -255,8 +266,10 @@ endif
 # the "boot every architecture on every commit" rule from the roadmap.
 boot64-test: iso64
 	@echo "Booting the 64-bit kernel headless via BIOS (serial log: $(SERIAL64_LOG))..."
-	@KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(SERIAL64_LOG)
-	@TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" $(KERNEL64_DIR)/scripts/check-boot.sh $(SERIAL64_LOG) BIOS
+	$(call make-test-disk,$(SERIAL64_LOG).disk)
+	@DISK=$(SERIAL64_LOG).disk KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(SERIAL64_LOG)
+	@DISK=$(SERIAL64_LOG).disk DISK_WRITTEN=$(TEST_WRITTEN) TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" \
+	    $(KERNEL64_DIR)/scripts/check-boot.sh $(SERIAL64_LOG) BIOS
 	@echo "boot64-test passed"
 
 # The same ISO, the same kernel, booted by UEFI firmware instead.
@@ -265,8 +278,10 @@ ifneq ($(HAVE_CLANG),yes)
 	@echo "FAIL: the UEFI loader needs clang and lld (sudo apt install clang lld)"; exit 1
 endif
 	@echo "Booting the 64-bit kernel headless via UEFI (serial log: $(UEFI64_LOG))..."
-	@QEMU_ARGS="-bios $(OVMF)" KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(UEFI64_LOG) 30
-	@TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" $(KERNEL64_DIR)/scripts/check-boot.sh $(UEFI64_LOG) UEFI
+	$(call make-test-disk,$(UEFI64_LOG).disk)
+	@DISK=$(UEFI64_LOG).disk QEMU_ARGS="-bios $(OVMF)" KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(UEFI64_LOG) 30
+	@DISK=$(UEFI64_LOG).disk DISK_WRITTEN=$(TEST_WRITTEN) TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" \
+	    $(KERNEL64_DIR)/scripts/check-boot.sh $(UEFI64_LOG) UEFI
 	@echo "boot64-uefi-test passed"
 
 # Unit tests of the kernel's pure logic (frames, page tables, heap,
@@ -279,6 +294,7 @@ kernel64-test:
 	cd console && cargo test
 	cd heap && cargo test
 	cd ramfs && cargo test
+	cd virtio && cargo test
 
 # One boot per deliberate fault: unmapped read, double fault, write to
 # rodata, executing data, stack overflow. Each must be caught and named.

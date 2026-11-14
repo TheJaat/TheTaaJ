@@ -10,6 +10,7 @@
 extern crate alloc;
 
 mod allocator;
+pub mod disk;
 pub mod files;
 
 use core::arch::asm;
@@ -154,8 +155,8 @@ pub fn interrupt_wait(line: Handle) -> Result<u64, Error> {
     abi::decode(syscall(call::INTERRUPT_WAIT, line, 0, 0))
 }
 
-/// Lets this process use the I/O ports `ports` names, with `port::in8`
-/// and `port::out8`.
+/// Lets this process use the I/O ports `ports` names, with the `port`
+/// functions.
 pub fn ioports_enable(ports: Handle) -> Result<(), Error> {
     abi::decode(syscall(call::IOPORTS_ENABLE, ports, 0, 0)).map(|_| ())
 }
@@ -180,6 +181,34 @@ pub mod port {
     /// The port must be enabled, and the value right for the device.
     pub unsafe fn out8(port: u16, value: u8) {
         asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack, preserves_flags));
+    }
+
+    /// # Safety
+    /// As for `in8`.
+    pub unsafe fn in16(port: u16) -> u16 {
+        let value: u16;
+        asm!("in ax, dx", out("ax") value, in("dx") port, options(nomem, nostack, preserves_flags));
+        value
+    }
+
+    /// # Safety
+    /// As for `out8`.
+    pub unsafe fn out16(port: u16, value: u16) {
+        asm!("out dx, ax", in("dx") port, in("ax") value, options(nomem, nostack, preserves_flags));
+    }
+
+    /// # Safety
+    /// As for `in8`.
+    pub unsafe fn in32(port: u16) -> u32 {
+        let value: u32;
+        asm!("in eax, dx", out("eax") value, in("dx") port, options(nomem, nostack, preserves_flags));
+        value
+    }
+
+    /// # Safety
+    /// As for `out8`.
+    pub unsafe fn out32(port: u16, value: u32) {
+        asm!("out dx, eax", in("dx") port, in("eax") value, options(nomem, nostack, preserves_flags));
     }
 }
 

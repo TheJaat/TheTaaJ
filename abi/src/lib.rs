@@ -373,3 +373,98 @@ impl ProcessEntry {
         core::str::from_utf8(&self.name[..end]).unwrap_or("?")
     }
 }
+
+/// A PCI device the kernel set up for a driver, as described to init:
+/// sent as b"pci" and these bytes, with handles to its resources -
+/// its I/O ports, DMA memory and, if `msix`, its interrupt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PciDeviceInfo {
+    pub bus: u8,
+    pub device: u8,
+    pub function: u8,
+    pub vendor_id: u16,
+    pub device_id: u16,
+    /// The I/O port BAR: first port, and how many.
+    pub io_base: u16,
+    pub io_size: u16,
+    /// Physically contiguous memory for the device to read and write:
+    /// where it is (what the device must be told) and how big.
+    pub dma_physical: u64,
+    pub dma_size: u64,
+    /// MSI-X is on, with message 0 going to the interrupt handle.
+    pub msix: bool,
+}
+
+impl PciDeviceInfo {
+    pub const SIZE: usize = 28;
+
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut b = [0; Self::SIZE];
+        b[0..3].copy_from_slice(&[self.bus, self.device, self.function]);
+        b[3..5].copy_from_slice(&self.vendor_id.to_le_bytes());
+        b[5..7].copy_from_slice(&self.device_id.to_le_bytes());
+        b[7..9].copy_from_slice(&self.io_base.to_le_bytes());
+        b[9..11].copy_from_slice(&self.io_size.to_le_bytes());
+        b[11..19].copy_from_slice(&self.dma_physical.to_le_bytes());
+        b[19..27].copy_from_slice(&self.dma_size.to_le_bytes());
+        b[27] = u8::from(self.msix);
+        b
+    }
+
+    pub fn from_bytes(b: &[u8]) -> Option<PciDeviceInfo> {
+        if b.len() != Self::SIZE {
+            return None;
+        }
+        let u16_at = |o: usize| u16::from_le_bytes([b[o], b[o + 1]]);
+        let u64_at = |o: usize| u64::from_le_bytes(b[o..o + 8].try_into().unwrap_or([0; 8]));
+        Some(PciDeviceInfo {
+            bus: b[0],
+            device: b[1],
+            function: b[2],
+            vendor_id: u16_at(3),
+            device_id: u16_at(5),
+            io_base: u16_at(7),
+            io_size: u16_at(9),
+            dma_physical: u64_at(11),
+            dma_size: u64_at(19),
+            msix: b[27] != 0,
+        })
+    }
+}
+
+/// The block service's protocol: a disk as numbered 512-byte sectors.
+///
+/// A request: [op] [sector: u64 LE] [data: one sector, for WRITE]
+/// A reply:   [status] [payload]
+///
+/// As with files, each request carries one handle - the end of a fresh
+/// channel to send the reply on.
+pub mod block {
+    pub const SECTOR: usize = 512;
+
+    /// Payload: the number of sectors (u64 LE), then 1 if read-only.
+    pub const INFO: u8 = 1;
+    /// Payload: the sector.
+    pub const READ: u8 = 2;
+    pub const WRITE: u8 = 3;
+
+    pub const OK: u8 = 0;
+    /// The disk reported an error.
+    pub const IO_ERROR: u8 = 1;
+    /// No such sector.
+    pub const OUT_OF_RANGE: u8 = 2;
+    pub const READ_ONLY: u8 = 3;
+    pub const BAD_REQUEST: u8 = 4;
+
+    pub const REQUEST_SIZE: usize = 1 + 8;
+
+    pub fn describe(status: u8) -> &'static str {
+        match status {
+            OK => "ok",
+            IO_ERROR => "the disk reported an error",
+            OUT_OF_RANGE => "no such sector",
+            READ_ONLY => "the disk is read-only",
+            _ => "the disk service did not understand",
+        }
+    }
+}

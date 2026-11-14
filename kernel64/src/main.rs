@@ -29,6 +29,7 @@ extern crate alloc;
 mod console; // first, so its macros are visible in every later module
 
 mod arch;
+mod devices;
 mod interrupts;
 mod irqlock;
 mod ipc;
@@ -218,6 +219,7 @@ fn start_init(info: &BootInfo) {
     } else {
         kprintln!("framebuffer: none");
     }
+    devices::offer(&to_init);
     drop(to_init); // what was sent stays readable; the kernel keeps nothing
 
     let handles = alloc::vec![

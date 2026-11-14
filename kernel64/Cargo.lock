@@ -16,4 +16,9 @@ version = "0.1.0"
 dependencies = [
  "abi",
  "heap",
+ "virtio",
 ]
+
+[[package]]
+name = "virtio"
+version = "0.1.0"

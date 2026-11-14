@@ -42,6 +42,16 @@ if [ -n "$TYPED" ]; then
     grep -qF "[shell] line: \"$TYPED\"" "$LOG"     || fail "keyboard: \"$TYPED\" not echoed by the shell"
     grep -q "\[init\] kbd ended .* restarting" "$LOG" || fail "init did not restart the crashed driver"
 fi
+if [ -n "${DISK:-}" ]; then
+    grep -q "\[pci\] .* virtio block device: .* handed to init" "$LOG" || fail "the kernel did not offer the disk"
+    grep -q "\[blk\] virtio disk" "$LOG"           || fail "the disk driver did not start"
+    if [ -n "${DISK_WRITTEN:-}" ]; then
+        # Proof the write reached the disk itself, not just a cache: the
+        # image file, after QEMU is gone.
+        dd if="$DISK" bs=512 skip=5 count=1 2>/dev/null | grep -qa "$DISK_WRITTEN" \
+            || fail "\"$DISK_WRITTEN\" is not in sector 5 of the disk image"
+    fi
+fi
 if [ -n "${EXPECT:-}" ]; then
     # The output of the commands typed: each pattern must appear.
     old_ifs=$IFS
