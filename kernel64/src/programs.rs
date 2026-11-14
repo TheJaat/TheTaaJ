@@ -31,6 +31,7 @@ static PROGRAMS: &[(&str, &[u8])] = &[
     ("echod", ECHOD),
     ("echoc", ECHOC),
     ("hello", HELLO),
+    ("peek", PEEK),
 ];
 
 pub fn find(name: &str) -> Option<(&'static str, &'static [u8])> {

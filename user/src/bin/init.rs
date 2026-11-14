@@ -7,7 +7,13 @@
 //!   4  I/O port 0x64
 //!   5  a channel with a message per device the kernel found - for now
 //!      the framebuffer: its description and its memory object
+//!   6  the system handle: the right to look at memory and processes
 //! (all with every right but the launcher's, so init can share them out.)
+//!
+//! init also runs programs for the shell. The shell has no launcher; it
+//! sends "run NAME" on a channel to init, which starts the program - if
+//! it is one a user may run - with the screen as its stdout, and replies
+//! "ok" with a handle to the new process, or an error.
 //!
 //! init builds the system from these: it wires the services together
 //! with channels and starts each one with only the handles it needs, and
@@ -36,6 +42,9 @@ use taaj::{println, Buffer, Error, Handle};
 
 taaj::program!(main);
 
+/// What the shell may ask init to run: programs, not services.
+const RUNNABLE: &[&str] = &["hello", "peek"];
+
 const MAX_RESTARTS: usize = 5;
 const RESTART_WINDOW: u64 = 30 * 100; // 30 seconds of 100 Hz ticks
 
@@ -59,7 +68,7 @@ struct Service {
 /// Starts `name` with a fresh duplicate of each grant. A duplicate is
 /// made with TRANSFER (needed to hand it over) and then handed over with
 /// only the rights in the grant - so the service cannot pass it on.
-fn start(launcher: Handle, name: &str, grants: &[&Grant]) -> Result<Handle, Error> {
+fn start(launcher: Handle, name: &str, grants: &[&Grant], argument: u64) -> Result<Handle, Error> {
     let mut copies = [(0u64, 0u32); 8];
     for (n, grant) in grants.iter().enumerate() {
         match taaj::duplicate(grant.handle, grant.rights | TRANSFER) {
@@ -73,7 +82,7 @@ fn start(launcher: Handle, name: &str, grants: &[&Grant]) -> Result<Handle, Erro
         }
     }
     let copies = &copies[..grants.len()];
-    taaj::spawn(launcher, name, copies).inspect_err(|_| {
+    taaj::spawn(launcher, name, copies, argument).inspect_err(|_| {
         // Not started: the copies are still ours.
         for &(copy, _) in copies {
             let _ = taaj::close(copy);
@@ -82,12 +91,13 @@ fn start(launcher: Handle, name: &str, grants: &[&Grant]) -> Result<Handle, Erro
 }
 
 fn main() -> i64 {
-    let (Some(launcher), Some(interrupt), Some(data_port), Some(status_port), Some(devices)) = (
+    let (Some(launcher), Some(interrupt), Some(data_port), Some(status_port), Some(devices), Some(system)) = (
         taaj::startup_handle(0),
         taaj::startup_handle(1),
         taaj::startup_handle(2),
         taaj::startup_handle(3),
         taaj::startup_handle(4),
+        taaj::startup_handle(5),
     ) else {
         println!("[init] started without the kernel's handles");
         return 1;
@@ -104,6 +114,7 @@ fn main() -> i64 {
         _ => None,
     };
     let Ok((display_tx, display_rx)) = taaj::channel_create() else { return 2 };
+    let Ok((requests, shell_requests)) = taaj::channel_create() else { return 2 };
 
     // Everything a service may be given, and the rights it gets.
     let grants = [
@@ -115,6 +126,8 @@ fn main() -> i64 {
         Grant { handle: fb_memory[0], rights: READ | WRITE }, // 5
         Grant { handle: display_rx, rights: RECEIVE },   // 6
         Grant { handle: display_tx, rights: SEND },      // 7: text to the screen
+        Grant { handle: shell_requests, rights: SEND | RECEIVE }, // 8: requests to init
+        Grant { handle: system, rights: 0 },             // 9: looking, not touching
     ];
     debug_assert!(grants.iter().all(|g| g.rights & DUPLICATE == 0));
 
@@ -129,7 +142,7 @@ fn main() -> i64 {
             restart_count: 0,
             given_up: framebuffer.is_none(),
         },
-        Service { name: "shell", grants: &[4, 7], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
+        Service { name: "shell", grants: &[4, 7, 8, 9], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
         Service { name: "kbd", grants: &[0, 1, 2, 3], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
     ];
     let launch = |service: &Service| {
@@ -137,7 +150,7 @@ fn main() -> i64 {
         for (n, &g) in service.grants.iter().enumerate() {
             list[n] = &grants[g];
         }
-        let process = start(launcher, service.name, &list[..service.grants.len()])?;
+        let process = start(launcher, service.name, &list[..service.grants.len()], 0)?;
         // Each new display needs to be told what it is drawing on.
         if let (Some(fb), "display") = (framebuffer, service.name) {
             let mut info = [0u8; 1 + FramebufferInfo::SIZE];
@@ -166,7 +179,7 @@ fn main() -> i64 {
     println!("{}; supervising", core::str::from_utf8(line.as_bytes()).unwrap_or("?"));
 
     loop {
-        // Watch every service still running.
+        // Watch every service still running, and the request channel.
         let mut watched = [0u64; 8];
         let mut which = [0usize; 8];
         let mut count = 0;
@@ -177,17 +190,17 @@ fn main() -> i64 {
                 count += 1;
             }
         }
-        if count == 0 {
-            println!("[init] nothing left to supervise");
-            // init must not exit; there is nothing better to do than wait.
-            loop {
-                taaj::sleep(100 * 60);
-            }
-        }
-        let (index, code) = match taaj::wait_any(&watched[..count]) {
-            Ok(result) => result,
+        watched[count] = requests;
+        let index = match taaj::object_wait(&watched[..=count]) {
+            Ok(index) => index,
             Err(_) => return 3,
         };
+        if index == count {
+            serve_request(launcher, requests, framebuffer.map(|_| display_tx));
+            continue;
+        }
+        // A service ended; it is ready, so this returns at once.
+        let Ok((_, code)) = taaj::wait_any(&watched[index..=index]) else { return 3 };
         let service = &mut services[which[index]];
         let _ = taaj::close(service.process);
 
@@ -213,6 +226,42 @@ fn main() -> i64 {
                 println!("[init] could not restart {}: {error:?}", service.name);
                 service.given_up = true;
             }
+        }
+    }
+}
+
+/// Answers one request from the shell. Requests are text: "run NAME".
+fn serve_request(launcher: Handle, requests: Handle, screen: Option<Handle>) {
+    let mut message = [0u8; 64];
+    let Ok((n, _)) = taaj::receive(requests, &mut message, &mut []) else { return };
+    let reply = |text: &[u8], handles: &[Handle]| {
+        let _ = taaj::send(requests, text, handles);
+    };
+    let Some(name) = message[..n].strip_prefix(b"run ").and_then(|n| core::str::from_utf8(n).ok()) else {
+        return reply(b"error: unknown request", &[]);
+    };
+    if !RUNNABLE.contains(&name) {
+        return reply(b"error: not a program you can run", &[]);
+    }
+    // Its stdout: a send-only copy of the display channel.
+    let result = match screen {
+        Some(screen) => match taaj::duplicate(screen, SEND | TRANSFER) {
+            Ok(copy) => taaj::spawn(launcher, name, &[(copy, SEND)], abi::startup::STDOUT).inspect_err(|_| {
+                let _ = taaj::close(copy);
+            }),
+            Err(error) => Err(error),
+        },
+        None => taaj::spawn(launcher, name, &[], 0),
+    };
+    match result {
+        Ok(process) => {
+            println!("[init] started {name} for the shell");
+            reply(b"ok", &[process]);
+        }
+        Err(error) => {
+            let mut text = Buffer::<64>::new();
+            let _ = write!(text, "error: {error:?}");
+            reply(text.as_bytes(), &[]);
         }
     }
 }

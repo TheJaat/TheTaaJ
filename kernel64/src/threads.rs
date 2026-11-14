@@ -287,23 +287,19 @@ impl WaitQueue {
     /// cannot slip in between them and be lost - the classic bug of
     /// "check, then sleep": the event arrives after the check, and the
     /// sleeper never hears of it.
-    pub fn wait_while(&self, mut condition: impl FnMut() -> bool) {
-        loop {
-            let were_enabled = arch::disable_interrupts();
-            if !condition() {
-                arch::restore_interrupts(were_enabled);
-                return;
-            }
-            let me = current();
-            {
-                let mut waiters = self.waiters.lock();
-                if !waiters.contains(&me) {
-                    waiters.push_back(me);
-                }
-            }
-            suspend(State::Blocked);
-            arch::restore_interrupts(were_enabled);
+    pub fn wait_while(&self, condition: impl FnMut() -> bool) {
+        wait_any(&[self], condition);
+    }
+
+    fn add(&self, id: ThreadId) {
+        let mut waiters = self.waiters.lock();
+        if !waiters.contains(&id) {
+            waiters.push_back(id);
         }
+    }
+
+    fn remove(&self, id: ThreadId) {
+        self.waiters.lock().retain(|&w| w != id);
     }
 
     /// Wakes every waiter; each re-checks its condition.
@@ -312,5 +308,31 @@ impl WaitQueue {
         for id in waiters {
             wake(id);
         }
+    }
+}
+
+/// Blocks for as long as `condition` holds, woken by any of `queues` -
+/// waiting for whichever of several things happens first.
+///
+/// The thread joins every queue, sleeps, and on waking leaves the queues
+/// that did not fire, so none keeps a stale entry. A wakeup from a queue
+/// that has nothing to do with the condition is harmless: every wait
+/// here re-checks its condition before it returns.
+pub fn wait_any(queues: &[&WaitQueue], mut condition: impl FnMut() -> bool) {
+    loop {
+        let were_enabled = arch::disable_interrupts();
+        if !condition() {
+            arch::restore_interrupts(were_enabled);
+            return;
+        }
+        let me = current();
+        for queue in queues {
+            queue.add(me);
+        }
+        suspend(State::Blocked);
+        for queue in queues {
+            queue.remove(me);
+        }
+        arch::restore_interrupts(were_enabled);
     }
 }

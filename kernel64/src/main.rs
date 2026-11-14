@@ -179,6 +179,7 @@ fn idle() -> ! {
 ///   5  a channel from the kernel, carrying one message per device it
 ///      found: for now, "framebuffer" - its description, and a handle to
 ///      its memory
+///   6  the system handle: the right to look at memory and processes
 ///
 /// From here on init decides what runs and who may touch what; the
 /// kernel enforces it. The kernel itself no longer draws on the screen.
@@ -222,6 +223,7 @@ fn start_init(info: &BootInfo) {
         (Object::IoPorts(0x60..0x61), Rights::ALL),
         (Object::IoPorts(0x64..0x65), Rights::ALL),
         (devices, Rights(abi::rights::RECEIVE)),
+        (Object::System, Rights::ALL),
     ];
     process::spawn("init", programs::INIT, handles).expect("starting init");
 }

@@ -69,7 +69,14 @@ if wait_for "$FINISHED" $((LIMIT * 10)); then
             echo "sendkey $key" | nc -U -N "$MONITOR" > /dev/null
             sleep 0.05
         done
-        wait_for "\[shell\] line" 50 || echo "qemu-boot: no echoed line after typing" >&2
+        # Each Enter runs a command; wait until the shell has run them all.
+        commands=$(echo "$KEYS" | tr ' ' '\n' | grep -c '^ret$')
+        ticks=100
+        while [ "$(grep -c '\[shell\] ran' "$LOG")" -lt "$commands" ] && [ $ticks -gt 0 ]; do
+            sleep 0.1
+            ticks=$((ticks - 1))
+        done
+        [ $ticks -gt 0 ] || echo "qemu-boot: the shell did not run all $commands commands" >&2
     fi
     sleep 0.3   # let the rest of a fault report reach the log
     # A picture of the screen, for check-boot.sh to look at.

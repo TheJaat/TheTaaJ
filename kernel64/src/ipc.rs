@@ -48,11 +48,12 @@ pub enum Object {
     Memory(Arc<MemoryObject>),
     /// The authority to start programs. Only init has one.
     Launcher,
-    /// A process: lets its holder wait for it to end. (A child cannot
-    /// get a handle to its parent unless the parent sends one - and
-    /// spawn hands these out without TRANSFER - so processes do not
-    /// keep each other alive in cycles.)
+    /// A process: lets its holder wait for it to end. A process holding
+    /// a handle to itself would be a cycle - but a process's handles
+    /// are all closed the moment it ends, which breaks it.
     Process(Arc<process::Process>),
+    /// The right to look at the whole system: memory, processes.
+    System,
 }
 
 /// A handle in flight: the object and the rights it travels with.
@@ -276,7 +277,7 @@ pub fn ioports_enable(handle: Handle) -> Result<u64, Error> {
 }
 
 /// Starts a program, giving it startup handles taken from the caller.
-pub fn spawn(launcher: Handle, name: u64, name_length: u64, pairs: u64, count: u64) -> Result<u64, Error> {
+pub fn spawn(launcher: Handle, name: u64, name_length: u64, pairs: u64, count: u64, argument: u64) -> Result<u64, Error> {
     if name_length > abi::PROGRAM_NAME_MAX || count > abi::SPAWN_HANDLES_MAX {
         return Err(Error::InvalidArgument);
     }
@@ -319,8 +320,10 @@ pub fn spawn(launcher: Handle, name: u64, name_length: u64, pairs: u64, count: u
     let handles: Vec<Handle> = pairs.iter().map(|&(h, _)| h).collect();
     let moved = table.remove_all(&handles, Rights(rights::TRANSFER), |_| true)?;
     let given = moved.into_iter().zip(&pairs).map(|((object, _), &(_, wanted))| (object, wanted)).collect();
-    process::start(&loaded, given);
-    table.insert(Object::Process(Arc::clone(&loaded)), Rights(0))
+    process::start(&loaded, given, argument);
+    // Passing it on is fine (the shell's `run` relies on it): a process
+    // handle only lets its holder wait.
+    table.insert(Object::Process(Arc::clone(&loaded)), Rights(rights::TRANSFER))
 }
 
 /// Waits for any of several processes to end.
@@ -387,4 +390,108 @@ pub fn memory_map(handle: Handle, writable: u64) -> Result<u64, Error> {
         _ => return Err(Error::WrongType),
     };
     process::map_memory(&object, writable)
+}
+
+/// Something `object_wait` can wait for.
+enum Waitable {
+    Channel(Arc<ChannelEnd>),
+    Process(Arc<process::Process>),
+    Interrupt(&'static InterruptLine),
+}
+
+impl Waitable {
+    fn ready(&self) -> bool {
+        match self {
+            // Ready if a receive would not wait: a message, or a closed peer.
+            Waitable::Channel(end) => !matches!(end.shared.state.lock().peek(end.end), Ok(None)),
+            Waitable::Process(p) => p.exit_code().is_some(),
+            Waitable::Interrupt(line) => line.is_pending(),
+        }
+    }
+
+    fn queue(&self) -> &crate::threads::WaitQueue {
+        match self {
+            Waitable::Channel(end) => &end.shared.readable[end.end],
+            Waitable::Process(_) => &process::EXITS,
+            Waitable::Interrupt(line) => line.waiters(),
+        }
+    }
+}
+
+/// Waits until any of the handles is ready; returns its index.
+pub fn object_wait(handles: u64, count: u64) -> Result<u64, Error> {
+    if count == 0 || count > abi::SPAWN_HANDLES_MAX {
+        return Err(Error::InvalidArgument);
+    }
+    let handles = handles_from_user(handles, count)?;
+    let process = me()?;
+    let waitables: Vec<Waitable> = {
+        let table = process.handles.lock();
+        handles
+            .iter()
+            .map(|&h| match table.get(h, Rights(0))? {
+                Object::Channel(end) => {
+                    table.get(h, Rights(rights::RECEIVE))?;
+                    Ok(Waitable::Channel(Arc::clone(end)))
+                }
+                Object::Process(p) => Ok(Waitable::Process(Arc::clone(p))),
+                Object::Interrupt(line) => {
+                    table.get(h, Rights(rights::RECEIVE))?;
+                    Ok(Waitable::Interrupt(line))
+                }
+                _ => Err(Error::WrongType),
+            })
+            .collect::<Result<_, _>>()?
+    };
+    let queues: Vec<&crate::threads::WaitQueue> = waitables.iter().map(Waitable::queue).collect();
+    crate::threads::wait_any(&queues, || !waitables.iter().any(Waitable::ready));
+    Ok(waitables.iter().position(Waitable::ready).unwrap_or(0) as u64)
+}
+
+fn require_system(handle: Handle) -> Result<(), Error> {
+    match me()?.handles.lock().get(handle, Rights(0))? {
+        Object::System => Ok(()),
+        _ => Err(Error::WrongType),
+    }
+}
+
+fn words_to_bytes(words: &[u64]) -> Vec<u8> {
+    words.iter().flat_map(|w| w.to_le_bytes()).collect()
+}
+
+pub fn system_info(system: Handle, out: u64) -> Result<u64, Error> {
+    require_system(system)?;
+    let (frames_total, frames_free) = crate::mm::with_memory(|_, f| (f.total_frames(), f.free_frames()));
+    let (heap_used, heap_total) = crate::mm::heap_usage();
+    let info = abi::SystemInfo {
+        ticks: crate::interrupts::ticks(),
+        ticks_per_second: crate::interrupts::HZ,
+        frames_total: frames_total as u64,
+        frames_free: frames_free as u64,
+        heap_used: heap_used as u64,
+        heap_total: heap_total as u64,
+        processes: process::all().len() as u64,
+        threads: crate::threads::count() as u64,
+        channels: live_channels() as u64,
+    };
+    process::copy_to_user(out, &words_to_bytes(&info.to_words()))?;
+    Ok(0)
+}
+
+pub fn process_list(system: Handle, out: u64, capacity: u64) -> Result<u64, Error> {
+    require_system(system)?;
+    if capacity > 256 {
+        return Err(Error::InvalidArgument);
+    }
+    let all = process::all();
+    let mut words = Vec::new();
+    for p in all.iter().take(capacity as usize) {
+        let mut name = [0u8; 16];
+        let n = p.name.len().min(16);
+        name[..n].copy_from_slice(&p.name.as_bytes()[..n]);
+        let entry = abi::ProcessEntry { pid: p.pid, name, exit_code: p.exit_code() };
+        words.extend_from_slice(&entry.to_words());
+    }
+    process::copy_to_user(out, &words_to_bytes(&words))?;
+    Ok(all.len() as u64)
 }

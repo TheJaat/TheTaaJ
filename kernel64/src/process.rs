@@ -164,7 +164,7 @@ pub fn spawn(
     handles: Vec<(Object, Rights)>,
 ) -> Result<(Arc<Process>, ThreadId), LoadError> {
     let process = load(name, file)?;
-    let thread = start(&process, handles);
+    let thread = start(&process, handles, 0);
     Ok((process.process, thread))
 }
 
@@ -179,6 +179,17 @@ impl core::ops::Deref for Loaded {
     fn deref(&self) -> &Arc<Process> {
         &self.process
     }
+}
+
+/// Every process that still exists, for `process_list`. Weak: listing a
+/// process must not keep it alive.
+static ALL: IrqLock<Vec<alloc::sync::Weak<Process>>> = IrqLock::new(Vec::new());
+
+/// The processes that exist (running, or ended but still referenced).
+pub fn all() -> Vec<Arc<Process>> {
+    let mut all = ALL.lock();
+    all.retain(|p| p.strong_count() > 0);
+    all.iter().filter_map(|p| p.upgrade()).collect()
 }
 
 /// Wakes everyone in `process_wait` whenever any process ends.
@@ -250,12 +261,14 @@ pub fn load(name: &'static str, file: &[u8]) -> Result<Loaded, LoadError> {
         io_ports: IrqLock::new(PortBitmap::NONE),
         mappings: IrqLock::new(Regions::new(MAPPING_AREA)),
     });
+    ALL.lock().push(Arc::downgrade(&process));
     Ok(Loaded { process, entry: image.entry })
 }
 
 /// Starts a loaded program on a new thread, with `handles` as its startup
-/// handles: numbered 1..=n in this order, n passed to `_start` in RDI.
-pub fn start(loaded: &Loaded, handles: Vec<(Object, Rights)>) -> ThreadId {
+/// handles: numbered 1..=n in this order, n passed to `_start` in RDI,
+/// and `argument` in RSI.
+pub fn start(loaded: &Loaded, handles: Vec<(Object, Rights)>, argument: u64) -> ThreadId {
     let process = &loaded.process;
     let count = handles.len() as u64;
     {
@@ -272,7 +285,7 @@ pub fn start(loaded: &Loaded, handles: Vec<(Object, Rights)>) -> ThreadId {
     threads::spawn_in(Some(Arc::clone(process)), process.name, move || {
         // SAFETY: this thread runs in `process`'s address space (the
         // switch loaded its CR3 and kernel stack), which maps both.
-        unsafe { syscall::enter_user(entry, stack, count) }
+        unsafe { syscall::enter_user(entry, stack, count, argument) }
     })
 }
 

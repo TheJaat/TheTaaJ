@@ -70,13 +70,15 @@ pub mod call {
     /// handle names directly, with `in` and `out`. Any other port is
     /// still a fault.
     pub const IOPORTS_ENABLE: u64 = 12;
-    /// process_spawn(launcher, name, name_length, handles, count) -
-    /// starts the program `name`. `handles` points to `count` pairs of
+    /// process_spawn(launcher, name, name_length, handles, count,
+    /// argument) - starts the program `name`. `handles` points to `count` pairs of
     /// u64s, (handle, rights): each handle moves into the child as its
     /// startup handle, with exactly `rights` - a subset of what the
     /// parent held, so a parent can hand on less than it has. Moving
-    /// needs TRANSFER on the parent's handle. Returns a handle to the
-    /// new process. All-or-nothing, like a send.
+    /// needs TRANSFER on the parent's handle. `argument` reaches the
+    /// child's `_start` in RSI (see `startup`). Returns a handle to the
+    /// new process, which may be passed on (TRANSFER) - it only lets its
+    /// holder wait for the process. All-or-nothing, like a send.
     pub const PROCESS_SPAWN: u64 = 13;
     /// process_wait(handles, count, code) - waits until any of `count`
     /// processes has ended; returns its index in the list and writes its
@@ -91,6 +93,25 @@ pub mod call {
     pub const MEMORY_MAP: u64 = 16;
     /// memory_unmap(address) - removes the mapping that starts there.
     pub const MEMORY_UNMAP: u64 = 17;
+    /// object_wait(handles, count) - waits until any of the handles is
+    /// ready, and returns its index. Ready means: a channel has a message
+    /// or its peer closed (a receive would not wait); a process has
+    /// ended; an interrupt is pending. Nothing is consumed - the caller
+    /// then receives, or reads the exit code, as usual.
+    pub const OBJECT_WAIT: u64 = 18;
+    /// system_info(system, out) - writes a `SystemInfo` (as u64 words).
+    /// Needs a system handle: what is running is not everyone's business.
+    pub const SYSTEM_INFO: u64 = 19;
+    /// process_list(system, out, capacity) - writes up to `capacity`
+    /// `ProcessEntry`s (as u64 words); returns how many processes exist.
+    pub const PROCESS_LIST: u64 = 20;
+}
+
+/// What a program learns from its parent besides its handles: the
+/// argument of process_spawn, in RSI.
+pub mod startup {
+    /// Startup handle 1 is a channel to the display - print there too.
+    pub const STDOUT: u64 = 1 << 0;
 }
 
 /// What a handle permits. A right, once removed, cannot be added back:
@@ -272,5 +293,83 @@ impl FramebufferInfo {
             blue_size: b[17],
             blue_shift: b[18],
         })
+    }
+}
+
+/// The kernel's state, for `system_info`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SystemInfo {
+    pub ticks: u64,
+    pub ticks_per_second: u64,
+    pub frames_total: u64,
+    pub frames_free: u64,
+    pub heap_used: u64,
+    pub heap_total: u64,
+    pub processes: u64,
+    pub threads: u64,
+    pub channels: u64,
+}
+
+impl SystemInfo {
+    pub const WORDS: usize = 9;
+
+    pub fn to_words(&self) -> [u64; Self::WORDS] {
+        [
+            self.ticks,
+            self.ticks_per_second,
+            self.frames_total,
+            self.frames_free,
+            self.heap_used,
+            self.heap_total,
+            self.processes,
+            self.threads,
+            self.channels,
+        ]
+    }
+
+    pub fn from_words(w: [u64; Self::WORDS]) -> SystemInfo {
+        SystemInfo {
+            ticks: w[0],
+            ticks_per_second: w[1],
+            frames_total: w[2],
+            frames_free: w[3],
+            heap_used: w[4],
+            heap_total: w[5],
+            processes: w[6],
+            threads: w[7],
+            channels: w[8],
+        }
+    }
+}
+
+/// One process, for `process_list`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ProcessEntry {
+    pub pid: u64,
+    /// The name, padded with zeros.
+    pub name: [u8; 16],
+    /// None while it runs.
+    pub exit_code: Option<i64>,
+}
+
+impl ProcessEntry {
+    pub const WORDS: usize = 4;
+    const RUNNING: u64 = i64::MIN as u64;
+
+    pub fn to_words(&self) -> [u64; Self::WORDS] {
+        let name = |half: usize| u64::from_le_bytes(self.name[half * 8..half * 8 + 8].try_into().unwrap());
+        [self.pid, name(0), name(1), self.exit_code.map_or(Self::RUNNING, |c| c as u64)]
+    }
+
+    pub fn from_words(w: [u64; Self::WORDS]) -> ProcessEntry {
+        let mut name = [0; 16];
+        name[..8].copy_from_slice(&w[1].to_le_bytes());
+        name[8..].copy_from_slice(&w[2].to_le_bytes());
+        ProcessEntry { pid: w[0], name, exit_code: (w[3] != Self::RUNNING).then_some(w[3] as i64) }
+    }
+
+    pub fn name(&self) -> &str {
+        let end = self.name.iter().position(|&b| b == 0).unwrap_or(16);
+        core::str::from_utf8(&self.name[..end]).unwrap_or("?")
     }
 }

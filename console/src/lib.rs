@@ -8,7 +8,7 @@
 //!   - the grid: what a terminal does with a stream of bytes - print,
 //!     wrap at the right edge, scroll at the bottom, and the control
 //!     codes a shell sends: newline, carriage return, backspace (move
-//!     left, no erasing - "\x08 \x08" erases), tab.
+//!     left, no erasing - "\x08 \x08" erases), tab, form feed (clear).
 //!
 //! The grid reports what changed through a callback, so the screen is
 //! redrawn only where it must be.
@@ -77,7 +77,7 @@ pub const MAX_ROWS: usize = 120;
 pub enum Damage {
     /// One cell now holds `character`.
     Cell { column: usize, row: usize, character: u8 },
-    /// Everything moved up a line: redraw it all.
+    /// Everything moved (a scroll) or went (a clear): redraw it all.
     Scrolled,
 }
 
@@ -123,6 +123,14 @@ impl Grid {
         match byte {
             b'\n' => self.newline(damage),
             b'\r' => self.column = 0,
+            0x0C => {
+                // Form feed: a new page - clear, cursor home.
+                for row in &mut self.cells[..self.rows] {
+                    *row = [b' '; MAX_COLUMNS];
+                }
+                (self.column, self.row) = (0, 0);
+                damage(Damage::Scrolled);
+            }
             0x08 => self.column = self.column.saturating_sub(1),
             b'\t' => {
                 let stop = ((self.column / 8 + 1) * 8).min(self.columns);
@@ -238,6 +246,14 @@ mod tests {
         assert_eq!(g.cursor(), (0, 0), "not past the start of the line");
         write(&mut g, "xy\rZ");
         assert_eq!(row_text(&g, 0), "Zy", "carriage return goes back to column 0");
+    }
+
+    #[test]
+    fn form_feed_clears() {
+        let mut g = Grid::new(10, 3);
+        write(&mut g, "one\ntwo");
+        assert_eq!(write(&mut g, "\x0c"), vec![Damage::Scrolled]);
+        assert_eq!((row_text(&g, 0), row_text(&g, 1), g.cursor()), (String::new(), String::new(), (0, 0)));
     }
 
     #[test]

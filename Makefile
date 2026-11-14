@@ -173,8 +173,11 @@ UEFI64_LOG   = $(BUILD_DIR)/serial64-uefi.log
 # Backspace - and the line it must echo back.
 # F12 crashes the keyboard driver on purpose; "/" waits for init to
 # restart it; then the line is typed to the new driver.
-TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret
+TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
+               p s ret m e m ret r u n spc h e l l o ret r u n spc p e e k ret
 TEST_TYPED   = Hi there
+# What those commands must print (grep patterns, separated by ";").
+TEST_EXPECT  = unknown command: Hi;  PID  NAME;init +running;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
 
 # The UEFI loader needs Clang and lld (`sudo apt install clang lld`).
 # Without them the ISO is built BIOS-only, and says so.
@@ -245,7 +248,7 @@ endif
 boot64-test: iso64
 	@echo "Booting the 64-bit kernel headless via BIOS (serial log: $(SERIAL64_LOG))..."
 	@KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(SERIAL64_LOG)
-	@TYPED="$(TEST_TYPED)" $(KERNEL64_DIR)/scripts/check-boot.sh $(SERIAL64_LOG) BIOS
+	@TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" $(KERNEL64_DIR)/scripts/check-boot.sh $(SERIAL64_LOG) BIOS
 	@echo "boot64-test passed"
 
 # The same ISO, the same kernel, booted by UEFI firmware instead.
@@ -255,7 +258,7 @@ ifneq ($(HAVE_CLANG),yes)
 endif
 	@echo "Booting the 64-bit kernel headless via UEFI (serial log: $(UEFI64_LOG))..."
 	@QEMU_ARGS="-bios $(OVMF)" KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(UEFI64_LOG) 30
-	@TYPED="$(TEST_TYPED)" $(KERNEL64_DIR)/scripts/check-boot.sh $(UEFI64_LOG) UEFI
+	@TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" $(KERNEL64_DIR)/scripts/check-boot.sh $(UEFI64_LOG) UEFI
 	@echo "boot64-uefi-test passed"
 
 # Unit tests of the kernel's pure logic (frames, page tables, heap,

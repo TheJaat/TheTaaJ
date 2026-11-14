@@ -51,6 +51,15 @@ impl InterruptLine {
         InterruptLine { pending: AtomicU64::new(0), waiters: WaitQueue::new() }
     }
 
+    /// Fired and not yet waited for?
+    pub fn is_pending(&self) -> bool {
+        self.pending.load(Ordering::Relaxed) > 0
+    }
+
+    pub fn waiters(&self) -> &WaitQueue {
+        &self.waiters
+    }
+
     /// From the interrupt handler.
     pub fn fire(&self) {
         self.pending.fetch_add(1, Ordering::Relaxed);

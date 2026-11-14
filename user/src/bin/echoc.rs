@@ -51,10 +51,16 @@ fn main() -> i64 {
 
     // 3b. Starting programs needs the launcher, which only init has. A
     //     channel handle is not one; neither is a number.
-    check!(taaj::spawn(boot, "hello", &[]) == Err(Error::WrongType), "spawned without a launcher");
-    check!(taaj::spawn(0x4242, "hello", &[]) == Err(Error::InvalidHandle), "spawned with a forged launcher");
+    check!(taaj::spawn(boot, "hello", &[], 0) == Err(Error::WrongType), "spawned without a launcher");
+    check!(taaj::spawn(0x4242, "hello", &[], 0) == Err(Error::InvalidHandle), "spawned with a forged launcher");
     check!(taaj::wait_any(&[boot]) == Err(Error::WrongType), "waited on a channel as a process");
     check!(taaj::wait_any(&[]) == Err(Error::InvalidArgument), "waited on nothing");
+    // Looking at the system needs the system handle, which only init and
+    // the shell have.
+    check!(taaj::system_info(boot).is_err(), "read the system's state with a channel handle");
+    check!(taaj::process_list(boot, &mut []) == Err(Error::WrongType), "listed processes without the right");
+    check!(taaj::object_wait(&[]) == Err(Error::InvalidArgument), "object_wait on nothing");
+    check!(taaj::object_wait(&[0x777]) == Err(Error::InvalidHandle), "object_wait on a forged handle");
 
     // 4. A channel end cannot be sent through its own channel (it would
     //    keep itself alive forever).
@@ -64,6 +70,11 @@ fn main() -> i64 {
     //    the inbox holds 32 messages, then sends fail; a message too big
     //    for the buffer stays queued instead of being cut or lost.
     let Ok((a, b)) = taaj::channel_create() else { return 101 };
+    // object_wait: b has nothing yet; after a send it is ready - and the
+    // message is still there to receive (waiting consumes nothing).
+    check!(taaj::send(a, b"ping", &[]) == Ok(()), "send for object_wait");
+    check!(taaj::object_wait(&[boot, b]) == Ok(1), "object_wait found the ready channel");
+    check!(taaj::receive(b, &mut buffer, &mut []) == Ok((4, 0)), "the message is still there");
     for n in 0..abi::CHANNEL_QUEUE_MAX {
         check!(taaj::send(a, &[n as u8; 5], &[]) == Ok(()), "send within the limit");
     }
@@ -103,6 +114,7 @@ fn main() -> i64 {
     check!(taaj::memory_create(abi::MEMORY_MAX + 1) == Err(Error::InvalidArgument), "an oversized one");
     check!(taaj::memory_map(boot, false) == Err(Error::WrongType), "mapped a channel");
     let Ok(memory) = taaj::memory_create(3 * 4096) else { return 104 };
+    check!(taaj::object_wait(&[memory]) == Err(Error::WrongType), "waited on memory");
     let Ok(base) = taaj::memory_map(memory, true) else { return 105 };
     let sentence = b"shared memory, no copies";
     // SAFETY: the mapping is three pages; this writes into the third.

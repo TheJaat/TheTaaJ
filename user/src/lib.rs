@@ -36,12 +36,18 @@ pub fn syscall(number: u64, a: u64, b: u64, c: u64) -> u64 {
 /// The raw system call with five arguments (RDI, RSI, RDX, R10, R8).
 #[inline(always)]
 pub fn syscall5(number: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> u64 {
+    syscall6(number, a, b, c, d, e, 0)
+}
+
+/// The raw system call with six arguments (RDI, RSI, RDX, R10, R8, R9).
+#[inline(always)]
+pub fn syscall6(number: u64, a: u64, b: u64, c: u64, d: u64, e: u64, f: u64) -> u64 {
     let result: u64;
     // SAFETY: as for `syscall`.
     unsafe {
         asm!("syscall",
              inlateout("rax") number => result,
-             in("rdi") a, in("rsi") b, in("rdx") c, in("r10") d, in("r8") e,
+             in("rdi") a, in("rsi") b, in("rdx") c, in("r10") d, in("r8") e, in("r9") f,
              out("rcx") _, out("r11") _,
              options(nostack));
     }
@@ -53,9 +59,24 @@ pub fn exit(code: i64) -> ! {
     unreachable!("exit returned")
 }
 
-/// Writes raw bytes to the console; returns how many, or why not.
+/// Writes raw bytes to the kernel's debug log (the serial line), and to
+/// stdout - the display - if this program was given one.
 pub fn write(bytes: &[u8]) -> Result<u64, Error> {
+    if let Some(stdout) = stdout() {
+        write_to_display(stdout, bytes);
+    }
     abi::decode(syscall(call::DEBUG_WRITE, bytes.as_ptr() as u64, bytes.len() as u64, 0))
+}
+
+/// Sends `bytes` as display TEXT messages on `channel`. A display that
+/// lags or is restarting loses some text; the program carries on.
+pub fn write_to_display(channel: Handle, bytes: &[u8]) {
+    let mut message = [0u8; 256];
+    for chunk in bytes.chunks(message.len() - 1) {
+        message[0] = abi::display::TEXT;
+        message[1..=chunk.len()].copy_from_slice(chunk);
+        let _ = send(channel, &message[..=chunk.len()], &[]);
+    }
 }
 
 /// The same call with an arbitrary pointer - for testing that the kernel
@@ -159,7 +180,7 @@ pub mod port {
 /// Starts the program `name` with `handles` - (handle, rights) pairs -
 /// as its startup handles. They leave this process. Returns a handle to
 /// the new process.
-pub fn spawn(launcher: Handle, name: &str, handles: &[(Handle, u32)]) -> Result<Handle, Error> {
+pub fn spawn(launcher: Handle, name: &str, handles: &[(Handle, u32)], argument: u64) -> Result<Handle, Error> {
     let mut pairs = [0u64; 2 * abi::SPAWN_HANDLES_MAX as usize];
     if handles.len() > abi::SPAWN_HANDLES_MAX as usize {
         return Err(Error::InvalidArgument);
@@ -168,14 +189,39 @@ pub fn spawn(launcher: Handle, name: &str, handles: &[(Handle, u32)]) -> Result<
         pairs[2 * n] = handle;
         pairs[2 * n + 1] = u64::from(rights);
     }
-    abi::decode(syscall5(
+    abi::decode(syscall6(
         call::PROCESS_SPAWN,
         launcher,
         name.as_ptr() as u64,
         name.len() as u64,
         pairs.as_ptr() as u64,
         handles.len() as u64,
+        argument,
     ))
+}
+
+/// Waits until any of `handles` is ready (a channel to receive from, a
+/// process that ended, a pending interrupt); returns its index.
+pub fn object_wait(handles: &[Handle]) -> Result<usize, Error> {
+    abi::decode(syscall(call::OBJECT_WAIT, handles.as_ptr() as u64, handles.len() as u64, 0)).map(|i| i as usize)
+}
+
+pub fn system_info(system: Handle) -> Result<abi::SystemInfo, Error> {
+    let mut words = [0u64; abi::SystemInfo::WORDS];
+    abi::decode(syscall(call::SYSTEM_INFO, system, words.as_mut_ptr() as u64, 0))?;
+    Ok(abi::SystemInfo::from_words(words))
+}
+
+/// Fills `out` with processes; returns how many exist (maybe more).
+pub fn process_list(system: Handle, out: &mut [abi::ProcessEntry]) -> Result<usize, Error> {
+    const W: usize = abi::ProcessEntry::WORDS;
+    let mut words = [0u64; 32 * W];
+    let capacity = out.len().min(32);
+    let total = abi::decode(syscall(call::PROCESS_LIST, system, words.as_mut_ptr() as u64, capacity as u64))?;
+    for (n, entry) in out.iter_mut().take(capacity).enumerate() {
+        *entry = abi::ProcessEntry::from_words(words[n * W..(n + 1) * W].try_into().unwrap());
+    }
+    Ok(total as usize)
 }
 
 /// Waits until one of `processes` ends: returns its index and exit code.
@@ -205,6 +251,15 @@ pub fn memory_unmap(address: *mut u8) -> Result<(), Error> {
 }
 
 static STARTUP_HANDLES: AtomicU64 = AtomicU64::new(0);
+static STARTUP_ARGUMENT: AtomicU64 = AtomicU64::new(0);
+
+/// The display channel to print to, if the parent gave one (handle 1,
+/// flagged by abi::startup::STDOUT).
+pub fn stdout() -> Option<Handle> {
+    (STARTUP_ARGUMENT.load(Ordering::Relaxed) & abi::startup::STDOUT != 0)
+        .then(|| startup_handle(0))
+        .flatten()
+}
 
 /// Startup handle `n` (counting from 0), if the parent gave that many.
 /// They are numbered 1..=count by the ABI.
@@ -219,8 +274,9 @@ pub fn bootstrap() -> Handle {
 }
 
 #[doc(hidden)]
-pub fn set_startup_handles(count: u64) {
+pub fn set_startup(count: u64, argument: u64) {
     STARTUP_HANDLES.store(count, Ordering::Relaxed);
+    STARTUP_ARGUMENT.store(argument, Ordering::Relaxed);
 }
 
 pub struct Console;
@@ -297,15 +353,15 @@ macro_rules! println {
 /// `fn main() -> i64`, whose return value becomes the exit code.
 ///
 /// It defines `_start`, where the kernel starts the program. The kernel
-/// enters it with RSP set as if `_start` had just been called, and the
-/// number of startup handles in RDI - its first argument - so it is an
-/// ordinary function.
+/// enters it with RSP set as if `_start` had just been called, the
+/// number of startup handles in RDI and the parent's argument in RSI -
+/// its two arguments - so it is an ordinary function.
 #[macro_export]
 macro_rules! program {
     ($main:path) => {
         #[no_mangle]
-        pub extern "C" fn _start(startup_handles: u64) -> ! {
-            $crate::set_startup_handles(startup_handles);
+        pub extern "C" fn _start(startup_handles: u64, argument: u64) -> ! {
+            $crate::set_startup(startup_handles, argument);
             $crate::exit($main())
         }
     };

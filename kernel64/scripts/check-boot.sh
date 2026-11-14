@@ -41,4 +41,13 @@ if [ -n "$TYPED" ]; then
     grep -qF "[shell] line: \"$TYPED\"" "$LOG"     || fail "keyboard: \"$TYPED\" not echoed by the shell"
     grep -q "\[init\] kbd ended .* restarting" "$LOG" || fail "init did not restart the crashed driver"
 fi
+if [ -n "${EXPECT:-}" ]; then
+    # The output of the commands typed: each pattern must appear.
+    old_ifs=$IFS
+    IFS=';'
+    for pattern in $EXPECT; do
+        grep -qE "$pattern" "$LOG" || fail "no output matching \"$pattern\""
+    done
+    IFS=$old_ifs
+fi
 sed -n '/Hello from TheTaaJ/,$p' "$LOG"

@@ -153,14 +153,14 @@ pub fn set_kernel_stack(top: u64) {
     unsafe { KERNEL_RSP = top };
 }
 
-/// Drops to ring 3 at `entry`, with stack pointer `stack` and `argument`
-/// in RDI (the first argument of `_start`). Every other general register
+/// Drops to ring 3 at `entry`, with stack pointer `stack` and two
+/// arguments for `_start` in RDI and RSI. Every other general register
 /// is zeroed first, so nothing of the kernel's leaks to the program.
 ///
 /// # Safety
 /// The current address space must map `entry` and the stack for user
 /// mode, and `set_kernel_stack` must name this thread's kernel stack.
-pub unsafe fn enter_user(entry: u64, stack: u64, argument: u64) -> ! {
+pub unsafe fn enter_user(entry: u64, stack: u64, first: u64, second: u64) -> ! {
     asm!(
         "push {ss}",
         "push {rsp}",
@@ -171,7 +171,6 @@ pub unsafe fn enter_user(entry: u64, stack: u64, argument: u64) -> ! {
         "xor ebx, ebx",
         "xor ecx, ecx",
         "xor edx, edx",
-        "xor esi, esi",
         "xor ebp, ebp",
         "xor r8d, r8d",
         "xor r9d, r9d",
@@ -187,7 +186,8 @@ pub unsafe fn enter_user(entry: u64, stack: u64, argument: u64) -> ! {
         rflags = const INTERRUPTS_ON | 0x2, // bit 1 always reads as 1
         rsp = in(reg) stack,
         rip = in(reg) entry,
-        in("rdi") argument,
+        in("rdi") first,
+        in("rsi") second,
         options(noreturn),
     )
 }
