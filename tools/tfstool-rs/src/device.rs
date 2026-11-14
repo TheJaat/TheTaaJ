@@ -1,23 +1,14 @@
-//! Where blocks come from.
+//! Where the tool's blocks come from: an image file on the host.
 //!
-//! In C, tfscore takes two function pointers and a `void *Context`. The
-//! Rust equivalent is a *trait*: a set of methods a type promises to
-//! provide. `Volume` works with anything that implements `BlockDevice`,
-//! and the compiler checks the promise - there is no `void *` to cast
-//! back to the wrong thing.
-//!
-//! Two implementations live here: an image file for the real tool, and
-//! a disk in memory for tests, which can also pretend to lose power.
+//! The `BlockDevice` trait and the in-memory test disk live in the
+//! `taajfs` crate, with the format and the volume; this adds the one
+//! device only a host has.
 
 use std::fs::File;
 use std::io::{self, ErrorKind, Read, Seek, SeekFrom, Write};
 
-use crate::format::{empty_block, Block, BLOCK_SIZE};
-
-pub trait BlockDevice {
-    fn read_block(&mut self, number: u32, buffer: &mut Block) -> io::Result<()>;
-    fn write_block(&mut self, number: u32, buffer: &Block) -> io::Result<()>;
-}
+pub use taajfs::device::{BlockDevice, DeviceError, MemDevice};
+use taajfs::format::{Block, BLOCK_SIZE};
 
 /// A volume image on the host.
 pub struct FileDevice {
@@ -36,11 +27,17 @@ fn byte_offset(number: u32) -> u64 {
     u64::from(number) * BLOCK_SIZE as u64
 }
 
+/// An I/O error as the volume sees it: what failed, and the OS's code.
+fn device_error(what: &'static str) -> impl Fn(io::Error) -> DeviceError {
+    move |e| DeviceError { what, code: e.raw_os_error().map(i64::from) }
+}
+
 impl BlockDevice for FileDevice {
     /// Past the end of the file reads as zeros, as in the C tool: that
     /// is what an unwritten part of a fresh image looks like.
-    fn read_block(&mut self, number: u32, buffer: &mut Block) -> io::Result<()> {
-        self.file.seek(SeekFrom::Start(byte_offset(number)))?;
+    fn read_block(&mut self, number: u32, buffer: &mut Block) -> Result<(), DeviceError> {
+        let error = device_error("reading the image");
+        self.file.seek(SeekFrom::Start(byte_offset(number))).map_err(&error)?;
 
         let mut filled = 0;
         while filled < BLOCK_SIZE {
@@ -48,71 +45,18 @@ impl BlockDevice for FileDevice {
                 Ok(0) => break, // end of file
                 Ok(n) => filled += n,
                 Err(e) if e.kind() == ErrorKind::Interrupted => continue,
-                Err(e) => return Err(e),
+                Err(e) => return Err(error(e)),
             }
         }
         buffer[filled..].fill(0);
         Ok(())
     }
 
-    fn write_block(&mut self, number: u32, buffer: &Block) -> io::Result<()> {
-        self.file.seek(SeekFrom::Start(byte_offset(number)))?;
+    fn write_block(&mut self, number: u32, buffer: &Block) -> Result<(), DeviceError> {
+        let error = device_error("writing the image");
+        self.file.seek(SeekFrom::Start(byte_offset(number))).map_err(&error)?;
         // `write_all` keeps writing until every byte is out or an error
         // occurs - a short write cannot slip through unnoticed.
-        self.file.write_all(buffer)
-    }
-}
-
-/// A disk held in memory, for tests.
-///
-/// `writes_left` simulates a power cut: once it reaches zero, every
-/// further write fails and changes nothing. Running an operation with
-/// every possible cut-off point is how the tests prove copy-on-write
-/// really leaves the old state intact.
-pub struct MemDevice {
-    pub blocks: Vec<Block>,
-    pub writes_left: Option<usize>,
-}
-
-impl MemDevice {
-    pub fn new(count: u32) -> MemDevice {
-        MemDevice {
-            blocks: vec![empty_block(); count as usize],
-            writes_left: None,
-        }
-    }
-}
-
-impl BlockDevice for MemDevice {
-    fn read_block(&mut self, number: u32, buffer: &mut Block) -> io::Result<()> {
-        match self.blocks.get(number as usize) {
-            Some(block) => {
-                *buffer = *block;
-                Ok(())
-            }
-            None => Err(io::Error::new(
-                ErrorKind::UnexpectedEof,
-                "read past the end",
-            )),
-        }
-    }
-
-    fn write_block(&mut self, number: u32, buffer: &Block) -> io::Result<()> {
-        if let Some(left) = self.writes_left.as_mut() {
-            if *left == 0 {
-                return Err(io::Error::other("simulated power loss"));
-            }
-            *left -= 1;
-        }
-        match self.blocks.get_mut(number as usize) {
-            Some(block) => {
-                *block = *buffer;
-                Ok(())
-            }
-            None => Err(io::Error::new(
-                ErrorKind::UnexpectedEof,
-                "write past the end",
-            )),
-        }
+        self.file.write_all(buffer).map_err(&error)
     }
 }

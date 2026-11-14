@@ -15,7 +15,8 @@ abi = { path = "../abi" }
 input = { path = "../input" }
 console = { path = "../console" }
 heap = { path = "../heap" }
-ramfs = { path = "../ramfs" }
+fileserver = { path = "../fileserver" }
+taajfs = { path = "../taajfs" }
 virtio = { path = "../virtio" }
 
 [profile.dev]

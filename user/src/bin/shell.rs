@@ -6,7 +6,8 @@
 //!   3  the request channel to init: "run NAME"
 //!   4  the system handle: looking at memory and processes, not touching
 //!   5  the request channel to the file service (send only)
-//!   6  the request channel to the disk driver (send only)
+//!   6  the request channel to the disk driver: reads only - files on
+//!      the disk are the file service's to change
 //!
 //! It has no launcher and no hardware. To run a program it asks init,
 //! which decides what may run, and replies with a handle to the new

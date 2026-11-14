@@ -27,7 +27,7 @@ pub fn dump<D: BlockDevice, W: Write>(device: &mut D, out: &mut W) -> io::Result
 
     writeln!(out, "superblocks:")?;
     for (slot, letter) in [(SUPER_A, 'A'), (SUPER_B, 'B')] {
-        device.read_block(slot, &mut block)?;
+        device.read_block(slot, &mut block).map_err(io::Error::other)?;
         let sb = Superblock::parse(&block);
         let valid = sb.is_valid();
 
@@ -77,7 +77,7 @@ pub fn dump<D: BlockDevice, W: Write>(device: &mut D, out: &mut W) -> io::Result
             return Ok(false);
         }
 
-        device.read_block(next, &mut block)?;
+        device.read_block(next, &mut block).map_err(io::Error::other)?;
         let dir = DirBlock::parse(&block);
         if dir.magic != MAGIC {
             writeln!(out, "  block {next} is not a directory block")?;
@@ -92,7 +92,7 @@ pub fn dump<D: BlockDevice, W: Write>(device: &mut D, out: &mut W) -> io::Result
 
         for entry in dir.entries.iter().filter(|e| e.inode != 0) {
             let mut raw = empty_block();
-            device.read_block(entry.inode, &mut raw)?;
+            device.read_block(entry.inode, &mut raw).map_err(io::Error::other)?;
             let inode = Inode::parse(&raw);
 
             writeln!(

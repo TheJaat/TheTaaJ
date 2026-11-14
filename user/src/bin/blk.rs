@@ -4,8 +4,16 @@
 //!   1  the device's I/O ports (its BAR 0)
 //!   2  its DMA memory: physically contiguous, its address known
 //!   3  the device channel: init sends the PciDeviceInfo first
-//!   4  the request channel (abi::block), from clients
-//!   5  the device's interrupt (MSI-X), if it has one - else polled
+//!   4  the request channel (abi::block): reads and writes - for the
+//!      file service, which owns what is on the disk
+//!   5  a second request channel: reads only - for anyone who may look
+//!      at the disk but not change it (the shell)
+//!   6  the device's interrupt (MSI-X), if it has one - else polled
+//!
+//! Two channels, two levels of authority: which one a client was given
+//! decides what it may do. The kernel knows nothing of it - handle
+//! rights say who may send on a channel, and this service decides what
+//! a message on each one is allowed to mean.
 //!
 //! The DMA memory holds everything the device reads or writes:
 //!
@@ -160,7 +168,11 @@ impl Disk {
     }
 
     /// Answers one request; returns the reply's length in `reply`.
-    fn serve(&mut self, request: &[u8], reply: &mut [u8]) -> usize {
+    fn serve(&mut self, request: &[u8], reply: &mut [u8], may_write: bool) -> usize {
+        if request.first() == Some(&block::WRITE) && !may_write {
+            reply[0] = block::READ_ONLY;
+            return 1;
+        }
         let sector = request.get(1..9).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes);
         let (status, length) = match (request.first().copied(), sector) {
             (Some(block::INFO), _) => {
@@ -189,13 +201,17 @@ impl Disk {
 }
 
 fn main() -> i64 {
-    let (Some(ports), Some(dma), Some(device), Some(requests)) =
-        (taaj::startup_handle(0), taaj::startup_handle(1), taaj::startup_handle(2), taaj::startup_handle(3))
-    else {
+    let (Some(ports), Some(dma), Some(device), Some(writers), Some(readers)) = (
+        taaj::startup_handle(0),
+        taaj::startup_handle(1),
+        taaj::startup_handle(2),
+        taaj::startup_handle(3),
+        taaj::startup_handle(4),
+    ) else {
         println!("[blk] started without its device");
         return 1;
     };
-    let interrupt = taaj::startup_handle(4);
+    let interrupt = taaj::startup_handle(5);
 
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
     let info = match taaj::receive(device, &mut message, &mut []) {
@@ -236,12 +252,30 @@ fn main() -> i64 {
     );
 
     let mut reply = [0u8; abi::MESSAGE_MAX as usize];
+    let channels = [writers, readers];
+    let mut open = [true, true];
     loop {
+        // Whichever channel has a request - both, in turn, if both do.
+        let live: [Handle; 2] = match open {
+            [true, true] => channels,
+            [true, false] => [writers; 2],
+            [false, true] => [readers; 2],
+            [false, false] => return 0,
+        };
+        let which = match taaj::object_wait(&live) {
+            Ok(n) => n,
+            Err(_) => return 6,
+        };
+        let requests = live[which];
+        let may_write = requests == writers;
         // As in fs: room for any message, so none can get stuck.
         let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
         let (n, count) = match taaj::receive(requests, &mut message, &mut handles) {
             Ok(received) => received,
-            Err(Error::PeerClosed) => return 0,
+            Err(Error::PeerClosed) => {
+                open[usize::from(!may_write)] = false; // no clients left on it
+                continue;
+            }
             Err(error) => {
                 println!("[blk] cannot receive: {error:?}");
                 return 6;
@@ -253,7 +287,7 @@ fn main() -> i64 {
             }
             continue;
         }
-        let length = disk.serve(&message[..n], &mut reply);
+        let length = disk.serve(&message[..n], &mut reply, may_write);
         let _ = taaj::send(handles[0], &reply[..length], &[]);
         let _ = taaj::close(handles[0]);
     }

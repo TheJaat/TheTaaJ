@@ -1,16 +1,16 @@
-//! TaajFS, in Rust.
+//! TaajFS, in Rust - the host tool's library.
 //!
-//! A library plus a small command-line front end (`main.rs`). Keeping
-//! the filesystem in a library means the tests exercise exactly the code
-//! the tool runs - and later, the same modules can move into a `no_std`
-//! file server inside TheTaaJ itself.
+//! The format and the volume are the `taajfs` crate, shared with the
+//! file service inside TheTaaJ, so the tool and the OS read and write
+//! disks with the same code. This adds what only the host needs:
 //!
-//!   format  - the on-disk structures, bytes <-> values; no I/O
-//!   device  - where blocks come from: an image file, or memory
-//!   volume  - mount, read, and copy-on-write changes
+//!   device  - an image file as a block device
 //!   dump    - an independent reader that reports what is on disk
+//!
+//! `format` and `volume` are re-exported, so the tool's code and tests
+//! name them as before.
 
 pub mod device;
 pub mod dump;
-pub mod format;
-pub mod volume;
+
+pub use taajfs::{format, volume};

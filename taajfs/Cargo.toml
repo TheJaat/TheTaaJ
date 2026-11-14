@@ -1,0 +1,10 @@
+[package]
+name = "taajfs"
+version = "0.1.0"
+edition = "2021"
+description = "TaajFS: the on-disk format and copy-on-write volume, shared by the host tool and TheTaaJ's file service"
+publish = false
+
+[dependencies]
+# None: core and alloc only, so the same code runs on the host and in
+# ring 3 on TheTaaJ.

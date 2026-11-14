@@ -179,23 +179,24 @@ TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
                a p p e n d spc n o t e s spc w o r l d ret \
                c a t spc n o t e s ret l s ret \
                r m spc n o t e s ret c a t spc n o t e s ret \
+               c a t spc w e l c o m e ret w r i t e spc s a v e d spc k e p t ret \
                d i s k ret d i s k spc r e a d spc 0 ret \
-               d i s k spc w r i t e spc 5 spc p e r s i s t e d ret \
-               d i s k spc r e a d spc 5 ret d i s k spc r e a d spc 9 9 9 9 9 ret
+               d i s k spc w r i t e spc 5 spc o o p s ret d i s k spc r e a d spc 9 9 9 9 9 ret
 TEST_TYPED   = Hi there
 # What those commands must print (grep patterns, separated by ";").
 # (Joined on one line: a continued line would start each pattern with a
 # space.)
 EXPECT_SHELL = unknown command: Hi;  PID  NAME;init +running;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
-EXPECT_FILES = \[fs\] ready;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^1 file, 12 bytes;^cat: notes: no such file
-EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(4096 KiB\);^0000  54 68 65 54 61 61 4a .*TheTaaJ test dis;^disk: wrote sector 5;^0000  70 65 72 73 69 73 74 65 64 .*persisted;^disk: sector 99999: no such sector
+EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^2 files, 32 bytes;^cat: notes: no such file;^Hello from the host;^saved: 5 bytes
+EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(4096 KiB\);^0000  4a 41 46 53 .*JAFS;^disk: sector 5: the disk is read-only;^disk: sector 99999: no such sector
 TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK)
-# The disk the boot tests attach: 4 MiB, a signature in sector 0 for the
-# driver to read back, and sector 5 for "disk write" to change.
-TEST_DISK_TEXT = TheTaaJ test disk
-TEST_WRITTEN   = persisted
+# The disk the boot tests attach: a 4 MiB TaajFS volume made on the host
+# by tfstool, with one file in it for the OS to read. After the boot,
+# check-boot.sh reads back - with tfstool again - the file the OS wrote.
+TFSTOOL_RS   = tools/tfstool-rs/target/release/tfstool
 define make-test-disk
-	@printf '$(TEST_DISK_TEXT)\n' > $(1) && truncate -s 4M $(1)
+	@rm -f $(1) && $(TFSTOOL_RS) mkfs $(1) 1024 > /dev/null && truncate -s 4M $(1)
+	@printf 'Hello from the host\n' > $(1).welcome && $(TFSTOOL_RS) put $(1) welcome $(1).welcome > /dev/null
 endef
 
 # The UEFI loader needs Clang and lld (`sudo apt install clang lld`).
@@ -264,23 +265,23 @@ endif
 
 # Boots the 64-bit kernel headless and checks what it printed. A start on
 # the "boot every architecture on every commit" rule from the roadmap.
-boot64-test: iso64
+boot64-test: iso64 tfstool-rs
 	@echo "Booting the 64-bit kernel headless via BIOS (serial log: $(SERIAL64_LOG))..."
 	$(call make-test-disk,$(SERIAL64_LOG).disk)
 	@DISK=$(SERIAL64_LOG).disk KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(SERIAL64_LOG)
-	@DISK=$(SERIAL64_LOG).disk DISK_WRITTEN=$(TEST_WRITTEN) TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" \
+	@DISK=$(SERIAL64_LOG).disk TFSTOOL=$(TFSTOOL_RS) TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" \
 	    $(KERNEL64_DIR)/scripts/check-boot.sh $(SERIAL64_LOG) BIOS
 	@echo "boot64-test passed"
 
 # The same ISO, the same kernel, booted by UEFI firmware instead.
-boot64-uefi-test: iso64
+boot64-uefi-test: iso64 tfstool-rs
 ifneq ($(HAVE_CLANG),yes)
 	@echo "FAIL: the UEFI loader needs clang and lld (sudo apt install clang lld)"; exit 1
 endif
 	@echo "Booting the 64-bit kernel headless via UEFI (serial log: $(UEFI64_LOG))..."
 	$(call make-test-disk,$(UEFI64_LOG).disk)
 	@DISK=$(UEFI64_LOG).disk QEMU_ARGS="-bios $(OVMF)" KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(UEFI64_LOG) 30
-	@DISK=$(UEFI64_LOG).disk DISK_WRITTEN=$(TEST_WRITTEN) TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" \
+	@DISK=$(UEFI64_LOG).disk TFSTOOL=$(TFSTOOL_RS) TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" \
 	    $(KERNEL64_DIR)/scripts/check-boot.sh $(UEFI64_LOG) UEFI
 	@echo "boot64-uefi-test passed"
 
@@ -293,7 +294,8 @@ kernel64-test:
 	cd input && cargo test
 	cd console && cargo test
 	cd heap && cargo test
-	cd ramfs && cargo test
+	cd fileserver && cargo test
+	cd taajfs && cargo test
 	cd virtio && cargo test
 
 # One boot per deliberate fault: unmapped read, double fault, write to

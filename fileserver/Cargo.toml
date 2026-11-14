@@ -1,0 +1,10 @@
+[package]
+name = "fileserver"
+version = "0.1.0"
+edition = "2021"
+description = "The file service: its protocol, and files in memory or on a TaajFS disk"
+publish = false
+
+[dependencies]
+abi = { path = "../abi" }
+taajfs = { path = "../taajfs" }

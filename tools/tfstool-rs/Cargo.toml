@@ -6,6 +6,6 @@ description = "Make, inspect and populate TaajFS images from the host - the Rust
 publish = false
 
 [dependencies]
-# None, on purpose. Everything here is std, so every line can be read
-# and understood - and the same code can later move into a no_std
-# server inside TheTaaJ.
+# Only our own: the format and the volume, shared with the file service
+# inside TheTaaJ (they are no_std, so the same code runs in both).
+taajfs = { path = "../../taajfs" }

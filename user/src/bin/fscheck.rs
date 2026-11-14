@@ -15,7 +15,7 @@
 
 use core::fmt::Write;
 
-use ramfs::protocol::{Status, MESSAGE_MAX, NAME_MAX, READ_MAX};
+use fileserver::protocol::{Status, MESSAGE_MAX, NAME_MAX, READ_MAX};
 use taaj::files::{FileError, Files};
 use taaj::{println, Buffer, Error};
 
@@ -120,7 +120,7 @@ fn main() -> i64 {
     // 6. Requests from a careless client. The service must stay up, and
     //    not keep handles it was not meant to.
     let mut message = [0u8; MESSAGE_MAX];
-    let request = ramfs::protocol::Request::new(ramfs::protocol::STAT, "big", 0);
+    let request = fileserver::protocol::Request::new(fileserver::protocol::STAT, "big", 0);
     let length = request.encode(&mut message).unwrap_or(0);
     check!(taaj::send(requests, &message[..length], &[]) == Ok(()), "a request with no reply channel");
     let Ok((mine, theirs)) = taaj::channel_create() else { return 100 };

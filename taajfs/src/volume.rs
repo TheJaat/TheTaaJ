@@ -11,11 +11,14 @@
 //!     writing ONE superblock into the slot that is not live
 //!   - there is no free map on disk; it is rebuilt from the tree
 
-use std::collections::HashSet;
-use std::fmt;
-use std::io;
+use alloc::collections::BTreeSet;
+use alloc::format;
+use alloc::string::{String, ToString};
+use alloc::vec;
+use alloc::vec::Vec;
+use core::fmt;
 
-use crate::device::BlockDevice;
+use crate::device::{BlockDevice, DeviceError};
 use crate::format::{
     empty_block, Block, DirBlock, DirEntry, Inode, Superblock, BLOCK_SIZE, DIR_ENTRIES, FIRST_DATA,
     MAGIC, MAX_BLOCKS, MAX_FILE_SIZE, NAME_MAX, SUPER_A, SUPER_B, TYPE_FILE,
@@ -32,11 +35,11 @@ const MAX_DIR_BLOCKS: usize = 64;
 /// In C this is a set of negative numbers, and nothing stops a caller
 /// from ignoring one or from returning -4 where -5 was meant. A Rust
 /// enum is a closed set of cases: a `match` on it must handle every
-/// one, and an `Io` error carries the real OS error with it instead of
+/// one, and a `Device` error carries what the device said instead of
 /// flattening it to -1.
 #[derive(Debug)]
 pub enum Error {
-    Io(io::Error),
+    Device(DeviceError),
     Magic,
     NoSuper,
     Full,
@@ -53,7 +56,7 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Io(e) => write!(f, "device error: {e}"),
+            Error::Device(e) => write!(f, "device error: {e}"),
             Error::Magic => f.write_str("not a TaajFS volume"),
             Error::NoSuper => f.write_str("no valid superblock in either slot"),
             Error::Full => f.write_str("no free blocks"),
@@ -67,17 +70,17 @@ impl fmt::Display for Error {
     }
 }
 
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
-/// Lets `?` turn an `io::Error` into our `Error` automatically.
-impl From<io::Error> for Error {
-    fn from(e: io::Error) -> Error {
-        Error::Io(e)
+/// Lets `?` turn a `DeviceError` into our `Error` automatically.
+impl From<DeviceError> for Error {
+    fn from(e: DeviceError) -> Error {
+        Error::Device(e)
     }
 }
 
 /// Shorthand used everywhere below.
-pub type Result<T> = std::result::Result<T, Error>;
+pub type Result<T> = core::result::Result<T, Error>;
 
 // ---- what callers see -----------------------------------------------
 
@@ -241,7 +244,7 @@ impl<D: BlockDevice> Volume<D> {
     /// says exactly where.
     fn directory_chain(&mut self) -> Result<Vec<(u32, DirBlock)>> {
         let mut chain = Vec::new();
-        let mut seen = HashSet::new();
+        let mut seen = BTreeSet::new();
         let mut next = self.sb.root_dir;
 
         while next != 0 {

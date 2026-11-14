@@ -11,7 +11,7 @@
 //! Files bigger than one message are read and written a message's worth
 //! at a time.
 
-use ramfs::protocol::{self, Request, Status, MESSAGE_MAX};
+use fileserver::protocol::{self, Request, Status, MESSAGE_MAX};
 
 use crate::{Error, Handle};
 

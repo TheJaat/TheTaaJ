@@ -11,8 +11,8 @@
 //!   6  the system handle: the right to look at memory and processes
 //! (all with every right but the launcher's, so init can share them out.)
 //!
-//! The services: display (the screen), fs (files, in memory), blk (the
-//! disk driver, if there is a disk), shell, and kbd (the keyboard
+//! The services: display (the screen), fs (files - on the disk, if
+//! there is one), blk (the disk driver), shell, and kbd (the keyboard
 //! driver).
 //!
 //! init also runs programs for the shell. The shell has no launcher; it
@@ -148,11 +148,14 @@ fn main() -> i64 {
     let Ok((files_in, files_out)) = taaj::channel_create() else { return 2 };
     // The disk's: its description for each new driver, and requests.
     let Ok((disk_info_tx, disk_info_rx)) = taaj::channel_create() else { return 2 };
+    // Two request channels: reads and writes for fs, which owns what is
+    // on the disk; reads only for the shell, which may look.
     let Ok((disk_in, disk_out)) = taaj::channel_create() else { return 2 };
+    let Ok((disk_look_in, disk_look_out)) = taaj::channel_create() else { return 2 };
     if disk.is_none() {
         // No disk: no one will ever answer, so say so at once - a
         // client's send fails with PeerClosed instead of waiting forever.
-        let _ = taaj::close(disk_in);
+        let _ = (taaj::close(disk_in), taaj::close(disk_look_in));
     }
     let [disk_ports, disk_dma, disk_interrupt] = disk.map_or([0; 3], |(_, handles, _)| handles);
 
@@ -176,6 +179,8 @@ fn main() -> i64 {
         Grant { handle: disk_in, rights: RECEIVE },       // 15: requests, for blk
         Grant { handle: disk_out, rights: SEND },         // 16: requests, to blk
         Grant { handle: disk_interrupt, rights: RECEIVE }, // 17: its interrupt
+        Grant { handle: disk_look_in, rights: RECEIVE },  // 18: read-only requests, for blk
+        Grant { handle: disk_look_out, rights: SEND },    // 19: read-only requests, to blk
     ];
     debug_assert!(grants.iter().all(|g| g.rights & DUPLICATE == 0));
 
@@ -190,19 +195,19 @@ fn main() -> i64 {
             restart_count: 0,
             given_up: framebuffer.is_none(),
         },
-        Service { name: "fs", grants: &[10], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
+        Service { name: "fs", grants: &[10, 16], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
         Service {
             name: "blk",
             grants: match disk {
-                Some((_, _, 3)) => &[12, 13, 14, 15, 17],
-                _ => &[12, 13, 14, 15], // no MSI-X: the driver polls
+                Some((_, _, 3)) => &[12, 13, 14, 15, 18, 17],
+                _ => &[12, 13, 14, 15, 18], // no MSI-X: the driver polls
             },
             process: 0,
             restarts: [0; MAX_RESTARTS],
             restart_count: 0,
             given_up: disk.is_none(),
         },
-        Service { name: "shell", grants: &[4, 7, 8, 9, 11, 16], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
+        Service { name: "shell", grants: &[4, 7, 8, 9, 11, 19], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
         Service { name: "kbd", grants: &[0, 1, 2, 3], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
     ];
     let launch = |service: &Service| {

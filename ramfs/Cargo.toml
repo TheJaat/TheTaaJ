@@ -1,9 +1,0 @@
-[package]
-name = "ramfs"
-version = "0.1.0"
-edition = "2021"
-description = "Files in memory, and the protocol of TheTaaJ's file service"
-publish = false
-
-[dependencies]
-abi = { path = "../abi" }

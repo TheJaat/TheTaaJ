@@ -7,8 +7,13 @@ name = "abi"
 version = "0.1.0"
 
 [[package]]
-name = "ramfs"
+name = "fileserver"
 version = "0.1.0"
 dependencies = [
  "abi",
+ "taajfs",
 ]
+
+[[package]]
+name = "taajfs"
+version = "0.1.0"

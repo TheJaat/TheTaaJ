@@ -45,11 +45,14 @@ fi
 if [ -n "${DISK:-}" ]; then
     grep -q "\[pci\] .* virtio block device: .* handed to init" "$LOG" || fail "the kernel did not offer the disk"
     grep -q "\[blk\] virtio disk" "$LOG"           || fail "the disk driver did not start"
-    if [ -n "${DISK_WRITTEN:-}" ]; then
-        # Proof the write reached the disk itself, not just a cache: the
-        # image file, after QEMU is gone.
-        dd if="$DISK" bs=512 skip=5 count=1 2>/dev/null | grep -qa "$DISK_WRITTEN" \
-            || fail "\"$DISK_WRITTEN\" is not in sector 5 of the disk image"
+    if [ -n "${TFSTOOL:-}" ]; then
+        # Proof that files reached the disk itself, in a form another
+        # implementation of TaajFS reads: the host tool, on the image,
+        # after QEMU is gone.
+        [ "$("$TFSTOOL" get "$DISK" saved 2>&1)" = "kept" ] \
+            || fail "tfstool does not find \"kept\" in the file \"saved\" on the disk"
+        ! "$TFSTOOL" get "$DISK" notes > /dev/null 2>&1 || fail "the removed file \"notes\" is still on the disk"
+        "$TFSTOOL" dump "$DISK" > "$LOG.dump" || fail "tfstool cannot read the volume the OS left"
     fi
 fi
 if [ -n "${EXPECT:-}" ]; then

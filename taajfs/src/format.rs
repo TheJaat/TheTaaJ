@@ -10,6 +10,9 @@
 //! Nothing in this file touches a device. It only converts between
 //! bytes and values, which is what makes it easy to test.
 
+use alloc::string::String;
+use alloc::vec::Vec;
+
 /// "JAFS" when read as bytes on disk.
 pub const MAGIC: u32 = 0x5346_414A;
 pub const VERSION: u32 = 1;
