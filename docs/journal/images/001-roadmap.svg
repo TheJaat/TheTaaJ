@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 210" width="900" height="210" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <rect x="0" y="0" width="900" height="210" fill="#ffffff"/>
+
+  <line x1="55" y1="50" x2="846" y2="50" stroke="#cbd5e1" stroke-width="4" stroke-linecap="round"/>
+  <line x1="55" y1="50" x2="168" y2="50" stroke="#2563eb" stroke-width="4" stroke-linecap="round" stroke-dasharray="6 5"/>
+
+  <g text-anchor="middle">
+    <!-- 0 -->
+    <circle cx="55" cy="50" r="16" fill="#2563eb"/>
+    <text x="55" y="55" font-size="13" font-weight="700" fill="#ffffff">0</text>
+    <text x="55" y="94" font-size="13" font-weight="600" fill="#1f2937">Foundations</text>
+    <text x="55" y="113" font-size="11.5" fill="#4b5563">boot · IPC · drivers</text>
+    <text x="55" y="129" font-size="11.5" fill="#4b5563">two filesystems</text>
+    <text x="55" y="152" font-size="11" font-weight="600" fill="#2563eb">done · 32-bit</text>
+
+    <!-- 1 -->
+    <circle cx="168" cy="50" r="16" fill="#ffffff" stroke="#2563eb" stroke-width="3"/>
+    <text x="168" y="55" font-size="13" font-weight="700" fill="#2563eb">1</text>
+    <text x="168" y="94" font-size="13" font-weight="600" fill="#1f2937">New base</text>
+    <text x="168" y="113" font-size="11.5" fill="#4b5563">x86_64 · BIOS + UEFI</text>
+    <text x="168" y="129" font-size="11.5" fill="#4b5563">Rust kernel</text>
+    <text x="168" y="152" font-size="11" font-weight="600" fill="#2563eb">next</text>
+
+    <!-- 2 -->
+    <circle cx="281" cy="50" r="16" fill="#ffffff" stroke="#94a3b8" stroke-width="3"/>
+    <text x="281" y="55" font-size="13" font-weight="700" fill="#64748b">2</text>
+    <text x="281" y="94" font-size="13" font-weight="600" fill="#1f2937">Usable system</text>
+    <text x="281" y="113" font-size="11.5" fill="#4b5563">VFS · ELF · libc</text>
+    <text x="281" y="129" font-size="11.5" fill="#4b5563">pipes · SMP</text>
+
+    <!-- 3 -->
+    <circle cx="394" cy="50" r="16" fill="#ffffff" stroke="#94a3b8" stroke-width="3"/>
+    <text x="394" y="55" font-size="13" font-weight="700" fill="#64748b">3</text>
+    <text x="394" y="94" font-size="13" font-weight="600" fill="#1f2937">Portable</text>
+    <text x="394" y="113" font-size="11.5" fill="#4b5563">AArch64, then</text>
+    <text x="394" y="129" font-size="11.5" fill="#4b5563">RISC-V · CI</text>
+
+    <!-- 4 -->
+    <circle cx="507" cy="50" r="16" fill="#ffffff" stroke="#94a3b8" stroke-width="3"/>
+    <text x="507" y="55" font-size="13" font-weight="700" fill="#64748b">4</text>
+    <text x="507" y="94" font-size="13" font-weight="600" fill="#1f2937">Connected</text>
+    <text x="507" y="113" font-size="11.5" fill="#4b5563">NIC · TCP/IP</text>
+    <text x="507" y="129" font-size="11.5" fill="#4b5563">serve thejat.in</text>
+
+    <!-- 5 -->
+    <circle cx="620" cy="50" r="16" fill="#ffffff" stroke="#94a3b8" stroke-width="3"/>
+    <text x="620" y="55" font-size="13" font-weight="700" fill="#64748b">5</text>
+    <text x="620" y="94" font-size="13" font-weight="600" fill="#1f2937">Desktop</text>
+    <text x="620" y="113" font-size="11.5" fill="#4b5563">window server</text>
+    <text x="620" y="129" font-size="11.5" fill="#4b5563">toolkit · apps</text>
+
+    <!-- 6 -->
+    <circle cx="733" cy="50" r="16" fill="#ffffff" stroke="#94a3b8" stroke-width="3"/>
+    <text x="733" y="55" font-size="13" font-weight="700" fill="#64748b">6</text>
+    <text x="733" y="94" font-size="13" font-weight="600" fill="#1f2937">Self-hosting</text>
+    <text x="733" y="113" font-size="11.5" fill="#4b5563">port a compiler</text>
+    <text x="733" y="129" font-size="11.5" fill="#4b5563">builds itself</text>
+
+    <!-- 7 -->
+    <circle cx="846" cy="50" r="16" fill="#ffffff" stroke="#94a3b8" stroke-width="3"/>
+    <text x="846" y="55" font-size="13" font-weight="700" fill="#64748b">7</text>
+    <text x="846" y="94" font-size="13" font-weight="600" fill="#1f2937">Daily driver</text>
+    <text x="846" y="113" font-size="11.5" fill="#4b5563">real PCs · NVMe</text>
+    <text x="846" y="129" font-size="11.5" fill="#4b5563">USB · power</text>
+  </g>
+
+  <text x="450" y="192" text-anchor="middle" font-size="11.5" fill="#6b7280">QEMU, VMware and VirtualBox are tested at every stage — real hardware is not saved for the end</text>
+</svg>

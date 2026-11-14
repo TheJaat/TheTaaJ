@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 430" width="800" height="430" font-family="system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#6b7280"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="800" height="430" fill="#ffffff"/>
+
+  <!-- Loaders -->
+  <rect x="40" y="20" width="226" height="72" rx="8" fill="#f3f4f6" stroke="#6b7280"/>
+  <text x="153" y="46" text-anchor="middle" font-size="15" font-weight="600" fill="#1f2937">BIOS loader</text>
+  <text x="153" y="66" text-anchor="middle" font-size="12.5" fill="#4b5563">x86_64</text>
+  <text x="153" y="83" text-anchor="middle" font-size="12" fill="#6b7280">real mode → long mode</text>
+
+  <rect x="287" y="20" width="226" height="72" rx="8" fill="#f3f4f6" stroke="#6b7280"/>
+  <text x="400" y="46" text-anchor="middle" font-size="15" font-weight="600" fill="#1f2937">UEFI loader</text>
+  <text x="400" y="66" text-anchor="middle" font-size="12.5" fill="#4b5563">x86_64 · AArch64</text>
+  <text x="400" y="83" text-anchor="middle" font-size="12" fill="#6b7280">GOP · ExitBootServices</text>
+
+  <rect x="534" y="20" width="226" height="72" rx="8" fill="#f3f4f6" stroke="#6b7280"/>
+  <text x="647" y="46" text-anchor="middle" font-size="15" font-weight="600" fill="#1f2937">U-Boot / firmware</text>
+  <text x="647" y="66" text-anchor="middle" font-size="12.5" fill="#4b5563">AArch64 · RISC-V</text>
+  <text x="647" y="83" text-anchor="middle" font-size="12" fill="#6b7280">Device Tree from firmware</text>
+
+  <!-- Arrows into handoff -->
+  <line x1="153" y1="92" x2="300" y2="138" stroke="#6b7280" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="400" y1="92" x2="400" y2="138" stroke="#6b7280" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="647" y1="92" x2="500" y2="138" stroke="#6b7280" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Handoff structure -->
+  <rect x="200" y="142" width="400" height="180" rx="8" fill="#fef3c7" stroke="#b45309" stroke-width="1.5"/>
+  <text x="400" y="170" text-anchor="middle" font-size="16" font-weight="600" fill="#78350f">TaajBootInfo</text>
+  <line x1="220" y1="182" x2="580" y2="182" stroke="#d97706" stroke-width="1"/>
+  <g font-size="13" fill="#78350f">
+    <text x="232" y="204">• memory map</text>
+    <text x="232" y="226">• framebuffer — address, size, pixel format</text>
+    <text x="232" y="248">• ACPI RSDP or Device Tree pointer</text>
+    <text x="232" y="270">• where the kernel image was loaded</text>
+    <text x="232" y="292">• ramdisk — location and size</text>
+    <text x="232" y="314">• boot command line</text>
+  </g>
+
+  <line x1="400" y1="322" x2="400" y2="350" stroke="#6b7280" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Kernel -->
+  <rect x="230" y="354" width="340" height="60" rx="8" fill="#dbeafe" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="400" y="380" text-anchor="middle" font-size="15" font-weight="600" fill="#1e3a8a" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace">kernel_main(&amp;boot_info)</text>
+  <text x="400" y="401" text-anchor="middle" font-size="12.5" fill="#1e40af">same entry, however it was booted</text>
+</svg>
