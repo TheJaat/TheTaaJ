@@ -2,7 +2,8 @@
 BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
-.PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck
+.PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
+        kernel64 iso64 run64 boot64-test
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
@@ -148,6 +149,48 @@ run: iso
 		-drive file=$(DISK_IMG),format=raw,if=ide,index=0,media=disk \
 		-drive file=$(TFS_IMG),format=raw,if=ide,index=1,media=disk \
 		-serial stdio
+
+# ---- the 64-bit kernel (Era 1) ---------------------------------------
+#
+# The same stage1/stage2 boot it: stage2 reads the ELF class and takes the
+# long-mode path for an ELF64 kernel. The 32-bit system above is unchanged
+# and stays the reference.
+
+KERNEL64_DIR = kernel64
+KERNEL64_ELF = $(KERNEL64_DIR)/target/x86_64-unknown-none/release/kernel64
+ISO64_DIR    = $(BUILD_DIR)/iso64
+ISO64_IMG    = $(BUILD_DIR)/image64.iso
+SERIAL64_LOG = $(BUILD_DIR)/serial64.log
+
+kernel64:
+	@echo "Building the 64-bit kernel..."
+	cd $(KERNEL64_DIR) && cargo build --release
+
+# The ISO gets a copy without debug info: stage2 reads the whole file
+# through a 1 MiB staging window, and the symbols stay in the original.
+iso64: build-bootloader kernel64
+	@echo "Creating the 64-bit ISO image..."
+	rm -rf $(ISO64_DIR)
+	mkdir -p $(ISO64_DIR)/kernel
+	cp $(STAGE1_BIN) $(STAGE2_BIN) $(ISO64_DIR)/
+	strip --strip-debug -o $(ISO64_DIR)/kernel/kernel.elf $(KERNEL64_ELF)
+	xorriso -as mkisofs -R -J -b stage1.bin -iso-level 3 -no-emul-boot \
+		-boot-load-size 4 -o $(ISO64_IMG) $(ISO64_DIR) 2>/dev/null
+
+run64: iso64
+	qemu-system-x86_64 -m 512M -cdrom $(ISO64_IMG) -boot d -serial stdio
+
+# Boots the 64-bit kernel headless and checks what it printed. A start on
+# the "boot every architecture on every commit" rule from the roadmap.
+boot64-test: iso64
+	@rm -f $(SERIAL64_LOG)
+	-timeout 20 qemu-system-x86_64 -m 512M -cdrom $(ISO64_IMG) -boot d \
+		-display none -no-reboot -serial file:$(SERIAL64_LOG)
+	@grep -q "Hello from TheTaaJ" $(SERIAL64_LOG) || { echo "FAIL: no greeting"; cat $(SERIAL64_LOG); exit 1; }
+	@grep -q "Nothing more to do yet" $(SERIAL64_LOG) || { echo "FAIL: did not finish"; cat $(SERIAL64_LOG); exit 1; }
+	@! grep -q "KERNEL PANIC" $(SERIAL64_LOG) || { echo "FAIL: panic"; cat $(SERIAL64_LOG); exit 1; }
+	@cat $(SERIAL64_LOG)
+	@echo "boot64-test passed"
 
 # Clean everything
 clean:

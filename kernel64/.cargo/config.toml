@@ -1,0 +1,17 @@
+[build]
+# x86_64-unknown-none: 64-bit x86 with no operating system underneath.
+# It already disables the red zone (an interrupt would trample it) and
+# SSE (no FPU state is saved on a context switch yet), and uses
+# panic=abort.
+target = "x86_64-unknown-none"
+
+[target.x86_64-unknown-none]
+rustflags = [
+    # The kernel is linked at a fixed high address and loaded exactly
+    # there; it is not position-independent.
+    "-C", "relocation-model=static",
+    # "kernel" code model: all code and data live in the top 2 GiB of the
+    # address space, so addresses fit in sign-extended 32-bit values.
+    # That is what the -2 GiB link address in linker.ld relies on.
+    "-C", "code-model=kernel",
+]

@@ -1,0 +1,7 @@
+# Pins the toolchain for this directory. rustup reads this file and, the
+# first time cargo runs here, installs the bare-metal target below - so a
+# fresh checkout needs no manual `rustup target add`.
+[toolchain]
+channel = "stable"
+targets = ["x86_64-unknown-none"]
+profile = "minimal"

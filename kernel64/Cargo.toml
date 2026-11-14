@@ -1,0 +1,25 @@
+[package]
+name = "kernel64"
+version = "0.1.0"
+edition = "2021"
+description = "The 64-bit TheTaaJ kernel"
+publish = false
+
+[[bin]]
+name = "kernel64"
+path = "src/main.rs"
+# A kernel has no test harness to run its tests in (yet), and `cargo
+# test` would try to build one against `std`.
+test = false
+bench = false
+
+[dependencies]
+# None. Every line of the kernel is ours to read.
+
+# No unwinding: there is nothing to unwind into. A panic prints and halts.
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+debug = true    # keep symbols - addresses in a fault mean nothing without them

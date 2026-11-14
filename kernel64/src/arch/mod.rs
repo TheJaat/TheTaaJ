@@ -1,0 +1,11 @@
+//! The architecture layer.
+//!
+//! The rest of the kernel calls only what is re-exported here, never an
+//! arch module directly. Adding AArch64 means adding `arch/aarch64/`
+//! with the same functions - and nothing outside `arch/` changes.
+
+#[cfg(target_arch = "x86_64")]
+mod x86_64;
+
+#[cfg(target_arch = "x86_64")]
+pub use self::x86_64::{console_write, halt_forever, init_early_console};
