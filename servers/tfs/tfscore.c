@@ -269,7 +269,7 @@ static int TfsCommit(TfsVolume_t *V, unsigned NewRoot)
     TfsSuper_t *S = (TfsSuper_t*)Block;
     int Target = (V->SuperSlot == TFS_SUPER_A) ? TFS_SUPER_B : TFS_SUPER_A;
 
-    Zero(Block, sizeof(Block));
+    Zero(Block, TFS_BLOCK_SIZE);     /* Block is a pointer: sizeof would be 4 */
     *S = V->Super;
     S->RootDir    = NewRoot;
     S->Generation = V->Super.Generation + 1;
@@ -526,7 +526,7 @@ int TfsCreate(TfsVolume_t *V, const char *Name)
     InodeBlock = TfsAllocate(V);
     if (InodeBlock == 0) { return TFS_ERR_FULL; }
 
-    Zero(Block, sizeof(Block));
+    Zero(Block, TFS_BLOCK_SIZE);     /* Block is a pointer: sizeof would be 4 */
     Inode->Magic = TFS_MAGIC;
     Inode->Size  = 0;
     Inode->Type  = TFS_TYPE_FILE;
