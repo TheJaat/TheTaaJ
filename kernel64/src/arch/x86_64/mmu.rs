@@ -5,18 +5,18 @@
 use core::arch::asm;
 use core::arch::x86_64::__cpuid;
 
-const EFER: u32 = 0xC000_0080;
+pub(super) const EFER: u32 = 0xC000_0080;
 const EFER_NXE: u64 = 1 << 11;
 const CR0_WP: u64 = 1 << 16;
 const CR4_PGE: u64 = 1 << 7;
 
-unsafe fn read_msr(msr: u32) -> u64 {
+pub(super) unsafe fn read_msr(msr: u32) -> u64 {
     let (low, high): (u32, u32);
     asm!("rdmsr", in("ecx") msr, out("eax") low, out("edx") high, options(nomem, nostack, preserves_flags));
     (u64::from(high) << 32) | u64::from(low)
 }
 
-unsafe fn write_msr(msr: u32, value: u64) {
+pub(super) unsafe fn write_msr(msr: u32, value: u64) {
     asm!("wrmsr", in("ecx") msr, in("eax") value as u32, in("edx") (value >> 32) as u32,
          options(nostack, preserves_flags));
 }

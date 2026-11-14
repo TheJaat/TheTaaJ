@@ -12,11 +12,14 @@
 
 use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, VecDeque};
+use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 use kernel64::sched::{Scheduler, State, Switch, ThreadId};
 
-use crate::arch::{self, context};
+use crate::arch::{self, context, mmu, syscall};
+use crate::process::Process;
 use crate::irqlock::IrqLock;
 use crate::mm::{self, KernelStack};
 use crate::interrupts;
@@ -30,8 +33,18 @@ struct Thread {
     /// Owned for its Drop, which unmaps and frees the stack once the
     /// thread is reaped. None for the boot thread (the boot stack).
     _stack: Option<KernelStack>,
+    /// The top of that stack: where the CPU lands on a system call or an
+    /// interrupt from user mode.
+    stack_top: Option<u64>,
+    /// The process whose address space this thread runs in; None for
+    /// kernel threads, which use the kernel's.
+    process: Option<Arc<Process>>,
     entry: Option<Entry>,
 }
+
+/// The address space loaded in CR3 now, to skip reloading the same one
+/// (a reload flushes the TLB).
+static ACTIVE_ROOT: AtomicU64 = AtomicU64::new(0);
 
 struct Threads {
     policy: Scheduler,
@@ -55,8 +68,17 @@ pub fn init() {
     let stack = mm::allocate_stack().expect("no stack for the idle thread");
     // SAFETY: a freshly mapped stack, nobody else's.
     let rsp = unsafe { context::initial_stack(stack.top()) };
-    let idle = Thread { name: "idle", rsp, _stack: Some(stack), entry: Some(Box::new(idle_loop)) };
-    let boot = Thread { name: "boot", rsp: 0, _stack: None, entry: None };
+    let stack_top = Some(stack.top());
+    let idle = Thread {
+        name: "idle",
+        rsp,
+        _stack: Some(stack),
+        stack_top,
+        process: None,
+        entry: Some(Box::new(idle_loop)),
+    };
+    let boot = Thread { name: "boot", rsp: 0, _stack: None, stack_top: None, process: None, entry: None };
+    ACTIVE_ROOT.store(mm::kernel_root(), Ordering::Relaxed);
 
     let mut table = BTreeMap::new();
     table.insert(IDLE, Box::new(idle));
@@ -78,10 +100,22 @@ fn with<R>(f: impl FnOnce(&mut Threads) -> R) -> R {
 
 /// Starts `f` on a new kernel thread.
 pub fn spawn(name: &'static str, f: impl FnOnce() + Send + 'static) -> ThreadId {
+    spawn_in(None, name, f)
+}
+
+/// Starts `f` on a new thread in `process`'s address space (or the
+/// kernel's, for None).
+pub fn spawn_in(
+    process: Option<Arc<Process>>,
+    name: &'static str,
+    f: impl FnOnce() + Send + 'static,
+) -> ThreadId {
     let stack = mm::allocate_stack().expect("out of kernel stacks");
     // SAFETY: a freshly mapped stack, nobody else's.
     let rsp = unsafe { context::initial_stack(stack.top()) };
-    let thread = Box::new(Thread { name, rsp, _stack: Some(stack), entry: Some(Box::new(f)) });
+    let stack_top = Some(stack.top());
+    let thread =
+        Box::new(Thread { name, rsp, _stack: Some(stack), stack_top, process, entry: Some(Box::new(f)) });
     with(|t| {
         let id = t.next_id;
         t.next_id += 1;
@@ -93,6 +127,11 @@ pub fn spawn(name: &'static str, f: impl FnOnce() + Send + 'static) -> ThreadId 
 
 pub fn current() -> ThreadId {
     with(|t| t.policy.current())
+}
+
+/// The process the running thread belongs to, if any.
+pub fn current_process() -> Option<Arc<Process>> {
+    with(|t| t.table.get(&t.policy.current()).and_then(|thread| thread.process.clone()))
 }
 
 pub fn name(id: ThreadId) -> Option<&'static str> {
@@ -149,10 +188,22 @@ fn schedule() {
     let switch = with(|t| {
         let Switch { from, to } = t.policy.pick_next()?;
         let save = &raw mut t.table.get_mut(&from).expect("current thread missing").rsp;
-        let load = t.table.get(&to).expect("next thread missing").rsp;
-        Some((save, load))
+        let next = t.table.get(&to).expect("next thread missing");
+        let root = next.process.as_ref().map_or_else(mm::kernel_root, |p| p.root());
+        Some((save, next.rsp, root, next.stack_top))
     });
-    if let Some((save, load)) = switch {
+    if let Some((save, load, root, stack_top)) = switch {
+        // The next thread's world: its kernel stack for entries from user
+        // mode, and its address space. Both are safe to change here - this
+        // code and its stack are in the kernel half, mapped in every
+        // address space.
+        if let Some(top) = stack_top {
+            syscall::set_kernel_stack(top);
+        }
+        if ACTIVE_ROOT.swap(root, Ordering::Relaxed) != root {
+            // SAFETY: a process's tables share the kernel half.
+            unsafe { mmu::activate(root) };
+        }
         // SAFETY: interrupts are off; both threads are in the table, and
         // neither record is freed while it is involved in a switch (reap
         // never frees the current thread).

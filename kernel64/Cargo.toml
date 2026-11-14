@@ -14,7 +14,9 @@ test = false
 bench = false
 
 [dependencies]
-# None. Every line of the kernel is ours to read.
+# Only our own: the system call interface, shared with user programs.
+# Every line of the kernel is ours to read.
+abi = { path = "../abi" }
 
 [features]
 # Deliberately fault after booting, to check that each protection holds

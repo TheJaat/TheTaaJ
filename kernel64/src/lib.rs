@@ -19,6 +19,7 @@ extern crate alloc;
 
 pub mod acpi;
 pub mod bootinfo;
+pub mod elf;
 pub mod input;
 pub mod memory;
 #[cfg(target_arch = "x86_64")]

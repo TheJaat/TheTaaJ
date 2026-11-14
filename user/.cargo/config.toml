@@ -1,0 +1,9 @@
+[build]
+# The same bare-metal target as the kernel: user programs have no OS
+# library underneath either - only the TheTaaJ system calls, through the
+# `taaj` runtime in src/lib.rs. Like the kernel, no SSE: the kernel does
+# not save FPU state on a switch yet.
+target = "x86_64-unknown-none"
+
+[target.x86_64-unknown-none]
+rustflags = ["-C", "relocation-model=static"]

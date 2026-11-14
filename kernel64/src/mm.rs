@@ -65,6 +65,19 @@ const HEAP_MAX: u64 = 256 * MIB;
 pub static FRAMES: IrqLock<Option<FrameAllocator>> = IrqLock::new(None);
 pub static TABLES: IrqLock<Option<PageTables>> = IrqLock::new(None);
 static NO_EXECUTE: AtomicBool = AtomicBool::new(false);
+/// Physical address of the kernel's PML4 - the address space kernel
+/// threads run in.
+static KERNEL_ROOT: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+pub fn kernel_root() -> u64 {
+    KERNEL_ROOT.load(Ordering::Relaxed)
+}
+
+/// Runs `f` with the frame allocator alone - for work on a process's
+/// page tables, which are not the kernel's.
+pub fn with_frames<R>(f: impl FnOnce(&mut FrameAllocator) -> R) -> R {
+    f(FRAMES.lock().as_mut().expect("memory not initialised"))
+}
 
 extern "C" {
     // linker.ld. Only their addresses mean anything.
@@ -230,9 +243,14 @@ pub fn init(info: &'static BootInfo, info_address: u64) -> &'static BootInfo {
     map_kernel(&mut tables, &mut frames, layout.rodata.clone(), no_execute());
     map_kernel(&mut tables, &mut frames, layout.data.clone(), Flags::WRITABLE | no_execute());
 
+    // Every process shares the kernel half by copying these PML4 slots
+    // once, so they must never change: give each one its PDPT now.
+    tables.fill_kernel_slots(&mut frames).expect("no frames for the kernel's PDPTs");
+
     // ---- 3. switch -------------------------------------------------------
 
     let root = tables.root();
+    KERNEL_ROOT.store(root.as_u64(), Ordering::Relaxed);
     // SAFETY: the new tables map the kernel's code, data and stack (the
     // boot stack is in .bss) and the direct map; nothing after the switch
     // uses an identity-mapped address - `regions` and `info` are dead.

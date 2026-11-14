@@ -150,7 +150,7 @@ pub fn timer() {
 pub fn threads() {
     // 1. Taking turns: two threads that yield after every step.
     let log = Arc::new(IrqLock::new(Vec::new()));
-    let ids: Vec<_> = [b'a', b'b']
+    let ids: Vec<_> = (*b"ab")
         .into_iter()
         .map(|tag| {
             let log = Arc::clone(&log);
@@ -218,4 +218,50 @@ pub fn threads() {
     assert_eq!(mm::stack_slots_used(), slots, "thread churn leaked stack slots");
     assert_eq!(threads::count(), 2, "only boot and idle should remain");
     kprintln!("[selftest] threads: sleep(5) took {slept} ticks; 200 threads spawned and reaped, nothing leaked");
+}
+
+/// User mode: four programs, run at once. Two follow the rules and must
+/// finish with their exit codes; two break them and must be killed -
+/// without the kernel noticing anything but a log line. Then everything
+/// they used must be back.
+pub fn user() {
+    use crate::{process, programs};
+
+    let run_all = || {
+        let programs: [(&'static str, &[u8]); 4] = [
+            ("hello", programs::HELLO),
+            ("peek", programs::PEEK),
+            ("cli", programs::CLI),
+            ("spin", programs::SPIN),
+        ];
+        let started: Vec<_> = programs
+            .iter()
+            .map(|&(name, file)| process::spawn(name, file).unwrap_or_else(|e| panic!("loading {name}: {e:?}")))
+            .collect();
+        started
+            .into_iter()
+            .map(|(process, thread)| {
+                threads::join(thread);
+                (process.name, process.exit_code())
+            })
+            .collect::<Vec<_>>()
+    };
+
+    let results = run_all();
+    let expected = [
+        ("hello", Some(42)),
+        ("peek", Some(abi::KILLED)),
+        ("cli", Some(abi::KILLED)),
+        ("spin", Some(0)),
+    ];
+    assert_eq!(results, expected, "user programs did not end as expected");
+
+    // A second round must leave memory exactly as the first did: every
+    // page of every process - code, data, stack, page tables - returned.
+    threads::yield_now(); // let the last exited thread be reaped
+    let frames = mm::with_memory(|_, f| f.free_frames());
+    assert_eq!(run_all(), expected);
+    threads::yield_now();
+    assert_eq!(mm::with_memory(|_, f| f.free_frames()), frames, "processes leaked frames");
+    kprintln!("[selftest] user: hello exited 42, spin exited 0, peek and cli were killed; 8 processes, nothing leaked");
 }

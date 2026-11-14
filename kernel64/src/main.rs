@@ -33,7 +33,10 @@ mod framebuffer;
 mod interrupts;
 mod irqlock;
 mod mm;
+mod process;
+mod programs;
 mod selftest;
+mod syscall;
 mod threads;
 
 use alloc::string::String;
@@ -93,6 +96,10 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
     // is the idle thread.
     threads::init();
     selftest::threads();
+
+    // User mode: programs in their own address spaces, in ring 3.
+    selftest::user();
+
     threads::spawn("echo", echo);
 
     match info.framebuffer() {

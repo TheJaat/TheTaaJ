@@ -1,0 +1,8 @@
+[package]
+name = "abi"
+version = "0.1.0"
+edition = "2021"
+description = "The TheTaaJ system call interface, shared by the kernel and user programs"
+publish = false
+
+[dependencies]

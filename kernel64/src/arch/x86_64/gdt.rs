@@ -21,9 +21,7 @@ use core::mem::size_of;
 /// the table later.
 pub const KERNEL_CODE: u16 = 0x08;
 pub const KERNEL_DATA: u16 = 0x10;
-#[allow(dead_code)] // used once user mode exists
 pub const USER_DATA: u16 = 0x18 | 3;
-#[allow(dead_code)]
 pub const USER_CODE: u16 = 0x20 | 3;
 pub const TSS: u16 = 0x28;
 
@@ -163,4 +161,17 @@ pub unsafe fn init() {
         data = in(reg) KERNEL_DATA as u64,
         tss = in(reg) TSS as u64,
     );
+}
+
+/// Sets the stack the CPU switches to when an interrupt or exception
+/// arrives in user mode (TSS.RSP0) - the running thread's kernel stack.
+/// User-mode RSP cannot be trusted, so the CPU never pushes onto it.
+pub fn set_kernel_stack(top: u64) {
+    // SAFETY: the TSS is only written here, with interrupts disabled (on
+    // a thread switch); the CPU reads it only when entering ring 0.
+    // `packed`: the field may be unaligned, so write it unaligned.
+    unsafe {
+        let tss = &raw mut TSS_SEGMENT;
+        core::ptr::addr_of_mut!((*tss).privilege_stacks).cast::<u64>().write_unaligned(top);
+    }
 }

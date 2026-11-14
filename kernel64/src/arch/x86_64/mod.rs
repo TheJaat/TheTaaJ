@@ -12,6 +12,7 @@ pub mod platform;
 mod port;
 mod ps2;
 mod serial;
+pub mod syscall;
 
 use core::arch::asm;
 
@@ -33,6 +34,7 @@ pub fn init_cpu() {
     unsafe {
         gdt::init();
         idt::init();
+        syscall::init();
     }
 }
 

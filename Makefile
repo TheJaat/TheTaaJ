@@ -4,7 +4,7 @@ KERNEL_DIR = kernel
 
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
         kernel64 iso64 run64 boot64-test kernel64-test fault64-test test64 \
-        uefi-loader run64-uefi boot64-uefi-test
+        uefi-loader run64-uefi boot64-uefi-test user64
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
@@ -184,7 +184,12 @@ MKFS_FAT     = /usr/sbin/mkfs.fat
 # QEMU's UEFI firmware, from the ovmf package.
 OVMF         = /usr/share/ovmf/OVMF.fd
 
-kernel64:
+# User programs come first: the kernel embeds them (kernel64/src/programs.rs).
+user64:
+	@echo "Building the user programs..."
+	cd user && cargo build --release
+
+kernel64: user64
 	@echo "Building the 64-bit kernel..."
 	cd $(KERNEL64_DIR) && cargo build --release
 
@@ -260,7 +265,7 @@ kernel64-test:
 
 # One boot per deliberate fault: unmapped read, double fault, write to
 # rodata, executing data, stack overflow. Each must be caught and named.
-fault64-test: build-bootloader
+fault64-test: build-bootloader user64
 	$(KERNEL64_DIR)/scripts/fault-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR)
 
 # Every layer: host unit tests, a normal boot (BIOS and UEFI) with its

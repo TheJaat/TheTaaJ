@@ -339,6 +339,16 @@ extern "C" fn exception_handler(frame: &mut InterruptFrame) {
         return;
     }
 
+    // From user mode (the low bits of CS are the privilege level): the
+    // program broke a rule. Kill it; the kernel carries on.
+    if frame.cs & 3 == 3 {
+        kprintln!("[process] {name} at {:#x} in user mode", frame.rip);
+        if frame.vector == PAGE_FAULT {
+            report_page_fault(frame.error_code);
+        }
+        crate::process::kill_current(name);
+    }
+
     // About to stop for good: if the fault came while the console was
     // locked, take it anyway, or the report would deadlock.
     // SAFETY: nothing runs after this handler.

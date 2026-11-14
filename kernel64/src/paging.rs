@@ -54,6 +54,11 @@ impl Flags {
     /// Instruction fetches fault. Needs EFER.NXE - without it this bit is
     /// reserved and setting it faults on every access.
     pub const NO_EXECUTE: Flags = Flags(1 << 63);
+    /// Ignored by the CPU (bits 9-11 are the OS's to use). Marks a leaf
+    /// whose frame belongs to the address space: tearing the space down
+    /// frees it. A mapping of someone else's memory - a device, shared
+    /// memory - is left without it, and its frame survives.
+    pub const OWNED: Flags = Flags(1 << 9);
 
     pub const fn bits(self) -> u64 {
         self.0
@@ -89,6 +94,7 @@ impl fmt::Debug for Flags {
             (Flags::NO_CACHE, "PCD"),
             (Flags::HUGE, "H"),
             (Flags::GLOBAL, "G"),
+            (Flags::OWNED, "OWN"),
             (Flags::NO_EXECUTE, "NX"),
         ];
         let mut first = true;
@@ -148,13 +154,21 @@ pub enum MapError {
 /// their own.
 pub trait FrameSource {
     fn allocate_frame(&mut self) -> Option<PhysAddr>;
+    fn free_frame(&mut self, frame: PhysAddr);
 }
 
 impl FrameSource for FrameAllocator {
     fn allocate_frame(&mut self) -> Option<PhysAddr> {
         self.allocate()
     }
+    fn free_frame(&mut self, frame: PhysAddr) {
+        self.free(frame);
+    }
 }
+
+/// PML4 slots 256-511 map the upper half - the kernel. Every address
+/// space shares them.
+const KERNEL_SLOTS: core::ops::Range<usize> = 256..512;
 
 /// What a virtual address maps to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -190,6 +204,71 @@ impl PageTables {
         let tables = PageTables { root, offset };
         tables.table(root).fill(0);
         Some(tables)
+    }
+
+    /// A new address space for a process: an empty lower half, and the
+    /// same upper half as `kernel` - the very same PDPTs, so the kernel is
+    /// mapped identically everywhere and a change to the kernel's
+    /// mappings below PML4 level shows up in every process at once.
+    ///
+    /// That only holds if `kernel` never adds a new PML4 slot later;
+    /// `fill_kernel_slots` makes sure it never needs to.
+    ///
+    /// # Safety
+    /// As for `new`.
+    pub unsafe fn new_user(
+        frames: &mut impl FrameSource,
+        offset: u64,
+        kernel: &PageTables,
+    ) -> Option<PageTables> {
+        let tables = PageTables::new(frames, offset)?;
+        let source = kernel.table(kernel.root);
+        let target = tables.table(tables.root);
+        target[KERNEL_SLOTS].copy_from_slice(&source[KERNEL_SLOTS]);
+        Some(tables)
+    }
+
+    /// Gives every empty upper-half PML4 slot a (empty) PDPT, so the
+    /// kernel's PML4 never changes again - which is what lets
+    /// `new_user` copy it once. Costs one frame per empty slot.
+    pub fn fill_kernel_slots(&mut self, frames: &mut impl FrameSource) -> Result<(), MapError> {
+        let root = self.table(self.root);
+        for slot in KERNEL_SLOTS {
+            self.next_table(root, slot, false, frames)?;
+        }
+        Ok(())
+    }
+
+    /// Frees the lower half: every page table, and every OWNED frame.
+    /// The upper half belongs to the kernel and is left alone.
+    pub fn destroy(self, frames: &mut impl FrameSource) {
+        let root = self.table(self.root);
+        for entry in &mut root[..KERNEL_SLOTS.start] {
+            if *entry & Flags::PRESENT.bits() != 0 {
+                self.free_table(PhysAddr::new(*entry & ADDRESS_MASK), 3, frames);
+                *entry = 0;
+            }
+        }
+        frames.free_frame(self.root);
+    }
+
+    /// Frees the table at `frame` (at `level`: 3 = PDPT ... 1 = PT), what
+    /// it points to, and the owned frames below it.
+    fn free_table(&self, frame: PhysAddr, level: u32, frames: &mut impl FrameSource) {
+        let table = self.table(frame);
+        for &entry in table.iter() {
+            if entry & Flags::PRESENT.bits() == 0 {
+                continue;
+            }
+            let leaf = level == 1 || entry & Flags::HUGE.bits() != 0;
+            if !leaf {
+                self.free_table(PhysAddr::new(entry & ADDRESS_MASK), level - 1, frames);
+            } else if entry & Flags::OWNED.bits() != 0 {
+                // Owned huge pages are not used; a 4 KiB frame each.
+                frames.free_frame(PhysAddr::new(entry & ADDRESS_MASK));
+            }
+        }
+        frames.free_frame(frame);
     }
 
     /// The physical address of the PML4 - what goes in CR3.
@@ -353,6 +432,7 @@ mod tests {
         base: u64,
         next: u64,
         limit: u64,
+        freed: Vec<PhysAddr>,
     }
 
     #[repr(C, align(4096))]
@@ -362,21 +442,29 @@ mod tests {
         fn new(pages: usize) -> FakeMemory {
             let storage: Vec<Page> = (0..pages).map(|_| Page([0xAA; 4096])).collect();
             let base = storage.as_ptr() as u64;
-            FakeMemory { _pages: storage, base, next: PAGE_SIZE, limit: pages as u64 * PAGE_SIZE }
+            FakeMemory { _pages: storage, base, next: PAGE_SIZE, limit: pages as u64 * PAGE_SIZE, freed: Vec::new() }
         }
+        /// Frames handed out and not returned.
         fn used(&self) -> u64 {
-            self.next / PAGE_SIZE - 1
+            self.next / PAGE_SIZE - 1 - self.freed.len() as u64
         }
     }
 
     impl FrameSource for FakeMemory {
         fn allocate_frame(&mut self) -> Option<PhysAddr> {
+            if let Some(frame) = self.freed.pop() {
+                return Some(frame);
+            }
             if self.next >= self.limit {
                 return None;
             }
             let frame = PhysAddr::new(self.next);
             self.next += PAGE_SIZE;
             Some(frame)
+        }
+        fn free_frame(&mut self, frame: PhysAddr) {
+            assert!(!self.freed.contains(&frame), "double free of {frame:?}");
+            self.freed.push(frame);
         }
     }
 
@@ -506,6 +594,56 @@ mod tests {
         assert_eq!(index(virt, 3), 510);
         assert_eq!(index(virt, 2), 0);
         assert_eq!(index(virt, 1), 256);
+    }
+
+    #[test]
+    fn processes_share_the_kernel_half_and_give_everything_back() {
+        let (mut memory, mut kernel) = setup(400);
+        kernel.fill_kernel_slots(&mut memory).unwrap();
+        let kernel_page = VirtAddr::new(0xFFFF_FFFF_8010_0000);
+        kernel.map(kernel_page, PhysAddr::new(0x10_0000), PageSize::Size4K, RW, &mut memory).unwrap();
+        let before = memory.used();
+
+        let base = memory.base;
+        // SAFETY: as in setup.
+        let mut user = unsafe { PageTables::new_user(&mut memory, base, &kernel) }.unwrap();
+        // The kernel is visible in the new space - including a mapping
+        // made after it was created, through the shared PDPTs.
+        assert!(user.translate(kernel_page).is_some());
+        let later = VirtAddr::new(0xFFFF_C000_0000_0000);
+        kernel.map(later, PhysAddr::new(0x2000), PageSize::Size4K, RW, &mut memory).unwrap();
+        assert_eq!(user.translate(later).map(|t| t.physical), Some(PhysAddr::new(0x2000)));
+        // That mapping took a PD and a PT - the kernel's, not the process's.
+        let kernel_tables_added = 2;
+
+        // A process maps its own pages, and one it does not own.
+        let owned = Flags::USER | Flags::WRITABLE | Flags::OWNED;
+        for n in 0..20 {
+            let frame = memory.allocate_frame().unwrap();
+            let virt = VirtAddr::new(0x40_0000 + n * PAGE_SIZE * 300); // spread over several PTs
+            user.map(virt, frame, PageSize::Size4K, owned, &mut memory).unwrap();
+        }
+        let device = PhysAddr::new(0xFEE0_0000);
+        user.map(VirtAddr::new(0x7000_0000), device, PageSize::Size4K, Flags::USER | Flags::WRITABLE, &mut memory)
+            .unwrap();
+        assert!(memory.used() > before + 20);
+
+        // Destroying it returns every frame it allocated - tables and
+        // owned pages - but not the device's, and leaves the kernel alone.
+        user.destroy(&mut memory);
+        assert_eq!(memory.used(), before + kernel_tables_added, "only the kernel's new tables should remain");
+        assert!(!memory.freed.contains(&device), "freed a frame the process did not own");
+        assert!(kernel.translate(kernel_page).is_some());
+    }
+
+    #[test]
+    fn filling_the_kernel_slots_is_idempotent() {
+        let (mut memory, mut kernel) = setup(400);
+        kernel.fill_kernel_slots(&mut memory).unwrap();
+        let used = memory.used();
+        kernel.fill_kernel_slots(&mut memory).unwrap();
+        assert_eq!(memory.used(), used);
+        assert_eq!(used, 1 + 256, "the root and one PDPT per upper slot");
     }
 
     #[test]
