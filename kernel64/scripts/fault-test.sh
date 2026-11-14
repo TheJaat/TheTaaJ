@@ -47,9 +47,7 @@ for test in $TESTS; do
     xorriso -as mkisofs -R -J -b stage1.bin -iso-level 3 -no-emul-boot \
         -boot-load-size 4 -o "$iso" "$iso_dir" 2>/dev/null
 
-    rm -f "$log"
-    timeout 15 qemu-system-x86_64 -m 512M -cdrom "$iso" -boot d \
-        -display none -no-reboot -serial "file:$log" || true
+    "$HERE/scripts/qemu-boot.sh" "$iso" "$log" 15
 
     if grep -qE "$pattern" "$log" && ! grep -q "\[test\] FAILED" "$log"; then
         echo "fault-$test: ok ($(grep -oE "$pattern" "$log" | head -1))"

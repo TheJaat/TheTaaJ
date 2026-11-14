@@ -188,9 +188,8 @@ run64: iso64
 # Boots the 64-bit kernel headless and checks what it printed. A start on
 # the "boot every architecture on every commit" rule from the roadmap.
 boot64-test: iso64
-	@rm -f $(SERIAL64_LOG)
-	-timeout 20 qemu-system-x86_64 -m 512M -cdrom $(ISO64_IMG) -boot d \
-		-display none -no-reboot -serial file:$(SERIAL64_LOG)
+	@echo "Booting the 64-bit kernel headless (serial log: $(SERIAL64_LOG))..."
+	@$(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(SERIAL64_LOG)
 	@grep -q "Hello from TheTaaJ" $(SERIAL64_LOG) || { echo "FAIL: no greeting"; cat $(SERIAL64_LOG); exit 1; }
 	@grep -q "resumed after the breakpoint" $(SERIAL64_LOG) || { echo "FAIL: exception path broken"; cat $(SERIAL64_LOG); exit 1; }
 	@grep -q "\[selftest\] memory: all passed" $(SERIAL64_LOG) || { echo "FAIL: memory self-test"; cat $(SERIAL64_LOG); exit 1; }
