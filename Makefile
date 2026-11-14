@@ -3,7 +3,7 @@ BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
-        kernel64 iso64 run64 boot64-test
+        kernel64 iso64 run64 boot64-test kernel64-test fault64-test test64
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
@@ -188,10 +188,28 @@ boot64-test: iso64
 		-display none -no-reboot -serial file:$(SERIAL64_LOG)
 	@grep -q "Hello from TheTaaJ" $(SERIAL64_LOG) || { echo "FAIL: no greeting"; cat $(SERIAL64_LOG); exit 1; }
 	@grep -q "resumed after the breakpoint" $(SERIAL64_LOG) || { echo "FAIL: exception path broken"; cat $(SERIAL64_LOG); exit 1; }
+	@grep -q "\[selftest\] memory: all passed" $(SERIAL64_LOG) || { echo "FAIL: memory self-test"; cat $(SERIAL64_LOG); exit 1; }
 	@grep -q "Nothing more to do yet" $(SERIAL64_LOG) || { echo "FAIL: did not finish"; cat $(SERIAL64_LOG); exit 1; }
 	@! grep -qE "KERNEL PANIC|CPU EXCEPTION" $(SERIAL64_LOG) || { echo "FAIL: panic or exception"; cat $(SERIAL64_LOG); exit 1; }
 	@cat $(SERIAL64_LOG)
 	@echo "boot64-test passed"
+
+# Unit tests of the kernel's pure logic (frames, page tables, heap,
+# locks), compiled for and run on this machine rather than in a VM.
+HOST_TRIPLE = $(shell rustc -vV | sed -n 's/^host: //p')
+
+kernel64-test:
+	cd $(KERNEL64_DIR) && cargo test --lib --target $(HOST_TRIPLE)
+
+# One boot per deliberate fault: unmapped read, double fault, write to
+# rodata, executing data, stack overflow. Each must be caught and named.
+fault64-test: build-bootloader
+	$(KERNEL64_DIR)/scripts/fault-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR)
+
+# All three layers: host unit tests, a normal boot with self-tests, and
+# the fault boots.
+test64: kernel64-test boot64-test fault64-test
+	@echo "test64: all passed"
 
 # Clean everything
 clean:

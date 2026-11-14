@@ -148,9 +148,12 @@ global_asm!(
     "    add rsp, 16", // drop the vector and error code
     "    iretq",
     "",
-    // The stubs' addresses, for building the IDT.
+    // The stubs' addresses, for building the IDT. Global, because Rust
+    // refers to it by name from code that may be compiled in a different
+    // codegen unit (object file) than this assembly.
     ".section .rodata",
     ".balign 8",
+    ".global isr_stub_table",
     "isr_stub_table:",
     ".irp n, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31",
     "    .quad isr_stub_\\n",
@@ -269,7 +272,31 @@ const NAMES: [&str; 32] = [
 ];
 
 const BREAKPOINT: u64 = 3;
+const DOUBLE_FAULT: u64 = 8;
 const PAGE_FAULT: u64 = 14;
+
+extern "C" {
+    /// The unmapped page below the boot stack (linker.ld).
+    static __boot_stack_guard: u8;
+}
+
+fn read_cr2() -> u64 {
+    let address: u64;
+    // SAFETY: reading CR2 has no side effects.
+    unsafe { asm!("mov {}, cr2", out(reg) address, options(nomem, nostack, preserves_flags)) };
+    address
+}
+
+/// Whether the faulting address lies in the stack guard page.
+///
+/// An overflow shows up as a page fault in the guard page - and, more
+/// often, as a double fault: the CPU cannot push the page fault's frame
+/// onto the stack that just overflowed, so the double fault (on its own
+/// IST stack) is what arrives, with CR2 still naming the guard page.
+fn is_stack_overflow() -> bool {
+    let guard = &raw const __boot_stack_guard as u64;
+    (guard..guard + 4096).contains(&read_cr2())
+}
 
 /// Every exception ends up here, with the saved state.
 ///
@@ -286,6 +313,9 @@ extern "C" fn exception_handler(frame: &mut InterruptFrame) {
 
     kprintln!();
     kprintln!("*** CPU EXCEPTION {}: {name}", frame.vector);
+    if (frame.vector == PAGE_FAULT || frame.vector == DOUBLE_FAULT) && is_stack_overflow() {
+        kprintln!("    kernel stack overflow (hit the guard page at {:#x})", read_cr2());
+    }
     if frame.vector == PAGE_FAULT {
         report_page_fault(frame.error_code);
     } else if frame.error_code != 0 {
@@ -297,9 +327,7 @@ extern "C" fn exception_handler(frame: &mut InterruptFrame) {
 
 fn report_page_fault(error: u64) {
     // CR2 holds the address the CPU was trying to reach.
-    let address: u64;
-    // SAFETY: reading CR2 has no side effects.
-    unsafe { asm!("mov {}, cr2", out(reg) address, options(nomem, nostack, preserves_flags)) };
+    let address = read_cr2();
 
     let cause = if error & 1 != 0 { "protection violation" } else { "page not present" };
     let access = if error & 16 != 0 {

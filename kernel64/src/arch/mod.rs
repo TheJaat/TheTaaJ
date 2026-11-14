@@ -8,7 +8,7 @@
 mod x86_64;
 
 #[cfg(target_arch = "x86_64")]
-pub use self::x86_64::{breakpoint, console_write, halt_forever, init_cpu, init_early_console};
+pub use self::x86_64::{breakpoint, console_write, halt_forever, init_cpu, init_early_console, mmu};
 
 #[cfg(all(target_arch = "x86_64", feature = "fault-tests"))]
 pub use self::x86_64::fault_tests;

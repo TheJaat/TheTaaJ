@@ -1,15 +1,19 @@
 //! TheTaaJ - the 64-bit kernel.
 //!
-//! This is the first step of the new base: the bootloader puts the CPU
-//! in long mode and jumps here with a TaajBootInfo, and the kernel proves
-//! it can read it. Everything the 32-bit kernel does - memory management,
-//! threads, IPC, capabilities - gets rebuilt on top of this, in Rust.
+//! The bootloader puts the CPU in long mode and jumps here with a
+//! TaajBootInfo. The kernel takes over the CPU tables, then memory: its
+//! own page tables, a frame allocator and a heap. Threads, IPC and
+//! capabilities get rebuilt on top of this, in Rust.
 //!
-//! Layout:
-//!   arch/        the only code that knows which CPU it is on
-//!   console      kprint!/kprintln!, over whatever the arch provides
-//!   bootinfo     the TaajBoot protocol, mirrored from taajboot.h
-//!   framebuffer  drawing on the screen the bootloader set up
+//! Two crates share this directory:
+//!   lib.rs (kernel64::)  pure logic - boot info, frames, page tables,
+//!                        heap, locks - tested on the host by `cargo test`
+//!   main.rs (this)       the kernel proper:
+//!     arch/        the only code that knows which CPU it is on
+//!     console      kprint!/kprintln!, over whatever the arch provides
+//!     mm           memory management wired to the real machine
+//!     selftest     checks that wiring at every boot
+//!     framebuffer  drawing on the screen the bootloader set up
 
 // No standard library: there is no OS underneath to provide one. `core`
 // (types, traits, formatting) is still available - it needs nothing.
@@ -18,14 +22,18 @@
 // arch/x86_64/entry.rs, which the linker script names.
 #![no_main]
 
+// Box, Vec, String and friends - backed by the heap in mm.rs.
+extern crate alloc;
+
 #[macro_use]
 mod console; // first, so its macros are visible in every later module
 
 mod arch;
-mod bootinfo;
 mod framebuffer;
+mod mm;
+mod selftest;
 
-use bootinfo::BootInfo;
+use kernel64::bootinfo::BootInfo;
 
 /// The first Rust code to run, called by `_start` with the physical
 /// address of the TaajBootInfo (in RDI, per the C calling convention).
@@ -48,8 +56,7 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
 
     // SAFETY: the TaajBoot protocol guarantees RDI held the structure's
     // physical address, and that the first 4 GiB are identity-mapped -
-    // so that address is also a valid pointer, for as long as the
-    // kernel keeps the loader's page tables.
+    // which the physical offset (still 0) reflects.
     let info = match unsafe { BootInfo::from_physical(boot_info_address) } {
         Ok(info) => info,
         Err(error) => panic!("boot info at {boot_info_address:#x} is unusable: {error}"),
@@ -57,15 +64,22 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
 
     report(info);
 
+    // Off the loader's page tables and onto the kernel's own. `info` is
+    // re-read through the direct map; the old reference is gone.
+    kprintln!();
+    let info = mm::init(info, boot_info_address);
+
+    selftest::run();
+
     match info.framebuffer() {
         Some(fb) if framebuffer::paint_welcome(fb) => kprintln!("framebuffer: painted"),
         Some(_) => kprintln!("framebuffer: unsupported pixel format, left alone"),
         None => kprintln!("framebuffer: none"),
     }
 
-    // Only in a build with `--features fault-tests` (a page fault) or
-    // `--features double-fault-test`: proves the handlers report real
-    // faults. Once there is a kernel command line, this can move there.
+    // Only in a build with one of the `fault-*` features: proves each
+    // protection holds and is reported. Once there is a kernel command
+    // line, this can move there.
     #[cfg(feature = "fault-tests")]
     run_fault_test();
 
@@ -76,14 +90,31 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
 
 #[cfg(feature = "fault-tests")]
 fn run_fault_test() {
+    use arch::fault_tests as test;
     kprintln!();
-    if cfg!(feature = "double-fault-test") {
+    if cfg!(feature = "fault-double") {
         kprintln!("[test] forcing a double fault...");
-        arch::fault_tests::double_fault();
+        test::double_fault();
     }
-    kprintln!("[test] forcing a page fault...");
-    let value = arch::fault_tests::page_fault();
-    kprintln!("[test] FAILED: read {value:#x} from unmapped memory");
+    if cfg!(feature = "fault-rodata") {
+        kprintln!("[test] writing to read-only data...");
+        test::write_rodata();
+    }
+    if cfg!(feature = "fault-nx") {
+        kprintln!("[test] executing data...");
+        test::execute_data();
+    }
+    if cfg!(feature = "fault-stack") {
+        kprintln!("[test] overflowing the boot stack...");
+        let depth = test::overflow_stack(0);
+        kprintln!("[test] FAILED: recursion returned {depth}");
+    }
+    if cfg!(feature = "fault-page") {
+        kprintln!("[test] forcing a page fault...");
+        let value = test::page_fault();
+        kprintln!("[test] FAILED: read {value:#x} from unmapped memory");
+    }
+    kprintln!("[test] FAILED: the fault did not happen");
 }
 
 /// Prints everything the bootloader told us.

@@ -9,6 +9,14 @@
 use core::ffi::CStr;
 use core::fmt;
 
+use crate::memory::addr::{phys_to_virt, PhysAddr};
+
+/// The boot info's addresses are physical; this is where the kernel can
+/// read them right now (identity map at first, the direct map later).
+fn reach<T>(address: u64) -> *const T {
+    phys_to_virt(PhysAddr::new(address)).as_ptr()
+}
+
 pub const MAGIC: u64 = 0x544F_4F42_4A41_4154; // "TAAJBOOT"
 pub const VERSION: u32 = 1;
 
@@ -117,15 +125,17 @@ impl fmt::Display for BootInfoError {
 }
 
 impl BootInfo {
-    /// Checks and borrows the structure at `address`.
+    /// Checks and borrows the structure at physical `address`.
     ///
-    /// The returned reference is `'static` - it lives for the rest of
-    /// the kernel's life - because the loader's memory below 1 MiB is
-    /// never reused while these page tables are in place.
+    /// The returned reference is `'static` because the loader's memory
+    /// below 1 MiB is never reused - but it is only valid while the
+    /// current physical offset holds. After the kernel switches to its
+    /// own page tables, read it again.
     ///
     /// # Safety
-    /// `address` must be identity-mapped and, if it holds the magic
-    /// number, point to a TaajBootInfo the loader filled in.
+    /// `address` must be reachable through the current physical offset
+    /// and, if it holds the magic number, be a TaajBootInfo the loader
+    /// filled in.
     pub unsafe fn from_physical(address: u64) -> Result<&'static BootInfo, BootInfoError> {
         if address == 0 {
             return Err(BootInfoError::Null);
@@ -135,7 +145,7 @@ impl BootInfo {
         }
 
         // Check the header before trusting anything after it.
-        let info = &*(address as *const BootInfo);
+        let info = &*reach::<BootInfo>(address);
         if info.magic != MAGIC {
             return Err(BootInfoError::BadMagic(info.magic));
         }
@@ -161,11 +171,11 @@ impl BootInfo {
         if self.memory_map == 0 || self.memory_map_count == 0 {
             return &[];
         }
-        // SAFETY: the loader wrote `memory_map_count` regions at this
-        // identity-mapped address, below 1 MiB, which is never reused.
+        // SAFETY: the loader wrote `memory_map_count` regions there,
+        // below 1 MiB, which is never reused.
         unsafe {
             core::slice::from_raw_parts(
-                self.memory_map as *const MemoryRegion,
+                reach::<MemoryRegion>(self.memory_map),
                 self.memory_map_count as usize,
             )
         }
@@ -192,7 +202,7 @@ unsafe fn c_string(address: u64) -> Option<&'static str> {
     if address == 0 {
         return None;
     }
-    CStr::from_ptr(address as *const core::ffi::c_char).to_str().ok()
+    CStr::from_ptr(reach::<core::ffi::c_char>(address)).to_str().ok()
 }
 
 // ---- layout checks --------------------------------------------------

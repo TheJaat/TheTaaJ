@@ -17,10 +17,15 @@ bench = false
 # None. Every line of the kernel is ours to read.
 
 [features]
-# Deliberately fault after booting, to check the exception handlers
-# report correctly. Never in a normal build.
-fault-tests = []
-double-fault-test = ["fault-tests"]
+# Deliberately fault after booting, to check that each protection holds
+# and each handler reports it correctly. Never in a normal build; `make
+# fault64-test` builds and boots each in turn.
+fault-tests = []                    # (internal: the shared test code)
+fault-page = ["fault-tests"]        # read unmapped memory
+fault-double = ["fault-tests"]      # an exception with no usable stack
+fault-rodata = ["fault-tests"]      # write to read-only data
+fault-nx = ["fault-tests"]          # execute data
+fault-stack = ["fault-tests"]       # overflow the boot stack
 
 # No unwinding: there is nothing to unwind into. A panic prints and halts.
 [profile.dev]

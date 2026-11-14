@@ -4,7 +4,8 @@
 //! For now this only proves the TaajBootInfo describes it correctly, by
 //! painting something recognisable. A real console comes later.
 
-use crate::bootinfo::Framebuffer;
+use kernel64::bootinfo::Framebuffer;
+use kernel64::memory::addr::{phys_to_virt, PhysAddr};
 
 /// Builds a pixel value from 8-bit red, green and blue, placing each
 /// channel where *this* framebuffer wants it. Hard-coding 0x00RRGGBB
@@ -27,7 +28,7 @@ pub fn paint_welcome(fb: &Framebuffer) -> bool {
         return false;
     }
 
-    let base = fb.address as *mut u8;
+    let base = phys_to_virt(PhysAddr::new(fb.address)).as_mut_ptr::<u8>();
     let band = fb.height / 3..fb.height / 3 + fb.height / 12;
 
     for y in 0..fb.height {
@@ -39,7 +40,7 @@ pub fn paint_welcome(fb: &Framebuffer) -> bool {
             pixel(fb, 0x10, 0x18 + t / 6, 0x30 + t / 4)
         };
 
-        // SAFETY: the framebuffer is identity-mapped (below 4 GiB), and
+        // SAFETY: the kernel maps the framebuffer in its direct map, and
         // every write stays inside line `y`, which starts at
         // base + y * pitch and holds `width` 4-byte pixels.
         //

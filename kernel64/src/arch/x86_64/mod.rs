@@ -3,6 +3,7 @@
 mod entry;
 mod gdt;
 mod idt;
+pub mod mmu;
 mod port;
 mod serial;
 
@@ -44,13 +45,13 @@ pub fn halt_forever() -> ! {
     }
 }
 
-/// Deliberately faults, for checking the handlers. Only built with the
-/// `fault-tests` feature.
+/// Deliberately faults, for checking the handlers and the page-table
+/// protections. Only built with one of the `fault-*` features.
 #[cfg(feature = "fault-tests")]
 pub mod fault_tests {
     /// Reads an address no page table maps: a page fault.
     pub fn page_fault() -> u64 {
-        // 256 GiB - far past the 4 GiB the bootloader identity-maps.
+        // 256 GiB, in the lower half - which the kernel maps nothing in.
         let address = 0x40_0000_0000 as *const u64;
         // SAFETY: none - this is meant to fault.
         unsafe { address.read_volatile() }
@@ -63,5 +64,43 @@ pub mod fault_tests {
     pub fn double_fault() -> ! {
         // SAFETY: none - this is meant to fault, and never returns.
         unsafe { core::arch::asm!("mov rsp, 0x4000000000", "int3", options(noreturn)) }
+    }
+
+    /// An immutable static: the linker puts it in .rodata, which the
+    /// kernel maps read-only.
+    static READ_ONLY: u64 = 0x1234;
+
+    /// Writes to read-only data. Without CR0.WP the kernel would be
+    /// allowed to; with it, this is a protection fault.
+    pub fn write_rodata() {
+        let address = &raw const READ_ONLY as *mut u64;
+        // SAFETY: none - this is meant to fault.
+        unsafe { address.write_volatile(0xBAD) };
+    }
+
+    /// One `ret` instruction, stored as data in .data, which is mapped
+    /// no-execute. `#[used]` keeps it even though nothing reads it as data.
+    #[used]
+    static mut DATA: [u8; 1] = [0xC3];
+
+    /// Calls into data. Code injected into a buffer is exactly this - and
+    /// NX is what stops it running.
+    pub fn execute_data() {
+        // black_box hides where the pointer came from. Without it, LLVM
+        // sees a call to a data object, reasons about it as if it were a
+        // function, and the build fails to link.
+        let address = core::hint::black_box(&raw const DATA as *const ());
+        // SAFETY: none - this is meant to fault.
+        let function: extern "C" fn() = unsafe { core::mem::transmute(address) };
+        function();
+    }
+
+    /// Recurses until the boot stack runs into its guard page.
+    #[allow(unconditional_recursion)]
+    pub fn overflow_stack(depth: u64) -> u64 {
+        // A big frame, kept alive by black_box, so this can neither be
+        // turned into a loop nor optimised away.
+        let frame = core::hint::black_box([depth; 64]);
+        overflow_stack(depth + 1) + frame[7]
     }
 }

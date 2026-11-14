@@ -18,6 +18,9 @@ struct Stack([u8; STACK_SIZE]);
 /// `static mut` because the CPU writes to it behind Rust's back. Rust
 /// code never touches it, so none of the usual hazards of a mutable
 /// static apply; only the assembly below names it.
+///
+/// Its own section, so linker.ld can put the guard page right below it.
+#[link_section = ".bss.boot_stack"]
 static mut BOOT_STACK: Stack = Stack([0; STACK_SIZE]);
 
 global_asm!(
