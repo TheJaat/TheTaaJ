@@ -235,6 +235,29 @@ pub fn spawn(launcher: Handle, name: &str, handles: &[(Handle, u32)], argument: 
     ))
 }
 
+/// Starts a program from an ELF file in the memory object `image` -
+/// one read from the disk, say. `name` is what the process is called.
+/// The image stays with the caller; `handles` leave, as for `spawn`.
+pub fn spawn_image(
+    launcher: Handle,
+    image: Handle,
+    name: &str,
+    handles: &[(Handle, u32)],
+    argument: u64,
+) -> Result<Handle, Error> {
+    let mut pairs = [0u64; 2 * abi::SPAWN_HANDLES_MAX as usize];
+    if handles.len() > abi::SPAWN_HANDLES_MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    for (n, &(handle, rights)) in handles.iter().enumerate() {
+        pairs[2 * n] = handle;
+        pairs[2 * n + 1] = u64::from(rights);
+    }
+    let request: [u64; abi::SPAWN_REQUEST_WORDS] =
+        [name.as_ptr() as u64, name.len() as u64, pairs.as_ptr() as u64, handles.len() as u64, argument];
+    abi::decode(syscall(call::PROCESS_SPAWN_IMAGE, launcher, image, request.as_ptr() as u64))
+}
+
 /// Waits until any of `handles` is ready (a channel to receive from, a
 /// process that ended, a pending interrupt); returns its index.
 pub fn object_wait(handles: &[Handle]) -> Result<usize, Error> {

@@ -276,8 +276,28 @@ pub fn ioports_enable(handle: Handle) -> Result<u64, Error> {
     Ok(0)
 }
 
-/// Starts a program, giving it startup handles taken from the caller.
+/// Starts one of the programs built into the kernel image, giving it
+/// startup handles taken from the caller.
 pub fn spawn(launcher: Handle, name: u64, name_length: u64, pairs: u64, count: u64, argument: u64) -> Result<u64, Error> {
+    spawn_from(launcher, None, name, name_length, pairs, count, argument)
+}
+
+/// Starts a program from an ELF file in the memory object `image`. The
+/// rest of the arguments are in user memory, at `request`.
+pub fn spawn_image(launcher: Handle, image: Handle, request: u64) -> Result<u64, Error> {
+    let words = handles_from_user(request, abi::SPAWN_REQUEST_WORDS as u64)?;
+    spawn_from(launcher, Some(image), words[0], words[1], words[2], words[3], words[4])
+}
+
+fn spawn_from(
+    launcher: Handle,
+    image: Option<Handle>,
+    name: u64,
+    name_length: u64,
+    pairs: u64,
+    count: u64,
+    argument: u64,
+) -> Result<u64, Error> {
     if name_length > abi::PROGRAM_NAME_MAX || count > abi::SPAWN_HANDLES_MAX {
         return Err(Error::InvalidArgument);
     }
@@ -307,13 +327,29 @@ pub fn spawn(launcher: Handle, name: u64, name_length: u64, pairs: u64, count: u
             return Err(Error::TooManyHandles);
         }
     }
-    let (program, file) =
-        core::str::from_utf8(&name).ok().and_then(crate::programs::find).ok_or(Error::NotFound)?;
+    let name = core::str::from_utf8(&name).ok().filter(|name| !name.is_empty());
+    // The file: built in, or copied out of the caller's memory object -
+    // copied, once, so the caller cannot change it while it is checked.
+    let copied;
+    let (program, file): (&str, &[u8]) = match image {
+        None => name.and_then(crate::programs::find).ok_or(Error::NotFound)?,
+        Some(image) => {
+            let object = match process.handles.lock().get(image, Rights(rights::READ))? {
+                Object::Memory(object) => Arc::clone(object),
+                _ => return Err(Error::WrongType),
+            };
+            copied = object.contents(abi::PROGRAM_IMAGE_MAX)?;
+            (name.ok_or(Error::InvalidArgument)?, &copied)
+        }
+    };
 
-    // 2. Loading can still fail - out of memory - so it comes before the
-    //    handles move. The table is not locked meanwhile: only this
-    //    process's own thread changes it, and it is here.
-    let loaded = process::load(program, file).map_err(|_| Error::OutOfMemory)?;
+    // 2. Loading can still fail - a bad file, out of memory - so it comes
+    //    before the handles move. The table is not locked meanwhile: only
+    //    this process's own thread changes it, and it is here.
+    let loaded = process::load(program, file).map_err(|error| match error {
+        process::LoadError::Elf(_) => Error::NotExecutable,
+        process::LoadError::OutOfMemory => Error::OutOfMemory,
+    })?;
 
     // 3. Nothing fails from here on.
     let mut table = process.handles.lock();

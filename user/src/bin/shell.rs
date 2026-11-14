@@ -74,7 +74,7 @@ impl Shell {
                   \x20 uptime       time since boot\n\
                   \x20 mem          memory in use\n\
                   \x20 ps           processes\n\
-                  \x20 run NAME     run a program (hello, peek)\n\
+                  \x20 run NAME     run a program: a file, or hello, peek\n\
                   \x20 ls           list the files\n\
                   \x20 cat FILE     show a file\n\
                   \x20 write FILE TEXT    make FILE hold TEXT\n\
@@ -275,14 +275,59 @@ impl Shell {
         }
     }
 
+    /// The program file `name` from the disk, in a new memory object -
+    /// how a program gets from the file service to the kernel, which
+    /// knows nothing of files. Ok(None) if there is no such file.
+    fn program_image(&self, name: &str) -> Result<Option<Handle>, &'static str> {
+        let Some(files) = &self.files else { return Ok(None) };
+        let size = match files.size(name) {
+            Ok(size) => size,
+            Err(_) => return Ok(None), // no such file (or no file service): maybe built in
+        };
+        if size == 0 || size > abi::PROGRAM_IMAGE_MAX {
+            return Err("is empty, or too big to be a program");
+        }
+        let memory = taaj::memory_create(size).map_err(|_| "does not fit in memory")?;
+        let filled = taaj::memory_map(memory, true).map_err(|_| "does not fit in memory").and_then(|base| {
+            let mut at = 0usize;
+            let read = files.read(name, |piece| {
+                // Never past the object, even if the file grew meanwhile.
+                let n = piece.len().min(size as usize - at);
+                // SAFETY: inside the mapping, `size` bytes long.
+                unsafe { base.add(at).copy_from_nonoverlapping(piece.as_ptr(), n) };
+                at += n;
+            });
+            let _ = taaj::memory_unmap(base);
+            read.map(|_| ()).map_err(|error| error.describe())
+        });
+        match filled {
+            Ok(()) => Ok(Some(memory)),
+            Err(why) => {
+                let _ = taaj::close(memory);
+                Err(why)
+            }
+        }
+    }
+
     /// Asks init to start `name`, then waits for it - a foreground job.
+    /// A file of that name is read and sent along; otherwise init looks
+    /// among the programs built into the kernel image.
     fn run_program(&self, name: &str) {
         let Some(init) = self.init else {
             self.write(b"no channel to init: cannot run programs\n");
             return;
         };
-        let mut request = Buffer::<64>::new();
-        if write!(request, "run {name}").is_err() || taaj::send(init, request.as_bytes(), &[]).is_err() {
+        let image = match self.program_image(name) {
+            Ok(image) => image,
+            Err(why) => return say!(self, "run: {name} {why}\n"),
+        };
+        let mut request = Buffer::<96>::new();
+        let sent = write!(request, "run {name}").is_ok()
+            && taaj::send(init, request.as_bytes(), image.as_slice()).is_ok();
+        if !sent {
+            if let Some(image) = image {
+                let _ = taaj::close(image); // not sent: still ours
+            }
             self.write(b"cannot reach init\n");
             return;
         }

@@ -9,6 +9,7 @@
 //! any kernel object. When it ends - by exiting or being killed - every
 //! handle is closed at once, so whoever was talking to it finds out.
 
+use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -41,7 +42,7 @@ const RUNNING: i64 = i64::MIN;
 
 pub struct Process {
     pub pid: u64,
-    pub name: &'static str,
+    pub name: String,
     /// Physical address of the PML4 - what CR3 holds while this runs.
     root: u64,
     tables: IrqLock<Option<PageTables>>,
@@ -159,7 +160,7 @@ static NEXT_PID: AtomicU64 = AtomicU64::new(1);
 
 /// Loads and starts a program: `load`, then `start`.
 pub fn spawn(
-    name: &'static str,
+    name: &str,
     file: &[u8],
     handles: Vec<(Object, Rights)>,
 ) -> Result<(Arc<Process>, ThreadId), LoadError> {
@@ -197,8 +198,13 @@ pub static EXITS: threads::WaitQueue = threads::WaitQueue::new();
 
 /// Loads the ELF executable `file` into a new address space. Nothing
 /// runs yet; this is the step that can fail.
-pub fn load(name: &'static str, file: &[u8]) -> Result<Loaded, LoadError> {
-    let image = elf::parse(file, abi::USER_END).map_err(LoadError::Elf)?;
+///
+/// `file` may be anything - a program from the disk is whatever someone
+/// put there. `elf::parse` checks all of it; a program must also lie
+/// below the mapping area, so no segment can sit where the kernel will
+/// later place a memory object, or on the stack.
+pub fn load(name: &str, file: &[u8]) -> Result<Loaded, LoadError> {
+    let image = elf::parse(file, MAPPING_AREA.start).map_err(LoadError::Elf)?;
 
     // SAFETY: frames are reached through the direct map.
     let mut tables = mm::with_memory(|kernel, frames| unsafe {
@@ -218,7 +224,11 @@ pub fn load(name: &'static str, file: &[u8]) -> Result<Loaded, LoadError> {
                 }
             }
             let flags = flags | Flags::USER | Flags::OWNED;
-            tables.map(VirtAddr::new(virt), frame, PageSize::Size4K, flags, frames).map_err(|_| LoadError::OutOfMemory)
+            tables.map(VirtAddr::new(virt), frame, PageSize::Size4K, flags, frames).map_err(|_| {
+                // Not mapped, so `destroy` will not find it: free it here.
+                frames.free(frame);
+                LoadError::OutOfMemory
+            })
         };
 
         for segment in &image.segments {
@@ -253,7 +263,7 @@ pub fn load(name: &'static str, file: &[u8]) -> Result<Loaded, LoadError> {
 
     let process = Arc::new(Process {
         pid: NEXT_PID.fetch_add(1, Ordering::Relaxed),
-        name,
+        name: String::from(name),
         root: tables.root().as_u64(),
         tables: IrqLock::new(Some(tables)),
         exit_code: AtomicI64::new(RUNNING),
@@ -282,7 +292,7 @@ pub fn start(loaded: &Loaded, handles: Vec<(Object, Rights)>, argument: u64) -> 
     // RSP as if `_start` had just been called: 16-byte aligned, minus the
     // return address a call would have pushed.
     let stack = USER_STACK_TOP - 8;
-    threads::spawn_in(Some(Arc::clone(process)), process.name, move || {
+    threads::spawn_in(Some(Arc::clone(process)), "user", move || {
         // SAFETY: this thread runs in `process`'s address space (the
         // switch loaded its CR3 and kernel stack), which maps both.
         unsafe { syscall::enter_user(entry, stack, count, argument) }

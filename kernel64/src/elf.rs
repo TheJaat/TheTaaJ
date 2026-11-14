@@ -11,6 +11,9 @@
 //!     it at load time closes that door for every program.
 //!   - nothing below 64 KiB: page 0 stays unmapped so null pointers
 //!     fault, with a margin for null + small offsets.
+//!   - at most MEMORY_MAX in all: a few bytes of file can ask for
+//!     gigabytes of zeroed memory, and loading it would take every frame
+//!     the machine has before failing.
 //!
 //! This only parses and validates; the kernel does the copying and
 //! mapping (process.rs).
@@ -22,6 +25,8 @@ use core::ops::Range;
 pub const PAGE: u64 = 4096;
 /// The lowest address a segment may use.
 pub const LOWEST_ADDRESS: u64 = 0x1_0000;
+/// The most memory one program's segments may take, in whole pages.
+pub const MEMORY_MAX: u64 = 64 << 20;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Segment {
@@ -52,6 +57,7 @@ pub enum ElfError {
     WritableAndExecutable,
     NothingToLoad,
     EntryNotExecutable,
+    TooBig,
 }
 
 impl fmt::Display for ElfError {
@@ -105,6 +111,7 @@ pub fn parse(file: &[u8], user_end: u64) -> Result<Image, ElfError> {
     }
 
     let mut segments: Vec<Segment> = Vec::new();
+    let mut memory = 0;
     for n in 0..header_count {
         let h = &file[(header_offset + n * header_size) as usize..][..56];
         if u32_at(h, 0) != PT_LOAD {
@@ -140,6 +147,10 @@ pub fn parse(file: &[u8], user_end: u64) -> Result<Image, ElfError> {
             if pages.start < other_pages.end && other_pages.start < pages.end {
                 return Err(ElfError::SegmentsOverlap);
             }
+        }
+        memory += pages.end - pages.start;
+        if memory > MEMORY_MAX {
+            return Err(ElfError::TooBig);
         }
         segments.push(Segment {
             virtual_range: address..end,
@@ -271,6 +282,41 @@ mod tests {
             0x200,
         );
         assert_eq!(parse(&f, END), Err(ElfError::SegmentsOverlap));
+    }
+
+    #[test]
+    fn limits_the_memory_a_program_may_ask_for() {
+        // 16 bytes of file, 64 MiB and a page of zeros: refused.
+        let f = elf(0x40_0000, &[(RX, 0x1000, 0x40_0000, 0x10, 0x10), (RW, 0x1010, 0x80_0000, 0x10, MEMORY_MAX)], 0x100);
+        assert_eq!(parse(&f, END), Err(ElfError::TooBig));
+        // The limit is on the total, so many medium segments do not get around it.
+        let many: Vec<Header> = (0..5).map(|n| (RW, 0x1000, 0x1000_0000 * (n + 1), 0x10, 16 << 20)).collect();
+        assert_eq!(parse(&elf(0x1000_0000, &many, 0x100), END), Err(ElfError::TooBig));
+        let f = elf(0x40_0000, &[(RX, 0x1000, 0x40_0000, 0x10, 0x10), (RW, 0x1010, 0x80_0000, 0x10, MEMORY_MAX - 0x1000)], 0x100);
+        assert!(parse(&f, END).is_ok(), "exactly the limit is fine");
+    }
+
+    #[test]
+    fn no_damaged_file_panics() {
+        // Every truncation of a good file, and every single byte of its
+        // headers flipped: an error or a (still valid) image, never a
+        // panic - this runs in the kernel, on files from the disk.
+        let good = typical();
+        for length in 0..good.len() {
+            let _ = parse(&good[..length], END);
+        }
+        for position in 0..64 + 3 * 56 {
+            for flip in [0x01, 0x80, 0xFF] {
+                let mut f = good.clone();
+                f[position] ^= flip;
+                if let Ok(image) = parse(&f, END) {
+                    for s in &image.segments {
+                        assert!(s.file_range.end <= f.len() && s.file_range.len() as u64 <= s.virtual_range.end - s.virtual_range.start);
+                        assert!(s.virtual_range.start >= LOWEST_ADDRESS && s.virtual_range.end <= END);
+                    }
+                }
+            }
+        }
     }
 
     #[test]

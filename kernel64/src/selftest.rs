@@ -252,13 +252,13 @@ pub fn user() {
         ];
         let started: Vec<_> = programs
             .iter()
-            .map(|&(name, file)| process::spawn(name, file, Vec::new()).unwrap_or_else(|e| panic!("loading {name}: {e:?}")))
+            .map(|&(name, file)| (name, process::spawn(name, file, Vec::new()).unwrap_or_else(|e| panic!("loading {name}: {e:?}"))))
             .collect();
         started
             .into_iter()
-            .map(|(process, thread)| {
+            .map(|(name, (process, thread))| {
                 threads::join(thread);
-                (process.name, process.exit_code())
+                (name, process.exit_code())
             })
             .collect::<Vec<_>>()
     };
@@ -282,6 +282,11 @@ pub fn user() {
     assert_eq!(run_all(), expected);
     threads::yield_now();
     assert_eq!(mm::with_memory(|_, f| f.free_frames()), frames, "processes leaked frames");
+    // Files that are not programs - which the disk may now hold - are
+    // refused, and cost nothing: text, and a program cut in half.
+    assert!(process::load("text", &[b'x'; 200]).is_err());
+    assert!(process::load("half", &programs::HELLO[..programs::HELLO.len() / 2]).is_err());
+    assert_eq!(mm::with_memory(|_, f| f.free_frames()), frames, "refused programs leaked frames");
     kprintln!("[selftest] user: hello exited 42, spin and heapcheck exited 0, peek, cli, port and memro were killed; 14 processes, nothing leaked");
 }
 

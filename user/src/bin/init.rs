@@ -300,36 +300,69 @@ fn main() -> i64 {
 }
 
 /// Answers one request from the shell. Requests are text: "run NAME".
+///
+/// With no handle, NAME is one of the programs built into the kernel
+/// image that a user may run. With one handle - a memory object - it is
+/// a program the shell read from a file, and NAME only what to call it.
+///
+/// init starts either with nothing but the screen to print on. That is
+/// why it is safe to run whatever is in a file: a process can only use
+/// what it holds a handle to, and this one holds one channel. It can
+/// compute, print, and exit.
+///
+/// The shell reads the file, not init. init restarts the file service
+/// when it crashes; if init itself waited on the file service, a hung
+/// one would stop the only process able to fix it.
 fn serve_request(launcher: Handle, requests: Handle, screen: Option<Handle>) {
-    let mut message = [0u8; 64];
-    let Ok((n, _)) = taaj::receive(requests, &mut message, &mut []) else { return };
+    let mut message = [0u8; 96];
+    // Room for any number of handles: a request that did not fit would
+    // stay at the head of the queue forever.
+    let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
+    let Ok((n, count)) = taaj::receive(requests, &mut message, &mut handles) else { return };
+    let close_all = || {
+        for &handle in &handles[..count] {
+            let _ = taaj::close(handle);
+        }
+    };
     let reply = |text: &[u8], handles: &[Handle]| {
         let _ = taaj::send(requests, text, handles);
     };
-    let Some(name) = message[..n].strip_prefix(b"run ").and_then(|n| core::str::from_utf8(n).ok()) else {
+    let name = message[..n].strip_prefix(b"run ").and_then(|n| core::str::from_utf8(n).ok());
+    let (Some(name), true) = (name, count <= 1) else {
+        close_all();
         return reply(b"error: unknown request", &[]);
     };
-    if !RUNNABLE.contains(&name) {
-        return reply(b"error: not a program you can run", &[]);
+    let image = (count == 1).then_some(handles[0]);
+    if image.is_none() && !RUNNABLE.contains(&name) {
+        return reply(b"error: no such program, on the disk or built in", &[]);
     }
     // Its stdout: a send-only copy of the display channel.
-    let result = match screen {
-        Some(screen) => match taaj::duplicate(screen, SEND | TRANSFER) {
-            Ok(copy) => taaj::spawn(launcher, name, &[(copy, SEND)], abi::startup::STDOUT).inspect_err(|_| {
-                let _ = taaj::close(copy);
-            }),
-            Err(error) => Err(error),
-        },
-        None => taaj::spawn(launcher, name, &[], 0),
+    let stdout = screen.and_then(|screen| taaj::duplicate(screen, SEND | TRANSFER).ok());
+    let stdout_pair = stdout.map(|copy| [(copy, SEND)]);
+    let (given, argument): (&[(Handle, u32)], u64) = match &stdout_pair {
+        Some(pair) => (pair, abi::startup::STDOUT),
+        None => (&[], 0),
     };
+    let result = match image {
+        Some(image) => taaj::spawn_image(launcher, image, name, given, argument),
+        None => taaj::spawn(launcher, name, given, argument),
+    };
+    close_all(); // the image: the kernel has its own copy by now
     match result {
         Ok(process) => {
-            println!("[init] started {name} for the shell");
+            println!("[init] started {name} for the shell{}", if image.is_some() { ", from a file" } else { "" });
             reply(b"ok", &[process]);
         }
         Err(error) => {
+            // Not started: the copy of the screen is still ours.
+            if let Some(copy) = stdout {
+                let _ = taaj::close(copy);
+            }
             let mut text = Buffer::<64>::new();
-            let _ = write!(text, "error: {error:?}");
+            let _ = match error {
+                Error::NotExecutable => write!(text, "error: {name} is not a program"),
+                error => write!(text, "error: {error:?}"),
+            };
             reply(text.as_bytes(), &[]);
         }
     }

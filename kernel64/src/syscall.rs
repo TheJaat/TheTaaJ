@@ -48,6 +48,7 @@ pub fn dispatch(number: u64, args: [u64; 6]) -> u64 {
         call::OBJECT_WAIT => ipc::object_wait(args[0], args[1]),
         call::SYSTEM_INFO => ipc::system_info(args[0], args[1]),
         call::PROCESS_LIST => ipc::process_list(args[0], args[1], args[2]),
+        call::PROCESS_SPAWN_IMAGE => ipc::spawn_image(args[0], args[1], args[2]),
         _ => Err(Error::UnknownCall),
     };
     arch::disable_interrupts();

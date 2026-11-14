@@ -105,7 +105,21 @@ pub mod call {
     /// process_list(system, out, capacity) - writes up to `capacity`
     /// `ProcessEntry`s (as u64 words); returns how many processes exist.
     pub const PROCESS_LIST: u64 = 20;
+    /// process_spawn_image(launcher, image, request) - starts a program
+    /// from an ELF file held in the memory object `image` (which needs
+    /// READ, and stays with the caller). `request` points at
+    /// SPAWN_REQUEST_WORDS u64s: name pointer, name length, pointer to
+    /// (handle, rights) pairs, their count, and the argument - the same
+    /// things process_spawn takes, in memory because seven values do not
+    /// fit in six registers. Returns a handle to the new process;
+    /// NotExecutable if the file is not a valid program.
+    pub const PROCESS_SPAWN_IMAGE: u64 = 21;
 }
+
+/// The u64s process_spawn_image's request holds.
+pub const SPAWN_REQUEST_WORDS: usize = 5;
+/// The largest program file process_spawn_image accepts: 4 MiB.
+pub const PROGRAM_IMAGE_MAX: u64 = 4 << 20;
 
 /// What a program learns from its parent besides its handles: the
 /// argument of process_spawn, in RSI.
@@ -180,6 +194,8 @@ pub enum Error {
     NotFound = 11,
     /// Not enough memory.
     OutOfMemory = 12,
+    /// The file is not a program this system can run.
+    NotExecutable = 13,
 }
 
 impl Error {
@@ -197,6 +213,7 @@ impl Error {
             10 => Some(Error::WrongType),
             11 => Some(Error::NotFound),
             12 => Some(Error::OutOfMemory),
+            13 => Some(Error::NotExecutable),
             _ => None,
         }
     }

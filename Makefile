@@ -180,6 +180,8 @@ TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
                c a t spc n o t e s ret l s ret \
                r m spc n o t e s ret c a t spc n o t e s ret \
                c a t spc w e l c o m e ret w r i t e spc s a v e d spc k e p t ret \
+               r u n spc p r i m e s ret r u n spc w e l c o m e ret r u n spc b r o k e n ret \
+               r u n spc n o t h i n g ret \
                d i s k ret d i s k spc r e a d spc 0 ret \
                d i s k spc w r i t e spc 5 spc o o p s ret d i s k spc r e a d spc 9 9 9 9 9 ret
 TEST_TYPED   = Hi there
@@ -187,16 +189,23 @@ TEST_TYPED   = Hi there
 # (Joined on one line: a continued line would start each pattern with a
 # space.)
 EXPECT_SHELL = unknown command: Hi;  PID  NAME;init +running;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
-EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^2 files, 32 bytes;^cat: notes: no such file;^Hello from the host;^saved: 5 bytes
+EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^4 files, [0-9]+ bytes;^cat: notes: no such file;^Hello from the host;^saved: 5 bytes
 EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(4096 KiB\);^0000  4a 41 46 53 .*JAFS;^disk: sector 5: the disk is read-only;^disk: sector 99999: no such sector
-TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK)
+EXPECT_RUN   = \[init\] started primes for the shell, from a file;^primes below 50: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47;^primes exited with code 0;^error: welcome is not a program;^error: broken is not a program;^error: no such program
+TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN)
 # The disk the boot tests attach: a 4 MiB TaajFS volume made on the host
 # by tfstool, with one file in it for the OS to read. After the boot,
 # check-boot.sh reads back - with tfstool again - the file the OS wrote.
+# Also on it: primes, a program that exists nowhere else - the kernel
+# image does not contain it - and the first 300 bytes of it, as a file
+# that looks like a program and is not.
+USER_BIN     = user/target/x86_64-unknown-none/release
 TFSTOOL_RS   = tools/tfstool-rs/target/release/tfstool
 define make-test-disk
 	@rm -f $(1) && $(TFSTOOL_RS) mkfs $(1) 1024 > /dev/null && truncate -s 4M $(1)
 	@printf 'Hello from the host\n' > $(1).welcome && $(TFSTOOL_RS) put $(1) welcome $(1).welcome > /dev/null
+	@$(TFSTOOL_RS) put $(1) primes $(USER_BIN)/primes > /dev/null
+	@head -c 300 $(USER_BIN)/primes > $(1).broken && $(TFSTOOL_RS) put $(1) broken $(1).broken > /dev/null
 endef
 
 # The UEFI loader needs Clang and lld (`sudo apt install clang lld`).

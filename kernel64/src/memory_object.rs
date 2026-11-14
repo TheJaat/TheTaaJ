@@ -67,6 +67,25 @@ impl MemoryObject {
         MemoryObject { frames, owned: false, cache }
     }
 
+    /// A copy of everything in the object - for the kernel to read what
+    /// a process prepared (a program file) without the process changing
+    /// it meanwhile. Refused for device memory, and for more than `max`
+    /// bytes.
+    pub fn contents(&self, max: u64) -> Result<Vec<u8>, abi::Error> {
+        if !self.owned || self.size() > max {
+            return Err(abi::Error::InvalidArgument);
+        }
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(self.size() as usize).map_err(|_| abi::Error::OutOfMemory)?;
+        for &frame in &self.frames {
+            // SAFETY: a frame this object owns, through the direct map.
+            bytes.extend_from_slice(unsafe {
+                core::slice::from_raw_parts(phys_to_virt(frame).as_ptr::<u8>(), PAGE_SIZE as usize)
+            });
+        }
+        Ok(bytes)
+    }
+
     pub fn frames(&self) -> &[PhysAddr] {
         &self.frames
     }
