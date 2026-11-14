@@ -29,10 +29,10 @@ extern crate alloc;
 mod console; // first, so its macros are visible in every later module
 
 mod arch;
-mod framebuffer;
 mod interrupts;
 mod irqlock;
 mod ipc;
+mod memory_object;
 mod mm;
 mod process;
 mod programs;
@@ -103,13 +103,7 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
     // IPC: processes talking through channels, by capability.
     selftest::ipc();
 
-    start_init();
-
-    match info.framebuffer() {
-        Some(fb) if framebuffer::paint_welcome(fb) => kprintln!("framebuffer: painted"),
-        Some(_) => kprintln!("framebuffer: unsupported pixel format, left alone"),
-        None => kprintln!("framebuffer: none"),
-    }
+    start_init(info);
 
     // Only in a build with one of the `fault-*` features: proves each
     // protection holds and is reported. Once there is a kernel command
@@ -176,19 +170,58 @@ fn idle() -> ! {
 }
 
 /// Starts `init`, the first process, and gives it everything a user
-/// space needs to build itself: the launcher (the right to start
-/// programs) and the devices - the keyboard's interrupt and ports. From
-/// here on init decides what runs and who may touch what; the kernel
-/// enforces it.
-fn start_init() {
+/// space needs to build itself:
+///
+///   1  the launcher: the right to start programs
+///   2  the keyboard's interrupt line
+///   3  I/O port 0x60
+///   4  I/O port 0x64
+///   5  a channel from the kernel, carrying one message per device it
+///      found: for now, "framebuffer" - its description, and a handle to
+///      its memory
+///
+/// From here on init decides what runs and who may touch what; the
+/// kernel enforces it. The kernel itself no longer draws on the screen.
+fn start_init(info: &BootInfo) {
     use ipc::Object;
     use kernel64::cap::Rights;
+    use kernel64::paging::Flags;
+    use memory_object::MemoryObject;
+
+    let (devices, to_init) = ipc::channel();
+    if let Some(fb) = info.framebuffer() {
+        let description = abi::FramebufferInfo {
+            width: fb.width,
+            height: fb.height,
+            pitch: fb.pitch,
+            bpp: fb.bpp,
+            red_size: fb.red_size,
+            red_shift: fb.red_shift,
+            green_size: fb.green_size,
+            green_shift: fb.green_shift,
+            blue_size: fb.blue_size,
+            blue_shift: fb.blue_shift,
+        };
+        // Device memory: write-through, so pixels reach the screen
+        // rather than waiting in the cache.
+        let size = u64::from(fb.pitch) * u64::from(fb.height);
+        let memory = MemoryObject::device(fb.address, size, Flags::WRITE_THROUGH);
+        let mut message = b"framebuffer".to_vec();
+        message.extend_from_slice(&description.to_bytes());
+        ipc::kernel_send(&to_init, &message, alloc::vec![(Object::Memory(alloc::sync::Arc::new(memory)), Rights::ALL)])
+            .expect("a new channel has room");
+        kprintln!("framebuffer: {}x{}, handed to init", fb.width, fb.height);
+    } else {
+        kprintln!("framebuffer: none");
+    }
+    drop(to_init); // what was sent stays readable; the kernel keeps nothing
 
     let handles = alloc::vec![
         (Object::Launcher, Rights(0)),
         (Object::Interrupt(&interrupts::KEYBOARD), Rights::ALL),
         (Object::IoPorts(0x60..0x61), Rights::ALL),
         (Object::IoPorts(0x64..0x65), Rights::ALL),
+        (devices, Rights(abi::rights::RECEIVE)),
     ];
     process::spawn("init", programs::INIT, handles).expect("starting init");
 }

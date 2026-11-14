@@ -17,19 +17,25 @@ use abi::Error;
 use kernel64::cap::{CapTable, Rights};
 use kernel64::elf::{self, ElfError};
 use kernel64::ioports::PortBitmap;
+use kernel64::regions::Regions;
 use kernel64::memory::addr::{phys_to_virt, PhysAddr, VirtAddr, PAGE_SIZE};
 use kernel64::paging::{Flags, PageSize, PageTables};
 use kernel64::sched::ThreadId;
 
-use crate::arch::syscall;
+use crate::arch::{mmu, syscall};
 use crate::irqlock::IrqLock;
 use crate::ipc::Object;
+use crate::memory_object::MemoryObject;
 use crate::{mm, threads};
 
 /// The user stack: 64 KiB just below this address. The page below it is
 /// left unmapped, so overflowing the stack faults.
 const USER_STACK_TOP: u64 = 0x0000_7FFF_FFFF_0000;
 const USER_STACK_PAGES: u64 = 16;
+
+/// Where memory objects are mapped: far from the program (which sits low,
+/// near 4 MiB) and the stack (at the very top).
+const MAPPING_AREA: core::ops::Range<u64> = 0x0000_1000_0000_0000..0x0000_7000_0000_0000;
 
 const RUNNING: i64 = i64::MIN;
 
@@ -44,6 +50,10 @@ pub struct Process {
     /// The I/O ports it may use directly; loaded into the TSS whenever
     /// it runs. Granted for the life of the process.
     pub io_ports: IrqLock<PortBitmap>,
+    /// Mapped memory objects. Each region holds a reference to its
+    /// object, so the frames outlive any handle while they are mapped.
+    /// Taken before `tables`.
+    mappings: IrqLock<Regions<Arc<MemoryObject>>>,
 }
 
 #[derive(Debug)]
@@ -79,10 +89,70 @@ impl Process {
 
 impl Drop for Process {
     fn drop(&mut self) {
+        // The tables go first: they free the process's own (OWNED) frames
+        // and leave mapped objects' frames alone. The mappings - the
+        // references keeping those objects alive - are dropped after,
+        // with the rest of the fields.
         if let Some(tables) = self.tables.lock().take() {
             mm::with_frames(|frames| tables.destroy(frames));
         }
     }
+}
+
+/// Maps all of `object` into the current process; returns the address.
+pub fn map_memory(object: &Arc<MemoryObject>, writable: bool) -> Result<u64, Error> {
+    let process = current().ok_or(Error::InvalidArgument)?;
+    let mut mappings = process.mappings.lock();
+    let start = mappings.allocate(object.size(), Arc::clone(object)).ok_or(Error::OutOfMemory)?;
+
+    // Never executable: shared memory is data. A page another process
+    // can write must not be one this process can run (W^X across
+    // processes).
+    let mut flags = Flags::USER | mm::no_execute() | object.cache;
+    if writable {
+        flags |= Flags::WRITABLE;
+    }
+    let mut tables = process.tables.lock();
+    let tables = tables.as_mut().ok_or(Error::InvalidArgument)?;
+    let mapped = mm::with_frames(|frames| {
+        for (n, &frame) in object.frames().iter().enumerate() {
+            let page = VirtAddr::new(start + n as u64 * PAGE_SIZE);
+            if tables.map(page, frame, PageSize::Size4K, flags, frames).is_err() {
+                return Err(n); // out of frames for page tables
+            }
+        }
+        Ok(())
+    });
+    if let Err(done) = mapped {
+        for n in 0..done as u64 {
+            tables.unmap(VirtAddr::new(start + n * PAGE_SIZE));
+        }
+        mappings.remove(start);
+        return Err(Error::OutOfMemory);
+    }
+    Ok(start)
+}
+
+/// Removes the current process's mapping that starts at `start`.
+pub fn unmap_memory(start: u64) -> Result<u64, Error> {
+    let process = current().ok_or(Error::InvalidArgument)?;
+    let mut mappings = process.mappings.lock();
+    let (range, object) = mappings.remove(start).ok_or(Error::InvalidArgument)?;
+    {
+        let mut tables = process.tables.lock();
+        let tables = tables.as_mut().ok_or(Error::InvalidArgument)?;
+        for page in range.step_by(PAGE_SIZE as usize) {
+            tables.unmap(VirtAddr::new(page));
+            // The CPU may still hold the old translation in its TLB; until
+            // it is flushed the process could keep using a page that is
+            // about to be freed. (This process is the one running, so its
+            // tables are the active ones.)
+            mmu::flush(page);
+        }
+    }
+    drop(mappings);
+    drop(object); // possibly the last reference: frees the frames
+    Ok(0)
 }
 
 static NEXT_PID: AtomicU64 = AtomicU64::new(1);
@@ -178,6 +248,7 @@ pub fn load(name: &'static str, file: &[u8]) -> Result<Loaded, LoadError> {
         exit_code: AtomicI64::new(RUNNING),
         handles: IrqLock::new(CapTable::new(abi::HANDLES_MAX)),
         io_ports: IrqLock::new(PortBitmap::NONE),
+        mappings: IrqLock::new(Regions::new(MAPPING_AREA)),
     });
     Ok(Loaded { process, entry: image.entry })
 }

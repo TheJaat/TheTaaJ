@@ -96,6 +96,34 @@ fn main() -> i64 {
     check!(taaj::close(mine) == Ok(()), "hang up");
     println!("[echoc] handed echod a private channel and talked over it");
 
+    // 6b. Shared memory: three pages, a sentence in the third. echod gets
+    //     a handle, maps the same pages and upper-cases the sentence in
+    //     place; this process sees the change in its own mapping.
+    check!(taaj::memory_create(0) == Err(Error::InvalidArgument), "an empty memory object");
+    check!(taaj::memory_create(abi::MEMORY_MAX + 1) == Err(Error::InvalidArgument), "an oversized one");
+    check!(taaj::memory_map(boot, false) == Err(Error::WrongType), "mapped a channel");
+    let Ok(memory) = taaj::memory_create(3 * 4096) else { return 104 };
+    let Ok(base) = taaj::memory_map(memory, true) else { return 105 };
+    let sentence = b"shared memory, no copies";
+    // SAFETY: the mapping is three pages; this writes into the third.
+    let text = unsafe { core::slice::from_raw_parts_mut(base.add(2 * 4096), sentence.len()) };
+    check!(text.iter().all(|&b| b == 0), "a new memory object is zeroed");
+    text.copy_from_slice(sentence);
+    let Ok(lent) = taaj::duplicate(memory, rights::READ | rights::WRITE | rights::TRANSFER) else { return 106 };
+    check!(taaj::send(boot, b"mem", &[lent]) == Ok(()), "lend the memory");
+    let reply = taaj::receive(boot, &mut buffer, &mut []);
+    check!(reply.map(|(n, _)| &buffer[..n]) == Ok(b"done"), "echod finished");
+    // SAFETY: re-reading the mapping, which echod wrote to.
+    let text = unsafe { core::slice::from_raw_parts(base.add(2 * 4096), sentence.len()) };
+    check!(text == b"SHARED MEMORY, NO COPIES", "echod's writes are visible here");
+    // The handle can go while the mapping stays: the mapping keeps the
+    // pages alive.
+    check!(taaj::close(memory) == Ok(()), "close the memory handle");
+    check!(unsafe { base.add(2 * 4096).read_volatile() } == b'S', "the mapping outlives the handle");
+    check!(taaj::memory_unmap(base) == Ok(()), "unmap");
+    check!(taaj::memory_unmap(base) == Err(Error::InvalidArgument), "unmapped twice");
+    println!("[echoc] shared three pages with echod; it wrote, we read - no copies");
+
     // 7. Closing must not recurse: a chain of 2000 channels, each end
     //    queued in the next one's inbox, held by a single handle. Closing
     //    it destroys all 2000 - without blowing the kernel stack.

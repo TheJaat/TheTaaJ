@@ -190,6 +190,20 @@ pub fn wait_any(processes: &[Handle]) -> Result<(usize, i64), Error> {
     Ok((index as usize, code))
 }
 
+/// A new memory object of at least `size` bytes, zeroed.
+pub fn memory_create(size: u64) -> Result<Handle, Error> {
+    abi::decode(syscall(call::MEMORY_CREATE, size, 0, 0))
+}
+
+/// Maps a memory object; returns where.
+pub fn memory_map(memory: Handle, writable: bool) -> Result<*mut u8, Error> {
+    abi::decode(syscall(call::MEMORY_MAP, memory, u64::from(writable), 0)).map(|a| a as *mut u8)
+}
+
+pub fn memory_unmap(address: *mut u8) -> Result<(), Error> {
+    abi::decode(syscall(call::MEMORY_UNMAP, address as u64, 0, 0)).map(|_| ())
+}
+
 static STARTUP_HANDLES: AtomicU64 = AtomicU64::new(0);
 
 /// Startup handle `n` (counting from 0), if the parent gave that many.

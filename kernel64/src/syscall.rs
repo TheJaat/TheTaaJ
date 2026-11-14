@@ -42,6 +42,9 @@ pub fn dispatch(number: u64, args: [u64; 6]) -> u64 {
         call::IOPORTS_ENABLE => ipc::ioports_enable(args[0]),
         call::PROCESS_SPAWN => ipc::spawn(args[0], args[1], args[2], args[3], args[4]),
         call::PROCESS_WAIT => ipc::wait(args[0], args[1], args[2]),
+        call::MEMORY_CREATE => ipc::memory_create(args[0]),
+        call::MEMORY_MAP => ipc::memory_map(args[0], args[1]),
+        call::MEMORY_UNMAP => process::unmap_memory(args[0]),
         _ => Err(Error::UnknownCall),
     };
     arch::disable_interrupts();

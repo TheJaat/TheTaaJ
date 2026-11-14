@@ -1,10 +1,12 @@
 //! init - the first process, and the supervisor of all the others.
 //!
-//! The kernel starts only this, with four startup handles:
+//! The kernel starts only this, with five startup handles:
 //!   1  the launcher: the right to start programs
 //!   2  the keyboard's interrupt line
 //!   3  I/O port 0x60
 //!   4  I/O port 0x64
+//!   5  a channel with a message per device the kernel found - for now
+//!      the framebuffer: its description and its memory object
 //! (all with every right but the launcher's, so init can share them out.)
 //!
 //! init builds the system from these: it wires the services together
@@ -26,8 +28,9 @@
 #![no_std]
 #![no_main]
 
-use taaj::rights::{DUPLICATE, RECEIVE, SEND, TRANSFER};
-use taaj::{println, Error, Handle};
+use abi::FramebufferInfo;
+use taaj::rights::{DUPLICATE, READ, RECEIVE, SEND, TRANSFER, WRITE};
+use taaj::{print, println, Error, Handle};
 
 taaj::program!(main);
 
@@ -77,13 +80,28 @@ fn start(launcher: Handle, name: &str, grants: &[&Grant]) -> Result<Handle, Erro
 }
 
 fn main() -> i64 {
-    let (Some(launcher), Some(interrupt), Some(data_port), Some(status_port)) =
-        (taaj::startup_handle(0), taaj::startup_handle(1), taaj::startup_handle(2), taaj::startup_handle(3))
-    else {
+    let (Some(launcher), Some(interrupt), Some(data_port), Some(status_port), Some(devices)) = (
+        taaj::startup_handle(0),
+        taaj::startup_handle(1),
+        taaj::startup_handle(2),
+        taaj::startup_handle(3),
+        taaj::startup_handle(4),
+    ) else {
         println!("[init] started without the kernel's handles");
         return 1;
     };
     let Ok((keys_out, keys_in)) = taaj::channel_create() else { return 2 };
+
+    // The screen, if the kernel found one: its description and memory.
+    let mut message = [0u8; 64];
+    let mut fb_memory = [0u64; 1];
+    let framebuffer = match taaj::receive(devices, &mut message, &mut fb_memory) {
+        Ok((n, 1)) if message[..n].starts_with(b"framebuffer") => {
+            FramebufferInfo::from_bytes(&message[b"framebuffer".len()..n])
+        }
+        _ => None,
+    };
+    let Ok((display_tx, display_rx)) = taaj::channel_create() else { return 2 };
 
     // Everything a service may be given, and the rights it gets.
     let grants = [
@@ -92,22 +110,37 @@ fn main() -> i64 {
         Grant { handle: status_port, rights: 0 },        // 2
         Grant { handle: keys_out, rights: SEND },        // 3
         Grant { handle: keys_in, rights: RECEIVE },      // 4
+        Grant { handle: fb_memory[0], rights: READ | WRITE }, // 5
+        Grant { handle: display_rx, rights: RECEIVE },   // 6
     ];
     debug_assert!(grants.iter().all(|g| g.rights & DUPLICATE == 0));
 
     let mut services = [
         Service { name: "shell", grants: &[4], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
         Service { name: "kbd", grants: &[0, 1, 2, 3], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
+        Service {
+            name: "display",
+            grants: &[5, 6],
+            process: 0,
+            restarts: [0; MAX_RESTARTS],
+            restart_count: 0,
+            given_up: framebuffer.is_none(),
+        },
     ];
     let launch = |service: &Service| {
         let mut list = [&grants[0]; 8];
         for (n, &g) in service.grants.iter().enumerate() {
             list[n] = &grants[g];
         }
-        start(launcher, service.name, &list[..service.grants.len()])
+        let process = start(launcher, service.name, &list[..service.grants.len()])?;
+        // Each new display needs to be told what it is drawing on.
+        if let (Some(fb), "display") = (framebuffer, service.name) {
+            taaj::send(display_tx, &fb.to_bytes(), &[])?;
+        }
+        Ok::<Handle, Error>(process)
     };
 
-    for service in &mut services {
+    for service in services.iter_mut().filter(|s| !s.given_up) {
         match launch(service) {
             Ok(process) => service.process = process,
             Err(error) => {
@@ -116,7 +149,11 @@ fn main() -> i64 {
             }
         }
     }
-    println!("[init] started shell and kbd; supervising");
+    print!("[init] started:");
+    for service in services.iter().filter(|s| !s.given_up) {
+        print!(" {}", service.name);
+    }
+    println!("; supervising");
 
     loop {
         // Watch every service still running.

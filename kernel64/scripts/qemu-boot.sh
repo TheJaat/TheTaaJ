@@ -26,11 +26,12 @@ KEYS=${KEYS:-}
 FINISHED="\[kernel\] idle|KERNEL PANIC|CPU EXCEPTION"
 MONITOR="$LOG.monitor"
 
-rm -f "$LOG" "$MONITOR"
+rm -f "$LOG" "$LOG.ppm" "$LOG.hang.ppm" "$LOG.qemu" "$MONITOR"
 : > "$LOG"
 qemu-system-x86_64 -m 512M -cdrom "$ISO" -boot d \
     -display none -no-reboot -serial "file:$LOG" \
-    -monitor "unix:$MONITOR,server,nowait" ${QEMU_ARGS:-} &
+    -monitor "unix:$MONITOR,server,nowait" \
+    -d cpu_reset -D "$LOG.qemu" ${QEMU_ARGS:-} &
 qemu=$!
 
 # Polls (ten times a second) until PATTERN appears in the log or the
@@ -71,8 +72,20 @@ if wait_for "$FINISHED" $((LIMIT * 10)); then
         wait_for "\[shell\] line" 50 || echo "qemu-boot: no echoed line after typing" >&2
     fi
     sleep 0.3   # let the rest of a fault report reach the log
+    # A picture of the screen, for check-boot.sh to look at.
+    echo "screendump $LOG.ppm" | nc -U -N "$MONITOR" > /dev/null
+    sleep 0.3
 else
-    echo "qemu-boot: no end of output after ${LIMIT}s - killed" >&2
+    if kill -0 $qemu 2>/dev/null; then
+        echo "qemu-boot: no end of output after ${LIMIT}s - killed" >&2
+        # What was on the screen: the BIOS loader reports only there.
+        echo "screendump $LOG.hang.ppm" | nc -U -N "$MONITOR" > /dev/null
+        sleep 0.3
+    else
+        # -no-reboot: a triple fault resets the CPU, and QEMU quits.
+        # $LOG.qemu holds the CPU state at each reset (-d cpu_reset).
+        echo "qemu-boot: QEMU quit before the kernel finished - a triple fault? (CPU state in $LOG.qemu)" >&2
+    fi
 fi
 
 kill $qemu 2>/dev/null

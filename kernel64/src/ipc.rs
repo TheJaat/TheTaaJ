@@ -31,6 +31,7 @@ use kernel64::cap::{Handle, Rights};
 use kernel64::channel::{peer, Channel, Message};
 
 use crate::interrupts::InterruptLine;
+use crate::memory_object::MemoryObject;
 use crate::irqlock::IrqLock;
 use crate::{arch, process};
 use crate::threads::WaitQueue;
@@ -43,6 +44,8 @@ pub enum Object {
     Interrupt(&'static InterruptLine),
     /// A range of I/O ports its holder may enable for itself.
     IoPorts(Range<u16>),
+    /// Physical pages that can be mapped, and shared.
+    Memory(Arc<MemoryObject>),
     /// The authority to start programs. Only init has one.
     Launcher,
     /// A process: lets its holder wait for it to end. (A child cannot
@@ -346,4 +349,42 @@ pub fn wait(handles: u64, count: u64, code: u64) -> Result<u64, Error> {
         .expect("one has ended");
     process::copy_to_user(code, &exit_code.to_le_bytes())?;
     Ok(index as u64)
+}
+
+/// Sends a message from the kernel itself, on a channel end it holds.
+pub fn kernel_send(end: &Object, data: &[u8], handles: Vec<Capability>) -> Result<(), Error> {
+    let end = end.channel()?;
+    end.shared.state.lock().send(end.end, Message { data: data.to_vec(), handles }).map_err(|(error, rejected)| {
+        bury([rejected]);
+        error
+    })?;
+    end.shared.readable[peer(end.end)].wake_all();
+    Ok(())
+}
+
+pub fn memory_create(size: u64) -> Result<u64, Error> {
+    if size == 0 || size > abi::MEMORY_MAX {
+        return Err(Error::InvalidArgument);
+    }
+    let process = me()?;
+    if process.handles.lock().room() == 0 {
+        return Err(Error::TooManyHandles);
+    }
+    let object = MemoryObject::new(size.div_ceil(abi::PAGE_SIZE)).ok_or(Error::OutOfMemory)?;
+    let handle = process.handles.lock().insert(Object::Memory(Arc::new(object)), Rights::ALL);
+    handle
+}
+
+pub fn memory_map(handle: Handle, writable: u64) -> Result<u64, Error> {
+    let writable = match writable {
+        0 => false,
+        1 => true,
+        _ => return Err(Error::InvalidArgument),
+    };
+    let needed = if writable { rights::READ | rights::WRITE } else { rights::READ };
+    let object = match me()?.handles.lock().get(handle, Rights(needed))? {
+        Object::Memory(object) => Arc::clone(object),
+        _ => return Err(Error::WrongType),
+    };
+    process::map_memory(&object, writable)
 }

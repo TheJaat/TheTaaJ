@@ -82,6 +82,15 @@ pub mod call {
     /// processes has ended; returns its index in the list and writes its
     /// exit code (an i64) to `code`.
     pub const PROCESS_WAIT: u64 = 14;
+    /// memory_create(size) - a new memory object of `size` bytes (rounded
+    /// up to whole pages), zeroed. Returns a handle with all rights.
+    pub const MEMORY_CREATE: u64 = 15;
+    /// memory_map(handle, writable) - maps the whole object into this
+    /// process, at an address the kernel chooses; returns it. Needs READ,
+    /// and WRITE too if `writable`. Never executable.
+    pub const MEMORY_MAP: u64 = 16;
+    /// memory_unmap(address) - removes the mapping that starts there.
+    pub const MEMORY_UNMAP: u64 = 17;
 }
 
 /// What a handle permits. A right, once removed, cannot be added back:
@@ -95,7 +104,11 @@ pub mod rights {
     pub const DUPLICATE: u32 = 1 << 2;
     /// Send the handle to another process.
     pub const TRANSFER: u32 = 1 << 3;
-    pub const ALL: u32 = SEND | RECEIVE | DUPLICATE | TRANSFER;
+    /// Map a memory object for reading.
+    pub const READ: u32 = 1 << 4;
+    /// Map a memory object for writing.
+    pub const WRITE: u32 = 1 << 5;
+    pub const ALL: u32 = SEND | RECEIVE | DUPLICATE | TRANSFER | READ | WRITE;
 }
 
 /// Most bytes in one message.
@@ -109,6 +122,11 @@ pub const CHANNEL_QUEUE_MAX: usize = 32;
 pub const SPAWN_HANDLES_MAX: u64 = 8;
 /// Longest program name.
 pub const PROGRAM_NAME_MAX: u64 = 64;
+
+/// Largest memory object: 16 MiB. (Per-process memory quotas come
+/// later; until then this bounds what one call can take.)
+pub const MEMORY_MAX: u64 = 16 << 20;
+pub const PAGE_SIZE: u64 = 4096;
 
 /// Most handles one process may hold.
 pub const HANDLES_MAX: usize = 1024;
@@ -189,3 +207,61 @@ pub const USER_END: u64 = 0x0000_8000_0000_0000;
 
 /// Exit code the kernel records for a process it killed for a fault.
 pub const KILLED: i64 = -1000;
+
+/// The screen, as the kernel describes it to init: a linear framebuffer
+/// of `pitch` bytes per line, each pixel `bpp` bits with its red, green
+/// and blue channels at the given bit positions. Sent as bytes, in a
+/// message, with a handle to the framebuffer's memory object.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FramebufferInfo {
+    pub width: u32,
+    pub height: u32,
+    pub pitch: u32,
+    pub bpp: u8,
+    pub red_size: u8,
+    pub red_shift: u8,
+    pub green_size: u8,
+    pub green_shift: u8,
+    pub blue_size: u8,
+    pub blue_shift: u8,
+}
+
+impl FramebufferInfo {
+    pub const SIZE: usize = 19;
+
+    pub fn to_bytes(&self) -> [u8; Self::SIZE] {
+        let mut b = [0; Self::SIZE];
+        b[0..4].copy_from_slice(&self.width.to_le_bytes());
+        b[4..8].copy_from_slice(&self.height.to_le_bytes());
+        b[8..12].copy_from_slice(&self.pitch.to_le_bytes());
+        b[12..].copy_from_slice(&[
+            self.bpp,
+            self.red_size,
+            self.red_shift,
+            self.green_size,
+            self.green_shift,
+            self.blue_size,
+            self.blue_shift,
+        ]);
+        b
+    }
+
+    pub fn from_bytes(b: &[u8]) -> Option<FramebufferInfo> {
+        if b.len() != Self::SIZE {
+            return None;
+        }
+        let u32_at = |o: usize| u32::from_le_bytes([b[o], b[o + 1], b[o + 2], b[o + 3]]);
+        Some(FramebufferInfo {
+            width: u32_at(0),
+            height: u32_at(4),
+            pitch: u32_at(8),
+            bpp: b[12],
+            red_size: b[13],
+            red_shift: b[14],
+            green_size: b[15],
+            green_shift: b[16],
+            blue_size: b[17],
+            blue_shift: b[18],
+        })
+    }
+}

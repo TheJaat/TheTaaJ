@@ -20,11 +20,14 @@ pub static PORT: &[u8] = program!("port");
 pub static KBD: &[u8] = program!("kbd");
 pub static SHELL: &[u8] = program!("shell");
 pub static INIT: &[u8] = program!("init");
+pub static DISPLAY: &[u8] = program!("display");
+pub static MEMRO: &[u8] = program!("memro");
 
 /// The programs a launcher can start, by name.
 static PROGRAMS: &[(&str, &[u8])] = &[
     ("kbd", KBD),
     ("shell", SHELL),
+    ("display", DISPLAY),
     ("echod", ECHOD),
     ("echoc", ECHOC),
     ("hello", HELLO),
