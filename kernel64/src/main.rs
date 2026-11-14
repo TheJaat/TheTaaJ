@@ -103,6 +103,9 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
     // IPC: processes talking through channels, by capability.
     selftest::ipc();
 
+    // Files: the file service, tested by a client in ring 3.
+    selftest::files();
+
     start_init(info);
 
     // Only in a build with one of the `fault-*` features: proves each

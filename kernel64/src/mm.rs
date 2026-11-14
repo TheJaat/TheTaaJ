@@ -38,7 +38,7 @@ use kernel64::memory::addr::{
     align_down, align_up, phys_to_virt, set_physical_offset, PhysAddr, VirtAddr, PAGE_SIZE,
 };
 use kernel64::memory::frame::FrameAllocator;
-use kernel64::memory::heap::Heap;
+use heap::Heap;
 use kernel64::memory::layout::find_free_space;
 use kernel64::paging::{Flags, MapError, PageSize, PageTables};
 use kernel64::acpi::PhysicalMemory;

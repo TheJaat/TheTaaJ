@@ -7,8 +7,13 @@ name = "abi"
 version = "0.1.0"
 
 [[package]]
+name = "heap"
+version = "0.1.0"
+
+[[package]]
 name = "kernel64"
 version = "0.1.0"
 dependencies = [
  "abi",
+ "heap",
 ]

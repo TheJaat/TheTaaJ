@@ -10,6 +10,9 @@
 //!   6  the system handle: the right to look at memory and processes
 //! (all with every right but the launcher's, so init can share them out.)
 //!
+//! The services: display (the screen), fs (files, in memory), shell,
+//! and kbd (the keyboard driver).
+//!
 //! init also runs programs for the shell. The shell has no launcher; it
 //! sends "run NAME" on a channel to init, which starts the program - if
 //! it is one a user may run - with the screen as its stdout, and replies
@@ -115,6 +118,10 @@ fn main() -> i64 {
     };
     let Ok((display_tx, display_rx)) = taaj::channel_create() else { return 2 };
     let Ok((requests, shell_requests)) = taaj::channel_create() else { return 2 };
+    // The file service's requests. init keeps both ends, as it does the
+    // keyboard's: a restarted fs takes over the same queue, and clients
+    // keep the channel they have.
+    let Ok((files_in, files_out)) = taaj::channel_create() else { return 2 };
 
     // Everything a service may be given, and the rights it gets.
     let grants = [
@@ -128,6 +135,8 @@ fn main() -> i64 {
         Grant { handle: display_tx, rights: SEND },      // 7: text to the screen
         Grant { handle: shell_requests, rights: SEND | RECEIVE }, // 8: requests to init
         Grant { handle: system, rights: 0 },             // 9: looking, not touching
+        Grant { handle: files_in, rights: RECEIVE },     // 10: requests, for fs
+        Grant { handle: files_out, rights: SEND },       // 11: requests, to fs
     ];
     debug_assert!(grants.iter().all(|g| g.rights & DUPLICATE == 0));
 
@@ -142,7 +151,8 @@ fn main() -> i64 {
             restart_count: 0,
             given_up: framebuffer.is_none(),
         },
-        Service { name: "shell", grants: &[4, 7, 8, 9], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
+        Service { name: "fs", grants: &[10], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
+        Service { name: "shell", grants: &[4, 7, 8, 9, 11], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
         Service { name: "kbd", grants: &[0, 1, 2, 3], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
     ];
     let launch = |service: &Service| {

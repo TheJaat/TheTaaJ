@@ -11,8 +11,19 @@ name = "console"
 version = "0.1.0"
 
 [[package]]
+name = "heap"
+version = "0.1.0"
+
+[[package]]
 name = "input"
 version = "0.1.0"
+
+[[package]]
+name = "ramfs"
+version = "0.1.0"
+dependencies = [
+ "abi",
+]
 
 [[package]]
 name = "user"
@@ -20,5 +31,7 @@ version = "0.1.0"
 dependencies = [
  "abi",
  "console",
+ "heap",
  "input",
+ "ramfs",
 ]

@@ -1,5 +1,5 @@
 //! `taaj` - the runtime every TheTaaJ user program links: system call
-//! wrappers, `print!`, the panic handler and the program entry.
+//! wrappers, `print!`, the heap, the panic handler and the program entry.
 //!
 //! A user program has no C library and no Rust `std` underneath it
 //! (yet): only `core`, and the system calls in `abi`. This is the
@@ -7,11 +7,17 @@
 
 #![no_std]
 
+extern crate alloc;
+
+mod allocator;
+pub mod files;
+
 use core::arch::asm;
 use core::fmt::{self, Write};
 use core::sync::atomic::{AtomicU64, Ordering};
 
 pub use abi::{call, rights, Error};
+pub use allocator::heap_usage;
 
 /// A handle: a number naming an entry in this process's handle table.
 pub type Handle = u64;
@@ -290,8 +296,9 @@ impl Write for Console {
     }
 }
 
-/// Text formatted into a fixed buffer - this runtime has no heap. Writes
-/// past the end are cut off (and reported as an error by `write_str`).
+/// Text formatted into a fixed buffer, with no allocation - so printing
+/// works even when the heap does not. Writes past the end are cut off
+/// (and reported as an error by `write_str`).
 pub struct Buffer<const N: usize> {
     bytes: [u8; N],
     length: usize,

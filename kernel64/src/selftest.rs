@@ -241,13 +241,14 @@ pub fn user() {
     use crate::{process, programs};
 
     let run_all = || {
-        let programs: [(&'static str, &[u8]); 6] = [
+        let programs: [(&'static str, &[u8]); 7] = [
             ("hello", programs::HELLO),
             ("peek", programs::PEEK),
             ("cli", programs::CLI),
             ("port", programs::PORT),
             ("memro", programs::MEMRO),
             ("spin", programs::SPIN),
+            ("heapcheck", programs::HEAPCHECK),
         ];
         let started: Vec<_> = programs
             .iter()
@@ -270,6 +271,7 @@ pub fn user() {
         ("port", Some(abi::KILLED)),
         ("memro", Some(abi::KILLED)),
         ("spin", Some(0)),
+        ("heapcheck", Some(0)),
     ];
     assert_eq!(results, expected, "user programs did not end as expected");
 
@@ -280,7 +282,7 @@ pub fn user() {
     assert_eq!(run_all(), expected);
     threads::yield_now();
     assert_eq!(mm::with_memory(|_, f| f.free_frames()), frames, "processes leaked frames");
-    kprintln!("[selftest] user: hello exited 42, spin exited 0, peek, cli, port and memro were killed; 12 processes, nothing leaked");
+    kprintln!("[selftest] user: hello exited 42, spin and heapcheck exited 0, peek, cli, port and memro were killed; 14 processes, nothing leaked");
 }
 
 /// IPC: a service and its client, connected by one channel the kernel
@@ -311,4 +313,35 @@ pub fn ipc() {
     assert_eq!(mm::with_memory(|_, f| f.free_frames()), frames, "IPC leaked frames");
     assert_eq!(ipc::live_channels(), 0, "channels leaked");
     kprintln!("[selftest] ipc: echo service and client - rights, transfer, backpressure, crash isolation; 0 channels left");
+}
+
+/// Files: the file service and a client that tests it - long files,
+/// listings, refusals, careless requests. When the client is done it
+/// closes its end, and the service must end cleanly. Twice, and then
+/// nothing may be left: no channel (each request made one for its
+/// reply), no frame (the service's heap held every file).
+pub fn files() {
+    use crate::{ipc, process, programs};
+    use kernel64::cap::Rights;
+
+    let run = || {
+        let (service_end, client_end) = ipc::channel();
+        let (service, service_thread) =
+            process::spawn("fs", programs::FS, alloc::vec![(service_end, Rights::ALL)]).expect("loading fs");
+        let (client, client_thread) =
+            process::spawn("fscheck", programs::FSCHECK, alloc::vec![(client_end, Rights::ALL)]).expect("loading fscheck");
+        threads::join(client_thread);
+        threads::join(service_thread);
+        assert_eq!(client.exit_code(), Some(0), "fscheck failed (the code is the line of the failed check)");
+        assert_eq!(service.exit_code(), Some(0), "fs should end when its last client goes");
+    };
+
+    run();
+    threads::yield_now();
+    let frames = mm::with_memory(|_, f| f.free_frames());
+    run();
+    threads::yield_now();
+    assert_eq!(mm::with_memory(|_, f| f.free_frames()), frames, "the file service leaked frames");
+    assert_eq!(ipc::live_channels(), 0, "channels leaked");
+    kprintln!("[selftest] files: fs and fscheck, twice - every check passed, 0 channels and no frames left");
 }

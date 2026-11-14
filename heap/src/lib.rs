@@ -1,4 +1,14 @@
-//! The kernel heap: `Box`, `Vec` and `String` for the kernel.
+//! A heap: the memory behind `Box`, `Vec` and `String`.
+//!
+//! The same allocator serves the kernel and every user program. It does
+//! not know where its memory comes from - it is handed regions with
+//! `add_region` and carves them up:
+//!
+//!   - the kernel maps fresh frames at the end of its heap area (mm.rs)
+//!   - a user program creates a memory object and maps it (the `taaj`
+//!     runtime)
+//!
+//! Pure logic over addresses, so it is tested here, on the host.
 //!
 //! A linked-list allocator. The free memory is a list of blocks, each
 //! storing its own size and a pointer to the next one *inside the free
@@ -20,6 +30,8 @@
 //! Simple and fully understandable, at the cost of O(n) operations. A
 //! slab allocator for the kernel's common fixed-size objects can sit on
 //! top later; this remains the general-purpose fallback.
+
+#![cfg_attr(not(test), no_std)]
 
 use core::alloc::Layout;
 use core::ptr;

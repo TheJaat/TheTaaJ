@@ -17,6 +17,8 @@ bench = false
 # Only our own: the system call interface, shared with user programs.
 # Every line of the kernel is ours to read.
 abi = { path = "../abi" }
+# The allocator, shared with user programs.
+heap = { path = "../heap" }
 
 [features]
 # Deliberately fault after booting, to check that each protection holds

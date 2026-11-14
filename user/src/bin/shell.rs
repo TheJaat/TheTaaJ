@@ -5,6 +5,7 @@
 //!   2  the channel to the display (send only) - may be absent
 //!   3  the request channel to init: "run NAME"
 //!   4  the system handle: looking at memory and processes, not touching
+//!   5  the request channel to the file service (send only)
 //!
 //! It has no launcher and no hardware. To run a program it asks init,
 //! which decides what may run, and replies with a handle to the new
@@ -19,6 +20,7 @@
 use core::fmt::Write;
 
 use abi::ProcessEntry;
+use taaj::files::Files;
 use taaj::{println, Buffer, Error, Handle};
 
 taaj::program!(main);
@@ -30,6 +32,7 @@ struct Shell {
     screen: Option<Handle>,
     init: Option<Handle>,
     system: Option<Handle>,
+    files: Option<Files>,
 }
 
 /// Formats into a buffer, then writes it at once to screen and log.
@@ -67,7 +70,12 @@ impl Shell {
                   \x20 uptime       time since boot\n\
                   \x20 mem          memory in use\n\
                   \x20 ps           processes\n\
-                  \x20 run NAME     run a program (hello, peek)\n",
+                  \x20 run NAME     run a program (hello, peek)\n\
+                  \x20 ls           list the files\n\
+                  \x20 cat FILE     show a file\n\
+                  \x20 write FILE TEXT    make FILE hold TEXT\n\
+                  \x20 append FILE TEXT   add TEXT to the end of FILE\n\
+                  \x20 rm FILE      remove a file\n",
             ),
             "echo" => say!(self, "{rest}\n"),
             "clear" => self.screen_only(b"\x0c"),
@@ -76,6 +84,14 @@ impl Shell {
             "ps" => self.ps(),
             "run" if !rest.is_empty() => self.run_program(rest),
             "run" => self.write(b"usage: run NAME\n"),
+            "ls" => self.ls(),
+            "cat" if !rest.is_empty() => self.cat(rest),
+            "write" | "append" => match rest.split_once(' ') {
+                Some((file, text)) => self.write_file(file, text, command == "append"),
+                None => say!(self, "usage: {command} FILE TEXT\n"),
+            },
+            "rm" if !rest.is_empty() => self.rm(rest),
+            "cat" | "rm" => say!(self, "usage: {command} FILE\n"),
             _ => say!(self, "unknown command: {command} (try help)\n"),
         }
     }
@@ -139,6 +155,60 @@ impl Shell {
         }
     }
 
+    fn files(&self) -> Option<&Files> {
+        if self.files.is_none() {
+            self.write(b"no file service: this shell has no files\n");
+        }
+        self.files.as_ref()
+    }
+
+    fn ls(&self) {
+        let Some(files) = self.files() else { return };
+        let mut bytes = 0;
+        let listed = files.list(|name, size| {
+            say!(self, "{size:>8}  {name}\n");
+            bytes += size;
+        });
+        match listed {
+            Ok(0) => self.write(b"no files\n"),
+            Ok(count) => say!(self, "{count} file{}, {bytes} bytes\n", if count == 1 { "" } else { "s" }),
+            Err(error) => say!(self, "ls: {}\n", error.describe()),
+        }
+    }
+
+    fn cat(&self, name: &str) {
+        let Some(files) = self.files() else { return };
+        let mut last = b'\n';
+        match files.read(name, |piece| {
+            self.write(piece);
+            last = piece[piece.len() - 1];
+        }) {
+            // Keep the prompt on a line of its own.
+            Ok(size) if size > 0 && last != b'\n' => self.write(b"\n"),
+            Ok(_) => {}
+            Err(error) => say!(self, "cat: {name}: {}\n", error.describe()),
+        }
+    }
+
+    /// `write` and `append`: the text, as a line.
+    fn write_file(&self, name: &str, text: &str, append: bool) {
+        let Some(files) = self.files() else { return };
+        let mut line = Buffer::<{ LINE_MAX + 1 }>::new();
+        let _ = writeln!(line, "{}", text.trim());
+        let result = if append { files.append(name, line.as_bytes()) } else { files.write(name, line.as_bytes()) };
+        match result {
+            Ok(size) => say!(self, "{name}: {size} bytes\n"),
+            Err(error) => say!(self, "{}: {name}: {}\n", if append { "append" } else { "write" }, error.describe()),
+        }
+    }
+
+    fn rm(&self, name: &str) {
+        let Some(files) = self.files() else { return };
+        if let Err(error) = files.remove(name) {
+            say!(self, "rm: {name}: {}\n", error.describe());
+        }
+    }
+
     /// Asks init to start `name`, then waits for it - a foreground job.
     fn run_program(&self, name: &str) {
         let Some(init) = self.init else {
@@ -172,8 +242,12 @@ impl Shell {
 
 fn main() -> i64 {
     let keys = taaj::bootstrap();
-    let shell =
-        Shell { screen: taaj::startup_handle(1), init: taaj::startup_handle(2), system: taaj::startup_handle(3) };
+    let shell = Shell {
+        screen: taaj::startup_handle(1),
+        init: taaj::startup_handle(2),
+        system: taaj::startup_handle(3),
+        files: taaj::startup_handle(4).map(Files::new),
+    };
     println!("[shell] ready - type a command (try help)");
     shell.screen_only(b"Welcome to TheTaaJ. Type help for the commands.\n\n");
     shell.screen_only(PROMPT);

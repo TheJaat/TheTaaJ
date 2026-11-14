@@ -174,10 +174,18 @@ UEFI64_LOG   = $(BUILD_DIR)/serial64-uefi.log
 # F12 crashes the keyboard driver on purpose; "/" waits for init to
 # restart it; then the line is typed to the new driver.
 TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
-               p s ret m e m ret r u n spc h e l l o ret r u n spc p e e k ret
+               p s ret m e m ret r u n spc h e l l o ret r u n spc p e e k ret \
+               w r i t e spc n o t e s spc h e l l o ret \
+               a p p e n d spc n o t e s spc w o r l d ret \
+               c a t spc n o t e s ret l s ret \
+               r m spc n o t e s ret c a t spc n o t e s ret
 TEST_TYPED   = Hi there
 # What those commands must print (grep patterns, separated by ";").
-TEST_EXPECT  = unknown command: Hi;  PID  NAME;init +running;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
+# (Joined on one line: a continued line would start each pattern with a
+# space.)
+EXPECT_SHELL = unknown command: Hi;  PID  NAME;init +running;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
+EXPECT_FILES = \[fs\] ready;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^1 file, 12 bytes;^cat: notes: no such file
+TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES)
 
 # The UEFI loader needs Clang and lld (`sudo apt install clang lld`).
 # Without them the ISO is built BIOS-only, and says so.
@@ -269,6 +277,8 @@ kernel64-test:
 	cd $(KERNEL64_DIR) && cargo test --lib --target $(HOST_TRIPLE)
 	cd input && cargo test
 	cd console && cargo test
+	cd heap && cargo test
+	cd ramfs && cargo test
 
 # One boot per deliberate fault: unmapped read, double fault, write to
 # rodata, executing data, stack overflow. Each must be caught and named.
