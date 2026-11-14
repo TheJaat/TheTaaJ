@@ -40,6 +40,12 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
     // in the higher half.
     kprintln!("64-bit kernel, kernel_main at {:p}", kernel_main as *const ());
 
+    // From here on, a CPU fault is a message rather than a reboot.
+    arch::init_cpu();
+    kprintln!("[cpu] GDT, TSS and IDT loaded");
+    arch::breakpoint();
+    kprintln!("[cpu] resumed after the breakpoint - exceptions round-trip");
+
     // SAFETY: the TaajBoot protocol guarantees RDI held the structure's
     // physical address, and that the first 4 GiB are identity-mapped -
     // so that address is also a valid pointer, for as long as the
@@ -57,9 +63,27 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
         None => kprintln!("framebuffer: none"),
     }
 
+    // Only in a build with `--features fault-tests` (a page fault) or
+    // `--features double-fault-test`: proves the handlers report real
+    // faults. Once there is a kernel command line, this can move there.
+    #[cfg(feature = "fault-tests")]
+    run_fault_test();
+
     kprintln!();
     kprintln!("Nothing more to do yet - halting.");
     arch::halt_forever()
+}
+
+#[cfg(feature = "fault-tests")]
+fn run_fault_test() {
+    kprintln!();
+    if cfg!(feature = "double-fault-test") {
+        kprintln!("[test] forcing a double fault...");
+        arch::fault_tests::double_fault();
+    }
+    kprintln!("[test] forcing a page fault...");
+    let value = arch::fault_tests::page_fault();
+    kprintln!("[test] FAILED: read {value:#x} from unmapped memory");
 }
 
 /// Prints everything the bootloader told us.

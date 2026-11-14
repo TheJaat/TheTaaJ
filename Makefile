@@ -187,8 +187,9 @@ boot64-test: iso64
 	-timeout 20 qemu-system-x86_64 -m 512M -cdrom $(ISO64_IMG) -boot d \
 		-display none -no-reboot -serial file:$(SERIAL64_LOG)
 	@grep -q "Hello from TheTaaJ" $(SERIAL64_LOG) || { echo "FAIL: no greeting"; cat $(SERIAL64_LOG); exit 1; }
+	@grep -q "resumed after the breakpoint" $(SERIAL64_LOG) || { echo "FAIL: exception path broken"; cat $(SERIAL64_LOG); exit 1; }
 	@grep -q "Nothing more to do yet" $(SERIAL64_LOG) || { echo "FAIL: did not finish"; cat $(SERIAL64_LOG); exit 1; }
-	@! grep -q "KERNEL PANIC" $(SERIAL64_LOG) || { echo "FAIL: panic"; cat $(SERIAL64_LOG); exit 1; }
+	@! grep -qE "KERNEL PANIC|CPU EXCEPTION" $(SERIAL64_LOG) || { echo "FAIL: panic or exception"; cat $(SERIAL64_LOG); exit 1; }
 	@cat $(SERIAL64_LOG)
 	@echo "boot64-test passed"
 

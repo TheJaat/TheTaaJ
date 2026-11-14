@@ -16,6 +16,12 @@ bench = false
 [dependencies]
 # None. Every line of the kernel is ours to read.
 
+[features]
+# Deliberately fault after booting, to check the exception handlers
+# report correctly. Never in a normal build.
+fault-tests = []
+double-fault-test = ["fault-tests"]
+
 # No unwinding: there is nothing to unwind into. A panic prints and halts.
 [profile.dev]
 panic = "abort"

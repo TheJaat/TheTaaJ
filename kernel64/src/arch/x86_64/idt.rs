@@ -1,0 +1,327 @@
+//! The IDT, and what happens when the CPU raises an exception.
+//!
+//! Until this exists, any fault - a bad pointer, a divide by zero - finds
+//! no handler, which is itself a fault, then a double fault, then a
+//! triple fault: the CPU resets and the machine reboots without a word.
+//! With it, every exception lands in `exception_handler`, which says
+//! exactly what happened and where.
+//!
+//! The path an exception takes:
+//!
+//!   CPU          pushes SS, RSP, RFLAGS, CS, RIP (and, for some vectors,
+//!                an error code), then jumps to the IDT entry
+//!   isr_stub_N   pushes a 0 if the CPU pushed no error code - so every
+//!                frame has the same shape - then the vector number
+//!   isr_common   pushes all 15 general registers, calls Rust
+//!   Rust         reads and may change the saved state
+//!   isr_common   pops everything back and `iretq`s to the saved RIP
+
+use core::arch::{asm, global_asm};
+use core::mem::size_of;
+
+use super::gdt::{TablePointer, DOUBLE_FAULT_IST, KERNEL_CODE};
+
+/// Everything saved on an exception, in memory order (lowest address,
+/// last pushed, first). `#[repr(C)]` makes the field order the layout,
+/// so this struct *is* the stack the assembly builds.
+#[repr(C)]
+#[derive(Debug)]
+pub struct InterruptFrame {
+    pub r15: u64,
+    pub r14: u64,
+    pub r13: u64,
+    pub r12: u64,
+    pub r11: u64,
+    pub r10: u64,
+    pub r9: u64,
+    pub r8: u64,
+    pub rbp: u64,
+    pub rdi: u64,
+    pub rsi: u64,
+    pub rdx: u64,
+    pub rcx: u64,
+    pub rbx: u64,
+    pub rax: u64,
+    // Pushed by the stub.
+    pub vector: u64,
+    pub error_code: u64,
+    // Pushed by the CPU.
+    pub rip: u64,
+    pub cs: u64,
+    pub rflags: u64,
+    pub rsp: u64,
+    pub ss: u64,
+}
+
+const _: () = assert!(size_of::<InterruptFrame>() == 22 * 8);
+
+// ---- the assembly side -------------------------------------------------
+
+global_asm!(
+    // Two macros, because only some exceptions push an error code. The
+    // `no_error` stub pushes a fake one so the frame is always the same.
+    ".macro ISR_NO_ERROR vector",
+    "isr_stub_\\vector:",
+    "    push 0",
+    "    push \\vector",
+    "    jmp isr_common",
+    ".endm",
+    ".macro ISR_ERROR vector",
+    "isr_stub_\\vector:",
+    "    push \\vector",
+    "    jmp isr_common",
+    ".endm",
+    "",
+    ".section .text",
+    "ISR_NO_ERROR 0",  // #DE divide error
+    "ISR_NO_ERROR 1",  // #DB debug
+    "ISR_NO_ERROR 2",  //     non-maskable interrupt
+    "ISR_NO_ERROR 3",  // #BP breakpoint
+    "ISR_NO_ERROR 4",  // #OF overflow
+    "ISR_NO_ERROR 5",  // #BR bound range exceeded
+    "ISR_NO_ERROR 6",  // #UD invalid opcode
+    "ISR_NO_ERROR 7",  // #NM device not available
+    "ISR_ERROR    8",  // #DF double fault (error code always 0)
+    "ISR_NO_ERROR 9",  //     coprocessor segment overrun (legacy)
+    "ISR_ERROR    10", // #TS invalid TSS
+    "ISR_ERROR    11", // #NP segment not present
+    "ISR_ERROR    12", // #SS stack-segment fault
+    "ISR_ERROR    13", // #GP general protection
+    "ISR_ERROR    14", // #PF page fault
+    "ISR_NO_ERROR 15", //     reserved
+    "ISR_NO_ERROR 16", // #MF x87 floating point
+    "ISR_ERROR    17", // #AC alignment check
+    "ISR_NO_ERROR 18", // #MC machine check
+    "ISR_NO_ERROR 19", // #XM SIMD floating point
+    "ISR_NO_ERROR 20", // #VE virtualization
+    "ISR_ERROR    21", // #CP control protection
+    "ISR_NO_ERROR 22",
+    "ISR_NO_ERROR 23",
+    "ISR_NO_ERROR 24",
+    "ISR_NO_ERROR 25",
+    "ISR_NO_ERROR 26",
+    "ISR_NO_ERROR 27",
+    "ISR_NO_ERROR 28", // #HV hypervisor injection
+    "ISR_ERROR    29", // #VC VMM communication
+    "ISR_ERROR    30", // #SX security
+    "ISR_NO_ERROR 31",
+    "",
+    "isr_common:",
+    // Save every general register. Pushing RAX first puts it highest,
+    // which is why InterruptFrame lists them in reverse.
+    "    push rax",
+    "    push rbx",
+    "    push rcx",
+    "    push rdx",
+    "    push rsi",
+    "    push rdi",
+    "    push rbp",
+    "    push r8",
+    "    push r9",
+    "    push r10",
+    "    push r11",
+    "    push r12",
+    "    push r13",
+    "    push r14",
+    "    push r15",
+    // The CPU aligned RSP to 16 before pushing its 5 values; with the
+    // stub's 2 and these 15 that is 22 * 8 = 176 bytes, still a multiple
+    // of 16 - so the `call` below sees the alignment the ABI requires.
+    "    mov rdi, rsp", // first argument: &mut InterruptFrame
+    "    cld",          // the ABI promises Rust code the direction flag is clear
+    "    call {handler}",
+    "    pop r15",
+    "    pop r14",
+    "    pop r13",
+    "    pop r12",
+    "    pop r11",
+    "    pop r10",
+    "    pop r9",
+    "    pop r8",
+    "    pop rbp",
+    "    pop rdi",
+    "    pop rsi",
+    "    pop rdx",
+    "    pop rcx",
+    "    pop rbx",
+    "    pop rax",
+    "    add rsp, 16", // drop the vector and error code
+    "    iretq",
+    "",
+    // The stubs' addresses, for building the IDT.
+    ".section .rodata",
+    ".balign 8",
+    "isr_stub_table:",
+    ".irp n, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31",
+    "    .quad isr_stub_\\n",
+    ".endr",
+    ".section .text",
+    handler = sym exception_handler,
+);
+
+extern "C" {
+    static isr_stub_table: [u64; 32];
+}
+
+// ---- the table ---------------------------------------------------------
+
+/// One IDT entry: a 64-bit handler address split across three fields,
+/// for compatibility with the 32-bit format it grew out of.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct Gate {
+    offset_low: u16,
+    selector: u16,
+    ist: u8,
+    attributes: u8,
+    offset_middle: u16,
+    offset_high: u32,
+    reserved: u32,
+}
+
+const _: () = assert!(size_of::<Gate>() == 16);
+
+/// Present, ring 0, 64-bit interrupt gate. An *interrupt* gate (rather
+/// than a trap gate) clears IF on entry, so handlers start with
+/// interrupts off.
+const INTERRUPT_GATE: u8 = 0x8E;
+
+const EMPTY: Gate = Gate {
+    offset_low: 0,
+    selector: 0,
+    ist: 0,
+    attributes: 0,
+    offset_middle: 0,
+    offset_high: 0,
+    reserved: 0,
+};
+
+static mut IDT: [Gate; 256] = [EMPTY; 256];
+
+fn gate(handler: u64, ist: u8) -> Gate {
+    Gate {
+        offset_low: handler as u16,
+        selector: KERNEL_CODE,
+        ist,
+        attributes: INTERRUPT_GATE,
+        offset_middle: (handler >> 16) as u16,
+        offset_high: (handler >> 32) as u32,
+        reserved: 0,
+    }
+}
+
+/// Fills in the 32 exception vectors and loads the IDT.
+///
+/// Vectors 32-255 stay empty for now: no hardware interrupt is enabled
+/// yet. Those will be the timer, keyboard and the rest.
+///
+/// # Safety
+/// Called once, on the boot CPU, after gdt::init (the gates name the
+/// kernel code selector and the double-fault IST slot).
+pub unsafe fn init() {
+    let idt = &raw mut IDT;
+    let stubs = &raw const isr_stub_table;
+
+    for vector in 0..32 {
+        let ist = if vector == 8 { DOUBLE_FAULT_IST } else { 0 };
+        (*idt)[vector] = gate((*stubs)[vector], ist);
+    }
+
+    let pointer = TablePointer { limit: (size_of::<[Gate; 256]>() - 1) as u16, base: idt as u64 };
+    asm!("lidt [{}]", in(reg) &pointer, options(readonly, nostack, preserves_flags));
+}
+
+// ---- the Rust side -------------------------------------------------------
+
+const NAMES: [&str; 32] = [
+    "divide error",
+    "debug",
+    "non-maskable interrupt",
+    "breakpoint",
+    "overflow",
+    "bound range exceeded",
+    "invalid opcode",
+    "device not available",
+    "double fault",
+    "coprocessor segment overrun",
+    "invalid TSS",
+    "segment not present",
+    "stack-segment fault",
+    "general protection fault",
+    "page fault",
+    "reserved",
+    "x87 floating-point error",
+    "alignment check",
+    "machine check",
+    "SIMD floating-point error",
+    "virtualization exception",
+    "control protection exception",
+    "reserved",
+    "reserved",
+    "reserved",
+    "reserved",
+    "reserved",
+    "reserved",
+    "hypervisor injection",
+    "VMM communication",
+    "security exception",
+    "reserved",
+];
+
+const BREAKPOINT: u64 = 3;
+const PAGE_FAULT: u64 = 14;
+
+/// Every exception ends up here, with the saved state.
+///
+/// A breakpoint is reported and execution continues after the `int3`.
+/// Anything else is, for now, fatal: there is no process to kill and no
+/// fault to fix up, so the right move is to say everything and stop.
+extern "C" fn exception_handler(frame: &mut InterruptFrame) {
+    let name = NAMES.get(frame.vector as usize).copied().unwrap_or("unknown");
+
+    if frame.vector == BREAKPOINT {
+        kprintln!("[cpu] breakpoint at {:#x} - continuing", frame.rip);
+        return;
+    }
+
+    kprintln!();
+    kprintln!("*** CPU EXCEPTION {}: {name}", frame.vector);
+    if frame.vector == PAGE_FAULT {
+        report_page_fault(frame.error_code);
+    } else if frame.error_code != 0 {
+        kprintln!("    error code {:#x}", frame.error_code);
+    }
+    dump(frame);
+    super::halt_forever();
+}
+
+fn report_page_fault(error: u64) {
+    // CR2 holds the address the CPU was trying to reach.
+    let address: u64;
+    // SAFETY: reading CR2 has no side effects.
+    unsafe { asm!("mov {}, cr2", out(reg) address, options(nomem, nostack, preserves_flags)) };
+
+    let cause = if error & 1 != 0 { "protection violation" } else { "page not present" };
+    let access = if error & 16 != 0 {
+        "instruction fetch"
+    } else if error & 2 != 0 {
+        "write"
+    } else {
+        "read"
+    };
+    let mode = if error & 4 != 0 { "user" } else { "kernel" };
+    kprintln!("    {mode} {access} at {address:#x}: {cause}");
+    if error & 8 != 0 {
+        kprintln!("    (a reserved bit was set in a page table entry)");
+    }
+}
+
+fn dump(f: &InterruptFrame) {
+    kprintln!("    rip {:#018x}  cs {:#06x}  rflags {:#010x}", f.rip, f.cs, f.rflags);
+    kprintln!("    rsp {:#018x}  ss {:#06x}", f.rsp, f.ss);
+    kprintln!("    rax {:#018x}  rbx {:#018x}  rcx {:#018x}", f.rax, f.rbx, f.rcx);
+    kprintln!("    rdx {:#018x}  rsi {:#018x}  rdi {:#018x}", f.rdx, f.rsi, f.rdi);
+    kprintln!("    rbp {:#018x}  r8  {:#018x}  r9  {:#018x}", f.rbp, f.r8, f.r9);
+    kprintln!("    r10 {:#018x}  r11 {:#018x}  r12 {:#018x}", f.r10, f.r11, f.r12);
+    kprintln!("    r13 {:#018x}  r14 {:#018x}  r15 {:#018x}", f.r13, f.r14, f.r15);
+}
