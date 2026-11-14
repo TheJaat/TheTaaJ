@@ -2,7 +2,7 @@
 BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
-.PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk
+.PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
@@ -116,6 +116,18 @@ disk:
 	mcopy -i $(DISK_IMG) $(BUILD_DIR)/hello.txt ::HELLO.TXT
 	mcopy -i $(DISK_IMG) README.md ::README.MD
 	@echo "  FAT32 disk image ready"
+
+# The Rust rewrite of tfstool. Not part of `all` yet: it needs cargo,
+# and the C tool remains the one the build uses.
+tfstool-rs:
+	@echo "Building the Rust tfstool..."
+	cd tools/tfstool-rs && cargo build --release
+
+# Unit tests for the Rust tool, then a cross-check of the two tools
+# against each other.
+tfscheck: tfstool tfstool-rs
+	cd tools/tfstool-rs && cargo test
+	sh tools/tfstool-rs/crosscheck.sh
 
 TFS_IMG = $(BUILD_DIR)/tfs.img
 
