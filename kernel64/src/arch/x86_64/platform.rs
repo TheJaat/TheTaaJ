@@ -15,7 +15,7 @@ use alloc::vec::Vec;
 
 use kernel64::acpi::Madt;
 
-use super::{apic, pic, ps2};
+use super::{apic, pic};
 use crate::interrupts;
 use crate::irqlock::IrqLock;
 use crate::mm;
@@ -73,13 +73,13 @@ pub unsafe fn init(madt: &Madt, hz: u64) -> Report {
             io_apics.push(apic);
         }
 
-        // The keyboard: ISA IRQ 1, wherever the firmware wired it.
-        if ps2::init() {
-            let route = madt.isa_route(1);
-            if let Some(io) = io_apics.iter().find(|io| io.handles(route.gsi)) {
-                io.route(route.gsi, KEYBOARD_VECTOR, route.polarity, route.trigger, cpu);
-                report.keyboard_gsi = Some(route.gsi);
-            }
+        // The keyboard: ISA IRQ 1, wherever the firmware wired it. The
+        // kernel only routes it; the PS/2 controller itself is set up by
+        // the user-mode driver (user/src/bin/kbd.rs).
+        let route = madt.isa_route(1);
+        if let Some(io) = io_apics.iter().find(|io| io.handles(route.gsi)) {
+            io.route(route.gsi, KEYBOARD_VECTOR, route.polarity, route.trigger, cpu);
+            report.keyboard_gsi = Some(route.gsi);
         }
     }
 
@@ -105,9 +105,9 @@ pub fn handle_interrupt(vector: u8) {
             interrupts::interrupt_done();
         }
         KEYBOARD_VECTOR => {
-            if let Some(byte) = ps2::read() {
-                interrupts::keyboard_byte(byte);
-            }
+            // Not even reading the device: that is the driver's job. The
+            // kernel only tells it something happened.
+            interrupts::KEYBOARD.fire();
             apic::end_of_interrupt();
             interrupts::interrupt_done();
         }

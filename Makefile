@@ -262,6 +262,7 @@ HOST_TRIPLE = $(shell PATH="$(PATH)" rustc -vV | sed -n 's/^host: //p')
 
 kernel64-test:
 	cd $(KERNEL64_DIR) && cargo test --lib --target $(HOST_TRIPLE)
+	cd input && cargo test
 
 # One boot per deliberate fault: unmapped read, double fault, write to
 # rodata, executing data, stack overflow. Each must be caught and named.

@@ -12,6 +12,7 @@ test = false
 
 [dependencies]
 abi = { path = "../abi" }
+input = { path = "../input" }
 
 [profile.dev]
 panic = "abort"

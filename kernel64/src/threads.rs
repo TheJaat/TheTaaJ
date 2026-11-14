@@ -16,6 +16,7 @@ use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
+use kernel64::ioports::PortBitmap;
 use kernel64::sched::{Scheduler, State, Switch, ThreadId};
 
 use crate::arch::{self, context, mmu, syscall};
@@ -134,8 +135,9 @@ pub fn current_process() -> Option<Arc<Process>> {
     with(|t| t.table.get(&t.policy.current()).and_then(|thread| thread.process.clone()))
 }
 
-pub fn name(id: ThreadId) -> Option<&'static str> {
-    with(|t| t.table.get(&id).map(|thread| thread.name))
+/// The names of every thread but the idle thread, in creation order.
+pub fn names() -> Vec<&'static str> {
+    with(|t| t.table.iter().filter(|(&id, _)| id != IDLE).map(|(_, thread)| thread.name).collect())
 }
 
 pub fn count() -> usize {
@@ -190,9 +192,9 @@ fn schedule() {
         let save = &raw mut t.table.get_mut(&from).expect("current thread missing").rsp;
         let next = t.table.get(&to).expect("next thread missing");
         let root = next.process.as_ref().map_or_else(mm::kernel_root, |p| p.root());
-        Some((save, next.rsp, root, next.stack_top))
+        Some((save, next.rsp, root, next.stack_top, next.process.clone()))
     });
-    if let Some((save, load, root, stack_top)) = switch {
+    if let Some((save, load, root, stack_top, process)) = switch {
         // The next thread's world: its kernel stack for entries from user
         // mode, and its address space. Both are safe to change here - this
         // code and its stack are in the kernel half, mapped in every
@@ -203,7 +205,16 @@ fn schedule() {
         if ACTIVE_ROOT.swap(root, Ordering::Relaxed) != root {
             // SAFETY: a process's tables share the kernel half.
             unsafe { mmu::activate(root) };
+            // A different process (or none): its I/O ports.
+            match &process {
+                Some(p) => arch::set_io_bitmap(&p.io_ports.lock()),
+                None => arch::set_io_bitmap(&PortBitmap::NONE),
+            }
         }
+        // Dropped before switching: this thread may never come back (an
+        // exiting one), and a reference held on its stack would then
+        // keep the process alive forever.
+        drop(process);
         // SAFETY: interrupts are off; both threads are in the table, and
         // neither record is freed while it is involved in a switch (reap
         // never frees the current thread).

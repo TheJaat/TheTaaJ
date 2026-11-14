@@ -22,7 +22,7 @@ pub mod bootinfo;
 pub mod cap;
 pub mod channel;
 pub mod elf;
-pub mod input;
+pub mod ioports;
 pub mod memory;
 #[cfg(target_arch = "x86_64")]
 pub mod paging;

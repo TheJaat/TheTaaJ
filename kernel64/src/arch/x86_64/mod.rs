@@ -10,9 +10,10 @@ mod pic;
 mod pit;
 pub mod platform;
 mod port;
-mod ps2;
 mod serial;
 pub mod syscall;
+
+pub use gdt::set_io_bitmap;
 
 use core::arch::asm;
 

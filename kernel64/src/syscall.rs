@@ -38,6 +38,8 @@ pub fn dispatch(number: u64, args: [u64; 6]) -> u64 {
         call::CHANNEL_RECEIVE => ipc::receive(args[0], args[1], args[2], args[3], args[4]),
         call::HANDLE_CLOSE => ipc::close(args[0]),
         call::HANDLE_DUPLICATE => ipc::duplicate(args[0], args[1]),
+        call::INTERRUPT_WAIT => ipc::interrupt_wait(args[0]),
+        call::IOPORTS_ENABLE => ipc::ioports_enable(args[0]),
         _ => Err(Error::UnknownCall),
     };
     arch::disable_interrupts();

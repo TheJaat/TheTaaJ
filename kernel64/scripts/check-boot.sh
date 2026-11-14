@@ -31,6 +31,7 @@ if [ -n "$METHOD" ]; then
     grep -qE "loader +TheTaaJBoot.*\($METHOD\)" "$LOG" || fail "not booted via $METHOD"
 fi
 if [ -n "$TYPED" ]; then
-    grep -qF "[keyboard] line: \"$TYPED\"" "$LOG"  || fail "keyboard: \"$TYPED\" not echoed"
+    grep -q "\[kbd\] PS/2 keyboard ready" "$LOG"     || fail "keyboard driver did not start"
+    grep -qF "[shell] line: \"$TYPED\"" "$LOG"     || fail "keyboard: \"$TYPED\" not echoed by the shell"
 fi
 sed -n '/Hello from TheTaaJ/,$p' "$LOG"

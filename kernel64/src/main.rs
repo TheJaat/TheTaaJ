@@ -44,7 +44,6 @@ use alloc::string::String;
 
 use kernel64::acpi::{Acpi, IoApic, Madt};
 use kernel64::bootinfo::BootInfo;
-use kernel64::input::{Decoder, Key};
 
 /// The first Rust code to run, called by `_start` with the physical
 /// address of the TaajBootInfo (in RDI, per the C calling convention).
@@ -104,7 +103,7 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
     // IPC: processes talking through channels, by capability.
     selftest::ipc();
 
-    threads::spawn("echo", echo);
+    start_services();
 
     match info.framebuffer() {
         Some(fb) if framebuffer::paint_welcome(fb) => kprintln!("framebuffer: painted"),
@@ -171,43 +170,42 @@ fn report_platform(p: &arch::platform::Report) {
 /// leaves the CPU to the threads it started - and to the idle thread.
 fn idle() -> ! {
     kprintln!();
-    kprintln!("[kernel] idle - {} threads; type, and each line is echoed back", threads::count() - 1);
+    kprintln!("[kernel] boot done; running: {}", threads::names().join(", "));
+    kprintln!("[kernel] idle - the services take it from here");
     threads::exit()
 }
 
-/// A thread that echoes keyboard lines - the first thread that blocks
-/// for real: it sleeps until the keyboard interrupt wakes it, using no
-/// CPU at all while nobody types.
-fn echo() {
-    let mut decoder = Decoder::new();
-    let mut line = String::new();
-    loop {
-        interrupts::KEYBOARD_WAITERS.wait_while(|| interrupts::KEYBOARD.is_empty());
-        while let Some(byte) = interrupts::KEYBOARD.pop() {
-            let Some(event) = decoder.feed(byte) else { continue };
-            if !event.pressed {
-                continue;
-            }
-            match event.key {
-                Key::Char(c) => {
-                    line.push(c);
-                    kprint!("{c}");
-                }
-                Key::Backspace => {
-                    if line.pop().is_some() {
-                        kprint!("\x08 \x08"); // back, blank, back
-                    }
-                }
-                Key::Enter => {
-                    kprintln!();
-                    let me = threads::current();
-                    kprintln!("[keyboard] line: {line:?} (thread {me}, {:?})", threads::name(me).unwrap_or("?"));
-                    line.clear();
-                }
-                _ => {}
-            }
-        }
-    }
+/// The kernel acting as `init`: starts the first services and hands each
+/// exactly the capabilities it needs - no more.
+///
+///   kbd    the PS/2 keyboard driver. Gets the keyboard interrupt (wait
+///          only), ports 0x60 and 0x64 (not 0x61-0x63 between them, which
+///          are other devices), and the sending end of a channel to the
+///          shell.
+///   shell  reads that channel's terminal bytes and echoes lines. It has
+///          no access to any hardware at all.
+///
+/// Later a user-space init will do this, reading a configuration; the
+/// kernel will start only it.
+fn start_services() {
+    use abi::rights::{RECEIVE, SEND};
+    use ipc::Object;
+    use kernel64::cap::Rights;
+
+    let (keys_out, keys_in) = ipc::channel();
+    let (kbd_bootstrap, to_kbd) = ipc::channel();
+    process::spawn("shell", programs::SHELL, Some(keys_in)).expect("starting the shell");
+    process::spawn("kbd", programs::KBD, Some(kbd_bootstrap)).expect("starting the keyboard driver");
+    let capabilities = alloc::vec![
+        (Object::Interrupt(&interrupts::KEYBOARD), Rights(RECEIVE)),
+        (Object::IoPorts(0x60..0x61), Rights(0)),
+        (Object::IoPorts(0x64..0x65), Rights(0)),
+        (keys_out, Rights(SEND)),
+    ];
+    ipc::kernel_send(&to_kbd, b"ps2-keyboard", capabilities).expect("a new channel has room");
+    // The kernel keeps nothing: once kbd has read the message, the
+    // channel is closed and only the services hold their handles.
+    drop(to_kbd);
 }
 
 #[cfg(feature = "fault-tests")]

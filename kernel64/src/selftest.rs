@@ -8,8 +8,9 @@
 use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use kernel64::memory::addr::{phys_to_virt, VirtAddr};
 use kernel64::paging::{Flags, PageSize};
@@ -17,8 +18,6 @@ use kernel64::paging::{Flags, PageSize};
 use crate::arch::{self, mmu};
 use crate::irqlock::IrqLock;
 use crate::{interrupts, mm, threads};
-use alloc::sync::Arc;
-use core::sync::atomic::AtomicBool;
 
 pub fn run() {
     frames();
@@ -198,13 +197,27 @@ pub fn threads() {
 
     // 4. Churn: 100 threads come and go. Their stacks must be recycled -
     // no growth in slots or frames after the first round.
+    //
+    // All 100 wait at a gate until every one exists. Otherwise the peak
+    // number alive would depend on timing - the timer can preempt the
+    // spawning loop and let early threads finish - and a second round
+    // that happened to peak higher would reach a stack slot never used
+    // before, whose page table stays: one frame that looks like a leak.
     let churn = || {
+        let gate = Arc::new(AtomicBool::new(false));
         let ids: Vec<_> = (0..100)
-            .map(|n| threads::spawn("churn", move || {
-                let v: Vec<u64> = (0..n).collect();
-                assert_eq!(v.len() as u64, n);
-            }))
+            .map(|n| {
+                let gate = Arc::clone(&gate);
+                threads::spawn("churn", move || {
+                    while !gate.load(Ordering::Acquire) {
+                        threads::yield_now();
+                    }
+                    let v: Vec<u64> = (0..n).collect();
+                    assert_eq!(v.len() as u64, n);
+                })
+            })
             .collect();
+        gate.store(true, Ordering::Release);
         for id in ids {
             threads::join(id);
         }
@@ -228,10 +241,11 @@ pub fn user() {
     use crate::{process, programs};
 
     let run_all = || {
-        let programs: [(&'static str, &[u8]); 4] = [
+        let programs: [(&'static str, &[u8]); 5] = [
             ("hello", programs::HELLO),
             ("peek", programs::PEEK),
             ("cli", programs::CLI),
+            ("port", programs::PORT),
             ("spin", programs::SPIN),
         ];
         let started: Vec<_> = programs
@@ -252,6 +266,7 @@ pub fn user() {
         ("hello", Some(42)),
         ("peek", Some(abi::KILLED)),
         ("cli", Some(abi::KILLED)),
+        ("port", Some(abi::KILLED)),
         ("spin", Some(0)),
     ];
     assert_eq!(results, expected, "user programs did not end as expected");
@@ -263,7 +278,7 @@ pub fn user() {
     assert_eq!(run_all(), expected);
     threads::yield_now();
     assert_eq!(mm::with_memory(|_, f| f.free_frames()), frames, "processes leaked frames");
-    kprintln!("[selftest] user: hello exited 42, spin exited 0, peek and cli were killed; 8 processes, nothing leaked");
+    kprintln!("[selftest] user: hello exited 42, spin exited 0, peek, cli and port were killed; 10 processes, nothing leaked");
 }
 
 /// IPC: a service and its client, connected by one channel the kernel

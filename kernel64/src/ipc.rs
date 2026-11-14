@@ -23,21 +23,26 @@
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::ops::Range;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use abi::{rights, Error};
 use kernel64::cap::{Handle, Rights};
 use kernel64::channel::{peer, Channel, Message};
 
+use crate::interrupts::InterruptLine;
 use crate::irqlock::IrqLock;
-use crate::process;
+use crate::{arch, process};
 use crate::threads::WaitQueue;
 
-/// Something a handle can refer to. Channels only, for now; memory
-/// objects, interrupts and processes will join them.
+/// Something a handle can refer to.
 #[derive(Clone)]
 pub enum Object {
     Channel(Arc<ChannelEnd>),
+    /// A device's interrupt line: lets its holder wait for it.
+    Interrupt(&'static InterruptLine),
+    /// A range of I/O ports its holder may enable for itself.
+    IoPorts(Range<u16>),
 }
 
 /// A handle in flight: the object and the rights it travels with.
@@ -79,16 +84,17 @@ pub fn channel() -> (Object, Object) {
 }
 
 impl Object {
-    fn channel(&self) -> &Arc<ChannelEnd> {
+    fn channel(&self) -> Result<&Arc<ChannelEnd>, Error> {
         match self {
-            Object::Channel(end) => end,
+            Object::Channel(end) => Ok(end),
+            _ => Err(Error::WrongType),
         }
     }
 }
 
 impl ChannelEnd {
     fn same_channel(&self, other: &Object) -> bool {
-        Arc::ptr_eq(&self.shared, &other.channel().shared)
+        other.channel().is_ok_and(|end| Arc::ptr_eq(&self.shared, &end.shared))
     }
 }
 
@@ -176,7 +182,7 @@ pub fn send(handle: Handle, data: u64, length: u64, handles: u64, count: u64) ->
 
     let process = me()?;
     let mut table = process.handles.lock();
-    let end = Arc::clone(table.get(handle, Rights(rights::SEND))?.channel());
+    let end = Arc::clone(table.get(handle, Rights(rights::SEND))?.channel()?);
     let mut state = end.shared.state.lock();
     // Every check before anything moves: after this point nothing fails.
     state.can_send(end.end)?;
@@ -192,7 +198,7 @@ pub fn send(handle: Handle, data: u64, length: u64, handles: u64, count: u64) ->
 
 pub fn receive(handle: Handle, buffer: u64, capacity: u64, handles: u64, handle_capacity: u64) -> Result<u64, Error> {
     let process = me()?;
-    let end = Arc::clone(process.handles.lock().get(handle, Rights(rights::RECEIVE))?.channel());
+    let end = Arc::clone(process.handles.lock().get(handle, Rights(rights::RECEIVE))?.channel()?);
     loop {
         // Wait for a message (or a closed peer: peek's error).
         end.shared.readable[end.end].wait_while(|| matches!(end.shared.state.lock().peek(end.end), Ok(None)));
@@ -234,4 +240,39 @@ pub fn close(handle: Handle) -> Result<u64, Error> {
 pub fn duplicate(handle: Handle, rights: u64) -> Result<u64, Error> {
     let rights = u32::try_from(rights).ok().filter(|r| r & !abi::rights::ALL == 0).ok_or(Error::InvalidArgument)?;
     me()?.handles.lock().duplicate(handle, Rights(rights))
+}
+
+/// Sends a message from the kernel itself, on a channel end it holds -
+/// how it hands the first services their capabilities.
+pub fn kernel_send(end: &Object, data: &[u8], handles: Vec<Capability>) -> Result<(), Error> {
+    let end = end.channel()?;
+    end.shared.state.lock().send(end.end, Message { data: data.to_vec(), handles }).map_err(|(error, rejected)| {
+        bury([rejected]);
+        error
+    })?;
+    end.shared.readable[peer(end.end)].wake_all();
+    Ok(())
+}
+
+pub fn interrupt_wait(handle: Handle) -> Result<u64, Error> {
+    let line = match process::current().ok_or(Error::InvalidHandle)?.handles.lock().get(handle, Rights(rights::RECEIVE))? {
+        Object::Interrupt(line) => *line,
+        _ => return Err(Error::WrongType),
+    };
+    Ok(line.wait())
+}
+
+pub fn ioports_enable(handle: Handle) -> Result<u64, Error> {
+    let process = me()?;
+    let ports = match process.handles.lock().get(handle, Rights(0))? {
+        Object::IoPorts(ports) => ports.clone(),
+        _ => return Err(Error::WrongType),
+    };
+    let mut map = process.io_ports.lock();
+    if !map.allow(ports) {
+        return Err(Error::InvalidArgument);
+    }
+    // This process is running: load the change now, not at the next switch.
+    arch::set_io_bitmap(&map);
+    Ok(0)
 }

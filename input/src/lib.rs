@@ -14,6 +14,12 @@
 //!
 //! The decoder is a small state machine: it remembers a pending 0xE0 and
 //! which modifiers are down.
+//!
+//! Its own crate because two sides use it: it began in the kernel, and
+//! now runs in the user-mode keyboard driver. Pure logic, so it is tested
+//! on the host.
+
+#![cfg_attr(not(test), no_std)]
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
@@ -153,6 +159,65 @@ impl Decoder {
     }
 }
 
+/// The bytes a terminal sends for a key press: at most four.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TerminalBytes {
+    bytes: [u8; 4],
+    length: usize,
+}
+
+impl TerminalBytes {
+    fn new(bytes: &[u8]) -> TerminalBytes {
+        let mut b = [0; 4];
+        b[..bytes.len()].copy_from_slice(bytes);
+        TerminalBytes { bytes: b, length: bytes.len() }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.length]
+    }
+}
+
+/// What a terminal sends when this key is pressed - the stream programs
+/// on Unix-like systems have read for fifty years:
+///   - characters as UTF-8; Ctrl + a letter as its control code (Ctrl-C
+///     is 0x03)
+///   - Enter as "\n", Backspace as 0x08, Tab, Escape
+///   - arrows and editing keys as VT100/ANSI escape sequences:
+///     ESC [ A is Up, ESC [ 3 ~ is Delete
+///
+/// None for releases, and for keys that send nothing alone (modifiers).
+pub fn terminal_bytes(event: KeyEvent, control: bool) -> Option<TerminalBytes> {
+    if !event.pressed {
+        return None;
+    }
+    let sequence: &[u8] = match event.key {
+        Key::Char(c) if control && c.is_ascii_alphabetic() => {
+            return Some(TerminalBytes::new(&[c.to_ascii_lowercase() as u8 - b'a' + 1]));
+        }
+        Key::Char(c) => {
+            let mut buffer = [0; 4];
+            return Some(TerminalBytes::new(c.encode_utf8(&mut buffer).as_bytes()));
+        }
+        Key::Enter => b"\n",
+        Key::Backspace => b"\x08",
+        Key::Tab => b"\t",
+        Key::Escape => b"\x1b",
+        Key::Up => b"\x1b[A",
+        Key::Down => b"\x1b[B",
+        Key::Right => b"\x1b[C",
+        Key::Left => b"\x1b[D",
+        Key::Home => b"\x1b[H",
+        Key::End => b"\x1b[F",
+        Key::Insert => b"\x1b[2~",
+        Key::Delete => b"\x1b[3~",
+        Key::PageUp => b"\x1b[5~",
+        Key::PageDown => b"\x1b[6~",
+        _ => return None,
+    };
+    Some(TerminalBytes::new(sequence))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,5 +306,19 @@ mod tests {
             keys,
             vec![Key::Enter, Key::Backspace, Key::Tab, Key::Escape, Key::Function(1), Key::Function(12)]
         );
+    }
+
+    #[test]
+    fn key_presses_become_terminal_bytes() {
+        let press = |key| KeyEvent { key, pressed: true };
+        let bytes = |key, control| terminal_bytes(press(key), control).map(|t| t.as_bytes().to_vec());
+        assert_eq!(bytes(Key::Char('h'), false), Some(b"h".to_vec()));
+        assert_eq!(bytes(Key::Char('c'), true), Some(vec![3]), "Ctrl-C");
+        assert_eq!(bytes(Key::Char('C'), true), Some(vec![3]), "Ctrl-Shift-C");
+        assert_eq!(bytes(Key::Enter, false), Some(b"\n".to_vec()));
+        assert_eq!(bytes(Key::Up, false), Some(b"\x1b[A".to_vec()));
+        assert_eq!(bytes(Key::PageDown, false), Some(b"\x1b[6~".to_vec()));
+        assert_eq!(bytes(Key::Shift, false), None);
+        assert_eq!(terminal_bytes(KeyEvent { key: Key::Char('h'), pressed: false }, false), None);
     }
 }

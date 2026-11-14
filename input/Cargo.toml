@@ -1,0 +1,8 @@
+[package]
+name = "input"
+version = "0.1.0"
+edition = "2021"
+description = "Keyboard input: PS/2 scancodes to key events and terminal bytes"
+publish = false
+
+[dependencies]

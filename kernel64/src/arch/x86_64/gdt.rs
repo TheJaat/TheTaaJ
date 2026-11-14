@@ -7,10 +7,13 @@
 //!     (ring 3) code, and SS must agree with it
 //!   - the TSS: not a "task" any more, just a table of stack pointers the
 //!     CPU switches to when an interrupt arrives. Its IST entries are what
-//!     make a double fault survivable.
+//!     make a double fault survivable. Behind it sits the I/O permission
+//!     bitmap: which ports ring 3 may use (kernel64::ioports).
 
 use core::arch::asm;
 use core::mem::size_of;
+
+use kernel64::ioports::{self, PortBitmap};
 
 /// Selectors - the byte offset of each descriptor in the GDT, plus the
 /// requested privilege level in the low two bits.
@@ -66,6 +69,15 @@ struct TaskStateSegment {
 
 const _: () = assert!(size_of::<TaskStateSegment>() == 104);
 
+/// The TSS followed by its I/O permission bitmap. The CPU reads the
+/// bitmap two bytes at a time, so it must end with a byte of all ones.
+#[repr(C)]
+struct TssBlock {
+    tss: TaskStateSegment,
+    io_bitmap: [u8; ioports::BYTES],
+    terminator: u8,
+}
+
 const DOUBLE_FAULT_STACK_SIZE: usize = 16 * 1024;
 
 #[repr(C, align(16))]
@@ -76,14 +88,19 @@ struct Stack([u8; DOUBLE_FAULT_STACK_SIZE]);
 /// its handler needs one that is known to be good.
 static mut DOUBLE_FAULT_STACK: Stack = Stack([0; DOUBLE_FAULT_STACK_SIZE]);
 
-static mut TSS_SEGMENT: TaskStateSegment = TaskStateSegment {
-    reserved0: 0,
-    privilege_stacks: [0; 3],
-    reserved1: 0,
-    interrupt_stacks: [0; 7],
-    reserved2: 0,
-    reserved3: 0,
-    io_map_base: size_of::<TaskStateSegment>() as u16,
+static mut TSS_SEGMENT: TssBlock = TssBlock {
+    tss: TaskStateSegment {
+        reserved0: 0,
+        privilege_stacks: [0; 3],
+        reserved1: 0,
+        interrupt_stacks: [0; 7],
+        reserved2: 0,
+        reserved3: 0,
+        // The bitmap starts right after the TSS proper.
+        io_map_base: size_of::<TaskStateSegment>() as u16,
+    },
+    io_bitmap: *PortBitmap::NONE.bytes(),
+    terminator: 0xFF,
 };
 
 /// Seven slots: null, four segments, and the TSS, which takes two
@@ -108,7 +125,8 @@ pub struct TablePointer {
 /// Builds the TSS descriptor - the one entry whose contents depend on a
 /// runtime address, which is why GDT starts with zeros there.
 fn tss_descriptor(base: u64) -> (u64, u64) {
-    let limit = (size_of::<TaskStateSegment>() - 1) as u64;
+    // The limit covers the bitmap: ports past it are refused.
+    let limit = (size_of::<TssBlock>() - 1) as u64;
     let low = (limit & 0xFFFF)
         | ((base & 0xFF_FFFF) << 16)
         | (0x9 << 40) // type 9: available 64-bit TSS
@@ -129,7 +147,7 @@ pub unsafe fn init() {
     // the right tool for statics the CPU itself reads and writes.
     let stack_top = (&raw mut DOUBLE_FAULT_STACK) as u64 + DOUBLE_FAULT_STACK_SIZE as u64;
     let tss = &raw mut TSS_SEGMENT;
-    (*tss).interrupt_stacks[(DOUBLE_FAULT_IST - 1) as usize] = stack_top;
+    (*tss).tss.interrupt_stacks[(DOUBLE_FAULT_IST - 1) as usize] = stack_top;
 
     let gdt = &raw mut GDT;
     let (low, high) = tss_descriptor(tss as u64);
@@ -172,6 +190,13 @@ pub fn set_kernel_stack(top: u64) {
     // `packed`: the field may be unaligned, so write it unaligned.
     unsafe {
         let tss = &raw mut TSS_SEGMENT;
-        core::ptr::addr_of_mut!((*tss).privilege_stacks).cast::<u64>().write_unaligned(top);
+        core::ptr::addr_of_mut!((*tss).tss.privilege_stacks).cast::<u64>().write_unaligned(top);
     }
+}
+
+/// Loads the ports the next thread's process may use.
+pub fn set_io_bitmap(map: &PortBitmap) {
+    // SAFETY: as for set_kernel_stack; the CPU reads the bitmap only on
+    // an `in` or `out` in ring 3.
+    unsafe { TSS_SEGMENT.io_bitmap = *map.bytes() };
 }

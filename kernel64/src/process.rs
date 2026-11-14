@@ -16,6 +16,7 @@ use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use abi::Error;
 use kernel64::cap::{CapTable, Rights};
 use kernel64::elf::{self, ElfError};
+use kernel64::ioports::PortBitmap;
 use kernel64::memory::addr::{phys_to_virt, PhysAddr, VirtAddr, PAGE_SIZE};
 use kernel64::paging::{Flags, PageSize, PageTables};
 use kernel64::sched::ThreadId;
@@ -40,6 +41,9 @@ pub struct Process {
     tables: IrqLock<Option<PageTables>>,
     exit_code: AtomicI64,
     pub handles: IrqLock<CapTable<Object>>,
+    /// The I/O ports it may use directly; loaded into the TSS whenever
+    /// it runs. Granted for the life of the process.
+    pub io_ports: IrqLock<PortBitmap>,
 }
 
 #[derive(Debug)]
@@ -151,6 +155,7 @@ pub fn spawn(
         tables: IrqLock::new(Some(tables)),
         exit_code: AtomicI64::new(RUNNING),
         handles: IrqLock::new(CapTable::new(abi::HANDLES_MAX)),
+        io_ports: IrqLock::new(PortBitmap::NONE),
     });
     let argument = match bootstrap {
         Some(object) => process.handles.lock().insert(object, Rights::ALL).expect("an empty table has room"),

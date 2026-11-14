@@ -16,3 +16,6 @@ pub static CLI: &[u8] = program!("cli");
 pub static SPIN: &[u8] = program!("spin");
 pub static ECHOD: &[u8] = program!("echod");
 pub static ECHOC: &[u8] = program!("echoc");
+pub static PORT: &[u8] = program!("port");
+pub static KBD: &[u8] = program!("kbd");
+pub static SHELL: &[u8] = program!("shell");

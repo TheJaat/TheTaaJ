@@ -122,6 +122,40 @@ pub fn duplicate(handle: Handle, rights: u32) -> Result<Handle, Error> {
     abi::decode(syscall(call::HANDLE_DUPLICATE, handle, u64::from(rights), 0))
 }
 
+/// Waits for the interrupt `line`; returns how often it fired.
+pub fn interrupt_wait(line: Handle) -> Result<u64, Error> {
+    abi::decode(syscall(call::INTERRUPT_WAIT, line, 0, 0))
+}
+
+/// Lets this process use the I/O ports `ports` names, with `port::in8`
+/// and `port::out8`.
+pub fn ioports_enable(ports: Handle) -> Result<(), Error> {
+    abi::decode(syscall(call::IOPORTS_ENABLE, ports, 0, 0)).map(|_| ())
+}
+
+/// Direct I/O port access - the same instructions the kernel uses, in
+/// ring 3. Allowed only for ports enabled with `ioports_enable`; any
+/// other port is a general protection fault, and the kernel kills the
+/// process.
+pub mod port {
+    use core::arch::asm;
+
+    /// # Safety
+    /// The port must be enabled, and reading it must be harmless to the
+    /// device (some registers change state when read).
+    pub unsafe fn in8(port: u16) -> u8 {
+        let value: u8;
+        asm!("in al, dx", out("al") value, in("dx") port, options(nomem, nostack, preserves_flags));
+        value
+    }
+
+    /// # Safety
+    /// The port must be enabled, and the value right for the device.
+    pub unsafe fn out8(port: u16, value: u8) {
+        asm!("out dx, al", in("dx") port, in("al") value, options(nomem, nostack, preserves_flags));
+    }
+}
+
 static BOOTSTRAP: AtomicU64 = AtomicU64::new(0);
 
 /// The handle this program was started with: its channel to whoever

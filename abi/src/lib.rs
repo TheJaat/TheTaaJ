@@ -61,6 +61,13 @@ pub mod call {
     /// object, with `rights`, which must be a subset of the original's.
     /// Needs DUPLICATE.
     pub const HANDLE_DUPLICATE: u64 = 10;
+    /// interrupt_wait(handle) - waits until the interrupt has fired;
+    /// returns how many times it did since the last wait. Needs RECEIVE.
+    pub const INTERRUPT_WAIT: u64 = 11;
+    /// ioports_enable(handle) - lets this process use the I/O ports the
+    /// handle names directly, with `in` and `out`. Any other port is
+    /// still a fault.
+    pub const IOPORTS_ENABLE: u64 = 12;
 }
 
 /// What a handle permits. A right, once removed, cannot be added back:
@@ -108,6 +115,8 @@ pub enum Error {
     BufferTooSmall = 8,
     /// The handle table is full.
     TooManyHandles = 9,
+    /// The handle is to the wrong kind of object for this call.
+    WrongType = 10,
 }
 
 impl Error {
@@ -122,6 +131,7 @@ impl Error {
             7 => Some(Error::QueueFull),
             8 => Some(Error::BufferTooSmall),
             9 => Some(Error::TooManyHandles),
+            10 => Some(Error::WrongType),
             _ => None,
         }
     }
