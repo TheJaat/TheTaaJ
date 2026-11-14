@@ -234,9 +234,52 @@ impl Write for Console {
     }
 }
 
+/// Text formatted into a fixed buffer - this runtime has no heap. Writes
+/// past the end are cut off (and reported as an error by `write_str`).
+pub struct Buffer<const N: usize> {
+    bytes: [u8; N],
+    length: usize,
+}
+
+impl<const N: usize> Buffer<N> {
+    pub const fn new() -> Self {
+        Buffer { bytes: [0; N], length: 0 }
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.bytes[..self.length]
+    }
+}
+
+impl<const N: usize> Default for Buffer<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<const N: usize> Write for Buffer<N> {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        let room = N - self.length;
+        let n = text.len().min(room);
+        self.bytes[self.length..self.length + n].copy_from_slice(&text.as_bytes()[..n]);
+        self.length += n;
+        if n < text.len() { Err(fmt::Error) } else { Ok(()) }
+    }
+}
+
+/// Formats everything first, then writes it with one system call. The
+/// kernel prints each call whole, so a line cannot be split by another
+/// process printing at the same moment - which `format_args`, writing
+/// piece by piece, would otherwise allow. Longer text falls back to
+/// writing in pieces.
 #[doc(hidden)]
 pub fn print_args(args: fmt::Arguments) {
-    let _ = Console.write_fmt(args);
+    let mut buffer = Buffer::<512>::new();
+    if buffer.write_fmt(args).is_ok() {
+        let _ = write(buffer.as_bytes());
+    } else {
+        let _ = Console.write_fmt(args);
+    }
 }
 
 #[macro_export]

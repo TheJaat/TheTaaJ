@@ -2,65 +2,150 @@
 //!
 //! Startup handles, from init:
 //!   1  the framebuffer's memory object (READ and WRITE)
-//!   2  a channel on which init sends the framebuffer's description
+//!   2  a channel of display messages (abi::display): first INFO - the
+//!      framebuffer's description - then TEXT from whoever was given
+//!      the sending end (the shell)
 //!
 //! It maps the framebuffer - the same physical pixels the graphics card
-//! scans out - and paints them. The kernel drew this screen until now;
-//! the code is the same, only it runs in a process that can touch
-//! nothing but the screen, and can crash without taking the kernel
-//! along. A text console on this screen comes next.
+//! scans out - paints the background, and runs a text console on it:
+//! the `console` crate keeps the grid of characters, this draws them
+//! with TheTaaJ's own font. It can touch nothing but the screen, and can
+//! crash without taking the kernel along.
 
 #![no_std]
 #![no_main]
 
 use abi::FramebufferInfo;
+use console::{font, Damage, Grid, MAX_COLUMNS, MAX_ROWS};
 use taaj::{println, Error};
 
 taaj::program!(main);
 
-/// Builds a pixel value from 8-bit red, green and blue, placing each
-/// channel where *this* framebuffer wants it. Hard-coding 0x00RRGGBB
-/// would work in QEMU and show wrong colours on hardware that orders the
-/// channels differently - the shifts in the description exist for that.
-fn pixel(fb: &FramebufferInfo, red: u8, green: u8, blue: u8) -> u32 {
-    let channel = |value: u8, size: u8, shift: u8| -> u32 {
-        // Keep the top `size` bits of the 8-bit value.
-        (u32::from(value) >> (8 - u32::from(size.min(8)))) << shift
-    };
-    channel(red, fb.red_size, fb.red_shift)
-        | channel(green, fb.green_size, fb.green_shift)
-        | channel(blue, fb.blue_size, fb.blue_shift)
+/// The grid lives in static memory: at 38 KiB it would crowd the 64 KiB
+/// stack.
+static mut GRID: Grid = Grid::new(MAX_COLUMNS, MAX_ROWS);
+
+struct Screen {
+    fb: FramebufferInfo,
+    base: *mut u8,
+    /// Each font pixel is scale x scale screen pixels.
+    scale: usize,
+    /// Where the grid starts, and the size of one cell.
+    left: usize,
+    top: usize,
+    cell_width: usize,
+    cell_height: usize,
+    text: u32,
 }
 
-/// A vertical gradient with an amber band a third of the way down.
-fn paint_welcome(fb: &FramebufferInfo, base: *mut u8) {
-    let band = fb.height / 3..fb.height / 3 + fb.height / 12;
-    for y in 0..fb.height {
-        // Dark navy at the top shading to deep teal at the bottom.
-        let t = (y * 255 / fb.height) as u8;
-        let colour = if band.contains(&y) {
-            pixel(fb, 0xE8, 0xA8, 0x38) // the band: warm amber
-        } else {
-            pixel(fb, 0x10, 0x18 + t / 6, 0x30 + t / 4)
+impl Screen {
+    /// Builds a pixel value from 8-bit red, green and blue, placing each
+    /// channel where *this* framebuffer wants it. Hard-coding 0x00RRGGBB
+    /// would work in QEMU and show wrong colours on hardware that orders
+    /// the channels differently.
+    fn pixel(&self, red: u8, green: u8, blue: u8) -> u32 {
+        let channel = |value: u8, size: u8, shift: u8| -> u32 {
+            (u32::from(value) >> (8 - u32::from(size.min(8)))) << shift
         };
-        // SAFETY: the mapping covers pitch * height bytes, and every
-        // write stays inside line `y`. Volatile: this is device memory,
-        // and the compiler must not merge or drop writes nobody reads.
-        let line = unsafe { base.add((y * fb.pitch) as usize) } as *mut u32;
-        for x in 0..fb.width as usize {
-            unsafe { line.add(x).write_volatile(colour) };
+        channel(red, self.fb.red_size, self.fb.red_shift)
+            | channel(green, self.fb.green_size, self.fb.green_shift)
+            | channel(blue, self.fb.blue_size, self.fb.blue_shift)
+    }
+
+    fn band(&self) -> core::ops::Range<u32> {
+        self.fb.height / 3..self.fb.height / 3 + self.fb.height / 12
+    }
+
+    /// The background at line `y`: dark navy shading to deep teal, with
+    /// an amber band a third of the way down. A function of y alone, so
+    /// erasing anything is just painting this again.
+    fn background(&self, y: usize) -> u32 {
+        if self.band().contains(&(y as u32)) {
+            self.pixel(0xE8, 0xA8, 0x38)
+        } else {
+            let t = (y as u32 * 255 / self.fb.height) as u8;
+            self.pixel(0x10, 0x18 + t / 6, 0x30 + t / 4)
+        }
+    }
+
+    fn put(&self, x: usize, y: usize, colour: u32) {
+        if x < self.fb.width as usize && y < self.fb.height as usize {
+            // SAFETY: inside the mapped framebuffer (checked above).
+            // Volatile: device memory, writes must all happen.
+            unsafe { (self.base.add(y * self.fb.pitch as usize) as *mut u32).add(x).write_volatile(colour) };
+        }
+    }
+
+    fn paint_background(&self) {
+        for y in 0..self.fb.height as usize {
+            let colour = self.background(y);
+            for x in 0..self.fb.width as usize {
+                self.put(x, y, colour);
+            }
+        }
+    }
+
+    /// Draws `c` with its top-left corner at (x, y), `scale` times size.
+    fn glyph(&self, c: u8, x: usize, y: usize, scale: usize, colour: u32) {
+        for gy in 0..font::HEIGHT * scale {
+            for gx in 0..font::WIDTH * scale {
+                if font::pixel(c, gx / scale, gy / scale) {
+                    self.put(x + gx, y + gy, colour);
+                }
+            }
+        }
+    }
+
+    /// Redraws one cell of the grid, with the cursor if it is there.
+    fn cell(&self, column: usize, row: usize, c: u8, cursor: bool) {
+        let (x0, y0) = (self.left + column * self.cell_width, self.top + row * self.cell_height);
+        for y in y0..y0 + self.cell_height {
+            let colour = self.background(y);
+            for x in x0..x0 + self.cell_width {
+                self.put(x, y, colour);
+            }
+        }
+        self.glyph(c, x0, y0, self.scale, self.text);
+        if cursor {
+            // An underline on the cell's last font row.
+            let y = y0 + font::HEIGHT * self.scale;
+            for dy in 0..self.scale {
+                for x in x0..x0 + font::WIDTH * self.scale {
+                    self.put(x, y + dy, self.text);
+                }
+            }
+        }
+    }
+
+    fn redraw(&self, grid: &Grid) {
+        let (columns, rows) = grid.size();
+        for row in 0..rows {
+            for column in 0..columns {
+                self.cell(column, row, grid.at(column, row), grid.cursor() == (column, row));
+            }
         }
     }
 }
 
 fn main() -> i64 {
-    let (Some(memory), Some(control)) = (taaj::startup_handle(0), taaj::startup_handle(1)) else {
+    let (Some(memory), Some(messages)) = (taaj::startup_handle(0), taaj::startup_handle(1)) else {
         return 1;
     };
-    let mut message = [0u8; FramebufferInfo::SIZE];
-    let fb = match taaj::receive(control, &mut message, &mut []) {
-        Ok((FramebufferInfo::SIZE, _)) => FramebufferInfo::from_bytes(&message).expect("sized"),
-        _ => return 2,
+    let mut message = [0u8; abi::MESSAGE_MAX as usize];
+
+    // INFO first. Anything before it is text from a previous display's
+    // time, with no screen yet to show it on.
+    let fb = loop {
+        match taaj::receive(messages, &mut message, &mut []) {
+            Ok((n, _)) if n > 0 && message[0] == abi::display::INFO => {
+                match FramebufferInfo::from_bytes(&message[1..n]) {
+                    Some(fb) => break fb,
+                    None => return 2,
+                }
+            }
+            Ok(_) => continue,
+            Err(_) => return 2,
+        }
     };
     if fb.bpp != 32 || fb.width == 0 || fb.height == 0 {
         println!("[display] {} bits per pixel: not supported yet", fb.bpp);
@@ -73,16 +158,67 @@ fn main() -> i64 {
             return 4;
         }
     };
-    paint_welcome(&fb, base);
-    println!("[display] painted the {}x{} screen from ring 3 (framebuffer mapped at {base:p})", fb.width, fb.height);
 
-    // Nothing more to draw yet: wait for requests, which will come.
-    let mut request = [0u8; 64];
+    let scale = if fb.width >= 800 { 2 } else { 1 };
+    let mut screen = Screen {
+        fb,
+        base,
+        scale,
+        left: 16 * scale,
+        top: 0,
+        cell_width: (font::WIDTH + 1) * scale,
+        cell_height: (font::HEIGHT + 2) * scale,
+        text: 0,
+    };
+    screen.text = screen.pixel(0xE0, 0xE8, 0xF0);
+    screen.top = screen.band().end as usize + 8 * scale;
+    screen.paint_background();
+
+    // The name, in the band, in the navy of the top of the screen.
+    let title_scale = 2 * scale;
+    let band = screen.band();
+    let title_y = band.start as usize + (band.len().saturating_sub(font::HEIGHT * title_scale)) / 2;
+    let navy = screen.pixel(0x10, 0x18, 0x30);
+    for (n, &c) in b"TheTaaJ".iter().enumerate() {
+        screen.glyph(c, screen.left + n * (font::WIDTH + 1) * title_scale, title_y, title_scale, navy);
+    }
+
+    let columns = (fb.width as usize - 2 * screen.left) / screen.cell_width;
+    let rows = (fb.height as usize - screen.top - 8 * scale) / screen.cell_height;
+    // SAFETY: the only reference to GRID, taken once; one thread.
+    let grid = unsafe { (&raw mut GRID).as_mut() }.expect("a static is never null");
+    *grid = Grid::new(columns, rows);
+    let (columns, rows) = grid.size();
+    screen.redraw(grid);
+    println!(
+        "[display] painted the {}x{} screen from ring 3 (framebuffer at {base:p}); console {columns}x{rows}",
+        fb.width, fb.height
+    );
+
     loop {
-        match taaj::receive(control, &mut request, &mut []) {
+        let n = match taaj::receive(messages, &mut message, &mut []) {
+            Ok((n, _)) => n,
             Err(Error::PeerClosed) => return 0,
             Err(_) => return 5,
-            Ok(_) => {}
+        };
+        if n == 0 || message[0] != abi::display::TEXT {
+            continue;
+        }
+        let (old_column, old_row) = grid.cursor();
+        let mut scrolled = false;
+        grid.write_all(&message[1..n], &mut |damage| match damage {
+            Damage::Cell { column, row, character } => screen.cell(column, row, character, false),
+            Damage::Scrolled => scrolled = true,
+        });
+        if scrolled {
+            screen.redraw(grid);
+        } else {
+            // The cursor moved: clear it from its old cell, draw it anew.
+            screen.cell(old_column, old_row, grid.at(old_column, old_row), false);
+            let (column, row) = grid.cursor();
+            if column < columns {
+                screen.cell(column, row, grid.at(column, row), true);
+            }
         }
     }
 }

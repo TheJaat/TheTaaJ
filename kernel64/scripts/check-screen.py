@@ -1,6 +1,6 @@
 """check-screen.py - checks a QEMU screendump (binary PPM) shows what the
 display service paints: a navy-to-teal gradient with an amber band a
-third of the way down.
+third of the way down, and the console's text below it.
 
     usage: check-screen.py SCREEN.ppm
 
@@ -47,7 +47,20 @@ def main():
         if any(abs(g - w) > 8 for g, w in zip(got, want)):
             print(f"screen: {what} is {got}, expected about {want}")
             return 1
-    print(f"screen: {width}x{height}, painted as expected")
+    # Text: the console's light grey-blue, below the band. Some hundreds
+    # of pixels of it at least - the welcome lines and the typed line.
+    text = (0xE0, 0xE8, 0xF0)
+    top = height // 3 + height // 12
+    ink = sum(
+        1
+        for y in range(top, height, 2)
+        for x in range(0, width, 2)
+        if all(abs(g - w) <= 8 for g, w in zip(at(x, y), text))
+    )
+    if ink < 200:
+        print(f"screen: only {ink} sampled pixels of text below the band - no console?")
+        return 1
+    print(f"screen: {width}x{height}, painted as expected, with text ({ink} sampled pixels)")
     return 0
 
 

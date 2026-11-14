@@ -208,6 +208,15 @@ pub const USER_END: u64 = 0x0000_8000_0000_0000;
 /// Exit code the kernel records for a process it killed for a fault.
 pub const KILLED: i64 = -1000;
 
+/// The display service's messages: the first byte says which.
+pub mod display {
+    /// Followed by a FramebufferInfo: what to draw on. Sent by init to
+    /// each display it starts, before anything else.
+    pub const INFO: u8 = 1;
+    /// Followed by terminal bytes to show.
+    pub const TEXT: u8 = 2;
+}
+
 /// The screen, as the kernel describes it to init: a linear framebuffer
 /// of `pitch` bytes per line, each pixel `bpp` bits with its red, green
 /// and blue channels at the given bit positions. Sent as bytes, in a

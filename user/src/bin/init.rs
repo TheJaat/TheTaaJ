@@ -30,7 +30,9 @@
 
 use abi::FramebufferInfo;
 use taaj::rights::{DUPLICATE, READ, RECEIVE, SEND, TRANSFER, WRITE};
-use taaj::{print, println, Error, Handle};
+use core::fmt::Write;
+
+use taaj::{println, Buffer, Error, Handle};
 
 taaj::program!(main);
 
@@ -112,12 +114,13 @@ fn main() -> i64 {
         Grant { handle: keys_in, rights: RECEIVE },      // 4
         Grant { handle: fb_memory[0], rights: READ | WRITE }, // 5
         Grant { handle: display_rx, rights: RECEIVE },   // 6
+        Grant { handle: display_tx, rights: SEND },      // 7: text to the screen
     ];
     debug_assert!(grants.iter().all(|g| g.rights & DUPLICATE == 0));
 
+    // The display first: it must have its info before the shell's text
+    // arrives on the same channel.
     let mut services = [
-        Service { name: "shell", grants: &[4], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
-        Service { name: "kbd", grants: &[0, 1, 2, 3], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
         Service {
             name: "display",
             grants: &[5, 6],
@@ -126,6 +129,8 @@ fn main() -> i64 {
             restart_count: 0,
             given_up: framebuffer.is_none(),
         },
+        Service { name: "shell", grants: &[4, 7], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
+        Service { name: "kbd", grants: &[0, 1, 2, 3], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
     ];
     let launch = |service: &Service| {
         let mut list = [&grants[0]; 8];
@@ -135,7 +140,10 @@ fn main() -> i64 {
         let process = start(launcher, service.name, &list[..service.grants.len()])?;
         // Each new display needs to be told what it is drawing on.
         if let (Some(fb), "display") = (framebuffer, service.name) {
-            taaj::send(display_tx, &fb.to_bytes(), &[])?;
+            let mut info = [0u8; 1 + FramebufferInfo::SIZE];
+            info[0] = abi::display::INFO;
+            info[1..].copy_from_slice(&fb.to_bytes());
+            taaj::send(display_tx, &info, &[])?;
         }
         Ok::<Handle, Error>(process)
     };
@@ -149,11 +157,13 @@ fn main() -> i64 {
             }
         }
     }
-    print!("[init] started:");
+    // One line, written at once: other services are already printing.
+    let mut line = Buffer::<128>::new();
+    let _ = write!(line, "[init] started:");
     for service in services.iter().filter(|s| !s.given_up) {
-        print!(" {}", service.name);
+        let _ = write!(line, " {}", service.name);
     }
-    println!("; supervising");
+    println!("{}; supervising", core::str::from_utf8(line.as_bytes()).unwrap_or("?"));
 
     loop {
         // Watch every service still running.

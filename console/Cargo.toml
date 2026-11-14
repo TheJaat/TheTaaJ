@@ -1,0 +1,8 @@
+[package]
+name = "console"
+version = "0.1.0"
+edition = "2021"
+description = "A text console: TheTaaJ's own bitmap font and a terminal-style text grid"
+publish = false
+
+[dependencies]
