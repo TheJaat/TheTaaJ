@@ -311,12 +311,32 @@ pub fn memory_unmap(address: *mut u8) -> Result<(), Error> {
 static STARTUP_HANDLES: AtomicU64 = AtomicU64::new(0);
 static STARTUP_ARGUMENT: AtomicU64 = AtomicU64::new(0);
 
-/// The display channel to print to, if the parent gave one (handle 1,
-/// flagged by abi::startup::STDOUT).
+/// The startup handle a flag stands for, if the parent set that flag:
+/// flagged handles come first, in the order of the flags' bits.
+fn flagged_handle(flag: u64) -> Option<Handle> {
+    let flags = STARTUP_ARGUMENT.load(Ordering::Relaxed);
+    (flags & flag != 0).then(|| startup_handle(u64::from((flags & (flag - 1)).count_ones()))).flatten()
+}
+
+/// The display channel to print to, if the parent gave one.
 pub fn stdout() -> Option<Handle> {
-    (STARTUP_ARGUMENT.load(Ordering::Relaxed) & abi::startup::STDOUT != 0)
-        .then(|| startup_handle(0))
-        .flatten()
+    flagged_handle(abi::startup::STDOUT)
+}
+
+/// The program's arguments: the text typed after its name, or nothing.
+/// They arrive as one message, so this reads them once - call it once.
+pub fn arguments() -> alloc::string::String {
+    let mut message = [0u8; abi::MESSAGE_MAX as usize];
+    let length = match flagged_handle(abi::startup::ARGUMENTS).map(|channel| receive(channel, &mut message, &mut [])) {
+        Some(Ok((length, _))) => length,
+        _ => 0,
+    };
+    alloc::string::String::from_utf8_lossy(&message[..length]).into_owned()
+}
+
+/// The file service, if the parent passed its channel on.
+pub fn file_service() -> Option<files::Files> {
+    flagged_handle(abi::startup::FILES).map(files::Files::new)
 }
 
 /// Startup handle `n` (counting from 0), if the parent gave that many.

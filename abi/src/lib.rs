@@ -122,10 +122,62 @@ pub const SPAWN_REQUEST_WORDS: usize = 5;
 pub const PROGRAM_IMAGE_MAX: u64 = 4 << 20;
 
 /// What a program learns from its parent besides its handles: the
-/// argument of process_spawn, in RSI.
+/// argument of process_spawn, in RSI. Each flag says one more startup
+/// handle is present; they come in the order of the flags' bits.
 pub mod startup {
-    /// Startup handle 1 is a channel to the display - print there too.
+    /// A channel to the display - print there too.
     pub const STDOUT: u64 = 1 << 0;
+    /// A channel holding one message: the program's arguments, as the
+    /// text typed after its name.
+    pub const ARGUMENTS: u64 = 1 << 1;
+    /// The file service's request channel.
+    pub const FILES: u64 = 1 << 2;
+}
+
+/// Requests to init, from the shell: "start this program".
+///
+///   [kind] [flags] [name length] [name] [arguments]
+///
+/// `kind` is BUILT_IN (a program in the kernel image, by name) or IMAGE
+/// (the first handle is a memory object holding the program's file).
+/// `flags` are startup flags, STDOUT and FILES: for each one set, one
+/// more handle follows, in that order - the caller's own handles, which
+/// it hands down to the new program. init adds nothing of its own, so a
+/// program can get no more than whoever asked for it holds.
+///
+/// The reply: "ok" and a handle to the new process, or "error: ...".
+pub mod init {
+    pub const BUILT_IN: u8 = 1;
+    pub const IMAGE: u8 = 2;
+
+    pub struct Run<'a> {
+        pub kind: u8,
+        pub flags: u8,
+        pub name: &'a str,
+        pub arguments: &'a [u8],
+    }
+
+    impl<'a> Run<'a> {
+        /// Lays the request out in `out`; its length, or None if it
+        /// does not fit.
+        pub fn encode(&self, out: &mut [u8]) -> Option<usize> {
+            let length = 3 + self.name.len() + self.arguments.len();
+            if self.name.len() > 255 || length > out.len() {
+                return None;
+            }
+            out[..3].copy_from_slice(&[self.kind, self.flags, self.name.len() as u8]);
+            out[3..3 + self.name.len()].copy_from_slice(self.name.as_bytes());
+            out[3 + self.name.len()..length].copy_from_slice(self.arguments);
+            Some(length)
+        }
+
+        pub fn decode(message: &'a [u8]) -> Option<Run<'a>> {
+            let (&[kind, flags, name_length], rest) = message.split_first_chunk::<3>()?;
+            let (name, arguments) = rest.split_at_checked(name_length as usize)?;
+            let name = core::str::from_utf8(name).ok().filter(|name| !name.is_empty())?;
+            matches!(kind, BUILT_IN | IMAGE).then_some(Run { kind, flags, name, arguments })
+        }
+    }
 }
 
 /// What a handle permits. A right, once removed, cannot be added back:
@@ -483,5 +535,51 @@ pub mod block {
             READ_ONLY => "the disk is read-only",
             _ => "the disk service did not understand",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::init::{Run, BUILT_IN, IMAGE};
+
+    #[test]
+    fn a_run_request_round_trips() {
+        let run = Run { kind: IMAGE, flags: 5, name: "cat", arguments: b"notes welcome" };
+        let mut message = [0u8; 64];
+        let length = run.encode(&mut message).unwrap();
+        assert_eq!(length, 3 + 3 + 13);
+        let back = Run::decode(&message[..length]).unwrap();
+        assert_eq!((back.kind, back.flags, back.name, back.arguments), (IMAGE, 5, "cat", &b"notes welcome"[..]));
+        // No arguments is not the same as no request.
+        let length = Run { kind: BUILT_IN, flags: 0, name: "hello", arguments: b"" }.encode(&mut message).unwrap();
+        let back = Run::decode(&message[..length]).unwrap();
+        assert_eq!((back.name, back.arguments.len()), ("hello", 0));
+    }
+
+    #[test]
+    fn a_run_request_that_does_not_fit_is_refused() {
+        let run = Run { kind: IMAGE, flags: 0, name: "cat", arguments: b"notes" };
+        assert_eq!(run.encode(&mut [0u8; 10]), None);
+        assert_eq!(run.encode(&mut [0u8; 11]), Some(11));
+        let long = "n".repeat(256);
+        assert_eq!(Run { kind: IMAGE, flags: 0, name: &long, arguments: b"" }.encode(&mut [0u8; 512]), None);
+    }
+
+    #[test]
+    fn bad_run_requests_decode_to_nothing() {
+        // Whatever arrives on the channel: never a panic, never a
+        // request with a name that is not there.
+        for bad in [
+            &b""[..],
+            b"\x01\x00",                // cut short
+            b"\x01\x00\x00",            // no name
+            b"\x01\x00\x05cat",         // the name claims more than there is
+            b"\x03\x00\x03cat",         // no such kind
+            b"\x01\x00\x02\xff\xfe",    // a name that is not text
+            b"run hello",               // the old, text request
+        ] {
+            assert!(Run::decode(bad).is_none(), "{bad:?}");
+        }
+        assert!(Run::decode(b"\x01\x00\x03cat").is_some());
     }
 }

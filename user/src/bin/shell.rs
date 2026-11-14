@@ -3,15 +3,20 @@
 //! Startup handles, from init:
 //!   1  the channel from the keyboard driver (receive only)
 //!   2  the channel to the display (send only) - may be absent
-//!   3  the request channel to init: "run NAME"
+//!   3  the request channel to init: "start this program" (abi::init)
 //!   4  the system handle: looking at memory and processes, not touching
 //!   5  the request channel to the file service (send only)
 //!   6  the request channel to the disk driver: reads only - files on
 //!      the disk are the file service's to change
 //!
 //! It has no launcher and no hardware. To run a program it asks init,
-//! which decides what may run, and replies with a handle to the new
-//! process - all the shell can do with it is wait for it to end.
+//! and sends along what the program is to have: a copy of its channel to
+//! the screen, a copy of its channel to the file service. init replies
+//! with a handle to the new process - all the shell can do with it is
+//! wait for it to end.
+//!
+//! A word that is not one of the shell's own commands is looked for as
+//! a file: `ls` and `cat` are programs on the disk, like any other.
 //!
 //! Output goes to the screen and to the kernel's debug log (the serial
 //! line), which is what the boot tests read.
@@ -74,9 +79,8 @@ impl Shell {
                   \x20 uptime       time since boot\n\
                   \x20 mem          memory in use\n\
                   \x20 ps           processes\n\
-                  \x20 run NAME     run a program: a file, or hello, peek\n\
-                  \x20 ls           list the files\n\
-                  \x20 cat FILE     show a file\n\
+                  \x20 run NAME ARGS    run a program: a file, or hello, peek\n\
+                  \x20 NAME ARGS    the same, for a file - ls and cat are such\n\
                   \x20 write FILE TEXT    make FILE hold TEXT\n\
                   \x20 append FILE TEXT   add TEXT to the end of FILE\n\
                   \x20 rm FILE      remove a file\n\
@@ -89,18 +93,20 @@ impl Shell {
             "uptime" => self.uptime(),
             "mem" => self.mem(),
             "ps" => self.ps(),
-            "run" if !rest.is_empty() => self.run_program(rest),
-            "run" => self.write(b"usage: run NAME\n"),
-            "ls" => self.ls(),
-            "cat" if !rest.is_empty() => self.cat(rest),
+            "run" if !rest.is_empty() => {
+                let (name, arguments) = rest.split_once(' ').unwrap_or((rest, ""));
+                self.run_program(name, arguments.trim(), true);
+            }
+            "run" => self.write(b"usage: run NAME ARGS\n"),
             "write" | "append" => match rest.split_once(' ') {
                 Some((file, text)) => self.write_file(file, text, command == "append"),
                 None => say!(self, "usage: {command} FILE TEXT\n"),
             },
             "rm" if !rest.is_empty() => self.rm(rest),
-            "cat" | "rm" => say!(self, "usage: {command} FILE\n"),
+            "rm" => self.write(b"usage: rm FILE\n"),
             "disk" => self.disk(rest),
-            _ => say!(self, "unknown command: {command} (try help)\n"),
+            // Not the shell's own: a program in a file, if there is one.
+            _ => self.run_program(command, rest, false),
         }
     }
 
@@ -168,34 +174,6 @@ impl Shell {
             self.write(b"no file service: this shell has no files\n");
         }
         self.files.as_ref()
-    }
-
-    fn ls(&self) {
-        let Some(files) = self.files() else { return };
-        let mut bytes = 0;
-        let listed = files.list(|name, size| {
-            say!(self, "{size:>8}  {name}\n");
-            bytes += size;
-        });
-        match listed {
-            Ok(0) => self.write(b"no files\n"),
-            Ok(count) => say!(self, "{count} file{}, {bytes} bytes\n", if count == 1 { "" } else { "s" }),
-            Err(error) => say!(self, "ls: {}\n", error.describe()),
-        }
-    }
-
-    fn cat(&self, name: &str) {
-        let Some(files) = self.files() else { return };
-        let mut last = b'\n';
-        match files.read(name, |piece| {
-            self.write(piece);
-            last = piece[piece.len() - 1];
-        }) {
-            // Keep the prompt on a line of its own.
-            Ok(size) if size > 0 && last != b'\n' => self.write(b"\n"),
-            Ok(_) => {}
-            Err(error) => say!(self, "cat: {name}: {}\n", error.describe()),
-        }
     }
 
     /// `write` and `append`: the text, as a line.
@@ -309,28 +287,59 @@ impl Shell {
         }
     }
 
+    /// A copy of one of the shell's own handles, to give to a program:
+    /// good for sending on, and for handing over, nothing else.
+    fn delegate(handle: Option<Handle>) -> Option<Handle> {
+        taaj::duplicate(handle?, taaj::rights::SEND | taaj::rights::TRANSFER).ok()
+    }
+
     /// Asks init to start `name`, then waits for it - a foreground job.
-    /// A file of that name is read and sent along; otherwise init looks
-    /// among the programs built into the kernel image.
-    fn run_program(&self, name: &str) {
-        let Some(init) = self.init else {
-            self.write(b"no channel to init: cannot run programs\n");
-            return;
-        };
+    /// A file of that name is read and sent along; otherwise, for `run`
+    /// (`explicit`), init looks among the programs built into the kernel
+    /// image. The program gets the screen and the files, as the shell
+    /// has them, and `arguments`.
+    ///
+    /// `run NAME` says how the program ended; a program run by its name
+    /// alone is a command, and says nothing unless it failed.
+    fn run_program(&self, name: &str, arguments: &str, explicit: bool) {
         let image = match self.program_image(name) {
+            Ok(None) if !explicit => return say!(self, "unknown command: {name} (try help)\n"),
             Ok(image) => image,
             Err(why) => return say!(self, "run: {name} {why}\n"),
         };
-        let mut request = Buffer::<96>::new();
-        let sent = write!(request, "run {name}").is_ok()
-            && taaj::send(init, request.as_bytes(), image.as_slice()).is_ok();
-        if !sent {
-            if let Some(image) = image {
-                let _ = taaj::close(image); // not sent: still ours
+        let mut handles = [0u64; 3];
+        let mut count = 0;
+        let mut flags = 0;
+        let offered = [
+            (0, image),
+            (abi::startup::STDOUT, Self::delegate(self.screen)),
+            (abi::startup::FILES, Self::delegate(self.files.as_ref().map(Files::channel))),
+        ];
+        for (flag, handle) in offered {
+            if let Some(handle) = handle {
+                handles[count] = handle;
+                count += 1;
+                flags |= flag as u8;
             }
-            self.write(b"cannot reach init\n");
-            return;
         }
+        let handles = &handles[..count];
+        let request = abi::init::Run {
+            kind: if image.is_some() { abi::init::IMAGE } else { abi::init::BUILT_IN },
+            flags,
+            name,
+            arguments: arguments.as_bytes(),
+        };
+        let mut message = [0u8; 3 + 2 * LINE_MAX];
+        let sent = match (self.init, request.encode(&mut message)) {
+            (Some(init), Some(length)) => taaj::send(init, &message[..length], handles).map(|()| init),
+            _ => Err(Error::InvalidArgument),
+        };
+        let Ok(init) = sent else {
+            for &handle in handles {
+                let _ = taaj::close(handle); // not sent: still ours
+            }
+            return self.write(b"cannot reach init: cannot run programs\n");
+        };
         let mut reply = [0u8; 64];
         let mut handle = [0u64; 1];
         let process = match taaj::receive(init, &mut reply, &mut handle) {
@@ -344,6 +353,7 @@ impl Shell {
         };
         match taaj::wait_any(&[process]) {
             Ok((_, abi::KILLED)) => say!(self, "{name} was killed by the kernel (it broke a rule)\n"),
+            Ok((_, 0)) if !explicit => {}
             Ok((_, code)) => say!(self, "{name} exited with code {code}\n"),
             Err(error) => say!(self, "lost track of {name}: {error:?}\n"),
         }

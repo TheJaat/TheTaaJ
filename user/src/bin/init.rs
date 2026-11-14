@@ -16,9 +16,10 @@
 //! driver).
 //!
 //! init also runs programs for the shell. The shell has no launcher; it
-//! sends "run NAME" on a channel to init, which starts the program - if
-//! it is one a user may run - with the screen as its stdout, and replies
-//! "ok" with a handle to the new process, or an error.
+//! sends a request (abi::init) on a channel to init, with the handles
+//! the program is to have - the shell's own, handed down. init starts
+//! the program with exactly those, and replies "ok" with a handle to
+//! the new process, or an error.
 //!
 //! init builds the system from these: it wires the services together
 //! with channels and starts each one with only the handles it needs, and
@@ -49,6 +50,11 @@ taaj::program!(main);
 
 /// What the shell may ask init to run: programs, not services.
 const RUNNABLE: &[&str] = &["hello", "peek"];
+
+/// On a grant: the service may copy the handle and pass copies on - to
+/// the programs it has init start. Without these two rights a handle
+/// stays where init put it.
+const DELEGABLE: u32 = DUPLICATE | TRANSFER;
 
 const MAX_RESTARTS: usize = 5;
 const RESTART_WINDOW: u64 = 30 * 100; // 30 seconds of 100 Hz ticks
@@ -168,11 +174,11 @@ fn main() -> i64 {
         Grant { handle: keys_in, rights: RECEIVE },      // 4
         Grant { handle: fb_memory, rights: READ | WRITE },    // 5
         Grant { handle: display_rx, rights: RECEIVE },   // 6
-        Grant { handle: display_tx, rights: SEND },      // 7: text to the screen
+        Grant { handle: display_tx, rights: SEND | DELEGABLE }, // 7: text to the screen
         Grant { handle: shell_requests, rights: SEND | RECEIVE }, // 8: requests to init
         Grant { handle: system, rights: 0 },             // 9: looking, not touching
         Grant { handle: files_in, rights: RECEIVE },     // 10: requests, for fs
-        Grant { handle: files_out, rights: SEND },       // 11: requests, to fs
+        Grant { handle: files_out, rights: SEND | DELEGABLE }, // 11: requests, to fs
         Grant { handle: disk_ports, rights: 0 },          // 12: the disk's ports
         Grant { handle: disk_dma, rights: READ | WRITE }, // 13: its DMA memory
         Grant { handle: disk_info_rx, rights: RECEIVE },  // 14: its description
@@ -182,7 +188,8 @@ fn main() -> i64 {
         Grant { handle: disk_look_in, rights: RECEIVE },  // 18: read-only requests, for blk
         Grant { handle: disk_look_out, rights: SEND },    // 19: read-only requests, to blk
     ];
-    debug_assert!(grants.iter().all(|g| g.rights & DUPLICATE == 0));
+    // Only the shell's screen and files can be copied and passed on.
+    debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11)));
 
     // The display first: it must have its info before the shell's text
     // arrives on the same channel.
@@ -265,7 +272,7 @@ fn main() -> i64 {
             Err(_) => return 3,
         };
         if index == count {
-            serve_request(launcher, requests, framebuffer.map(|_| display_tx));
+            serve_request(launcher, requests);
             continue;
         }
         // A service ended; it is ready, so this returns at once.
@@ -299,68 +306,126 @@ fn main() -> i64 {
     }
 }
 
-/// Answers one request from the shell. Requests are text: "run NAME".
+/// Answers one request from the shell: start a program (abi::init).
 ///
-/// With no handle, NAME is one of the programs built into the kernel
-/// image that a user may run. With one handle - a memory object - it is
-/// a program the shell read from a file, and NAME only what to call it.
+/// A BUILT_IN program is one in the kernel image that a user may run.
+/// An IMAGE is a program the shell read from a file; its first handle
+/// is the memory object holding it, and the name only what to call it.
 ///
-/// init starts either with nothing but the screen to print on. That is
-/// why it is safe to run whatever is in a file: a process can only use
-/// what it holds a handle to, and this one holds one channel. It can
-/// compute, print, and exit.
+/// What the program can do is decided by the handles that came with the
+/// request, and by nothing else. They are the shell's own - a copy of
+/// its channel to the screen, of its channel to the file service - and
+/// init passes them on, each cut down to "send". init gives nothing of
+/// its own: it holds the launcher, the disk's ports, every channel in
+/// the system, and a request that could make init reach for those on
+/// someone's behalf would make the shell as powerful as init. This way
+/// the shell can hand down what it has, and no more. That is also why
+/// it is safe to run whatever is in a file: a process can only use what
+/// it holds a handle to.
+///
+/// The arguments are the one thing init makes: a channel with a single
+/// message in it, whose receiving end the program gets.
 ///
 /// The shell reads the file, not init. init restarts the file service
 /// when it crashes; if init itself waited on the file service, a hung
 /// one would stop the only process able to fix it.
-fn serve_request(launcher: Handle, requests: Handle, screen: Option<Handle>) {
-    let mut message = [0u8; 96];
-    // Room for any number of handles: a request that did not fit would
-    // stay at the head of the queue forever.
+fn serve_request(launcher: Handle, requests: Handle) {
+    use abi::init::{Run, BUILT_IN, IMAGE};
+    use abi::startup::{ARGUMENTS, FILES, STDOUT};
+
+    // Room for any message and any number of handles: a request that
+    // did not fit would stay at the head of the queue forever.
+    let mut message = [0u8; abi::MESSAGE_MAX as usize];
     let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
     let Ok((n, count)) = taaj::receive(requests, &mut message, &mut handles) else { return };
-    let close_all = || {
-        for &handle in &handles[..count] {
+    let close = |handles: &[Handle]| {
+        for &handle in handles {
             let _ = taaj::close(handle);
         }
     };
     let reply = |text: &[u8], handles: &[Handle]| {
         let _ = taaj::send(requests, text, handles);
     };
-    let name = message[..n].strip_prefix(b"run ").and_then(|n| core::str::from_utf8(n).ok());
-    let (Some(name), true) = (name, count <= 1) else {
-        close_all();
+
+    // One handle for the image, one for each flag - no more, no fewer.
+    let run = Run::decode(&message[..n]).filter(|run| {
+        let flags = u64::from(run.flags);
+        flags & !(STDOUT | FILES) == 0 && count == usize::from(run.kind == IMAGE) + flags.count_ones() as usize
+    });
+    let Some(run) = run else {
+        close(&handles[..count]);
         return reply(b"error: unknown request", &[]);
     };
-    let image = (count == 1).then_some(handles[0]);
-    if image.is_none() && !RUNNABLE.contains(&name) {
+    let (image, passed) = match run.kind {
+        IMAGE => (Some(handles[0]), &handles[1..count]),
+        _ => (None, &handles[..count]),
+    };
+    if run.kind == BUILT_IN && !RUNNABLE.contains(&run.name) {
+        close(passed);
         return reply(b"error: no such program, on the disk or built in", &[]);
     }
-    // Its stdout: a send-only copy of the display channel.
-    let stdout = screen.and_then(|screen| taaj::duplicate(screen, SEND | TRANSFER).ok());
-    let stdout_pair = stdout.map(|copy| [(copy, SEND)]);
-    let (given, argument): (&[(Handle, u32)], u64) = match &stdout_pair {
-        Some(pair) => (pair, abi::startup::STDOUT),
-        None => (&[], 0),
+
+    // The arguments, waiting in a channel of their own.
+    let arguments = if run.arguments.is_empty() {
+        None
+    } else {
+        let made = taaj::channel_create().and_then(|(tx, rx)| {
+            let sent = taaj::send(tx, run.arguments, &[]);
+            let _ = taaj::close(tx);
+            sent.map(|()| rx).inspect_err(|_| close(&[rx]))
+        });
+        match made {
+            Ok(rx) => Some(rx),
+            Err(error) => {
+                close(&handles[..count]);
+                let mut text = Buffer::<64>::new();
+                let _ = write!(text, "error: {error:?}");
+                return reply(text.as_bytes(), &[]);
+            }
+        }
     };
+
+    // The startup handles, in the order of the flags' bits: stdout,
+    // arguments, files.
+    let mut given = [(0u64, 0u32); 3];
+    let mut length = 0;
+    let mut flags = u64::from(run.flags);
+    let mut passed = passed.iter().copied();
+    for flag in [STDOUT, ARGUMENTS, FILES] {
+        let entry = match flag {
+            ARGUMENTS => arguments.map(|rx| (rx, RECEIVE)),
+            _ if flags & flag != 0 => passed.next().map(|handle| (handle, SEND)),
+            _ => None,
+        };
+        if let Some(entry) = entry {
+            given[length] = entry;
+            length += 1;
+            flags |= flag;
+        }
+    }
+    let given = &given[..length];
+
     let result = match image {
-        Some(image) => taaj::spawn_image(launcher, image, name, given, argument),
-        None => taaj::spawn(launcher, name, given, argument),
+        Some(image) => taaj::spawn_image(launcher, image, run.name, given, flags),
+        None => taaj::spawn(launcher, run.name, given, flags),
     };
-    close_all(); // the image: the kernel has its own copy by now
+    // The image: the kernel has its own copy by now.
+    if let Some(image) = image {
+        close(&[image]);
+    }
     match result {
         Ok(process) => {
-            println!("[init] started {name} for the shell{}", if image.is_some() { ", from a file" } else { "" });
+            println!("[init] started {} for the shell{}", run.name, if image.is_some() { ", from a file" } else { "" });
             reply(b"ok", &[process]);
         }
         Err(error) => {
-            // Not started: the copy of the screen is still ours.
-            if let Some(copy) = stdout {
-                let _ = taaj::close(copy);
+            // Not started: its handles are still here.
+            for &(handle, _) in given {
+                close(&[handle]);
             }
             let mut text = Buffer::<64>::new();
             let _ = match error {
-                Error::NotExecutable => write!(text, "error: {name} is not a program"),
+                Error::NotExecutable => write!(text, "error: {} is not a program", run.name),
                 error => write!(text, "error: {error:?}"),
             };
             reply(text.as_bytes(), &[]);

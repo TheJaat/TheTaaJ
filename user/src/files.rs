@@ -43,6 +43,11 @@ impl Files {
         Files { requests }
     }
 
+    /// The request channel - to pass a copy of it on.
+    pub fn channel(&self) -> Handle {
+        self.requests
+    }
+
     /// One exchange. Returns the reply's payload length (in `reply`
     /// after the status byte).
     fn call(&self, request: Request, reply: &mut [u8; MESSAGE_MAX]) -> Result<usize, FileError> {

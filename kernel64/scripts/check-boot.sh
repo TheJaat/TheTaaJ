@@ -63,5 +63,12 @@ if [ -n "${EXPECT:-}" ]; then
         grep -qE "$pattern" "$LOG" || fail "no output matching \"$pattern\""
     done
     IFS=$old_ifs
+    # `ps` is typed before any program is run and again after the last:
+    # the same processes, threads and channels both times, or running a
+    # program left something behind - a handle the shell or init forgot.
+    [ "$(grep -cE "^[0-9]+ processes, [0-9]+ threads, [0-9]+ channels" "$LOG")" -ge 2 ] \
+        || fail "ps did not run twice"
+    [ "$(grep -E "^[0-9]+ processes, [0-9]+ threads, [0-9]+ channels" "$LOG" | sort -u | wc -l)" -eq 1 ] \
+        || fail "running programs left processes, threads or channels behind"
 fi
 sed -n '/Hello from TheTaaJ/,$p' "$LOG"
