@@ -250,7 +250,7 @@ pub fn user() {
         ];
         let started: Vec<_> = programs
             .iter()
-            .map(|&(name, file)| process::spawn(name, file, None).unwrap_or_else(|e| panic!("loading {name}: {e:?}")))
+            .map(|&(name, file)| process::spawn(name, file, Vec::new()).unwrap_or_else(|e| panic!("loading {name}: {e:?}")))
             .collect();
         started
             .into_iter()
@@ -287,13 +287,14 @@ pub fn user() {
 /// channel and every frame must be gone.
 pub fn ipc() {
     use crate::{ipc, process, programs};
+    use kernel64::cap::Rights;
 
     let run = || {
         let (service_end, client_end) = ipc::channel();
         let (service, service_thread) =
-            process::spawn("echod", programs::ECHOD, Some(service_end)).expect("loading echod");
+            process::spawn("echod", programs::ECHOD, alloc::vec![(service_end, Rights::ALL)]).expect("loading echod");
         let (client, client_thread) =
-            process::spawn("echoc", programs::ECHOC, Some(client_end)).expect("loading echoc");
+            process::spawn("echoc", programs::ECHOC, alloc::vec![(client_end, Rights::ALL)]).expect("loading echoc");
         threads::join(client_thread);
         threads::join(service_thread);
         assert_eq!(client.exit_code(), Some(0), "echoc failed (the code is the line of the failed check)");

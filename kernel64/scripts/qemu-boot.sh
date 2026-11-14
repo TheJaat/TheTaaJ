@@ -12,7 +12,9 @@
 #   QEMU_ARGS  extra QEMU options (for example the firmware)
 #   KEYS       QEMU key names to type once the keyboard driver is ready,
 #              through QEMU's monitor (`sendkey`) - e.g. "shift-h i ret".
-#              The script then waits for the shell to echo a line.
+#              A "/" waits until a new keyboard driver is ready (after a
+#              crash and restart) before typing on. The script then waits
+#              for the shell to echo a line.
 
 set -u
 
@@ -51,10 +53,21 @@ if wait_for "$FINISHED" $((LIMIT * 10)); then
     # ready, or the first keys are lost.
     if [ -n "$KEYS" ] && grep -q "\[kernel\] idle" "$LOG" && wait_for "\[kbd\] PS/2 keyboard ready" 50; then
         # One key at a time, with a pause: a real typist, not a burst.
+        ready="\[kbd\] PS/2 keyboard ready"
         for key in $KEYS; do
-            echo "sendkey $key"
+            if [ "$key" = "/" ]; then
+                # Wait for one more "ready" line than there is now.
+                seen=$(grep -c "$ready" "$LOG")
+                ticks=100
+                while [ "$(grep -c "$ready" "$LOG")" -le "$seen" ] && [ $ticks -gt 0 ]; do
+                    sleep 0.1
+                    ticks=$((ticks - 1))
+                done
+                continue
+            fi
+            echo "sendkey $key" | nc -U -N "$MONITOR" > /dev/null
             sleep 0.05
-        done | nc -U -N "$MONITOR" > /dev/null
+        done
         wait_for "\[shell\] line" 50 || echo "qemu-boot: no echoed line after typing" >&2
     fi
     sleep 0.3   # let the rest of a fault report reach the log

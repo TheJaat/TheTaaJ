@@ -171,7 +171,9 @@ UEFI64_LOG   = $(BUILD_DIR)/serial64-uefi.log
 
 # What the boot tests type at the idle kernel - with a typo corrected by
 # Backspace - and the line it must echo back.
-TEST_KEYS    = shift-h i spc t h e r x backspace e ret
+# F12 crashes the keyboard driver on purpose; "/" waits for init to
+# restart it; then the line is typed to the new driver.
+TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret
 TEST_TYPED   = Hi there
 
 # The UEFI loader needs Clang and lld (`sudo apt install clang lld`).

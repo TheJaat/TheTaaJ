@@ -26,6 +26,7 @@ grep -q "\[selftest\] threads: sleep" "$LOG"      || fail "threads self-test"
 grep -q "\[selftest\] user:" "$LOG"               || fail "user-mode self-test"
 grep -q "\[selftest\] ipc:" "$LOG"                || fail "IPC self-test"
 grep -q "\[kernel\] idle" "$LOG"                  || fail "did not reach idle"
+grep -q "\[init\] started shell and kbd" "$LOG"   || fail "init did not start the services"
 ! grep -qE "KERNEL PANIC|CPU EXCEPTION" "$LOG"     || fail "panic or exception"
 if [ -n "$METHOD" ]; then
     grep -qE "loader +TheTaaJBoot.*\($METHOD\)" "$LOG" || fail "not booted via $METHOD"
@@ -33,5 +34,6 @@ fi
 if [ -n "$TYPED" ]; then
     grep -q "\[kbd\] PS/2 keyboard ready" "$LOG"     || fail "keyboard driver did not start"
     grep -qF "[shell] line: \"$TYPED\"" "$LOG"     || fail "keyboard: \"$TYPED\" not echoed by the shell"
+    grep -q "\[init\] kbd ended .* restarting" "$LOG" || fail "init did not restart the crashed driver"
 fi
 sed -n '/Hello from TheTaaJ/,$p' "$LOG"

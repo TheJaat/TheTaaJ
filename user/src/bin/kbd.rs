@@ -1,15 +1,19 @@
 //! The PS/2 keyboard driver - in user mode.
 //!
-//! The kernel gives it, in its bootstrap message, exactly what it needs:
-//!   0  the keyboard's interrupt line (it may wait on it, nothing more)
-//!   1  I/O port 0x60, the 8042 controller's data port
-//!   2  I/O port 0x64, its status/command port
-//!   3  a channel to send terminal bytes on (send only)
+//! init starts it with exactly what it needs, as startup handles:
+//!   1  the keyboard's interrupt line (it may wait on it, nothing more)
+//!   2  I/O port 0x60, the 8042 controller's data port
+//!   3  I/O port 0x64, its status/command port
+//!   4  a channel to send terminal bytes on (send only)
+//! None of them can be duplicated or passed on.
 //!
 //! It sets the controller up, then loops: wait for the interrupt, read
 //! the waiting bytes, decode them into key presses (the `input` crate),
 //! and send each press as terminal bytes. If it crashes, the kernel
-//! survives - the keyboard just stops, until something restarts it.
+//! survives, and init starts a new one.
+//!
+//! F12 is a deliberate bug - the driver reads address 0 - so that the
+//! crash and the restart can be tested (and seen).
 //!
 //! The 8042: status bit 0 says a byte is waiting at 0x60; bit 1 says the
 //! controller has not yet taken the last byte written.
@@ -17,7 +21,7 @@
 #![no_std]
 #![no_main]
 
-use input::{terminal_bytes, Decoder};
+use input::{terminal_bytes, Decoder, Key};
 use taaj::port::{in8, out8};
 use taaj::{println, Error};
 
@@ -91,16 +95,12 @@ fn init_controller() -> bool {
 }
 
 fn main() -> i64 {
-    let mut name = [0u8; 32];
-    let mut handles = [0u64; 4];
-    match taaj::receive(taaj::bootstrap(), &mut name, &mut handles) {
-        Ok((_, 4)) => {}
-        _ => {
-            println!("[kbd] no capabilities - nothing to drive");
-            return 1;
-        }
-    }
-    let [interrupt, data_port, status_port, output] = handles;
+    let (Some(interrupt), Some(data_port), Some(status_port), Some(output)) =
+        (taaj::startup_handle(0), taaj::startup_handle(1), taaj::startup_handle(2), taaj::startup_handle(3))
+    else {
+        println!("[kbd] no capabilities - nothing to drive");
+        return 1;
+    };
     if taaj::ioports_enable(data_port).is_err() || taaj::ioports_enable(status_port).is_err() {
         return 2;
     }
@@ -118,6 +118,11 @@ fn main() -> i64 {
         while unsafe { in8(STATUS) } & OUTPUT_FULL != 0 {
             let byte = unsafe { in8(DATA) };
             let Some(event) = decoder.feed(byte) else { continue };
+            if event.pressed && event.key == Key::Function(12) {
+                println!("[kbd] F12: simulating a driver bug - reading address 0");
+                // SAFETY: none - this is the bug.
+                return unsafe { core::ptr::read_volatile(core::ptr::null::<i64>()) };
+            }
             let Some(bytes) = terminal_bytes(event, decoder.control_held()) else { continue };
             match taaj::send(output, bytes.as_bytes(), &[]) {
                 Ok(()) | Err(Error::QueueFull) => {} // a reader that lags loses keys, not the driver

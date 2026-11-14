@@ -19,3 +19,17 @@ pub static ECHOC: &[u8] = program!("echoc");
 pub static PORT: &[u8] = program!("port");
 pub static KBD: &[u8] = program!("kbd");
 pub static SHELL: &[u8] = program!("shell");
+pub static INIT: &[u8] = program!("init");
+
+/// The programs a launcher can start, by name.
+static PROGRAMS: &[(&str, &[u8])] = &[
+    ("kbd", KBD),
+    ("shell", SHELL),
+    ("echod", ECHOD),
+    ("echoc", ECHOC),
+    ("hello", HELLO),
+];
+
+pub fn find(name: &str) -> Option<(&'static str, &'static [u8])> {
+    PROGRAMS.iter().find(|(n, _)| *n == name).copied()
+}

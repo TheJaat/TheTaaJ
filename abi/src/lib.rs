@@ -22,8 +22,10 @@
 //! the same number in another process names something else, or nothing.
 //! Handles are passed between processes by sending them in messages.
 //!
-//! Every program starts with one handle, its bootstrap channel, in RDI
-//! (0 if it was given none).
+//! A program starts with the handles its parent gave it - its startup
+//! handles - and nothing else. They are numbered 1, 2, ... n, in the
+//! order the parent listed them, with n in RDI. By convention handle 1
+//! is the bootstrap channel, when there is one.
 
 #![no_std]
 
@@ -68,6 +70,18 @@ pub mod call {
     /// handle names directly, with `in` and `out`. Any other port is
     /// still a fault.
     pub const IOPORTS_ENABLE: u64 = 12;
+    /// process_spawn(launcher, name, name_length, handles, count) -
+    /// starts the program `name`. `handles` points to `count` pairs of
+    /// u64s, (handle, rights): each handle moves into the child as its
+    /// startup handle, with exactly `rights` - a subset of what the
+    /// parent held, so a parent can hand on less than it has. Moving
+    /// needs TRANSFER on the parent's handle. Returns a handle to the
+    /// new process. All-or-nothing, like a send.
+    pub const PROCESS_SPAWN: u64 = 13;
+    /// process_wait(handles, count, code) - waits until any of `count`
+    /// processes has ended; returns its index in the list and writes its
+    /// exit code (an i64) to `code`.
+    pub const PROCESS_WAIT: u64 = 14;
 }
 
 /// What a handle permits. A right, once removed, cannot be added back:
@@ -90,6 +104,12 @@ pub const MESSAGE_MAX: u64 = 1024;
 pub const MESSAGE_HANDLES_MAX: u64 = 8;
 /// Messages waiting at one channel end before sends fail with QueueFull.
 pub const CHANNEL_QUEUE_MAX: usize = 32;
+/// Most startup handles a process may be given, and most processes one
+/// process_wait may watch.
+pub const SPAWN_HANDLES_MAX: u64 = 8;
+/// Longest program name.
+pub const PROGRAM_NAME_MAX: u64 = 64;
+
 /// Most handles one process may hold.
 pub const HANDLES_MAX: usize = 1024;
 
@@ -117,6 +137,10 @@ pub enum Error {
     TooManyHandles = 9,
     /// The handle is to the wrong kind of object for this call.
     WrongType = 10,
+    /// No such program.
+    NotFound = 11,
+    /// Not enough memory.
+    OutOfMemory = 12,
 }
 
 impl Error {
@@ -132,6 +156,8 @@ impl Error {
             8 => Some(Error::BufferTooSmall),
             9 => Some(Error::TooManyHandles),
             10 => Some(Error::WrongType),
+            11 => Some(Error::NotFound),
+            12 => Some(Error::OutOfMemory),
             _ => None,
         }
     }

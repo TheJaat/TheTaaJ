@@ -156,17 +156,57 @@ pub mod port {
     }
 }
 
-static BOOTSTRAP: AtomicU64 = AtomicU64::new(0);
+/// Starts the program `name` with `handles` - (handle, rights) pairs -
+/// as its startup handles. They leave this process. Returns a handle to
+/// the new process.
+pub fn spawn(launcher: Handle, name: &str, handles: &[(Handle, u32)]) -> Result<Handle, Error> {
+    let mut pairs = [0u64; 2 * abi::SPAWN_HANDLES_MAX as usize];
+    if handles.len() > abi::SPAWN_HANDLES_MAX as usize {
+        return Err(Error::InvalidArgument);
+    }
+    for (n, &(handle, rights)) in handles.iter().enumerate() {
+        pairs[2 * n] = handle;
+        pairs[2 * n + 1] = u64::from(rights);
+    }
+    abi::decode(syscall5(
+        call::PROCESS_SPAWN,
+        launcher,
+        name.as_ptr() as u64,
+        name.len() as u64,
+        pairs.as_ptr() as u64,
+        handles.len() as u64,
+    ))
+}
 
-/// The handle this program was started with: its channel to whoever
-/// started it. 0 if none.
+/// Waits until one of `processes` ends: returns its index and exit code.
+pub fn wait_any(processes: &[Handle]) -> Result<(usize, i64), Error> {
+    let mut code = 0i64;
+    let index = abi::decode(syscall(
+        call::PROCESS_WAIT,
+        processes.as_ptr() as u64,
+        processes.len() as u64,
+        &raw mut code as u64,
+    ))?;
+    Ok((index as usize, code))
+}
+
+static STARTUP_HANDLES: AtomicU64 = AtomicU64::new(0);
+
+/// Startup handle `n` (counting from 0), if the parent gave that many.
+/// They are numbered 1..=count by the ABI.
+pub fn startup_handle(n: u64) -> Option<Handle> {
+    (n < STARTUP_HANDLES.load(Ordering::Relaxed)).then_some(n + 1)
+}
+
+/// The bootstrap channel: by convention, the first startup handle. 0 if
+/// there is none.
 pub fn bootstrap() -> Handle {
-    BOOTSTRAP.load(Ordering::Relaxed)
+    startup_handle(0).unwrap_or(0)
 }
 
 #[doc(hidden)]
-pub fn set_bootstrap(handle: Handle) {
-    BOOTSTRAP.store(handle, Ordering::Relaxed);
+pub fn set_startup_handles(count: u64) {
+    STARTUP_HANDLES.store(count, Ordering::Relaxed);
 }
 
 pub struct Console;
@@ -201,14 +241,14 @@ macro_rules! println {
 ///
 /// It defines `_start`, where the kernel starts the program. The kernel
 /// enters it with RSP set as if `_start` had just been called, and the
-/// bootstrap handle in RDI - its first argument - so it is an ordinary
-/// function.
+/// number of startup handles in RDI - its first argument - so it is an
+/// ordinary function.
 #[macro_export]
 macro_rules! program {
     ($main:path) => {
         #[no_mangle]
-        pub extern "C" fn _start(bootstrap: u64) -> ! {
-            $crate::set_bootstrap(bootstrap);
+        pub extern "C" fn _start(startup_handles: u64) -> ! {
+            $crate::set_startup_handles(startup_handles);
             $crate::exit($main())
         }
     };

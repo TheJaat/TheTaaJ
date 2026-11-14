@@ -103,7 +103,7 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
     // IPC: processes talking through channels, by capability.
     selftest::ipc();
 
-    start_services();
+    start_init();
 
     match info.framebuffer() {
         Some(fb) if framebuffer::paint_welcome(fb) => kprintln!("framebuffer: painted"),
@@ -175,37 +175,22 @@ fn idle() -> ! {
     threads::exit()
 }
 
-/// The kernel acting as `init`: starts the first services and hands each
-/// exactly the capabilities it needs - no more.
-///
-///   kbd    the PS/2 keyboard driver. Gets the keyboard interrupt (wait
-///          only), ports 0x60 and 0x64 (not 0x61-0x63 between them, which
-///          are other devices), and the sending end of a channel to the
-///          shell.
-///   shell  reads that channel's terminal bytes and echoes lines. It has
-///          no access to any hardware at all.
-///
-/// Later a user-space init will do this, reading a configuration; the
-/// kernel will start only it.
-fn start_services() {
-    use abi::rights::{RECEIVE, SEND};
+/// Starts `init`, the first process, and gives it everything a user
+/// space needs to build itself: the launcher (the right to start
+/// programs) and the devices - the keyboard's interrupt and ports. From
+/// here on init decides what runs and who may touch what; the kernel
+/// enforces it.
+fn start_init() {
     use ipc::Object;
     use kernel64::cap::Rights;
 
-    let (keys_out, keys_in) = ipc::channel();
-    let (kbd_bootstrap, to_kbd) = ipc::channel();
-    process::spawn("shell", programs::SHELL, Some(keys_in)).expect("starting the shell");
-    process::spawn("kbd", programs::KBD, Some(kbd_bootstrap)).expect("starting the keyboard driver");
-    let capabilities = alloc::vec![
-        (Object::Interrupt(&interrupts::KEYBOARD), Rights(RECEIVE)),
-        (Object::IoPorts(0x60..0x61), Rights(0)),
-        (Object::IoPorts(0x64..0x65), Rights(0)),
-        (keys_out, Rights(SEND)),
+    let handles = alloc::vec![
+        (Object::Launcher, Rights(0)),
+        (Object::Interrupt(&interrupts::KEYBOARD), Rights::ALL),
+        (Object::IoPorts(0x60..0x61), Rights::ALL),
+        (Object::IoPorts(0x64..0x65), Rights::ALL),
     ];
-    ipc::kernel_send(&to_kbd, b"ps2-keyboard", capabilities).expect("a new channel has room");
-    // The kernel keeps nothing: once kbd has read the message, the
-    // channel is closed and only the services hold their handles.
-    drop(to_kbd);
+    process::spawn("init", programs::INIT, handles).expect("starting init");
 }
 
 #[cfg(feature = "fault-tests")]

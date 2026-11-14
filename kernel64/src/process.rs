@@ -87,14 +87,36 @@ impl Drop for Process {
 
 static NEXT_PID: AtomicU64 = AtomicU64::new(1);
 
-/// Loads the ELF executable `file` into a new address space and starts
-/// it on a new thread. `bootstrap`, if given, becomes its first handle,
-/// with all rights, passed to `_start` in RDI.
+/// Loads and starts a program: `load`, then `start`.
 pub fn spawn(
     name: &'static str,
     file: &[u8],
-    bootstrap: Option<Object>,
+    handles: Vec<(Object, Rights)>,
 ) -> Result<(Arc<Process>, ThreadId), LoadError> {
+    let process = load(name, file)?;
+    let thread = start(&process, handles);
+    Ok((process.process, thread))
+}
+
+/// A loaded program, not yet started.
+pub struct Loaded {
+    process: Arc<Process>,
+    entry: u64,
+}
+
+impl core::ops::Deref for Loaded {
+    type Target = Arc<Process>;
+    fn deref(&self) -> &Arc<Process> {
+        &self.process
+    }
+}
+
+/// Wakes everyone in `process_wait` whenever any process ends.
+pub static EXITS: threads::WaitQueue = threads::WaitQueue::new();
+
+/// Loads the ELF executable `file` into a new address space. Nothing
+/// runs yet; this is the step that can fail.
+pub fn load(name: &'static str, file: &[u8]) -> Result<Loaded, LoadError> {
     let image = elf::parse(file, abi::USER_END).map_err(LoadError::Elf)?;
 
     // SAFETY: frames are reached through the direct map.
@@ -157,20 +179,30 @@ pub fn spawn(
         handles: IrqLock::new(CapTable::new(abi::HANDLES_MAX)),
         io_ports: IrqLock::new(PortBitmap::NONE),
     });
-    let argument = match bootstrap {
-        Some(object) => process.handles.lock().insert(object, Rights::ALL).expect("an empty table has room"),
-        None => 0,
-    };
-    let entry = image.entry;
+    Ok(Loaded { process, entry: image.entry })
+}
+
+/// Starts a loaded program on a new thread, with `handles` as its startup
+/// handles: numbered 1..=n in this order, n passed to `_start` in RDI.
+pub fn start(loaded: &Loaded, handles: Vec<(Object, Rights)>) -> ThreadId {
+    let process = &loaded.process;
+    let count = handles.len() as u64;
+    {
+        let mut table = process.handles.lock();
+        for (n, (object, rights)) in handles.into_iter().enumerate() {
+            let handle = table.insert(object, rights).expect("a fresh table has room");
+            debug_assert_eq!(handle, n as u64 + 1, "startup handles are 1..=n");
+        }
+    }
+    let entry = loaded.entry;
     // RSP as if `_start` had just been called: 16-byte aligned, minus the
     // return address a call would have pushed.
     let stack = USER_STACK_TOP - 8;
-    let thread = threads::spawn_in(Some(Arc::clone(&process)), name, move || {
+    threads::spawn_in(Some(Arc::clone(process)), process.name, move || {
         // SAFETY: this thread runs in `process`'s address space (the
         // switch loaded its CR3 and kernel stack), which maps both.
-        unsafe { syscall::enter_user(entry, stack, argument) }
-    });
-    Ok((process, thread))
+        unsafe { syscall::enter_user(entry, stack, count) }
+    })
 }
 
 /// The process the running thread belongs to.
@@ -185,6 +217,7 @@ pub fn exit_current(code: i64) -> ! {
         kprintln!("[process] {} {:?} exited with code {code}", process.pid, process.name);
         process.close_all_handles();
     }
+    EXITS.wake_all();
     threads::exit()
 }
 
@@ -195,6 +228,7 @@ pub fn kill_current(reason: &str) -> ! {
         kprintln!("[process] {} {:?} killed: {reason}", process.pid, process.name);
         process.close_all_handles();
     }
+    EXITS.wake_all();
     threads::exit()
 }
 

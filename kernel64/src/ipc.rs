@@ -43,6 +43,13 @@ pub enum Object {
     Interrupt(&'static InterruptLine),
     /// A range of I/O ports its holder may enable for itself.
     IoPorts(Range<u16>),
+    /// The authority to start programs. Only init has one.
+    Launcher,
+    /// A process: lets its holder wait for it to end. (A child cannot
+    /// get a handle to its parent unless the parent sends one - and
+    /// spawn hands these out without TRANSFER - so processes do not
+    /// keep each other alive in cycles.)
+    Process(Arc<process::Process>),
 }
 
 /// A handle in flight: the object and the rights it travels with.
@@ -242,18 +249,6 @@ pub fn duplicate(handle: Handle, rights: u64) -> Result<u64, Error> {
     me()?.handles.lock().duplicate(handle, Rights(rights))
 }
 
-/// Sends a message from the kernel itself, on a channel end it holds -
-/// how it hands the first services their capabilities.
-pub fn kernel_send(end: &Object, data: &[u8], handles: Vec<Capability>) -> Result<(), Error> {
-    let end = end.channel()?;
-    end.shared.state.lock().send(end.end, Message { data: data.to_vec(), handles }).map_err(|(error, rejected)| {
-        bury([rejected]);
-        error
-    })?;
-    end.shared.readable[peer(end.end)].wake_all();
-    Ok(())
-}
-
 pub fn interrupt_wait(handle: Handle) -> Result<u64, Error> {
     let line = match process::current().ok_or(Error::InvalidHandle)?.handles.lock().get(handle, Rights(rights::RECEIVE))? {
         Object::Interrupt(line) => *line,
@@ -275,4 +270,80 @@ pub fn ioports_enable(handle: Handle) -> Result<u64, Error> {
     // This process is running: load the change now, not at the next switch.
     arch::set_io_bitmap(&map);
     Ok(0)
+}
+
+/// Starts a program, giving it startup handles taken from the caller.
+pub fn spawn(launcher: Handle, name: u64, name_length: u64, pairs: u64, count: u64) -> Result<u64, Error> {
+    if name_length > abi::PROGRAM_NAME_MAX || count > abi::SPAWN_HANDLES_MAX {
+        return Err(Error::InvalidArgument);
+    }
+    let name = process::copy_from_user(name, name_length)?;
+    let pairs: Vec<(Handle, Rights)> = handles_from_user(pairs, count * 2)?
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| u32::try_from(pair[1]).map(|rights| (pair[0], Rights(rights))))
+        .collect::<Result<_, _>>()
+        .map_err(|_| Error::InvalidArgument)?;
+    let process = me()?;
+
+    // 1. Every check, before anything changes.
+    {
+        let table = process.handles.lock();
+        if !matches!(table.get(launcher, Rights(0))?, Object::Launcher) {
+            return Err(Error::WrongType);
+        }
+        for &(handle, wanted) in &pairs {
+            let held = table.rights(handle)?;
+            if !held.contains(Rights(rights::TRANSFER)) || !held.contains(wanted) {
+                return Err(Error::AccessDenied);
+            }
+        }
+        if table.room() + pairs.len() < 1 {
+            return Err(Error::TooManyHandles);
+        }
+    }
+    let (program, file) =
+        core::str::from_utf8(&name).ok().and_then(crate::programs::find).ok_or(Error::NotFound)?;
+
+    // 2. Loading can still fail - out of memory - so it comes before the
+    //    handles move. The table is not locked meanwhile: only this
+    //    process's own thread changes it, and it is here.
+    let loaded = process::load(program, file).map_err(|_| Error::OutOfMemory)?;
+
+    // 3. Nothing fails from here on.
+    let mut table = process.handles.lock();
+    let handles: Vec<Handle> = pairs.iter().map(|&(h, _)| h).collect();
+    let moved = table.remove_all(&handles, Rights(rights::TRANSFER), |_| true)?;
+    let given = moved.into_iter().zip(&pairs).map(|((object, _), &(_, wanted))| (object, wanted)).collect();
+    process::start(&loaded, given);
+    table.insert(Object::Process(Arc::clone(&loaded)), Rights(0))
+}
+
+/// Waits for any of several processes to end.
+pub fn wait(handles: u64, count: u64, code: u64) -> Result<u64, Error> {
+    if count == 0 || count > abi::SPAWN_HANDLES_MAX {
+        return Err(Error::InvalidArgument);
+    }
+    let handles = handles_from_user(handles, count)?;
+    process::check_writable(code, 8)?;
+    let process = me()?;
+    let watched: Vec<Arc<process::Process>> = {
+        let table = process.handles.lock();
+        handles
+            .iter()
+            .map(|&h| match table.get(h, Rights(0))? {
+                Object::Process(p) => Ok(Arc::clone(p)),
+                _ => Err(Error::WrongType),
+            })
+            .collect::<Result<_, _>>()?
+    };
+    process::EXITS.wait_while(|| watched.iter().all(|p| p.exit_code().is_none()));
+    let (index, exit_code) = watched
+        .iter()
+        .enumerate()
+        .find_map(|(n, p)| p.exit_code().map(|c| (n, c)))
+        .expect("one has ended");
+    process::copy_to_user(code, &exit_code.to_le_bytes())?;
+    Ok(index as u64)
 }

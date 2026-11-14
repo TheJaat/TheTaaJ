@@ -116,6 +116,12 @@ impl<T> CapTable<T> {
         Ok(object)
     }
 
+    /// The rights `handle` carries.
+    pub fn rights(&self, handle: Handle) -> Result<Rights, Error> {
+        let index = self.slot(handle).ok_or(Error::InvalidHandle)?;
+        Ok(self.slots[index].entry.as_ref().expect("checked").1)
+    }
+
     /// Removes `handle` from the table, returning what it held. The
     /// handle - and any copy of its number - is dead from now on.
     pub fn remove(&mut self, handle: Handle) -> Result<(T, Rights), Error> {
@@ -198,6 +204,16 @@ mod tests {
         assert_eq!(t.get(a, Rights(SEND)), Ok(&"a"));
         assert_eq!(t.get(b, Rights::ALL), Ok(&"b"));
         assert_eq!(t.len(), 2);
+    }
+
+    /// The ABI promises startup handles are 1, 2, ... n: a fresh table
+    /// must number its first entries that way.
+    #[test]
+    fn a_fresh_table_numbers_handles_from_one() {
+        let mut t = table();
+        let handles: Vec<_> = ["a", "b", "c"].iter().map(|&o| t.insert(o, Rights::ALL).unwrap()).collect();
+        assert_eq!(handles, vec![1, 2, 3]);
+        assert_eq!(t.rights(2), Ok(Rights::ALL));
     }
 
     #[test]

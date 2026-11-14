@@ -49,6 +49,13 @@ fn main() -> i64 {
     check!(taaj::close(receive_only) == Err(Error::InvalidHandle), "closed twice");
     check!(taaj::duplicate(boot, 1 << 20).is_err(), "made-up right accepted");
 
+    // 3b. Starting programs needs the launcher, which only init has. A
+    //     channel handle is not one; neither is a number.
+    check!(taaj::spawn(boot, "hello", &[]) == Err(Error::WrongType), "spawned without a launcher");
+    check!(taaj::spawn(0x4242, "hello", &[]) == Err(Error::InvalidHandle), "spawned with a forged launcher");
+    check!(taaj::wait_any(&[boot]) == Err(Error::WrongType), "waited on a channel as a process");
+    check!(taaj::wait_any(&[]) == Err(Error::InvalidArgument), "waited on nothing");
+
     // 4. A channel end cannot be sent through its own channel (it would
     //    keep itself alive forever).
     check!(taaj::send(boot, b"", &[boot]) == Err(Error::InvalidArgument), "sent a channel through itself");
