@@ -96,15 +96,20 @@ pub unsafe fn init(madt: &Madt, hz: u64) -> Report {
 /// deliver nothing more at this priority.
 pub fn handle_interrupt(vector: u8) {
     match vector {
+        // EOI before `interrupt_done`, which may switch threads: the
+        // APIC must be ready for the next interrupt even if this thread
+        // does not run again for a while.
         TIMER_VECTOR => {
             interrupts::timer_tick();
             apic::end_of_interrupt();
+            interrupts::interrupt_done();
         }
         KEYBOARD_VECTOR => {
             if let Some(byte) = ps2::read() {
                 interrupts::keyboard_byte(byte);
             }
             apic::end_of_interrupt();
+            interrupts::interrupt_done();
         }
         // Spurious: nothing happened. Neither the APIC nor the masked
         // PICs expect an EOI for these.

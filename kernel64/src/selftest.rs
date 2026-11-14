@@ -15,7 +15,10 @@ use kernel64::memory::addr::{phys_to_virt, VirtAddr};
 use kernel64::paging::{Flags, PageSize};
 
 use crate::arch::{self, mmu};
-use crate::{interrupts, mm};
+use crate::irqlock::IrqLock;
+use crate::{interrupts, mm, threads};
+use alloc::sync::Arc;
+use core::sync::atomic::AtomicBool;
 
 pub fn run() {
     frames();
@@ -140,4 +143,79 @@ pub fn timer() {
     // Generous bounds: a VM's clocks can stretch under load.
     assert!(ms >= expected / 2 && ms <= expected * 3, "10 timer ticks took {ms} ms, expected {expected}");
     kprintln!("[selftest] timer: 10 ticks in {ms} ms (expected {expected})");
+}
+
+/// Threads: they take turns, a thread that never yields is still
+/// interrupted, sleep sleeps, and dead threads give everything back.
+pub fn threads() {
+    // 1. Taking turns: two threads that yield after every step.
+    let log = Arc::new(IrqLock::new(Vec::new()));
+    let ids: Vec<_> = [b'a', b'b']
+        .into_iter()
+        .map(|tag| {
+            let log = Arc::clone(&log);
+            threads::spawn("turns", move || {
+                for _ in 0..3 {
+                    log.lock().push(tag);
+                    threads::yield_now();
+                }
+            })
+        })
+        .collect();
+    for id in ids {
+        threads::join(id);
+    }
+    let log = log.lock().clone();
+    assert_eq!(log.iter().filter(|&&b| b == b'a').count(), 3);
+    assert_eq!(log.iter().filter(|&&b| b == b'b').count(), 3);
+    assert_ne!(log, b"aaabbb", "yield did not hand over the CPU");
+    kprintln!("[selftest] threads: two yielding threads ran as {:?}", core::str::from_utf8(&log).unwrap());
+
+    // 2. Preemption: this thread never yields. If the timer did not take
+    // the CPU from it, nothing else - including this test - would ever
+    // run again; it gives up after two seconds and says so.
+    let stop = Arc::new(AtomicBool::new(false));
+    let spinner = {
+        let stop = Arc::clone(&stop);
+        threads::spawn("spinner", move || {
+            let deadline = arch::tsc() + 2 * arch::platform::tsc_hz();
+            while !stop.load(Ordering::Relaxed) {
+                assert!(arch::tsc() < deadline, "the spinning thread was never preempted");
+                core::hint::spin_loop();
+            }
+        })
+    };
+    threads::sleep(3); // only returns if the spinner is preempted
+    stop.store(true, Ordering::Relaxed);
+    threads::join(spinner);
+    kprintln!("[selftest] threads: a thread that never yields was preempted");
+
+    // 3. Sleeping.
+    let start = interrupts::ticks();
+    threads::sleep(5);
+    let slept = interrupts::ticks() - start;
+    assert!((5..=7).contains(&slept), "sleep(5) took {slept} ticks");
+
+    // 4. Churn: 100 threads come and go. Their stacks must be recycled -
+    // no growth in slots or frames after the first round.
+    let churn = || {
+        let ids: Vec<_> = (0..100)
+            .map(|n| threads::spawn("churn", move || {
+                let v: Vec<u64> = (0..n).collect();
+                assert_eq!(v.len() as u64, n);
+            }))
+            .collect();
+        for id in ids {
+            threads::join(id);
+        }
+        threads::yield_now(); // let the last exited thread be reaped
+    };
+    churn();
+    let frames = mm::with_memory(|_, f| f.free_frames());
+    let slots = mm::stack_slots_used();
+    churn();
+    assert_eq!(mm::with_memory(|_, f| f.free_frames()), frames, "thread churn leaked frames");
+    assert_eq!(mm::stack_slots_used(), slots, "thread churn leaked stack slots");
+    assert_eq!(threads::count(), 2, "only boot and idle should remain");
+    kprintln!("[selftest] threads: sleep(5) took {slept} ticks; 200 threads spawned and reaped, nothing leaked");
 }

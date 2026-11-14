@@ -13,7 +13,7 @@ STAGE1=$1
 STAGE2=$2
 BUILD=$3
 shift 3
-TESTS=${*:-page double rodata nx stack}
+TESTS=${*:-page double rodata nx stack thread-stack}
 
 HERE=$(cd "$(dirname "$0")/.." && pwd)
 
@@ -25,6 +25,7 @@ expected() {
         rodata) echo "kernel write at 0x[0-9a-f]+: protection violation" ;;
         nx)     echo "kernel instruction fetch at 0x[0-9a-f]+: protection violation" ;;
         stack)  echo "kernel stack overflow" ;;
+        thread-stack) echo "kernel stack overflow \\(hit the guard page at 0xffffd8" ;;
         *)      echo "unknown fault test '$1'" >&2; exit 2 ;;
     esac
 }

@@ -315,7 +315,8 @@ fn read_cr2() -> u64 {
 /// IST stack) is what arrives, with CR2 still naming the guard page.
 fn is_stack_overflow() -> bool {
     let guard = &raw const __boot_stack_guard as u64;
-    (guard..guard + 4096).contains(&read_cr2())
+    let address = read_cr2();
+    (guard..guard + 4096).contains(&address) || crate::mm::is_stack_guard(address)
 }
 
 /// Every exception ends up here, with the saved state.

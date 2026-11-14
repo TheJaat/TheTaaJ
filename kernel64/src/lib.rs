@@ -24,4 +24,5 @@ pub mod memory;
 #[cfg(target_arch = "x86_64")]
 pub mod paging;
 pub mod queue;
+pub mod sched;
 pub mod sync;

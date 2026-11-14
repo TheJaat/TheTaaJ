@@ -26,6 +26,7 @@ fault-double = ["fault-tests"]      # an exception with no usable stack
 fault-rodata = ["fault-tests"]      # write to read-only data
 fault-nx = ["fault-tests"]          # execute data
 fault-stack = ["fault-tests"]       # overflow the boot stack
+fault-thread-stack = ["fault-tests"] # overflow a kernel thread's stack
 
 # No unwinding: there is nothing to unwind into. A panic prints and halts.
 [profile.dev]

@@ -12,6 +12,7 @@
 //!        0xFFFF_8000_0000_0000  the direct map: all physical memory,
 //!                               read/write, never executable
 //!        0xFFFF_C000_0000_0000  the kernel heap, growing upward
+//!        0xFFFF_D800_0000_0000  kernel thread stacks, each with a guard
 //!        0xFFFF_E000_0000_0000  device registers (MMIO), uncached
 //!        0xFFFF_FFFF_8000_0000  the kernel image: code read+execute,
 //!                               rodata read-only, data read/write -
@@ -52,6 +53,8 @@ const GIB: u64 = 1024 * MIB;
 pub const KERNEL_WINDOW: u64 = 0xFFFF_FFFF_8000_0000;
 pub const DIRECT_MAP: u64 = 0xFFFF_8000_0000_0000;
 pub const HEAP_START: u64 = 0xFFFF_C000_0000_0000;
+/// Kernel thread stacks, one slot each (see KernelStack).
+pub const STACKS_START: u64 = 0xFFFF_D800_0000_0000;
 /// Device registers, mapped uncached, one after another.
 pub const MMIO_START: u64 = 0xFFFF_E000_0000_0000;
 const MMIO_SIZE: u64 = GIB;
@@ -389,4 +392,92 @@ impl PhysicalMemory for DirectMap {
         }
         mapped
     }
+}
+
+// ---- kernel stacks ------------------------------------------------------
+
+/// Each thread's stack lives in its own 64 KiB slot: the lowest page is
+/// left unmapped as a guard, the other 15 pages (60 KiB) are the stack.
+/// Overflowing the stack touches the guard page and faults at once,
+/// instead of silently overwriting the slot below - another thread's
+/// stack.
+const STACK_SLOT: u64 = 64 * 1024;
+const STACK_SLOTS: u64 = 16 * 1024; // 1 GiB of address space
+
+struct Slots {
+    next: u64,
+    free: alloc::vec::Vec<u64>,
+}
+
+/// Taken before TABLES.
+static SLOTS: IrqLock<Slots> = IrqLock::new(Slots { next: 0, free: alloc::vec::Vec::new() });
+
+/// A mapped kernel stack. Dropping it unmaps the pages and frees the
+/// frames.
+pub struct KernelStack {
+    slot: u64,
+}
+
+impl KernelStack {
+    fn base(&self) -> u64 {
+        STACKS_START + self.slot * STACK_SLOT
+    }
+
+    /// The highest address: stacks grow down from here.
+    pub fn top(&self) -> u64 {
+        self.base() + STACK_SLOT
+    }
+}
+
+pub fn allocate_stack() -> Option<KernelStack> {
+    let mut slots = SLOTS.lock();
+    let slot = match slots.free.pop() {
+        Some(slot) => slot,
+        None if slots.next < STACK_SLOTS => {
+            slots.next += 1;
+            slots.next - 1
+        }
+        None => return None,
+    };
+    let stack = KernelStack { slot };
+    let flags = Flags::WRITABLE | Flags::GLOBAL | no_execute();
+    let mapped = with_memory(|tables, frames| {
+        for page in (stack.base() + PAGE_SIZE..stack.top()).step_by(PAGE_SIZE as usize) {
+            let Some(frame) = frames.allocate() else { return false };
+            tables
+                .map(VirtAddr::new(page), frame, PageSize::Size4K, flags, frames)
+                .unwrap_or_else(|error| panic!("stack mapping at {page:#x} failed: {error:?}"));
+        }
+        true
+    });
+    drop(slots);
+    // On failure, dropping `stack` unmaps whatever was mapped.
+    mapped.then_some(stack)
+}
+
+impl Drop for KernelStack {
+    fn drop(&mut self) {
+        let mut slots = SLOTS.lock();
+        with_memory(|tables, frames| {
+            for page in (self.base() + PAGE_SIZE..self.top()).step_by(PAGE_SIZE as usize) {
+                if let Some(frame) = tables.unmap(VirtAddr::new(page)) {
+                    mmu::flush(page);
+                    frames.free(frame);
+                }
+            }
+        });
+        slots.free.push(self.slot);
+    }
+}
+
+/// Whether `address` is in the guard page of some thread's stack.
+pub fn is_stack_guard(address: u64) -> bool {
+    (STACKS_START..STACKS_START + STACK_SLOTS * STACK_SLOT).contains(&address)
+        && (address - STACKS_START) % STACK_SLOT < PAGE_SIZE
+}
+
+/// How many stack slots have ever been used - stays low if stacks are
+/// recycled.
+pub fn stack_slots_used() -> u64 {
+    SLOTS.lock().next
 }

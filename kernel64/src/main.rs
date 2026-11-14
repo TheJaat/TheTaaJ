@@ -34,6 +34,7 @@ mod interrupts;
 mod irqlock;
 mod mm;
 mod selftest;
+mod threads;
 
 use alloc::string::String;
 
@@ -87,6 +88,12 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
     report_platform(&platform);
     arch::enable_interrupts();
     selftest::timer();
+
+    // Threads: the code running now becomes thread 1, "boot"; thread 0
+    // is the idle thread.
+    threads::init();
+    selftest::threads();
+    threads::spawn("echo", echo);
 
     match info.framebuffer() {
         Some(fb) if framebuffer::paint_welcome(fb) => kprintln!("framebuffer: painted"),
@@ -149,15 +156,22 @@ fn report_platform(p: &arch::platform::Report) {
     }
 }
 
-/// Where the kernel rests once booted: asleep until an interrupt, then
-/// handling whatever it brought. For now that is the keyboard - each
-/// line typed is echoed back. The first "program" the kernel runs.
+/// The end of booting: the boot thread's work is done, so it exits and
+/// leaves the CPU to the threads it started - and to the idle thread.
 fn idle() -> ! {
+    kprintln!();
+    kprintln!("[kernel] idle - {} threads; type, and each line is echoed back", threads::count() - 1);
+    threads::exit()
+}
+
+/// A thread that echoes keyboard lines - the first thread that blocks
+/// for real: it sleeps until the keyboard interrupt wakes it, using no
+/// CPU at all while nobody types.
+fn echo() {
     let mut decoder = Decoder::new();
     let mut line = String::new();
-    kprintln!();
-    kprintln!("[kernel] idle - type, and each line is echoed back");
     loop {
+        interrupts::KEYBOARD_WAITERS.wait_while(|| interrupts::KEYBOARD.is_empty());
         while let Some(byte) = interrupts::KEYBOARD.pop() {
             let Some(event) = decoder.feed(byte) else { continue };
             if !event.pressed {
@@ -175,15 +189,13 @@ fn idle() -> ! {
                 }
                 Key::Enter => {
                     kprintln!();
-                    kprintln!("[keyboard] line: {line:?}");
+                    let me = threads::current();
+                    kprintln!("[keyboard] line: {line:?} (thread {me}, {:?})", threads::name(me).unwrap_or("?"));
                     line.clear();
                 }
                 _ => {}
             }
         }
-        // Nothing left to do: sleep until the next interrupt (the timer
-        // guarantees one within 1/HZ s).
-        arch::wait_for_interrupt();
     }
 }
 
@@ -207,6 +219,14 @@ fn run_fault_test() {
         kprintln!("[test] overflowing the boot stack...");
         let depth = test::overflow_stack(0);
         kprintln!("[test] FAILED: recursion returned {depth}");
+    }
+    if cfg!(feature = "fault-thread-stack") {
+        kprintln!("[test] overflowing a thread's stack...");
+        let id = threads::spawn("overflow", || {
+            let depth = test::overflow_stack(0);
+            kprintln!("[test] FAILED: recursion returned {depth}");
+        });
+        threads::join(id);
     }
     if cfg!(feature = "fault-page") {
         kprintln!("[test] forcing a page fault...");
