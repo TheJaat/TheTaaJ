@@ -32,6 +32,7 @@ mod arch;
 mod framebuffer;
 mod interrupts;
 mod irqlock;
+mod ipc;
 mod mm;
 mod process;
 mod programs;
@@ -99,6 +100,9 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
 
     // User mode: programs in their own address spaces, in ring 3.
     selftest::user();
+
+    // IPC: processes talking through channels, by capability.
+    selftest::ipc();
 
     threads::spawn("echo", echo);
 

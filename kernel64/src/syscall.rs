@@ -2,13 +2,13 @@
 //!
 //! The numbers and errors are in the `abi` crate, shared with user
 //! programs. Every argument is untrusted: numbers are range-checked and
-//! pointers go through `process::copy_from_user`.
+//! pointers go through `process::copy_from_user` and `copy_to_user`.
 
 use alloc::string::String;
 
 use abi::{call, Error};
 
-use crate::{arch, interrupts, process, threads};
+use crate::{arch, interrupts, ipc, process, threads};
 
 /// Longest sleep accepted, in ticks: ten minutes.
 const MAX_SLEEP: u64 = 10 * 60 * interrupts::HZ;
@@ -33,6 +33,11 @@ pub fn dispatch(number: u64, args: [u64; 6]) -> u64 {
         call::SLEEP => Err(Error::InvalidArgument),
         call::PROCESS_ID => Ok(process::current().map_or(0, |p| p.pid)),
         call::TICKS => Ok(interrupts::ticks()),
+        call::CHANNEL_CREATE => ipc::create(args[0]),
+        call::CHANNEL_SEND => ipc::send(args[0], args[1], args[2], args[3], args[4]),
+        call::CHANNEL_RECEIVE => ipc::receive(args[0], args[1], args[2], args[3], args[4]),
+        call::HANDLE_CLOSE => ipc::close(args[0]),
+        call::HANDLE_DUPLICATE => ipc::duplicate(args[0], args[1]),
         _ => Err(Error::UnknownCall),
     };
     arch::disable_interrupts();

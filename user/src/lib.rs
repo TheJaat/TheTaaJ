@@ -9,8 +9,12 @@
 
 use core::arch::asm;
 use core::fmt::{self, Write};
+use core::sync::atomic::{AtomicU64, Ordering};
 
-pub use abi::{call, Error};
+pub use abi::{call, rights, Error};
+
+/// A handle: a number naming an entry in this process's handle table.
+pub type Handle = u64;
 
 /// The raw system call: number in RAX, arguments in RDI, RSI, RDX. The
 /// `syscall` instruction overwrites RCX and R11, so they are clobbers.
@@ -23,6 +27,21 @@ pub fn syscall(number: u64, a: u64, b: u64, c: u64) -> u64 {
         asm!("syscall",
              inlateout("rax") number => result,
              in("rdi") a, in("rsi") b, in("rdx") c,
+             out("rcx") _, out("r11") _,
+             options(nostack));
+    }
+    result
+}
+
+/// The raw system call with five arguments (RDI, RSI, RDX, R10, R8).
+#[inline(always)]
+pub fn syscall5(number: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> u64 {
+    let result: u64;
+    // SAFETY: as for `syscall`.
+    unsafe {
+        asm!("syscall",
+             inlateout("rax") number => result,
+             in("rdi") a, in("rsi") b, in("rdx") c, in("r10") d, in("r8") e,
              out("rcx") _, out("r11") _,
              options(nostack));
     }
@@ -61,6 +80,61 @@ pub fn ticks() -> u64 {
     syscall(call::TICKS, 0, 0, 0)
 }
 
+/// A new channel: the handles of its two ends.
+pub fn channel_create() -> Result<(Handle, Handle), Error> {
+    let mut ends = [0u64; 2];
+    abi::decode(syscall(call::CHANNEL_CREATE, ends.as_mut_ptr() as u64, 0, 0))?;
+    Ok((ends[0], ends[1]))
+}
+
+/// Sends `data` and `handles` (which leave this process) on `channel`.
+pub fn send(channel: Handle, data: &[u8], handles: &[Handle]) -> Result<(), Error> {
+    abi::decode(syscall5(
+        call::CHANNEL_SEND,
+        channel,
+        data.as_ptr() as u64,
+        data.len() as u64,
+        handles.as_ptr() as u64,
+        handles.len() as u64,
+    ))
+    .map(|_| ())
+}
+
+/// Waits for a message on `channel`; returns (bytes, handles) received.
+pub fn receive(channel: Handle, buffer: &mut [u8], handles: &mut [Handle]) -> Result<(usize, usize), Error> {
+    let packed = abi::decode(syscall5(
+        call::CHANNEL_RECEIVE,
+        channel,
+        buffer.as_mut_ptr() as u64,
+        buffer.len() as u64,
+        handles.as_mut_ptr() as u64,
+        handles.len() as u64,
+    ))?;
+    Ok(((packed & 0xFFFF_FFFF) as usize, (packed >> 32) as usize))
+}
+
+pub fn close(handle: Handle) -> Result<(), Error> {
+    abi::decode(syscall(call::HANDLE_CLOSE, handle, 0, 0)).map(|_| ())
+}
+
+/// Another handle to the same object, with fewer (or the same) rights.
+pub fn duplicate(handle: Handle, rights: u32) -> Result<Handle, Error> {
+    abi::decode(syscall(call::HANDLE_DUPLICATE, handle, u64::from(rights), 0))
+}
+
+static BOOTSTRAP: AtomicU64 = AtomicU64::new(0);
+
+/// The handle this program was started with: its channel to whoever
+/// started it. 0 if none.
+pub fn bootstrap() -> Handle {
+    BOOTSTRAP.load(Ordering::Relaxed)
+}
+
+#[doc(hidden)]
+pub fn set_bootstrap(handle: Handle) {
+    BOOTSTRAP.store(handle, Ordering::Relaxed);
+}
+
 pub struct Console;
 
 impl Write for Console {
@@ -92,13 +166,15 @@ macro_rules! println {
 /// `fn main() -> i64`, whose return value becomes the exit code.
 ///
 /// It defines `_start`, where the kernel starts the program. The kernel
-/// enters it with RSP set as if `_start` had just been called, so it is
-/// an ordinary function.
+/// enters it with RSP set as if `_start` had just been called, and the
+/// bootstrap handle in RDI - its first argument - so it is an ordinary
+/// function.
 #[macro_export]
 macro_rules! program {
     ($main:path) => {
         #[no_mangle]
-        pub extern "C" fn _start() -> ! {
+        pub extern "C" fn _start(bootstrap: u64) -> ! {
+            $crate::set_bootstrap(bootstrap);
             $crate::exit($main())
         }
     };

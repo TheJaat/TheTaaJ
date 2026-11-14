@@ -4,12 +4,17 @@
 //! half is the kernel, shared by every process but inaccessible from
 //! ring 3 (no USER bit). A process's frames are marked OWNED, so tearing
 //! down its page tables returns every one of them.
+//!
+//! A process also has a handle table (cap.rs): the only way it can reach
+//! any kernel object. When it ends - by exiting or being killed - every
+//! handle is closed at once, so whoever was talking to it finds out.
 
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 
 use abi::Error;
+use kernel64::cap::{CapTable, Rights};
 use kernel64::elf::{self, ElfError};
 use kernel64::memory::addr::{phys_to_virt, PhysAddr, VirtAddr, PAGE_SIZE};
 use kernel64::paging::{Flags, PageSize, PageTables};
@@ -17,6 +22,7 @@ use kernel64::sched::ThreadId;
 
 use crate::arch::syscall;
 use crate::irqlock::IrqLock;
+use crate::ipc::Object;
 use crate::{mm, threads};
 
 /// The user stack: 64 KiB just below this address. The page below it is
@@ -33,6 +39,7 @@ pub struct Process {
     root: u64,
     tables: IrqLock<Option<PageTables>>,
     exit_code: AtomicI64,
+    pub handles: IrqLock<CapTable<Object>>,
 }
 
 #[derive(Debug)]
@@ -56,6 +63,16 @@ impl Process {
     }
 }
 
+impl Process {
+    /// Closes every handle - now, not when the last reference to the
+    /// Process goes, which may be much later (a parent still holding it
+    /// to read the exit code).
+    fn close_all_handles(&self) {
+        let objects = self.handles.lock().take_all();
+        drop(objects); // outside the lock: closing channels wakes threads
+    }
+}
+
 impl Drop for Process {
     fn drop(&mut self) {
         if let Some(tables) = self.tables.lock().take() {
@@ -67,8 +84,13 @@ impl Drop for Process {
 static NEXT_PID: AtomicU64 = AtomicU64::new(1);
 
 /// Loads the ELF executable `file` into a new address space and starts
-/// it on a new thread.
-pub fn spawn(name: &'static str, file: &[u8]) -> Result<(Arc<Process>, ThreadId), LoadError> {
+/// it on a new thread. `bootstrap`, if given, becomes its first handle,
+/// with all rights, passed to `_start` in RDI.
+pub fn spawn(
+    name: &'static str,
+    file: &[u8],
+    bootstrap: Option<Object>,
+) -> Result<(Arc<Process>, ThreadId), LoadError> {
     let image = elf::parse(file, abi::USER_END).map_err(LoadError::Elf)?;
 
     // SAFETY: frames are reached through the direct map.
@@ -128,7 +150,12 @@ pub fn spawn(name: &'static str, file: &[u8]) -> Result<(Arc<Process>, ThreadId)
         root: tables.root().as_u64(),
         tables: IrqLock::new(Some(tables)),
         exit_code: AtomicI64::new(RUNNING),
+        handles: IrqLock::new(CapTable::new(abi::HANDLES_MAX)),
     });
+    let argument = match bootstrap {
+        Some(object) => process.handles.lock().insert(object, Rights::ALL).expect("an empty table has room"),
+        None => 0,
+    };
     let entry = image.entry;
     // RSP as if `_start` had just been called: 16-byte aligned, minus the
     // return address a call would have pushed.
@@ -136,7 +163,7 @@ pub fn spawn(name: &'static str, file: &[u8]) -> Result<(Arc<Process>, ThreadId)
     let thread = threads::spawn_in(Some(Arc::clone(&process)), name, move || {
         // SAFETY: this thread runs in `process`'s address space (the
         // switch loaded its CR3 and kernel stack), which maps both.
-        unsafe { syscall::enter_user(entry, stack) }
+        unsafe { syscall::enter_user(entry, stack, argument) }
     });
     Ok((process, thread))
 }
@@ -151,6 +178,7 @@ pub fn exit_current(code: i64) -> ! {
     if let Some(process) = current() {
         process.exit_code.store(code, Ordering::Release);
         kprintln!("[process] {} {:?} exited with code {code}", process.pid, process.name);
+        process.close_all_handles();
     }
     threads::exit()
 }
@@ -160,18 +188,21 @@ pub fn kill_current(reason: &str) -> ! {
     if let Some(process) = current() {
         process.exit_code.store(abi::KILLED, Ordering::Release);
         kprintln!("[process] {} {:?} killed: {reason}", process.pid, process.name);
+        process.close_all_handles();
     }
     threads::exit()
 }
 
-/// Copies `length` bytes from the current process's memory at `pointer`.
+/// The physical address behind each page of `pointer..pointer+length`
+/// in the current process, checked: every page mapped for user mode, and
+/// writable if `write`.
 ///
 /// The kernel never dereferences a user pointer directly. Every page of
 /// the range is looked up in the process's own page tables first, and
 /// must be mapped with the USER bit - so a pointer into the kernel half,
 /// into unmapped memory, or wrapping around the address space is an
 /// error, not a fault and not a leak.
-pub fn copy_from_user(pointer: u64, length: u64) -> Result<Vec<u8>, Error> {
+fn user_pages(pointer: u64, length: u64, write: bool) -> Result<Vec<(u64, usize)>, Error> {
     let end = pointer.checked_add(length).ok_or(Error::BadAddress)?;
     if end > abi::USER_END {
         return Err(Error::BadAddress);
@@ -180,19 +211,53 @@ pub fn copy_from_user(pointer: u64, length: u64) -> Result<Vec<u8>, Error> {
     let tables = process.tables.lock();
     let tables = tables.as_ref().ok_or(Error::BadAddress)?;
 
-    let mut bytes = Vec::with_capacity(length as usize);
+    let mut needed = Flags::USER;
+    if write {
+        needed |= Flags::WRITABLE;
+    }
+    let mut pieces = Vec::new();
     let mut address = pointer;
     while address < end {
         let translation = tables.translate(VirtAddr::new(address)).ok_or(Error::BadAddress)?;
-        if !translation.flags.contains(Flags::USER) {
+        if !translation.flags.contains(needed) {
             return Err(Error::BadAddress);
         }
         let chunk = (PAGE_SIZE - address % PAGE_SIZE).min(end - address);
-        let source = phys_to_virt(PhysAddr::new(translation.physical.as_u64())).as_ptr::<u8>();
-        // SAFETY: the page is mapped (checked), and read through the
-        // direct map, so it stays valid whatever the process does.
-        bytes.extend_from_slice(unsafe { core::slice::from_raw_parts(source, chunk as usize) });
+        pieces.push((translation.physical.as_u64(), chunk as usize));
         address += chunk;
     }
+    Ok(pieces)
+}
+
+/// Copies `length` bytes from the current process's memory at `pointer`.
+pub fn copy_from_user(pointer: u64, length: u64) -> Result<Vec<u8>, Error> {
+    let mut bytes = Vec::with_capacity(length as usize);
+    for (physical, length) in user_pages(pointer, length, false)? {
+        let source = phys_to_virt(PhysAddr::new(physical)).as_ptr::<u8>();
+        // SAFETY: the page is mapped (checked), and read through the
+        // direct map, so it stays valid whatever the process does.
+        bytes.extend_from_slice(unsafe { core::slice::from_raw_parts(source, length) });
+    }
     Ok(bytes)
+}
+
+/// Whether the current process may have `length` bytes at `pointer`
+/// written - checked before a call commits to anything, so a bad buffer
+/// fails the call rather than losing, say, a received message.
+pub fn check_writable(pointer: u64, length: u64) -> Result<(), Error> {
+    user_pages(pointer, length, true).map(|_| ())
+}
+
+/// Copies `bytes` into the current process's memory at `pointer`: all of
+/// them, or (if any page is not writable user memory) none.
+pub fn copy_to_user(pointer: u64, bytes: &[u8]) -> Result<(), Error> {
+    let mut offset = 0;
+    for (physical, length) in user_pages(pointer, bytes.len() as u64, true)? {
+        let target = phys_to_virt(PhysAddr::new(physical)).as_mut_ptr::<u8>();
+        // SAFETY: as above, and the page is user memory - never the
+        // kernel's own - so writing it cannot corrupt the kernel.
+        unsafe { target.copy_from_nonoverlapping(bytes[offset..].as_ptr(), length) };
+        offset += length;
+    }
+    Ok(())
 }

@@ -1,0 +1,237 @@
+//! Inter-process communication: channels as kernel objects, and the
+//! system calls on them.
+//!
+//! The rules (the channel's state, the handle table's checks) are in the
+//! library - `kernel64::channel` and `kernel64::cap` - tested on the
+//! host. This adds what only the kernel can: locks, waiting for a
+//! message, user memory, and getting the lifetimes right.
+//!
+//! Lifetimes: a channel end lives as long as some handle - in a table or
+//! in a message in flight - refers to it. When the last one goes, the
+//! end closes, its peer is told, and the messages waiting in its inbox
+//! are destroyed - with any handles they carry, which may close further
+//! channels, and so on.
+//!
+//! Lock order, always: a process's handle table, then a channel's state,
+//! then a process's page tables. Never the other way round.
+//!
+//! A known limit, shared with other capability kernels: channels can
+//! keep each other alive in a cycle - end A in B's inbox, B in A's - once
+//! their owners close every handle. Sending an end through its own
+//! channel is refused (the one-step cycle); longer cycles leak until a
+//! cycle collector exists.
+
+use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+use abi::{rights, Error};
+use kernel64::cap::{Handle, Rights};
+use kernel64::channel::{peer, Channel, Message};
+
+use crate::irqlock::IrqLock;
+use crate::process;
+use crate::threads::WaitQueue;
+
+/// Something a handle can refer to. Channels only, for now; memory
+/// objects, interrupts and processes will join them.
+#[derive(Clone)]
+pub enum Object {
+    Channel(Arc<ChannelEnd>),
+}
+
+/// A handle in flight: the object and the rights it travels with.
+type Capability = (Object, Rights);
+
+struct Shared {
+    state: IrqLock<Channel<Capability>>,
+    /// readable[n]: threads waiting for a message at end n.
+    readable: [WaitQueue; 2],
+}
+
+pub struct ChannelEnd {
+    shared: Arc<Shared>,
+    end: usize,
+}
+
+/// Channels in existence, for leak checks.
+static LIVE: AtomicUsize = AtomicUsize::new(0);
+
+pub fn live_channels() -> usize {
+    LIVE.load(Ordering::Relaxed)
+}
+
+impl Drop for Shared {
+    fn drop(&mut self) {
+        LIVE.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
+/// A new channel: its two ends.
+pub fn channel() -> (Object, Object) {
+    LIVE.fetch_add(1, Ordering::Relaxed);
+    let shared = Arc::new(Shared {
+        state: IrqLock::new(Channel::new(abi::CHANNEL_QUEUE_MAX)),
+        readable: [WaitQueue::new(), WaitQueue::new()],
+    });
+    let end = |n| Object::Channel(Arc::new(ChannelEnd { shared: Arc::clone(&shared), end: n }));
+    (end(0), end(1))
+}
+
+impl Object {
+    fn channel(&self) -> &Arc<ChannelEnd> {
+        match self {
+            Object::Channel(end) => end,
+        }
+    }
+}
+
+impl ChannelEnd {
+    fn same_channel(&self, other: &Object) -> bool {
+        Arc::ptr_eq(&self.shared, &other.channel().shared)
+    }
+}
+
+impl Drop for ChannelEnd {
+    fn drop(&mut self) {
+        let unread = self.shared.state.lock().close(self.end);
+        self.shared.readable[peer(self.end)].wake_all();
+        bury(unread);
+    }
+}
+
+/// Messages waiting to be destroyed.
+static GRAVEYARD: IrqLock<Vec<Message<Capability>>> = IrqLock::new(Vec::new());
+static DRAINING: AtomicBool = AtomicBool::new(false);
+
+/// Destroys messages - iteratively, not recursively.
+///
+/// Destroying a message drops its handles; dropping the last handle to a
+/// channel end destroys *its* inbox, and so on. Done by plain recursion,
+/// a chain of channels nested in each other's inboxes - which a process
+/// can build as deep as it likes while holding a single handle - would
+/// recurse once per link and overflow the kernel stack. So the messages
+/// go into a graveyard, and only the outermost call empties it: inner
+/// drops just add to the pile. The stack stays a few frames deep however
+/// long the chain.
+fn bury(messages: impl IntoIterator<Item = Message<Capability>>) {
+    GRAVEYARD.lock().extend(messages);
+    loop {
+        if DRAINING.swap(true, Ordering::Acquire) {
+            return; // someone further out is draining; they will get these
+        }
+        loop {
+            let next = GRAVEYARD.lock().pop();
+            match next {
+                Some(message) => drop(message), // may bury more
+                None => break,
+            }
+        }
+        DRAINING.store(false, Ordering::Release);
+        // Something buried between the last pop and the store above saw
+        // DRAINING still set and left it to us.
+        if GRAVEYARD.lock().is_empty() {
+            return;
+        }
+    }
+}
+
+/// The current process, which every call below needs.
+fn me() -> Result<Arc<process::Process>, Error> {
+    process::current().ok_or(Error::InvalidHandle)
+}
+
+fn handles_from_user(pointer: u64, count: u64) -> Result<Vec<Handle>, Error> {
+    let bytes = process::copy_from_user(pointer, count * 8)?;
+    Ok(bytes.as_chunks::<8>().0.iter().map(|b| u64::from_le_bytes(*b)).collect())
+}
+
+fn handles_to_bytes(handles: &[Handle]) -> Vec<u8> {
+    handles.iter().flat_map(|h| h.to_le_bytes()).collect()
+}
+
+pub fn create(out: u64) -> Result<u64, Error> {
+    let process = me()?;
+    process::check_writable(out, 16)?;
+    let handles = {
+        let mut table = process.handles.lock();
+        if table.room() < 2 {
+            return Err(Error::TooManyHandles);
+        }
+        let (a, b) = channel();
+        [table.insert(a, Rights::ALL)?, table.insert(b, Rights::ALL)?]
+    };
+    process::copy_to_user(out, &handles_to_bytes(&handles))?;
+    Ok(0)
+}
+
+pub fn send(handle: Handle, data: u64, length: u64, handles: u64, count: u64) -> Result<u64, Error> {
+    if length > abi::MESSAGE_MAX || count > abi::MESSAGE_HANDLES_MAX {
+        return Err(Error::InvalidArgument);
+    }
+    // Copy everything in first: user memory is read once, so the process
+    // cannot change it while the kernel is looking.
+    let data = process::copy_from_user(data, length)?;
+    let to_move = handles_from_user(handles, count)?;
+
+    let process = me()?;
+    let mut table = process.handles.lock();
+    let end = Arc::clone(table.get(handle, Rights(rights::SEND))?.channel());
+    let mut state = end.shared.state.lock();
+    // Every check before anything moves: after this point nothing fails.
+    state.can_send(end.end)?;
+    let moved = table.remove_all(&to_move, Rights(rights::TRANSFER), |o| !end.same_channel(o))?;
+    if state.send(end.end, Message { data, handles: moved }).is_err() {
+        unreachable!("can_send said yes");
+    }
+    drop(state);
+    drop(table);
+    end.shared.readable[peer(end.end)].wake_all();
+    Ok(0)
+}
+
+pub fn receive(handle: Handle, buffer: u64, capacity: u64, handles: u64, handle_capacity: u64) -> Result<u64, Error> {
+    let process = me()?;
+    let end = Arc::clone(process.handles.lock().get(handle, Rights(rights::RECEIVE))?.channel());
+    loop {
+        // Wait for a message (or a closed peer: peek's error).
+        end.shared.readable[end.end].wait_while(|| matches!(end.shared.state.lock().peek(end.end), Ok(None)));
+
+        let mut table = process.handles.lock();
+        let mut state = end.shared.state.lock();
+        // Someone else holding this end may have taken it meanwhile.
+        let Some((length, count)) = state.peek(end.end)? else { continue };
+        if length as u64 > capacity || count as u64 > handle_capacity {
+            return Err(Error::BufferTooSmall);
+        }
+        process::check_writable(buffer, length as u64)?;
+        process::check_writable(handles, count as u64 * 8)?;
+        if table.room() < count {
+            return Err(Error::TooManyHandles);
+        }
+        // Nothing can fail now: take the message, install its handles.
+        let message = state.receive(end.end).expect("peeked");
+        drop(state);
+        let installed: Vec<Handle> = message
+            .handles
+            .into_iter()
+            .map(|(object, rights)| table.insert(object, rights).expect("room checked"))
+            .collect();
+        drop(table);
+        process::copy_to_user(buffer, &message.data)?;
+        process::copy_to_user(handles, &handles_to_bytes(&installed))?;
+        return Ok(length as u64 | (count as u64) << 32);
+    }
+}
+
+pub fn close(handle: Handle) -> Result<u64, Error> {
+    let process = me()?;
+    let (object, _) = process.handles.lock().remove(handle)?;
+    drop(object); // outside the table's lock: closing may wake and bury
+    Ok(0)
+}
+
+pub fn duplicate(handle: Handle, rights: u64) -> Result<u64, Error> {
+    let rights = u32::try_from(rights).ok().filter(|r| r & !abi::rights::ALL == 0).ok_or(Error::InvalidArgument)?;
+    me()?.handles.lock().duplicate(handle, Rights(rights))
+}

@@ -19,6 +19,8 @@ extern crate alloc;
 
 pub mod acpi;
 pub mod bootinfo;
+pub mod cap;
+pub mod channel;
 pub mod elf;
 pub mod input;
 pub mod memory;

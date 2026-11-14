@@ -24,6 +24,7 @@ grep -q "\[selftest\] memory: all passed" "$LOG"   || fail "memory self-test"
 grep -q "\[selftest\] timer" "$LOG"               || fail "timer self-test"
 grep -q "\[selftest\] threads: sleep" "$LOG"      || fail "threads self-test"
 grep -q "\[selftest\] user:" "$LOG"               || fail "user-mode self-test"
+grep -q "\[selftest\] ipc:" "$LOG"                || fail "IPC self-test"
 grep -q "\[kernel\] idle" "$LOG"                  || fail "did not reach idle"
 ! grep -qE "KERNEL PANIC|CPU EXCEPTION" "$LOG"     || fail "panic or exception"
 if [ -n "$METHOD" ]; then

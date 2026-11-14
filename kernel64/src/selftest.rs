@@ -236,7 +236,7 @@ pub fn user() {
         ];
         let started: Vec<_> = programs
             .iter()
-            .map(|&(name, file)| process::spawn(name, file).unwrap_or_else(|e| panic!("loading {name}: {e:?}")))
+            .map(|&(name, file)| process::spawn(name, file, None).unwrap_or_else(|e| panic!("loading {name}: {e:?}")))
             .collect();
         started
             .into_iter()
@@ -264,4 +264,33 @@ pub fn user() {
     threads::yield_now();
     assert_eq!(mm::with_memory(|_, f| f.free_frames()), frames, "processes leaked frames");
     kprintln!("[selftest] user: hello exited 42, spin exited 0, peek and cli were killed; 8 processes, nothing leaked");
+}
+
+/// IPC: a service and its client, connected by one channel the kernel
+/// made. The client tests every rule of handles and channels, then asks
+/// the service to crash and must survive it. Twice - and then every
+/// channel and every frame must be gone.
+pub fn ipc() {
+    use crate::{ipc, process, programs};
+
+    let run = || {
+        let (service_end, client_end) = ipc::channel();
+        let (service, service_thread) =
+            process::spawn("echod", programs::ECHOD, Some(service_end)).expect("loading echod");
+        let (client, client_thread) =
+            process::spawn("echoc", programs::ECHOC, Some(client_end)).expect("loading echoc");
+        threads::join(client_thread);
+        threads::join(service_thread);
+        assert_eq!(client.exit_code(), Some(0), "echoc failed (the code is the line of the failed check)");
+        assert_eq!(service.exit_code(), Some(abi::KILLED), "echod should have crashed");
+    };
+
+    run();
+    threads::yield_now();
+    let frames = mm::with_memory(|_, f| f.free_frames());
+    run();
+    threads::yield_now();
+    assert_eq!(mm::with_memory(|_, f| f.free_frames()), frames, "IPC leaked frames");
+    assert_eq!(ipc::live_channels(), 0, "channels leaked");
+    kprintln!("[selftest] ipc: echo service and client - rights, transfer, backpressure, crash isolation; 0 channels left");
 }

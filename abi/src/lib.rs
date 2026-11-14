@@ -13,8 +13,17 @@
 //!   RAX        result: >= 0 success, < 0 an `Error`, negated
 //!   RCX, R11   destroyed (the CPU uses them); everything else preserved
 //!
-//! This is the native interface, deliberately small. Capabilities and
-//! IPC come next; the POSIX layer will sit on top of them, in user space.
+//! This is the native interface, deliberately small. The POSIX layer will
+//! sit on top of it, in user space.
+//!
+//! Capabilities: a process reaches kernel objects only through handles -
+//! small numbers naming entries in its own handle table, each with a set
+//! of `rights`. A handle is meaningful only to the process holding it;
+//! the same number in another process names something else, or nothing.
+//! Handles are passed between processes by sending them in messages.
+//!
+//! Every program starts with one handle, its bootstrap channel, in RDI
+//! (0 if it was given none).
 
 #![no_std]
 
@@ -33,7 +42,49 @@ pub mod call {
     pub const PROCESS_ID: u64 = 4;
     /// ticks() - timer ticks since boot.
     pub const TICKS: u64 = 5;
+    /// channel_create(out: *mut [u64; 2]) - a new channel; writes the
+    /// handles of its two ends, each with all rights.
+    pub const CHANNEL_CREATE: u64 = 6;
+    /// channel_send(handle, data, data_length, handles, handle_count) -
+    /// queues a message on the other end. Never blocks: a full queue is
+    /// `QueueFull`. The handles move with the message - they leave the
+    /// sender's table, all of them or (on any error) none.
+    pub const CHANNEL_SEND: u64 = 7;
+    /// channel_receive(handle, buffer, buffer_length, handles,
+    /// handle_capacity) - takes the next message, waiting for one if
+    /// needed. Returns `data_length | handle_count << 32`. A message that
+    /// does not fit is left queued (`BufferTooSmall`).
+    pub const CHANNEL_RECEIVE: u64 = 8;
+    /// handle_close(handle).
+    pub const HANDLE_CLOSE: u64 = 9;
+    /// handle_duplicate(handle, rights) - a second handle to the same
+    /// object, with `rights`, which must be a subset of the original's.
+    /// Needs DUPLICATE.
+    pub const HANDLE_DUPLICATE: u64 = 10;
 }
+
+/// What a handle permits. A right, once removed, cannot be added back:
+/// duplicates and transfers keep or narrow rights, never widen them.
+pub mod rights {
+    /// Send on a channel.
+    pub const SEND: u32 = 1 << 0;
+    /// Receive from a channel.
+    pub const RECEIVE: u32 = 1 << 1;
+    /// Make another handle to the object.
+    pub const DUPLICATE: u32 = 1 << 2;
+    /// Send the handle to another process.
+    pub const TRANSFER: u32 = 1 << 3;
+    pub const ALL: u32 = SEND | RECEIVE | DUPLICATE | TRANSFER;
+}
+
+/// Most bytes in one message.
+pub const MESSAGE_MAX: u64 = 1024;
+/// Most handles in one message.
+pub const MESSAGE_HANDLES_MAX: u64 = 8;
+/// Messages waiting at one channel end before sends fail with QueueFull.
+pub const CHANNEL_QUEUE_MAX: usize = 32;
+/// Most handles one process may hold.
+pub const HANDLES_MAX: usize = 1024;
 
 /// Why a system call failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +96,18 @@ pub enum Error {
     InvalidArgument = 2,
     /// A pointer argument points at memory the process cannot access.
     BadAddress = 3,
+    /// Not a handle in this process's table (never was, or closed).
+    InvalidHandle = 4,
+    /// The handle lacks a right the call needs.
+    AccessDenied = 5,
+    /// The other end of the channel is closed.
+    PeerClosed = 6,
+    /// The other end has too many unread messages.
+    QueueFull = 7,
+    /// The waiting message is larger than the buffers given.
+    BufferTooSmall = 8,
+    /// The handle table is full.
+    TooManyHandles = 9,
 }
 
 impl Error {
@@ -53,6 +116,12 @@ impl Error {
             1 => Some(Error::UnknownCall),
             2 => Some(Error::InvalidArgument),
             3 => Some(Error::BadAddress),
+            4 => Some(Error::InvalidHandle),
+            5 => Some(Error::AccessDenied),
+            6 => Some(Error::PeerClosed),
+            7 => Some(Error::QueueFull),
+            8 => Some(Error::BufferTooSmall),
+            9 => Some(Error::TooManyHandles),
             _ => None,
         }
     }
