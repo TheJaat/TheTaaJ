@@ -28,6 +28,9 @@ pub const MEMORY_RESERVED: u32 = 2;
 pub const MEMORY_ACPI_RECLAIMABLE: u32 = 3;
 pub const MEMORY_ACPI_NVS: u32 = 4;
 pub const MEMORY_BAD: u32 = 5;
+/// Allocated by the loader for the kernel: the boot info, the memory map,
+/// the entry page tables, the kernel image. Reclaimable later.
+pub const MEMORY_LOADER: u32 = 6;
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
@@ -50,6 +53,7 @@ impl MemoryRegion {
             MEMORY_ACPI_RECLAIMABLE => "ACPI reclaimable",
             MEMORY_ACPI_NVS => "ACPI NVS",
             MEMORY_BAD => "bad",
+            MEMORY_LOADER => "loader",
             _ => "unknown",
         }
     }

@@ -3,7 +3,8 @@ BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
-        kernel64 iso64 run64 boot64-test kernel64-test fault64-test test64
+        kernel64 iso64 run64 boot64-test kernel64-test fault64-test test64 \
+        uefi-loader run64-uefi boot64-uefi-test
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
@@ -166,37 +167,84 @@ KERNEL64_ELF = $(KERNEL64_DIR)/target/x86_64-unknown-none/release/kernel64
 ISO64_DIR    = $(BUILD_DIR)/iso64
 ISO64_IMG    = $(BUILD_DIR)/image64.iso
 SERIAL64_LOG = $(BUILD_DIR)/serial64.log
+UEFI64_LOG   = $(BUILD_DIR)/serial64-uefi.log
+
+# The UEFI loader needs Clang and lld (`sudo apt install clang lld`).
+# Without them the ISO is built BIOS-only, and says so.
+UEFI_DIR     = bootloader/src/boot/uefi
+UEFI_EFI     = $(BOOTLOADER_BUILD_DIR)/uefi/BOOTX64.EFI
+ESP64_IMG    = $(ISO64_DIR)/efiboot.img
+HAVE_CLANG  := $(shell command -v clang >/dev/null && command -v lld-link >/dev/null && echo yes)
+MKFS_FAT     = /usr/sbin/mkfs.fat
+# QEMU's UEFI firmware, from the ovmf package.
+OVMF         = /usr/share/ovmf/OVMF.fd
 
 kernel64:
 	@echo "Building the 64-bit kernel..."
 	cd $(KERNEL64_DIR) && cargo build --release
 
-# The ISO gets a copy without debug info: stage2 reads the whole file
+uefi-loader:
+ifeq ($(HAVE_CLANG),yes)
+	@echo "Building the UEFI loader..."
+	$(MAKE) -C $(UEFI_DIR) ROOT_DIR=$(abspath bootloader)
+else
+	@echo "NOTE: clang/lld-link not found - skipping the UEFI loader (sudo apt install clang lld)"
+endif
+
+# One ISO that boots both ways. El Torito, the CD boot standard, allows
+# several boot entries: BIOS firmware takes the first (stage1.bin), UEFI
+# firmware the one marked EFI - a small FAT image holding the loader as
+# EFI/BOOT/BOOTX64.EFI (the path firmware looks for when nothing else is
+# configured) and its own copy of the kernel.
+#
+# The kernel is a copy without debug info: stage2 reads the whole file
 # through a 1 MiB staging window, and the symbols stay in the original.
-iso64: build-bootloader kernel64
+iso64: build-bootloader kernel64 uefi-loader
 	@echo "Creating the 64-bit ISO image..."
 	rm -rf $(ISO64_DIR)
 	mkdir -p $(ISO64_DIR)/kernel
 	cp $(STAGE1_BIN) $(STAGE2_BIN) $(ISO64_DIR)/
 	strip --strip-debug -o $(ISO64_DIR)/kernel/kernel.elf $(KERNEL64_ELF)
+ifeq ($(HAVE_CLANG),yes)
+	$(MKFS_FAT) -C -n TAAJESP $(ESP64_IMG) 4096 >/dev/null
+	mmd -i $(ESP64_IMG) ::/EFI ::/EFI/BOOT ::/kernel
+	mcopy -i $(ESP64_IMG) $(UEFI_EFI) ::/EFI/BOOT/BOOTX64.EFI
+	mcopy -i $(ESP64_IMG) $(ISO64_DIR)/kernel/kernel.elf ::/kernel/kernel.elf
+	xorriso -as mkisofs -R -J -iso-level 3 \
+		-b stage1.bin -no-emul-boot -boot-load-size 4 \
+		-eltorito-alt-boot -e efiboot.img -no-emul-boot \
+		-o $(ISO64_IMG) $(ISO64_DIR) 2>/dev/null
+else
 	xorriso -as mkisofs -R -J -b stage1.bin -iso-level 3 -no-emul-boot \
 		-boot-load-size 4 -o $(ISO64_IMG) $(ISO64_DIR) 2>/dev/null
+endif
 
 run64: iso64
 	qemu-system-x86_64 -m 512M -cdrom $(ISO64_IMG) -boot d -serial stdio
 
+run64-uefi: iso64
+ifneq ($(HAVE_CLANG),yes)
+	@echo "ERROR: no UEFI loader in the ISO - it needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+	qemu-system-x86_64 -m 512M -bios $(OVMF) -cdrom $(ISO64_IMG) -boot d -serial stdio
+
 # Boots the 64-bit kernel headless and checks what it printed. A start on
 # the "boot every architecture on every commit" rule from the roadmap.
 boot64-test: iso64
-	@echo "Booting the 64-bit kernel headless (serial log: $(SERIAL64_LOG))..."
+	@echo "Booting the 64-bit kernel headless via BIOS (serial log: $(SERIAL64_LOG))..."
 	@$(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(SERIAL64_LOG)
-	@grep -q "Hello from TheTaaJ" $(SERIAL64_LOG) || { echo "FAIL: no greeting"; cat $(SERIAL64_LOG); exit 1; }
-	@grep -q "resumed after the breakpoint" $(SERIAL64_LOG) || { echo "FAIL: exception path broken"; cat $(SERIAL64_LOG); exit 1; }
-	@grep -q "\[selftest\] memory: all passed" $(SERIAL64_LOG) || { echo "FAIL: memory self-test"; cat $(SERIAL64_LOG); exit 1; }
-	@grep -q "Nothing more to do yet" $(SERIAL64_LOG) || { echo "FAIL: did not finish"; cat $(SERIAL64_LOG); exit 1; }
-	@! grep -qE "KERNEL PANIC|CPU EXCEPTION" $(SERIAL64_LOG) || { echo "FAIL: panic or exception"; cat $(SERIAL64_LOG); exit 1; }
-	@cat $(SERIAL64_LOG)
+	@$(KERNEL64_DIR)/scripts/check-boot.sh $(SERIAL64_LOG) BIOS
 	@echo "boot64-test passed"
+
+# The same ISO, the same kernel, booted by UEFI firmware instead.
+boot64-uefi-test: iso64
+ifneq ($(HAVE_CLANG),yes)
+	@echo "FAIL: the UEFI loader needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+	@echo "Booting the 64-bit kernel headless via UEFI (serial log: $(UEFI64_LOG))..."
+	@QEMU_ARGS="-bios $(OVMF)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(UEFI64_LOG) 30
+	@$(KERNEL64_DIR)/scripts/check-boot.sh $(UEFI64_LOG) UEFI
+	@echo "boot64-uefi-test passed"
 
 # Unit tests of the kernel's pure logic (frames, page tables, heap,
 # locks), compiled for and run on this machine rather than in a VM.
@@ -210,9 +258,9 @@ kernel64-test:
 fault64-test: build-bootloader
 	$(KERNEL64_DIR)/scripts/fault-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR)
 
-# All three layers: host unit tests, a normal boot with self-tests, and
-# the fault boots.
-test64: kernel64-test boot64-test fault64-test
+# Every layer: host unit tests, a normal boot (BIOS and UEFI) with its
+# self-tests, and the fault boots.
+test64: kernel64-test boot64-test boot64-uefi-test fault64-test
 	@echo "test64: all passed"
 
 # Clean everything
