@@ -157,6 +157,11 @@ run: iso
 # and stays the reference.
 
 KERNEL64_DIR = kernel64
+
+# rustup installs cargo and rustc in ~/.cargo/bin, and adds it to PATH
+# only in shells started after the install. Prepend it here so the build
+# works from any shell; `export` passes it on to scripts and sub-makes.
+export PATH := $(HOME)/.cargo/bin:$(PATH)
 KERNEL64_ELF = $(KERNEL64_DIR)/target/x86_64-unknown-none/release/kernel64
 ISO64_DIR    = $(BUILD_DIR)/iso64
 ISO64_IMG    = $(BUILD_DIR)/image64.iso
@@ -196,7 +201,7 @@ boot64-test: iso64
 
 # Unit tests of the kernel's pure logic (frames, page tables, heap,
 # locks), compiled for and run on this machine rather than in a VM.
-HOST_TRIPLE = $(shell rustc -vV | sed -n 's/^host: //p')
+HOST_TRIPLE = $(shell PATH="$(PATH)" rustc -vV | sed -n 's/^host: //p')
 
 kernel64-test:
 	cd $(KERNEL64_DIR) && cargo test --lib --target $(HOST_TRIPLE)
