@@ -14,8 +14,8 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use kernel64::memory::addr::{phys_to_virt, VirtAddr};
 use kernel64::paging::{Flags, PageSize};
 
-use crate::arch::mmu;
-use crate::mm;
+use crate::arch::{self, mmu};
+use crate::{interrupts, mm};
 
 pub fn run() {
     frames();
@@ -119,4 +119,25 @@ fn heap() {
     }
     let (used_after, _) = mm::heap_usage();
     assert_eq!(used_after, used_before, "dropping everything did not free everything");
+}
+
+/// The timer interrupt arrives, at the rate it was set to: ten ticks,
+/// timed with the TSC (calibrated separately, against the PIT).
+pub fn timer() {
+    let tsc_hz = arch::platform::tsc_hz();
+    let first = interrupts::ticks();
+    // Line up with a tick boundary, then count ten.
+    while interrupts::ticks() == first {
+        arch::wait_for_interrupt();
+    }
+    let start_ticks = interrupts::ticks();
+    let start = arch::tsc();
+    while interrupts::ticks() < start_ticks + 10 {
+        arch::wait_for_interrupt();
+    }
+    let ms = (arch::tsc() - start) * 1000 / tsc_hz.max(1);
+    let expected = 10 * 1000 / interrupts::HZ;
+    // Generous bounds: a VM's clocks can stretch under load.
+    assert!(ms >= expected / 2 && ms <= expected * 3, "10 timer ticks took {ms} ms, expected {expected}");
+    kprintln!("[selftest] timer: 10 ticks in {ms} ms (expected {expected})");
 }

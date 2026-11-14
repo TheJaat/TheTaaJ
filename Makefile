@@ -169,6 +169,11 @@ ISO64_IMG    = $(BUILD_DIR)/image64.iso
 SERIAL64_LOG = $(BUILD_DIR)/serial64.log
 UEFI64_LOG   = $(BUILD_DIR)/serial64-uefi.log
 
+# What the boot tests type at the idle kernel - with a typo corrected by
+# Backspace - and the line it must echo back.
+TEST_KEYS    = shift-h i spc t h e r x backspace e ret
+TEST_TYPED   = Hi there
+
 # The UEFI loader needs Clang and lld (`sudo apt install clang lld`).
 # Without them the ISO is built BIOS-only, and says so.
 UEFI_DIR     = bootloader/src/boot/uefi
@@ -232,8 +237,8 @@ endif
 # the "boot every architecture on every commit" rule from the roadmap.
 boot64-test: iso64
 	@echo "Booting the 64-bit kernel headless via BIOS (serial log: $(SERIAL64_LOG))..."
-	@$(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(SERIAL64_LOG)
-	@$(KERNEL64_DIR)/scripts/check-boot.sh $(SERIAL64_LOG) BIOS
+	@KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(SERIAL64_LOG)
+	@TYPED="$(TEST_TYPED)" $(KERNEL64_DIR)/scripts/check-boot.sh $(SERIAL64_LOG) BIOS
 	@echo "boot64-test passed"
 
 # The same ISO, the same kernel, booted by UEFI firmware instead.
@@ -242,8 +247,8 @@ ifneq ($(HAVE_CLANG),yes)
 	@echo "FAIL: the UEFI loader needs clang and lld (sudo apt install clang lld)"; exit 1
 endif
 	@echo "Booting the 64-bit kernel headless via UEFI (serial log: $(UEFI64_LOG))..."
-	@QEMU_ARGS="-bios $(OVMF)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(UEFI64_LOG) 30
-	@$(KERNEL64_DIR)/scripts/check-boot.sh $(UEFI64_LOG) UEFI
+	@QEMU_ARGS="-bios $(OVMF)" KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(UEFI64_LOG) 30
+	@TYPED="$(TEST_TYPED)" $(KERNEL64_DIR)/scripts/check-boot.sh $(UEFI64_LOG) UEFI
 	@echo "boot64-uefi-test passed"
 
 # Unit tests of the kernel's pure logic (frames, page tables, heap,

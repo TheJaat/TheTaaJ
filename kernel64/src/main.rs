@@ -30,10 +30,16 @@ mod console; // first, so its macros are visible in every later module
 
 mod arch;
 mod framebuffer;
+mod interrupts;
+mod irqlock;
 mod mm;
 mod selftest;
 
+use alloc::string::String;
+
+use kernel64::acpi::{Acpi, IoApic, Madt};
 use kernel64::bootinfo::BootInfo;
+use kernel64::input::{Decoder, Key};
 
 /// The first Rust code to run, called by `_start` with the physical
 /// address of the TaajBootInfo (in RDI, per the C calling convention).
@@ -71,6 +77,17 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
 
     selftest::run();
 
+    // Interrupts: find the controllers, set them up, switch on.
+    kprintln!();
+    let madt = read_madt(info.acpi_rsdp);
+    let ids: alloc::vec::Vec<u8> = madt.processors.iter().filter(|p| p.enabled).map(|p| p.apic_id).collect();
+    kprintln!("[acpi] {} CPU(s), APIC ids {ids:?} - this one runs; the rest wait for SMP", ids.len());
+    // SAFETY: once, on the boot CPU, interrupts still disabled.
+    let platform = unsafe { arch::platform::init(&madt, interrupts::HZ) };
+    report_platform(&platform);
+    arch::enable_interrupts();
+    selftest::timer();
+
     match info.framebuffer() {
         Some(fb) if framebuffer::paint_welcome(fb) => kprintln!("framebuffer: painted"),
         Some(_) => kprintln!("framebuffer: unsupported pixel format, left alone"),
@@ -83,9 +100,91 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
     #[cfg(feature = "fault-tests")]
     run_fault_test();
 
+    idle()
+}
+
+/// Reads the MADT, or - with no usable ACPI - assumes the standard PC
+/// layout: one CPU, the local APIC and one I/O APIC at their
+/// architectural default addresses, no overrides.
+fn read_madt(rsdp: u64) -> Madt {
+    let memory = mm::DirectMap;
+    let found = match Acpi::new(&memory, rsdp) {
+        Ok(acpi) => {
+            let mut names = String::new();
+            for signature in acpi.signatures(&memory) {
+                names.push_str(core::str::from_utf8(&signature).unwrap_or("????"));
+                names.push(' ');
+            }
+            kprintln!("[acpi] revision {}, OEM {:?}, tables: {names}", acpi.revision,
+                core::str::from_utf8(&acpi.oem).unwrap_or("?").trim_end());
+            acpi.find(&memory, b"APIC").and_then(|table| Madt::parse(&table))
+        }
+        Err(error) => Err(error),
+    };
+    found.unwrap_or_else(|error| {
+        kprintln!("[acpi] no usable MADT ({error}) - assuming the standard PC layout");
+        Madt {
+            local_apic_address: 0xFEE0_0000,
+            has_legacy_pics: true,
+            io_apics: alloc::vec![IoApic { id: 0, address: 0xFEC0_0000, gsi_base: 0 }],
+            ..Madt::default()
+        }
+    })
+}
+
+fn report_platform(p: &arch::platform::Report) {
+    kprintln!("[irq] local APIC id {}; legacy PICs remapped and masked", p.cpu_apic_id);
+    for &(id, address, gsi_base, inputs) in &p.io_apics {
+        kprintln!("[irq] I/O APIC {id} at {address:#x}: GSIs {gsi_base}-{}", gsi_base + inputs - 1);
+    }
+    kprintln!(
+        "[irq] APIC timer at {} Hz (bus clock {} MHz), TSC {} MHz",
+        p.timer_hz,
+        p.bus_hz / 1_000_000,
+        p.tsc_hz / 1_000_000
+    );
+    match p.keyboard_gsi {
+        Some(gsi) => kprintln!("[irq] PS/2 keyboard on GSI {gsi}"),
+        None => kprintln!("[irq] no PS/2 keyboard"),
+    }
+}
+
+/// Where the kernel rests once booted: asleep until an interrupt, then
+/// handling whatever it brought. For now that is the keyboard - each
+/// line typed is echoed back. The first "program" the kernel runs.
+fn idle() -> ! {
+    let mut decoder = Decoder::new();
+    let mut line = String::new();
     kprintln!();
-    kprintln!("Nothing more to do yet - halting.");
-    arch::halt_forever()
+    kprintln!("[kernel] idle - type, and each line is echoed back");
+    loop {
+        while let Some(byte) = interrupts::KEYBOARD.pop() {
+            let Some(event) = decoder.feed(byte) else { continue };
+            if !event.pressed {
+                continue;
+            }
+            match event.key {
+                Key::Char(c) => {
+                    line.push(c);
+                    kprint!("{c}");
+                }
+                Key::Backspace => {
+                    if line.pop().is_some() {
+                        kprint!("\x08 \x08"); // back, blank, back
+                    }
+                }
+                Key::Enter => {
+                    kprintln!();
+                    kprintln!("[keyboard] line: {line:?}");
+                    line.clear();
+                }
+                _ => {}
+            }
+        }
+        // Nothing left to do: sleep until the next interrupt (the timer
+        // guarantees one within 1/HZ s).
+        arch::wait_for_interrupt();
+    }
 }
 
 #[cfg(feature = "fault-tests")]
@@ -176,6 +275,9 @@ fn report(info: &BootInfo) {
 /// and stop. `PanicInfo` formats as the location plus the message.
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
+    arch::disable_interrupts();
+    // SAFETY: halting right after; whoever held the console never resumes.
+    unsafe { console::break_lock() };
     kprintln!();
     kprintln!("*** KERNEL PANIC: {info}");
     arch::halt_forever()

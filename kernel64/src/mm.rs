@@ -12,6 +12,7 @@
 //!        0xFFFF_8000_0000_0000  the direct map: all physical memory,
 //!                               read/write, never executable
 //!        0xFFFF_C000_0000_0000  the kernel heap, growing upward
+//!        0xFFFF_E000_0000_0000  device registers (MMIO), uncached
 //!        0xFFFF_FFFF_8000_0000  the kernel image: code read+execute,
 //!                               rodata read-only, data read/write -
 //!                               and an unmapped guard page below the
@@ -39,9 +40,10 @@ use kernel64::memory::frame::FrameAllocator;
 use kernel64::memory::heap::Heap;
 use kernel64::memory::layout::find_free_space;
 use kernel64::paging::{Flags, MapError, PageSize, PageTables};
-use kernel64::sync::SpinLock;
+use kernel64::acpi::PhysicalMemory;
 
 use crate::arch::mmu;
+use crate::irqlock::IrqLock;
 
 const MIB: u64 = 1024 * 1024;
 const GIB: u64 = 1024 * MIB;
@@ -50,12 +52,15 @@ const GIB: u64 = 1024 * MIB;
 pub const KERNEL_WINDOW: u64 = 0xFFFF_FFFF_8000_0000;
 pub const DIRECT_MAP: u64 = 0xFFFF_8000_0000_0000;
 pub const HEAP_START: u64 = 0xFFFF_C000_0000_0000;
+/// Device registers, mapped uncached, one after another.
+pub const MMIO_START: u64 = 0xFFFF_E000_0000_0000;
+const MMIO_SIZE: u64 = GIB;
 const HEAP_INITIAL: u64 = MIB;
 const HEAP_GROWTH: u64 = MIB;
 const HEAP_MAX: u64 = 256 * MIB;
 
-pub static FRAMES: SpinLock<Option<FrameAllocator>> = SpinLock::new(None);
-pub static TABLES: SpinLock<Option<PageTables>> = SpinLock::new(None);
+pub static FRAMES: IrqLock<Option<FrameAllocator>> = IrqLock::new(None);
+pub static TABLES: IrqLock<Option<PageTables>> = IrqLock::new(None);
 static NO_EXECUTE: AtomicBool = AtomicBool::new(false);
 
 extern "C" {
@@ -296,13 +301,13 @@ impl HeapState {
 }
 
 struct KernelHeap {
-    state: SpinLock<HeapState>,
+    state: IrqLock<HeapState>,
 }
 
 /// What `alloc` - Box, Vec, String, ... - uses for memory.
 #[global_allocator]
 static HEAP: KernelHeap =
-    KernelHeap { state: SpinLock::new(HeapState { heap: Heap::empty(), end: HEAP_START }) };
+    KernelHeap { state: IrqLock::new(HeapState { heap: Heap::empty(), end: HEAP_START }) };
 
 unsafe impl GlobalAlloc for KernelHeap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -328,4 +333,60 @@ unsafe impl GlobalAlloc for KernelHeap {
 pub fn heap_usage() -> (usize, usize) {
     let state = HEAP.state.lock();
     (state.heap.used(), state.heap.total())
+}
+
+// ---- device memory ------------------------------------------------------
+
+/// The next free address in the MMIO window. Taken before TABLES.
+static MMIO_NEXT: IrqLock<u64> = IrqLock::new(MMIO_START);
+
+/// Maps `size` bytes of device registers at physical `physical`,
+/// uncached, and returns the virtual address of `physical`.
+///
+/// The direct map also covers most device memory, but with normal
+/// (write-back) caching: a read could be answered from the cache instead
+/// of the device, and writes could be delayed or merged. Registers need
+/// every access to reach the device, in order.
+pub fn map_mmio(physical: u64, size: u64) -> u64 {
+    let start = align_down(physical, PAGE_SIZE);
+    let end = align_up(physical + size, PAGE_SIZE);
+    let flags = Flags::WRITABLE | Flags::NO_CACHE | Flags::WRITE_THROUGH | Flags::GLOBAL | no_execute();
+
+    let mut next = MMIO_NEXT.lock();
+    let virt = *next;
+    assert!(virt + (end - start) <= MMIO_START + MMIO_SIZE, "MMIO window full");
+    with_memory(|tables, frames| {
+        for offset in (0..end - start).step_by(PAGE_SIZE as usize) {
+            tables
+                .map(VirtAddr::new(virt + offset), PhysAddr::new(start + offset), PageSize::Size4K, flags, frames)
+                .unwrap_or_else(|error| panic!("MMIO mapping of {physical:#x} failed: {error:?}"));
+        }
+    });
+    *next += end - start;
+    virt + (physical - start)
+}
+
+/// Physical memory as the ACPI parser reads it: through the direct map,
+/// refusing any range the direct map does not cover - firmware tables
+/// can point anywhere, and a bad pointer must be an error, not a fault.
+pub struct DirectMap;
+
+impl PhysicalMemory for DirectMap {
+    fn read(&self, address: u64, buffer: &mut [u8]) -> bool {
+        if buffer.is_empty() {
+            return true;
+        }
+        let Some(end) = address.checked_add(buffer.len() as u64) else { return false };
+        let mapped = with_memory(|tables, _| {
+            (align_down(address, PAGE_SIZE)..end)
+                .step_by(PAGE_SIZE as usize)
+                .all(|page| tables.translate(phys_to_virt(PhysAddr::new(page))).is_some())
+        });
+        if mapped {
+            // SAFETY: every page of the range is mapped, checked above.
+            let source = phys_to_virt(PhysAddr::new(address)).as_ptr::<u8>();
+            unsafe { core::ptr::copy_nonoverlapping(source, buffer.as_mut_ptr(), buffer.len()) };
+        }
+        mapped
+    }
 }

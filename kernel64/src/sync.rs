@@ -9,10 +9,10 @@
 //! it is clear. Right for short critical sections in a kernel, where
 //! there is no scheduler to sleep on yet.
 //!
-//! Interrupts are not touched here. Today they are always off; once they
-//! are on, any lock also taken by an interrupt handler must disable them
-//! while held, or the handler can spin forever on a lock its own CPU
-//! holds. That will be a separate, interrupt-safe lock type.
+//! Interrupts are not touched here - this module knows no CPU. A lock an
+//! interrupt handler can also take must disable interrupts while held,
+//! or the handler can spin forever on a lock its own CPU holds; the
+//! kernel wraps this one as `IrqLock` for that (irqlock.rs).
 
 use core::cell::UnsafeCell;
 use core::hint;
@@ -49,6 +49,16 @@ impl<T> SpinLock<T> {
                 hint::spin_loop();
             }
         }
+    }
+
+    /// Releases the lock whoever holds it.
+    ///
+    /// # Safety
+    /// Only for a dying kernel that must print one last message even if
+    /// the console's lock was held when it failed. The holder's guard
+    /// must never be used again.
+    pub unsafe fn force_unlock(&self) {
+        self.locked.store(false, Ordering::Release);
     }
 
     pub fn try_lock(&self) -> Option<SpinLockGuard<'_, T>> {

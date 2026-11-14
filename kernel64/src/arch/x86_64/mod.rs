@@ -1,11 +1,18 @@
 //! x86_64.
 
+mod apic;
 mod entry;
 mod gdt;
 mod idt;
 pub mod mmu;
+mod pic;
+mod pit;
+pub mod platform;
 mod port;
+mod ps2;
 mod serial;
+
+use core::arch::asm;
 
 /// Sets up the earliest output there is: the COM1 serial port.
 pub fn init_early_console() {
@@ -26,6 +33,50 @@ pub fn init_cpu() {
         gdt::init();
         idt::init();
     }
+}
+
+/// Whether this CPU accepts interrupts now (RFLAGS.IF).
+pub fn interrupts_enabled() -> bool {
+    let flags: u64;
+    // SAFETY: reading RFLAGS has no side effects.
+    unsafe { asm!("pushfq", "pop {}", out(reg) flags, options(nomem, preserves_flags)) };
+    flags & (1 << 9) != 0
+}
+
+/// Disables interrupts, returning whether they were enabled - to hand
+/// back to `restore_interrupts`.
+pub fn disable_interrupts() -> bool {
+    let were_enabled = interrupts_enabled();
+    // SAFETY: cli only changes RFLAGS.IF.
+    unsafe { asm!("cli", options(nomem, nostack)) };
+    were_enabled
+}
+
+pub fn restore_interrupts(were_enabled: bool) {
+    if were_enabled {
+        enable_interrupts();
+    }
+}
+
+pub fn enable_interrupts() {
+    // SAFETY: the IDT handles every vector by the time anyone calls this.
+    unsafe { asm!("sti", options(nomem, nostack)) };
+}
+
+/// Enables interrupts and sleeps until one arrives. `sti` takes effect
+/// only after the NEXT instruction, so no interrupt can slip in between
+/// the two and leave `hlt` waiting for a second one.
+pub fn wait_for_interrupt() {
+    // SAFETY: as for enable_interrupts.
+    unsafe { asm!("sti", "hlt", options(nomem, nostack)) };
+}
+
+/// The CPU's time-stamp counter: cycles since reset.
+pub fn tsc() -> u64 {
+    let (low, high): (u32, u32);
+    // SAFETY: rdtsc only reads the counter.
+    unsafe { asm!("rdtsc", out("eax") low, out("edx") high, options(nomem, nostack, preserves_flags)) };
+    (u64::from(high) << 32) | u64::from(low)
 }
 
 /// Raises a breakpoint exception, which the IDT reports and resumes

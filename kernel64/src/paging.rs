@@ -40,6 +40,12 @@ impl Flags {
     pub const WRITABLE: Flags = Flags(1 << 1);
     /// Ring 3 may use it. Must be set at every level of the walk.
     pub const USER: Flags = Flags(1 << 2);
+    /// PWT: writes go straight to memory instead of staying in the cache.
+    pub const WRITE_THROUGH: Flags = Flags(1 << 3);
+    /// PCD: no caching at all. With WRITE_THROUGH, the default PAT makes
+    /// this "uncacheable" - what device registers need: every read must
+    /// reach the device, and every write must leave the CPU, in order.
+    pub const NO_CACHE: Flags = Flags(1 << 4);
     /// In a PDPT or PD entry: this is the page itself, not a table.
     pub const HUGE: Flags = Flags(1 << 7);
     /// Survives a CR3 reload in the TLB: for kernel mappings, which every
@@ -79,6 +85,8 @@ impl fmt::Debug for Flags {
             (Flags::PRESENT, "P"),
             (Flags::WRITABLE, "W"),
             (Flags::USER, "U"),
+            (Flags::WRITE_THROUGH, "PWT"),
+            (Flags::NO_CACHE, "PCD"),
             (Flags::HUGE, "H"),
             (Flags::GLOBAL, "G"),
             (Flags::NO_EXECUTE, "NX"),

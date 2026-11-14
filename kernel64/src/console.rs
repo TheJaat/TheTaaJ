@@ -5,10 +5,14 @@
 //! x86_64 is the COM1 serial port and on another architecture will be
 //! whatever early console it has.
 //!
-//! No lock yet. That is correct for now - one CPU, interrupts off - and
-//! stops being correct the moment either changes.
+//! A lock keeps each message whole: without it, a message printed by an
+//! interrupt handler could land in the middle of another one's line.
 
 use core::fmt::{self, Write};
+
+use crate::irqlock::IrqLock;
+
+static LOCK: IrqLock<()> = IrqLock::new(());
 
 struct Console;
 
@@ -25,8 +29,18 @@ impl Write for Console {
 /// Not for direct use - the macros call it. `pub` only because macros
 /// expand at the call site, which may be in another module.
 pub fn print(args: fmt::Arguments) {
+    let _guard = LOCK.lock();
     // Writing to the console cannot fail, so the Result carries nothing.
     let _ = Console.write_fmt(args);
+}
+
+/// Frees the console lock, for a panic or fatal exception that must be
+/// reported even if it struck while something was printing.
+///
+/// # Safety
+/// Only on the way to halting: whoever held the lock never runs again.
+pub unsafe fn break_lock() {
+    LOCK.force_unlock();
 }
 
 /// Like `print!`, for the kernel.

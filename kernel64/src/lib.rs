@@ -13,8 +13,15 @@
 // no_std for the kernel; the full std when compiled for host tests.
 #![cfg_attr(not(test), no_std)]
 
+// Vec and friends. In the kernel they come from its heap (mm.rs); in
+// host tests, from the host's allocator.
+extern crate alloc;
+
+pub mod acpi;
 pub mod bootinfo;
+pub mod input;
 pub mod memory;
 #[cfg(target_arch = "x86_64")]
 pub mod paging;
+pub mod queue;
 pub mod sync;
