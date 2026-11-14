@@ -19,6 +19,20 @@ typedef struct _TfsVolume {
      * after every commit. Nothing on disk tracks allocation. */
     unsigned char  Used[TFS_MAX_BLOCKS / 8];
     unsigned int   UsedCount;
+
+    /* Scratch block buffers.
+     *
+     * A filesystem naturally wants a block-sized buffer in almost every
+     * function, and at 4 KB each that overruns a ring-3 stack several
+     * times over once the calls nest. Hanging them off the volume costs
+     * nothing and bounds the stack by construction.
+     *
+     * The consequence is that these functions are not reentrant: one
+     * thread per volume. The file services are single-threaded request
+     * loops, so that is already true. */
+    unsigned char  Scratch[TFS_BLOCK_SIZE];
+    unsigned char  Scratch2[TFS_BLOCK_SIZE];
+    unsigned char  Scratch3[TFS_BLOCK_SIZE];
 } TfsVolume_t;
 
 typedef struct _TfsFile {

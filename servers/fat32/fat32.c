@@ -43,6 +43,7 @@ static int DiskIo(unsigned Lba, unsigned Count, void *Buffer, int Write)
         }
     }
 
+    Request.Drive = 0;      /* the FAT volume is the master */
     Request.Lba = Lba; Request.Count = Count; Request.WindowOffset = 0;
     Result.Status = -1;
 

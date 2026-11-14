@@ -9,6 +9,27 @@ static void Copy(void *D, const void *S, unsigned N)
 static void Zero(void *D, unsigned N)
 { unsigned char *d=(unsigned char*)D; unsigned i; for (i=0;i<N;i++) d[i]=0; }
 
+/* CopyName
+ * Copies a NUL-terminated name into a fixed 28-byte field, padding the
+ * rest with zeros.
+ *
+ * The obvious `Copy(Field, Name, TFS_NAME_MAX)` reads 28 bytes from
+ * whatever the caller passed, and a caller passing a string literal has
+ * only as many bytes as the literal. It happens to work when the
+ * literal sits in the middle of a page and is a buffer overrun the rest
+ * of the time. */
+static void CopyName(char *Field, const char *Name)
+{
+    unsigned i;
+
+    for (i = 0; i < TFS_NAME_MAX && Name[i] != '\0'; i++) {
+        Field[i] = Name[i];
+    }
+    for (; i < TFS_NAME_MAX; i++) {
+        Field[i] = '\0';
+    }
+}
+
 static int NameEqual(const char *A, const char *B)
 {
     int i;
@@ -101,7 +122,7 @@ static unsigned TfsAllocate(TfsVolume_t *V)
  * authority. */
 static int TfsRebuildFreeMap(TfsVolume_t *V)
 {
-    unsigned char Block[TFS_BLOCK_SIZE];
+    unsigned char *Block = V->Scratch;
     unsigned DirBlock;
     unsigned Guard = 0;
 
@@ -124,7 +145,7 @@ static int TfsRebuildFreeMap(TfsVolume_t *V)
         MarkUsed(V, DirBlock);
 
         for (i = 0; i < Dir->Count && i < TFS_DIR_ENTRIES; i++) {
-            unsigned char InodeBlock[TFS_BLOCK_SIZE];
+            unsigned char *InodeBlock = V->Scratch2;
             TfsInode_t *Inode = (TfsInode_t*)InodeBlock;
             unsigned b;
 
@@ -149,6 +170,11 @@ static int TfsRebuildFreeMap(TfsVolume_t *V)
 
 /* ---- mount and format -------------------------------------------- */
 
+/* TfsFormat
+ * The one function with a block buffer on the stack, because it runs
+ * before a volume exists to hang one off. It is called by mkfs on a
+ * host, never from a ring-3 server, so 4 KB of frame is fine - and it is
+ * the only place that is true. */
 int TfsFormat(TfsRead_t Read, TfsWrite_t Write, void *Context,
               unsigned TotalBlocks)
 {
@@ -192,8 +218,8 @@ int TfsFormat(TfsRead_t Read, TfsWrite_t Write, void *Context,
 
 int TfsMount(TfsVolume_t *V, TfsRead_t Read, TfsWrite_t Write, void *Context)
 {
-    unsigned char Block[TFS_BLOCK_SIZE];
-    TfsSuper_t *S = (TfsSuper_t*)Block;
+    unsigned char *Block;
+    TfsSuper_t *S;
     TfsSuper_t Best;
     int BestSlot = -1;
     int slot;
@@ -201,6 +227,9 @@ int TfsMount(TfsVolume_t *V, TfsRead_t Read, TfsWrite_t Write, void *Context)
     Zero(V, sizeof(TfsVolume_t));
     V->Read = Read; V->Write = Write; V->Context = Context;
     Zero(&Best, sizeof(Best));
+
+    Block = V->Scratch;
+    S = (TfsSuper_t*)Block;
 
     /* Take the highest generation whose checksum is good. A half-written
      * superblock fails the checksum and is simply ignored, which is what
@@ -236,7 +265,7 @@ int TfsMount(TfsVolume_t *V, TfsRead_t Read, TfsWrite_t Write, void *Context)
  * observe. */
 static int TfsCommit(TfsVolume_t *V, unsigned NewRoot)
 {
-    unsigned char Block[TFS_BLOCK_SIZE];
+    unsigned char *Block = V->Scratch;
     TfsSuper_t *S = (TfsSuper_t*)Block;
     int Target = (V->SuperSlot == TFS_SUPER_A) ? TFS_SUPER_B : TFS_SUPER_A;
 
@@ -262,7 +291,7 @@ static int TfsCommit(TfsVolume_t *V, unsigned NewRoot)
 
 int TfsList(TfsVolume_t *V, TfsFile_t *Files, int Max)
 {
-    unsigned char Block[TFS_BLOCK_SIZE];
+    unsigned char *Block = V->Scratch;
     unsigned DirBlock;
     int Count = 0, Guard = 0;
 
@@ -294,7 +323,7 @@ int TfsList(TfsVolume_t *V, TfsFile_t *Files, int Max)
 
 int TfsLookup(TfsVolume_t *V, const char *Name, TfsFile_t *File)
 {
-    unsigned char Block[TFS_BLOCK_SIZE];
+    unsigned char *Block = V->Scratch;
     unsigned DirBlock;
     int Guard = 0;
 
@@ -330,8 +359,8 @@ int TfsLookup(TfsVolume_t *V, const char *Name, TfsFile_t *File)
 int TfsRead(TfsVolume_t *V, const TfsFile_t *File, unsigned Offset,
             void *Buffer, unsigned Length)
 {
-    unsigned char Block[TFS_BLOCK_SIZE];
-    unsigned char InodeBlock[TFS_BLOCK_SIZE];
+    unsigned char *Block = V->Scratch;
+    unsigned char *InodeBlock = V->Scratch2;
     TfsInode_t *Inode = (TfsInode_t*)InodeBlock;
     unsigned char *Out = (unsigned char*)Buffer;
     unsigned Done = 0;
@@ -373,98 +402,102 @@ unsigned TfsFreeBlocks(TfsVolume_t *V)
  * Writes a complete new copy of the directory chain, applying one
  * change, and returns the new head block.
  *
- * Rewriting the whole chain rather than the one block that changed is
- * wasteful and correct: a directory is at most a few blocks here, and
- * the alternative is tracking which block held which entry so the rest
- * can be shared. The simpler version is the one that cannot be subtly
- * wrong. */
+ * It streams: one old block in, one new block out, flushing the output
+ * when it fills. The first version gathered every entry into an array
+ * first, which was 40 KB of stack for a directory of 816 entries -
+ * several times the whole ring-3 stack, and a guaranteed overflow the
+ * moment it was called.
+ *
+ * Streaming also means the cost does not grow with the directory: two
+ * block buffers, whatever the size. */
 static int TfsRewriteDirectory(TfsVolume_t *V, const char *Name,
                                unsigned Inode, unsigned Size, unsigned Type,
                                int Remove, unsigned *NewHead)
 {
-    unsigned char Block[TFS_BLOCK_SIZE];
-    TfsDirEntry_t All[TFS_DIR_ENTRIES * 8];
-    unsigned Total = 0;
-    unsigned DirBlock;
+    unsigned char *In = V->Scratch;
+    unsigned char *Out = V->Scratch2;
+    TfsDirBlock_t *Source = (TfsDirBlock_t*)In;
+    TfsDirBlock_t *Target = (TfsDirBlock_t*)Out;
+    unsigned DirBlock, Head = 0, Previous = 0;
     int Guard = 0, Replaced = 0;
-    unsigned i, Head = 0, Previous = 0;
 
-    /* Gather every surviving entry. */
+    Zero(Out, TFS_BLOCK_SIZE);
+    Target->Magic = TFS_MAGIC;
+    Target->Count = 0;
+    Target->Next  = 0;
+
+    /* Flush the output block and link it to the previous one. */
+    #define TFS_FLUSH_OUT()                                               \
+        do {                                                              \
+            unsigned New = TfsAllocate(V);                                \
+            if (New == 0) { return TFS_ERR_FULL; }                        \
+            if (V->Write(V->Context, New, Out) != 0) { return TFS_ERR_IO; }\
+            if (Head == 0) { Head = New; }                                \
+            else {                                                        \
+                /* Patch the previous block's Next. It is a block this    \
+                 * uncommitted change allocated, never a live one. */     \
+                unsigned char *Patch = V->Scratch3;                       \
+                TfsDirBlock_t *P = (TfsDirBlock_t*)Patch;                 \
+                if (V->Read(V->Context, Previous, Patch) != 0) {          \
+                    return TFS_ERR_IO;                                    \
+                }                                                         \
+                P->Next = New;                                            \
+                if (V->Write(V->Context, Previous, Patch) != 0) {         \
+                    return TFS_ERR_IO;                                    \
+                }                                                         \
+            }                                                             \
+            Previous = New;                                               \
+            Zero(Out, TFS_BLOCK_SIZE);                                    \
+            Target->Magic = TFS_MAGIC;                                    \
+            Target->Count = 0;                                            \
+            Target->Next  = 0;                                            \
+        } while (0)
+
     DirBlock = V->Super.RootDir;
+
     while (DirBlock != 0) {
-        TfsDirBlock_t *Dir = (TfsDirBlock_t*)Block;
+        unsigned i;
 
-        if (++Guard > 8) { return TFS_ERR_FULL; }
-        if (V->Read(V->Context, DirBlock, Block) != 0) { return TFS_ERR_IO; }
+        if (++Guard > 64) { return TFS_ERR_FULL; }
+        if (V->Read(V->Context, DirBlock, In) != 0) { return TFS_ERR_IO; }
+        if (Source->Magic != TFS_MAGIC) { return TFS_ERR_MAGIC; }
 
-        for (i = 0; i < Dir->Count && i < TFS_DIR_ENTRIES; i++) {
-            if (Dir->Entries[i].Inode == 0) { continue; }
+        for (i = 0; i < Source->Count && i < TFS_DIR_ENTRIES; i++) {
+            TfsDirEntry_t Entry = Source->Entries[i];
 
-            if (NameEqual(Dir->Entries[i].Name, Name)) {
-                if (Remove) { Replaced = 1; continue; }
-                All[Total] = Dir->Entries[i];
-                All[Total].Inode = Inode;
-                All[Total].Size  = Size;
-                All[Total].Type  = Type;
-                Total++;
+            if (Entry.Inode == 0) { continue; }
+
+            if (NameEqual(Entry.Name, Name)) {
                 Replaced = 1;
-                continue;
+                if (Remove) { continue; }
+                Entry.Inode = Inode;
+                Entry.Size  = Size;
+                Entry.Type  = Type;
             }
 
-            if (Total >= (TFS_DIR_ENTRIES * 8)) { return TFS_ERR_FULL; }
-            All[Total++] = Dir->Entries[i];
+            if (Target->Count >= TFS_DIR_ENTRIES) { TFS_FLUSH_OUT(); }
+            Target->Entries[Target->Count++] = Entry;
         }
-        DirBlock = Dir->Next;
+
+        DirBlock = Source->Next;
     }
 
     if (!Replaced) {
         if (Remove) { return TFS_ERR_NOTFOUND; }
-        if (Total >= (TFS_DIR_ENTRIES * 8)) { return TFS_ERR_FULL; }
-        Zero(&All[Total], sizeof(TfsDirEntry_t));
-        Copy(All[Total].Name, Name, TFS_NAME_MAX);
-        All[Total].Inode = Inode;
-        All[Total].Size  = Size;
-        All[Total].Type  = Type;
-        Total++;
+        if (Target->Count >= TFS_DIR_ENTRIES) { TFS_FLUSH_OUT(); }
+        Zero(&Target->Entries[Target->Count], sizeof(TfsDirEntry_t));
+        CopyName(Target->Entries[Target->Count].Name, Name);
+        Target->Entries[Target->Count].Inode = Inode;
+        Target->Entries[Target->Count].Size  = Size;
+        Target->Entries[Target->Count].Type  = Type;
+        Target->Count++;
     }
 
-    /* Write the new chain. Always at least one block, so an empty
-     * directory still has a root to point at. */
-    i = 0;
-    do {
-        TfsDirBlock_t *Dir = (TfsDirBlock_t*)Block;
-        unsigned New = TfsAllocate(V);
-        unsigned n = 0;
+    /* Always write a final block, even when empty: a directory with no
+     * entries still needs a block for the superblock to point at. */
+    TFS_FLUSH_OUT();
 
-        if (New == 0) { return TFS_ERR_FULL; }
-
-        Zero(Block, sizeof(Block));
-        Dir->Magic = TFS_MAGIC;
-        Dir->Next  = 0;
-
-        while (n < TFS_DIR_ENTRIES && i < Total) {
-            Dir->Entries[n++] = All[i++];
-        }
-        Dir->Count = n;
-
-        if (V->Write(V->Context, New, Block) != 0) { return TFS_ERR_IO; }
-
-        if (Head == 0) {
-            Head = New;
-        }
-        else {
-            /* Link the previous block to this one. Re-reading and
-             * rewriting it is safe: it is a block we allocated during
-             * this uncommitted change, not a live one. */
-            unsigned char Prev[TFS_BLOCK_SIZE];
-            TfsDirBlock_t *P = (TfsDirBlock_t*)Prev;
-
-            if (V->Read(V->Context, Previous, Prev) != 0) { return TFS_ERR_IO; }
-            P->Next = New;
-            if (V->Write(V->Context, Previous, Prev) != 0) { return TFS_ERR_IO; }
-        }
-        Previous = New;
-    } while (i < Total);
+    #undef TFS_FLUSH_OUT
 
     *NewHead = Head;
     return TFS_OK;
@@ -472,7 +505,7 @@ static int TfsRewriteDirectory(TfsVolume_t *V, const char *Name,
 
 int TfsCreate(TfsVolume_t *V, const char *Name)
 {
-    unsigned char Block[TFS_BLOCK_SIZE];
+    unsigned char *Block = V->Scratch3;
     TfsInode_t *Inode = (TfsInode_t*)Block;
     TfsFile_t Existing;
     unsigned InodeBlock, NewRoot;
@@ -510,8 +543,8 @@ int TfsCreate(TfsVolume_t *V, const char *Name)
 int TfsWriteFile(TfsVolume_t *V, const char *Name, unsigned Offset,
                  const void *Buffer, unsigned Length)
 {
-    unsigned char Block[TFS_BLOCK_SIZE];
-    unsigned char InodeBlock[TFS_BLOCK_SIZE];
+    unsigned char *Block = V->Scratch2;
+    unsigned char *InodeBlock = V->Scratch3;
     TfsInode_t *Inode = (TfsInode_t*)InodeBlock;
     const unsigned char *In = (const unsigned char*)Buffer;
     TfsFile_t File;
@@ -544,7 +577,7 @@ int TfsWriteFile(TfsVolume_t *V, const char *Name, unsigned Offset,
         if (Index >= TFS_INODE_BLOCKS) { return TFS_ERR_TOOBIG; }
         if (Chunk > (Length - Done)) { Chunk = Length - Done; }
 
-        Zero(Block, sizeof(Block));
+        Zero(Block, TFS_BLOCK_SIZE);
         if (Index < Inode->BlockCount && Inode->Blocks[Index] != 0) {
             if (V->Read(V->Context, Inode->Blocks[Index], Block) != 0) {
                 return TFS_ERR_IO;
@@ -565,11 +598,10 @@ int TfsWriteFile(TfsVolume_t *V, const char *Name, unsigned Offset,
              * stale block number would return another file's data. */
             for (b = Inode->BlockCount; b < Index; b++) {
                 unsigned Fill = TfsAllocate(V);
-                unsigned char ZeroBlock[TFS_BLOCK_SIZE];
 
                 if (Fill == 0) { return TFS_ERR_FULL; }
-                Zero(ZeroBlock, sizeof(ZeroBlock));
-                if (V->Write(V->Context, Fill, ZeroBlock) != 0) {
+                Zero(V->Scratch, TFS_BLOCK_SIZE);
+                if (V->Write(V->Context, Fill, V->Scratch) != 0) {
                     return TFS_ERR_IO;
                 }
                 Inode->Blocks[b] = Fill;

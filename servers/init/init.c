@@ -74,6 +74,7 @@ int ModuleMain(void)
     Supervise("serial.mod", 0);
     Supervise("ata.mod", 0);
     Supervise("fat32.mod", 0);
+    Supervise("tfs.mod", 0);
 
     for (i = 0; i < ChildCount; i++) {
         if (!Start(&Children[i])) {

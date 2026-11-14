@@ -2,10 +2,10 @@
 BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
-.PHONY: all clean run iso ramdisk modules servers librt disk tfstool
+.PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk
 
 # Default target
-all: $(BUILD_DIR) build-bootloader build-kernel iso disk
+all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
 
 # Build directory
 BUILD_DIR = build
@@ -55,7 +55,7 @@ MODULE_BINS = $(MODULE_DIR)/hello.mod $(MODULE_DIR)/user.mod \
               $(MODULE_DIR)/pci.mod $(MODULE_DIR)/serial.mod \
               $(MODULE_DIR)/init.mod $(MODULE_DIR)/regsrv.mod \
               $(MODULE_DIR)/calcsrv.mod $(MODULE_DIR)/calccli.mod \
-              $(MODULE_DIR)/ata.mod $(MODULE_DIR)/fat32.mod $(MODULE_DIR)/fsls.mod $(MODULE_DIR)/sh.mod
+              $(MODULE_DIR)/ata.mod $(MODULE_DIR)/fat32.mod $(MODULE_DIR)/fsls.mod $(MODULE_DIR)/sh.mod $(MODULE_DIR)/tfs.mod
 RAMDISK_SRC = $(wildcard ramdisk-src/*)
 
 # Loadable modules. Cross-compiled, but only to .o - they are relocated
@@ -115,13 +115,26 @@ disk:
 	echo "hello from a real FAT32 volume" > $(BUILD_DIR)/hello.txt
 	mcopy -i $(DISK_IMG) $(BUILD_DIR)/hello.txt ::HELLO.TXT
 	mcopy -i $(DISK_IMG) README.md ::README.MD
-	@echo "  disk image ready"
+	@echo "  FAT32 disk image ready"
+
+TFS_IMG = $(BUILD_DIR)/tfs.img
+
+# The second drive, formatted with our own filesystem and populated by
+# the host tool - which is also how we check afterwards what the OS
+# wrote to it.
+tfsdisk: tfstool
+	@echo "Building TaajFS disk image..."
+	$(BUILD_DIR)/tools/tfstool mkfs $(TFS_IMG) 4096
+	echo "a file on TaajFS, written from the host" > $(BUILD_DIR)/tfs-hello.txt
+	$(BUILD_DIR)/tools/tfstool put $(TFS_IMG) hello.txt $(BUILD_DIR)/tfs-hello.txt
+	@echo "  TaajFS disk image ready"
 
 # Run the bootloader in QEMU
 run: iso
 	@echo "Running the bootloader in QEMU..."
 	qemu-system-x86_64 -m 512M -cdrom $(ISO_IMG) -boot d \
 		-drive file=$(DISK_IMG),format=raw,if=ide,index=0,media=disk \
+		-drive file=$(TFS_IMG),format=raw,if=ide,index=1,media=disk \
 		-serial stdio
 
 # Clean everything

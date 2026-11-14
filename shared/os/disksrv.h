@@ -10,11 +10,18 @@
 
 #define DISKSRV_NAME        "disk"
 
-#define DISK_OP_INFO        1   /* no payload   -> DiskInfo_t     */
+#define DISK_OP_INFO        1   /* DiskRequest_t -> DiskInfo_t    */
 #define DISK_OP_READ        2   /* DiskRequest_t -> DiskResult_t  */
 #define DISK_OP_WRITE       3   /* DiskRequest_t -> DiskResult_t  */
 
 #define DISK_SECTOR_SIZE    512
+
+/* Both drives on the primary channel, served by one endpoint.
+ *
+ * Two services would mean two windows, two endpoints and two copies of
+ * the same loop. A drive number in the request costs four bytes and the
+ * server is single-threaded anyway, so requests are already serialised. */
+#define DISK_DRIVE_MAX      2
 
 /* The shared window. Sixteen sectors is enough for a FAT32 cluster at
  * the usual 4 KB, with room to spare. */
@@ -29,6 +36,7 @@ typedef struct _DiskInfo {
 } DiskInfo_t;
 
 typedef struct _DiskRequest {
+    unsigned int Drive;          /* 0 = master, 1 = slave */
     unsigned int Lba;
     unsigned int Count;          /* sectors, 1..DISK_WINDOW_SECTORS */
     unsigned int WindowOffset;   /* byte offset into the shared region */

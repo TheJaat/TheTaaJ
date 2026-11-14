@@ -18,6 +18,7 @@
 static int Keyboard = -1;
 static int Fs = -1;
 static unsigned Window = 0;
+static char Mounted[16] = "fs";
 
 /* ---- tiny string helpers; there is no libc ---- */
 
@@ -111,6 +112,7 @@ static void CmdHelp(void)
     SysPrintLine("  truncate <path> <n>");
     SysPrintLine("  stat <path>");
     SysPrintLine("  sync                flush the filesystem");
+    SysPrintLine("  mount [service]     switch filesystems (fs, tfs)");
     SysPrintLine("  help");
 }
 
@@ -241,6 +243,39 @@ static void Execute(char *Line)
     if (Equal(Line, "stat")) { CmdStat(Argument); return; }
     if (Equal(Line, "sync")) { Sync(); SysPrintLine("synced"); return; }
 
+    if (Equal(Line, "mount")) {
+        /* Switch to another file service by name.
+         *
+         * Nothing below this line knows or cares which filesystem is on
+         * the other end - the commands are unchanged. That is the only
+         * real test of whether the interface is an interface. */
+        int NewFs = -1, NewShm = -1;
+        unsigned NewWindow;
+
+        if (*Argument == '\0') {
+            SysPrint("mounted: ");
+            SysPrintLine(Mounted);
+            return;
+        }
+        if (SysLookup(Argument, &NewFs, &NewShm) != 0) {
+            SysPrint("mount: no service called ");
+            SysPrintLine(Argument);
+            return;
+        }
+        NewWindow = SysShmMap(NewShm);
+        if (NewWindow == 0) {
+            SysPrintLine("mount: could not map its window");
+            return;
+        }
+
+        Fs = NewFs;
+        Window = NewWindow;
+        Copy(Mounted, Argument, sizeof(Mounted));
+        SysPrint("mounted ");
+        SysPrintLine(Argument);
+        return;
+    }
+
     if (Equal(Line, "mkdir")) {
         if (Simple(FS_OP_MKDIR, Argument) == 0) SysPrintLine("created");
         else SysPrintLine("mkdir: failed");
@@ -312,6 +347,7 @@ int ModuleMain(void)
 
     SysPrintLine("");
     SysPrintLine("TheTaaJ shell, ring 3. Type 'help'.");
+    SysPrint(Mounted);
     SysPrint("$ ");
 
     for (;;) {
@@ -326,6 +362,7 @@ int ModuleMain(void)
             Line[Length] = '\0';
             Execute(Line);
             Length = 0;
+            SysPrint(Mounted);
             SysPrint("$ ");
             continue;
         }

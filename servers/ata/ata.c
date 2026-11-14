@@ -33,7 +33,7 @@
 #define CMD_FLUSH_CACHE     0xE7
 #define CMD_IDENTIFY        0xEC
 
-static DiskInfo_t GlbInfo;
+static DiskInfo_t GlbInfo[DISK_DRIVE_MAX];
 static unsigned GlbWindow = 0;
 
 /* AtaDelay
@@ -85,21 +85,27 @@ static int AtaWaitDataRequest(void)
 }
 
 /* AtaSelect
- * Drive 0, LBA mode, top four address bits in the low nibble. The 0xE0
- * is not decoration: bit 6 selects LBA over CHS, and bits 7 and 5 are
- * required to be set. */
-static void AtaSelect(unsigned Lba)
+ * LBA mode, with the drive bit and the top four address bits.
+ *
+ * 0xE0 is not decoration: bit 6 selects LBA over CHS, and bits 7 and 5
+ * are required to be set. Bit 4 picks master or slave - the one bit that
+ * turns this from a single-drive driver into a two-drive one. */
+static void AtaSelect(unsigned Drive, unsigned Lba)
 {
-    SysOutB(ATA_DRIVE, (unsigned char)(0xE0 | ((Lba >> 24) & 0x0F)));
+    SysOutB(ATA_DRIVE, (unsigned char)(0xE0 | ((Drive & 1) << 4)
+                                     | ((Lba >> 24) & 0x0F)));
     AtaDelay();
 }
 
-static int AtaIdentify(void)
+static int AtaIdentify(unsigned Drive)
 {
+    DiskInfo_t *Info = &GlbInfo[Drive];
     unsigned short Data[256];
     int i;
 
-    SysOutB(ATA_DRIVE, 0xA0);
+    /* 0xA0 is master, 0xB0 is slave, in the pre-LBA form IDENTIFY
+     * expects. */
+    SysOutB(ATA_DRIVE, (unsigned char)(0xA0 | ((Drive & 1) << 4)));
     AtaDelay();
     SysOutB(ATA_SECTOR_COUNT, 0);
     SysOutB(ATA_LBA_LOW, 0);
@@ -126,27 +132,36 @@ static int AtaIdentify(void)
 
 
     /* Words 60-61: the 28-bit LBA sector count. */
-    GlbInfo.Sectors    = (unsigned)Data[60] | ((unsigned)Data[61] << 16);
-    GlbInfo.SectorSize = DISK_SECTOR_SIZE;
-    GlbInfo.Present    = 1;
+    Info->Sectors    = (unsigned)Data[60] | ((unsigned)Data[61] << 16);
+    Info->SectorSize = DISK_SECTOR_SIZE;
+    Info->Present    = 1;
 
     /* Words 27-46: the model, byte-swapped within each word. */
     for (i = 0; i < 20; i++) {
-        GlbInfo.Model[i * 2]     = (char)(Data[27 + i] >> 8);
-        GlbInfo.Model[i * 2 + 1] = (char)(Data[27 + i] & 0xFF);
+        Info->Model[i * 2]     = (char)(Data[27 + i] >> 8);
+        Info->Model[i * 2 + 1] = (char)(Data[27 + i] & 0xFF);
     }
-    GlbInfo.Model[40] = '\0';
+    Info->Model[40] = '\0';
 
     return 0;
 }
 
-static int AtaTransfer(unsigned Lba, unsigned Count, unsigned Offset,
-                       int Write)
+static int AtaTransfer(unsigned Drive, unsigned Lba, unsigned Count,
+                       unsigned Offset, int Write)
 {
     unsigned char *Buffer = (unsigned char*)(GlbWindow + Offset);
     unsigned s, i;
 
+    if (Drive >= DISK_DRIVE_MAX || !GlbInfo[Drive].Present) {
+        return -1;
+    }
     if (Count == 0 || Count > DISK_WINDOW_SECTORS) {
+        return -1;
+    }
+    /* Refuse a request past the end of the drive rather than letting the
+     * controller decide what that means. */
+    if (Lba >= GlbInfo[Drive].Sectors
+        || Count > (GlbInfo[Drive].Sectors - Lba)) {
         return -1;
     }
     if ((Offset + (Count * DISK_SECTOR_SIZE)) > DISK_WINDOW_BYTES) {
@@ -156,7 +171,7 @@ static int AtaTransfer(unsigned Lba, unsigned Count, unsigned Offset,
         return -1;
     }
 
-    AtaSelect(Lba);
+    AtaSelect(Drive, Lba);
     SysOutB(ATA_SECTOR_COUNT, (unsigned char)Count);
     SysOutB(ATA_LBA_LOW,  (unsigned char)(Lba & 0xFF));
     SysOutB(ATA_LBA_MID,  (unsigned char)((Lba >> 8) & 0xFF));
@@ -220,26 +235,42 @@ int ModuleMain(void)
      * stack is being proven. */
     SysOutB(ATA_CONTROL, 0x02);
 
-    if (AtaIdentify() != 0) {
-        SysPrintLine("[ata] no drive on the primary channel");
-        SysExit(1);
-    }
+    {
+        unsigned Drive;
+        int Found = 0;
 
-    if (GlbInfo.Sectors == 0) {
-        /* IDENTIFY answered but reported nothing. Publishing anyway
-         * would hand the filesystem a device that cannot work, and the
-         * failure would surface three processes away. */
-        SysPrintLine("[ata] drive reports zero sectors - refusing to publish");
-        SysExit(1);
-    }
+        for (Drive = 0; Drive < DISK_DRIVE_MAX; Drive++) {
+            if (AtaIdentify(Drive) != 0) {
+                SysPrint("[ata] drive ");
+                SysPrintNumber(Drive);
+                SysPrintLine(": nothing attached");
+                continue;
+            }
+            if (GlbInfo[Drive].Sectors == 0) {
+                SysPrint("[ata] drive ");
+                SysPrintNumber(Drive);
+                SysPrintLine(": reports zero sectors, ignoring");
+                GlbInfo[Drive].Present = 0;
+                continue;
+            }
 
-    SysPrint("[ata] ");
-    SysPrint(GlbInfo.Model);
-    SysPrint(", ");
-    SysPrintNumber(GlbInfo.Sectors);
-    SysPrint(" sectors (");
-    SysPrintNumber(GlbInfo.Sectors / 2048);
-    SysPrintLine(" MB)");
+            SysPrint("[ata] drive ");
+            SysPrintNumber(Drive);
+            SysPrint(": ");
+            SysPrint(GlbInfo[Drive].Model);
+            SysPrint(", ");
+            SysPrintNumber(GlbInfo[Drive].Sectors);
+            SysPrint(" sectors (");
+            SysPrintNumber(GlbInfo[Drive].Sectors / 2048);
+            SysPrintLine(" MB)");
+            Found++;
+        }
+
+        if (Found == 0) {
+            SysPrintLine("[ata] no drives on the primary channel");
+            SysExit(1);
+        }
+    }
 
     Endpoint = SysEndpointCreate();
     Shm = SysShmCreate(DISK_WINDOW_BYTES);
@@ -269,9 +300,23 @@ int ModuleMain(void)
         }
 
         switch (Opcode) {
-            case DISK_OP_INFO:
-                SysReply(&GlbInfo, sizeof(GlbInfo));
+            case DISK_OP_INFO: {
+                DiskRequest_t *q = (DiskRequest_t*)Message;
+                DiskInfo_t Empty;
+                unsigned Drive = 0;
+
+                if (Length >= (int)sizeof(DiskRequest_t)) {
+                    Drive = q->Drive;
+                }
+                if (Drive < DISK_DRIVE_MAX) {
+                    SysReply(&GlbInfo[Drive], sizeof(DiskInfo_t));
+                }
+                else {
+                    SysMemSet(&Empty, 0, sizeof(Empty));
+                    SysReply(&Empty, sizeof(Empty));
+                }
                 break;
+            }
 
             case DISK_OP_READ:
             case DISK_OP_WRITE: {
@@ -283,7 +328,8 @@ int ModuleMain(void)
                     r.Count = 0;
                 }
                 else {
-                    r.Status = AtaTransfer(q->Lba, q->Count, q->WindowOffset,
+                    r.Status = AtaTransfer(q->Drive, q->Lba, q->Count,
+                                           q->WindowOffset,
                                            Opcode == DISK_OP_WRITE);
                     r.Count = (r.Status == 0) ? q->Count : 0;
                 }
