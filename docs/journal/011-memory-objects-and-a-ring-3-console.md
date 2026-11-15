@@ -106,7 +106,7 @@ In the terminal log:
 | Line | Meaning |
 |---|---|
 | `framebuffer: 1024x768, handed to init` | The kernel gave the screen away |
-| `[display] painted the 1024x768 screen from ring 3 (framebuffer at 0x100000000000); console 80x20` | Mapped at an address the kernel chose, in user space |
+| `[display] painted the 1024x768 screen from ring 3 (framebuffer at 0x100000000000); console 80x33` | Mapped at an address the kernel chose, in user space |
 | `[process] N "memro" killed: page fault` and `user write at 0x100000000000: protection violation` | A write through a read-only mapping is refused by the hardware |
 
 Automated: `make kernel64-test` (regions), `cd console && cargo test` (font and grid), `make boot64-test` (takes and checks a screenshot).

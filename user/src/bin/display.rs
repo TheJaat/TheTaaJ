@@ -78,11 +78,11 @@ impl Screen {
     }
 
     fn band(&self) -> core::ops::Range<u32> {
-        self.fb.height / 3..self.fb.height / 3 + self.fb.height / 12
+        0..self.fb.height / 12
     }
 
     /// The background at line `y`: dark navy shading to deep teal, with
-    /// an amber band a third of the way down. A function of y alone, so
+    /// an amber band across the top. A function of y alone, so
     /// erasing anything is just painting this again.
     fn background(&self, y: usize) -> u32 {
         if self.band().contains(&(y as u32)) {
