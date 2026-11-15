@@ -21,6 +21,8 @@ abi = { path = "../abi" }
 heap = { path = "../heap" }
 # virtio constants: which PCI devices the kernel sets up for drivers.
 virtio = { path = "../virtio" }
+# The font - for the kernel's last words, on the screen (lastwords.rs).
+console = { path = "../console" }
 
 [features]
 # Deliberately fault after booting, to check that each protection holds
@@ -33,6 +35,7 @@ fault-rodata = ["fault-tests"]      # write to read-only data
 fault-nx = ["fault-tests"]          # execute data
 fault-stack = ["fault-tests"]       # overflow the boot stack
 fault-thread-stack = ["fault-tests"] # overflow a kernel thread's stack
+fault-init = ["fault-tests"]         # init is a program that ends
 
 # No unwinding: there is nothing to unwind into. A panic prints and halts.
 [profile.dev]

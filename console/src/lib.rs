@@ -81,6 +81,7 @@ pub enum Damage {
     Scrolled,
 }
 
+#[repr(C)]
 pub struct Grid {
     cells: [[u8; MAX_COLUMNS]; MAX_ROWS],
     columns: usize,
@@ -101,6 +102,39 @@ impl Grid {
 
     pub fn size(&self) -> (usize, usize) {
         (self.columns, self.rows)
+    }
+
+    /// Takes over a grid found in memory that outlived whoever wrote it
+    /// last - a display that was replaced. True if it is a grid of this
+    /// size that can simply be carried on with; then it is, with any
+    /// cell that holds no character made a space.
+    ///
+    /// What was there may be anything: the last writer may have died
+    /// halfway through a change, or never have been there at all. Every
+    /// field is a plain number, so reading them is safe; what must hold
+    /// is what `write` relies on - the cursor inside the grid, the grid
+    /// inside the array. False means: start empty (the caller does).
+    pub fn adopt(&mut self, columns: usize, rows: usize) -> bool {
+        let sound = self.columns == columns
+            && self.rows == rows
+            && (1..=MAX_COLUMNS).contains(&columns)
+            && (1..=MAX_ROWS).contains(&rows)
+            && self.column <= self.columns // == columns: about to wrap
+            && self.row < self.rows
+            && self.continuation <= 3;
+        if sound {
+            for cell in self.cells.iter_mut().flatten() {
+                if !(0x20..=0x7E).contains(cell) {
+                    *cell = b' ';
+                }
+            }
+        }
+        sound
+    }
+
+    /// How many rows hold any text.
+    pub fn rows_used(&self) -> usize {
+        self.cells[..self.rows].iter().filter(|row| row[..self.columns].iter().any(|&c| c != b' ')).count()
     }
 
     pub fn cursor(&self) -> (usize, usize) {
@@ -182,6 +216,71 @@ mod tests {
     fn row_text(g: &Grid, row: usize) -> String {
         let (columns, _) = g.size();
         (0..columns).map(|c| g.at(c, row) as char).collect::<String>().trim_end().to_string()
+    }
+
+    #[test]
+    fn a_grid_left_behind_is_carried_on_with() {
+        let mut g = Grid::new(20, 4);
+        write(&mut g, "one\ntwo\nthr");
+        assert!(g.adopt(20, 4));
+        assert_eq!((row_text(&g, 0), row_text(&g, 1), row_text(&g, 2)), ("one".into(), "two".into(), "thr".into()));
+        assert_eq!(g.rows_used(), 3);
+        // ... exactly where it was.
+        write(&mut g, "ee");
+        assert_eq!(row_text(&g, 2), "three");
+        // A cursor past the last column is one about to wrap: still sound.
+        let mut g = Grid::new(3, 2);
+        write(&mut g, "abc");
+        assert!(g.adopt(3, 2));
+        write(&mut g, "d");
+        assert_eq!(row_text(&g, 1), "d");
+    }
+
+    #[test]
+    fn a_grid_that_cannot_be_trusted_is_refused() {
+        let good = || {
+            let mut g = Grid::new(20, 4);
+            write(&mut g, "text");
+            g
+        };
+        // Another size: the screen is not the one it was written for.
+        assert!(!good().adopt(21, 4));
+        assert!(!good().adopt(20, 5));
+        // Each field that `write` indexes with, out of range.
+        let mut g = good();
+        g.column = 21;
+        assert!(!g.adopt(20, 4));
+        let mut g = good();
+        g.row = 4;
+        assert!(!g.adopt(20, 4));
+        let mut g = good();
+        g.continuation = 4;
+        assert!(!g.adopt(20, 4));
+        // Sizes no grid has, even if asked for.
+        let mut g = good();
+        (g.columns, g.rows) = (MAX_COLUMNS + 1, 4);
+        assert!(!g.adopt(MAX_COLUMNS + 1, 4));
+        let mut g = good();
+        (g.columns, g.rows) = (0, 4);
+        assert!(!g.adopt(0, 4));
+        // Memory that was never a grid: all zeros, all ones.
+        for fill in [0u8, 0xFF] {
+            let mut g = good();
+            // SAFETY: every field of Grid is a plain integer; any bytes are a value.
+            unsafe { core::ptr::write_bytes(&mut g as *mut Grid as *mut u8, fill, core::mem::size_of::<Grid>()) };
+            assert!(!g.adopt(20, 4), "filled with {fill:#x}");
+        }
+    }
+
+    #[test]
+    fn cells_that_hold_no_character_become_spaces() {
+        let mut g = Grid::new(20, 4);
+        write(&mut g, "abc");
+        g.cells[0][1] = 0;
+        g.cells[3][19] = 0x90;
+        assert!(g.adopt(20, 4));
+        assert_eq!(row_text(&g, 0), "a c");
+        assert_eq!(g.at(19, 3), b' ');
     }
 
     fn write(g: &mut Grid, s: &str) -> Vec<Damage> {

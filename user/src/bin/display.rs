@@ -33,9 +33,12 @@ use taaj::{println, Error};
 
 taaj::program!(main);
 
-/// The grid lives in static memory: at 38 KiB it would crowd the 64 KiB
-/// stack.
+/// The grid when init gave no memory to keep it in. In static memory:
+/// at 38 KiB it would crowd the 64 KiB stack.
 static mut GRID: Grid = Grid::new(MAX_COLUMNS, MAX_ROWS);
+
+// The kept grid must fit in the memory init keeps for it.
+const _: () = assert!(core::mem::size_of::<Grid>() as u64 <= abi::display::KEPT_SIZE);
 
 /// What is on the screen now: the character drawn in each cell, and
 /// where the cursor is drawn. 0 is "nothing drawn yet", which no cell of
@@ -239,9 +242,29 @@ fn main() -> i64 {
 
     let columns = (fb.width as usize - 2 * screen.left) / screen.cell_width;
     let rows = (fb.height as usize - screen.top - 8 * scale) / screen.cell_height;
-    // SAFETY: the only reference to GRID, taken once; one thread.
-    let grid = unsafe { (&raw mut GRID).as_mut() }.expect("a static is never null");
-    *grid = Grid::new(columns, rows);
+    // Where the text lives. If init gave memory for it (startup handle
+    // 4), there: that memory is init's, and is still there when this
+    // process is not - so a display that replaces one that crashed or
+    // hung finds the screen's text as it was, and shows it again.
+    let kept = taaj::startup_handle(3)
+        .filter(|&memory| taaj::memory_size(memory).is_ok_and(|size| size >= core::mem::size_of::<Grid>() as u64))
+        .and_then(|memory| taaj::memory_map(memory, true).ok());
+    let grid: &mut Grid = match kept {
+        // SAFETY: a mapping at least as big as a Grid, page-aligned,
+        // this process's alone while it runs; and every field of Grid is
+        // a plain integer, so whatever bytes are there are *a* Grid -
+        // whether one to trust is `adopt`'s question, below.
+        Some(base) => unsafe { &mut *base.cast::<Grid>() },
+        // SAFETY: the only reference to GRID, taken once; one thread.
+        None => unsafe { (&raw mut GRID).as_mut() }.expect("a static is never null"),
+    };
+    // Clamped as Grid::new clamps - without building a second 38 KiB
+    // grid on the stack to ask it.
+    let wanted = (columns.clamp(1, MAX_COLUMNS), rows.clamp(1, MAX_ROWS));
+    let found = kept.is_some() && grid.adopt(wanted.0, wanted.1);
+    if !found {
+        *grid = Grid::new(columns, rows);
+    }
     let (columns, rows) = grid.size();
     // SAFETY: as for GRID.
     let shown = unsafe { (&raw mut SHOWN).as_mut() }.expect("a static is never null");
@@ -250,6 +273,9 @@ fn main() -> i64 {
         "[display] painted the {}x{} screen from ring 3 (framebuffer at {base:p}); console {columns}x{rows}",
         fb.width, fb.height
     );
+    if found && grid.rows_used() > 0 {
+        println!("[display] the text on the screen was kept: {} lines shown again", grid.rows_used());
+    }
 
     loop {
         // Wait for text; then take whatever else is already waiting,

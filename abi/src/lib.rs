@@ -339,6 +339,9 @@ pub mod display {
     /// Followed by a number of ticks (u64 LE, at most STALL_MAX): a
     /// test - the display does nothing for that long, as if stuck.
     pub const STALL: u8 = 3;
+    /// The size of the memory init keeps for the display's text, so
+    /// that it outlives any one display process: 64 KiB.
+    pub const KEPT_SIZE: u64 = 64 * 1024;
 }
 
 /// A ping: the one message a service's ping channel carries - this

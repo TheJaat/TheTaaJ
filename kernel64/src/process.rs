@@ -323,10 +323,44 @@ fn end_current(code: i64, how: core::fmt::Arguments) -> ! {
     if let Some(process) = current() {
         process.exit_code.store(code, Ordering::Release);
         kprintln!("[process] {} {:?} {how}", process.pid, process.name);
+        if process.pid == ESSENTIAL.load(Ordering::Acquire) {
+            stop_the_system(&process.name, how);
+        }
         process.close_all_handles();
     }
     EXITS.wake_all();
     threads::exit()
+}
+
+/// The process the system cannot go on without: init. 0 until set.
+static ESSENTIAL: AtomicU64 = AtomicU64::new(0);
+
+/// Marks `process` as the one whose end is the system's end.
+pub fn set_essential(process: &Process) {
+    ESSENTIAL.store(process.pid, Ordering::Release);
+}
+
+/// init has ended, and the system ends with it - here, in one place,
+/// with the reason.
+///
+/// Left alone, it would end anyway, and worse: init holds one end of
+/// every channel between the services, so as its handles close each
+/// service sees its peers vanish and exits in turn, every one of them
+/// correctly - a system that switches itself off in good order and
+/// leaves a frozen screen and a log of ordinary exits. Nothing can be
+/// restarted, because the thing that restarts is what ended. So the
+/// kernel stops while the reason is still the last thing said.
+fn stop_the_system(name: &str, how: core::fmt::Arguments) -> ! {
+    crate::arch::disable_interrupts();
+    // SAFETY: halting right after; whoever held the console never resumes.
+    unsafe { crate::console::break_lock() };
+    kprintln!();
+    kprintln!("*** THE SYSTEM HAS STOPPED: {name} {how}");
+    kprintln!("    {name} starts every service and restarts the ones that fail.");
+    kprintln!("    Without it nothing can be started again, so the kernel has");
+    kprintln!("    stopped here rather than let the services fall one by one.");
+    kprintln!("    Restart the machine.");
+    crate::arch::halt_forever()
 }
 
 /// Ends the current process with `code`.

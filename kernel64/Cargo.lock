@@ -7,6 +7,10 @@ name = "abi"
 version = "0.1.0"
 
 [[package]]
+name = "console"
+version = "0.1.0"
+
+[[package]]
 name = "heap"
 version = "0.1.0"
 
@@ -15,6 +19,7 @@ name = "kernel64"
 version = "0.1.0"
 dependencies = [
  "abi",
+ "console",
  "heap",
  "virtio",
 ]

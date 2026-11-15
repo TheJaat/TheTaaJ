@@ -257,6 +257,11 @@ fn main() -> i64 {
     // gets a channel only for the watchdog's pings (abi::PING).
     let Ok((display_ping_tx, display_ping_rx)) = taaj::channel_create() else { return 2 };
     let Ok((kbd_ping_tx, kbd_ping_rx)) = taaj::channel_create() else { return 2 };
+    // Memory for the text on the screen. It is init's, lent to each
+    // display in turn - so the text outlives a display that is
+    // replaced. Without it (no memory to spare) a display keeps its
+    // text itself, and a new one starts blank.
+    let screen_text = taaj::memory_create(abi::display::KEPT_SIZE).unwrap_or(0);
     let Ok((requests, shell_requests)) = taaj::channel_create() else { return 2 };
     // The file service's requests. init keeps both ends, as it does the
     // keyboard's: a restarted fs takes over the same queue, and clients
@@ -303,6 +308,7 @@ fn main() -> i64 {
         Grant { handle: files_look_out, rights: SEND | DELEGABLE }, // 21: read-only requests, to fs
         Grant { handle: display_ping_rx, rights: RECEIVE }, // 22: pings, for display
         Grant { handle: kbd_ping_rx, rights: RECEIVE },     // 23: pings, for kbd
+        Grant { handle: screen_text, rights: READ | WRITE }, // 24: the screen's text, kept
     ];
     // Only the shell's screen and files can be copied and passed on.
     debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21)));
@@ -323,7 +329,7 @@ fn main() -> i64 {
     let mut services = [
         Service {
             name: "display",
-            grants: &[5, 6, 22],
+            grants: if screen_text != 0 { &[5, 6, 22, 24] } else { &[5, 6, 22] },
             process: 0,
             restarts: [0; MAX_RESTARTS],
             restart_count: 0,

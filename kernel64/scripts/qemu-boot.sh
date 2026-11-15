@@ -30,7 +30,10 @@ if [ -n "$DISK" ]; then
     DISK_ARGS="-drive file=$DISK,format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0"
 fi
 
-FINISHED="\[kernel\] idle|KERNEL PANIC|CPU EXCEPTION"
+FINISHED="\[kernel\] idle|KERNEL PANIC|CPU EXCEPTION|THE SYSTEM HAS STOPPED"
+# FINISHED_ONLY: wait for this instead (a boot that goes idle and then
+# does something more).
+FINISHED=${FINISHED_ONLY:-$FINISHED}
 MONITOR="$LOG.monitor"
 
 rm -f "$LOG" "$LOG.ppm" "$LOG.hang.ppm" "$LOG.qemu" "$MONITOR"

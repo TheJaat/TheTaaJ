@@ -46,6 +46,8 @@ struct Console;
 impl Write for Console {
     fn write_str(&mut self, text: &str) -> fmt::Result {
         crate::arch::console_write(text);
+        // And on the screen - once the kernel has taken it, to stop.
+        crate::lastwords::echo(text);
         Ok(())
     }
 }
@@ -103,6 +105,8 @@ pub fn write_queued() -> bool {
 /// Only on the way to halting: whoever held the lock never runs again.
 pub unsafe fn break_lock() {
     QUEUE.force_unlock();
+    // The kernel is stopping: what it says now goes on the screen too.
+    crate::lastwords::begin();
 }
 
 /// Like `print!`, for the kernel.

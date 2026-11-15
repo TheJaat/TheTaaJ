@@ -32,6 +32,7 @@ mod arch;
 mod devices;
 mod interrupts;
 mod irqlock;
+mod lastwords;
 mod ipc;
 mod memory_object;
 mod mm;
@@ -79,6 +80,12 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
     // re-read through the direct map; the old reference is gone.
     kprintln!();
     let info = mm::init(info, boot_info_address);
+
+    // The screen, mapped now for the one time the kernel will draw on
+    // it: to say why it stopped. Later may be too late to map anything.
+    if let Some(fb) = info.framebuffer() {
+        lastwords::prepare(fb);
+    }
 
     selftest::run();
 
@@ -233,13 +240,21 @@ fn start_init(info: &BootInfo) {
         (devices, Rights(abi::rights::RECEIVE)),
         (Object::System, Rights::ALL),
     ];
-    process::spawn("init", programs::INIT, handles).expect("starting init");
+    // In the fault-init test, "init" is a program that says hello and
+    // ends - to see what the kernel does when init does.
+    let program = if cfg!(feature = "fault-init") { programs::HELLO } else { programs::INIT };
+    let (init, _) = process::spawn("init", program, handles).expect("starting init");
+    process::set_essential(&init);
 }
 
 #[cfg(feature = "fault-tests")]
 fn run_fault_test() {
     use arch::fault_tests as test;
     kprintln!();
+    if cfg!(feature = "fault-init") {
+        kprintln!("[test] init is a program that ends: the kernel must stop, and say so");
+        return; // it runs once this thread lets it
+    }
     if cfg!(feature = "fault-double") {
         kprintln!("[test] forcing a double fault...");
         test::double_fault();
