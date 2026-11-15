@@ -157,7 +157,9 @@ run: iso
 # long-mode path for an ELF64 kernel. The 32-bit system above is unchanged
 # and stays the reference.
 
-KERNEL64_DIR = kernel64
+# The Rust kernel and its interface (abi) live in the kernel repository,
+# beside the 32-bit C kernel.
+KERNEL64_DIR = kernel/kernel64
 
 # rustup installs cargo and rustc in ~/.cargo/bin, and adds it to PATH
 # only in shells started after the install. Prepend it here so the build
@@ -274,7 +276,7 @@ MKFS_FAT     = /usr/sbin/mkfs.fat
 # QEMU's UEFI firmware, from the ovmf package.
 OVMF         = /usr/share/ovmf/OVMF.fd
 
-# User programs come first: the kernel embeds them (kernel64/src/programs.rs).
+# User programs come first: the kernel embeds them (kernel/kernel64/src/programs.rs).
 user64:
 	@echo "Building the user programs..."
 	cd user && cargo build --release
@@ -356,7 +358,7 @@ HOST_TRIPLE = $(shell PATH="$(PATH)" rustc -vV | sed -n 's/^host: //p')
 
 kernel64-test:
 	cd $(KERNEL64_DIR) && cargo test --lib --target $(HOST_TRIPLE)
-	cd abi && cargo test
+	cd kernel/abi && cargo test
 	cd input && cargo test
 	cd console && cargo test
 	cd heap && cargo test

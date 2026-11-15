@@ -6,5 +6,5 @@ description = "The file service: its protocol, and files in memory or on a TaajF
 publish = false
 
 [dependencies]
-abi = { path = "../abi" }
+abi = { path = "../kernel/abi" }
 taajfs = { path = "../taajfs" }

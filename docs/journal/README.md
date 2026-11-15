@@ -2,6 +2,8 @@
 
 The story of building TheTaaJ, one step at a time: what each step is, why it was needed, how it works, what went wrong on the way, and how to test it. Each entry ends with a **testing note** — the exact things to type, and what should appear.
 
+Since entry 027 the Rust kernel and `abi` live in the kernel repository: where an older entry says `kernel64/…` or `abi/…`, the path is now `kernel/kernel64/…` or `kernel/abi/…`.
+
 Entries are numbered in the order the work happened. Entries 002–015 were written after the work, from the code and the commit history; each is listed with the commit that holds the work.
 
 | # | Entry | Status | Commit |
@@ -31,7 +33,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 023 | [A watchdog: replacing a service that has stopped answering](023-a-watchdog.md) | written | `d4ff7ed` |
 | 024 | [Every service watched: pings for the display and the keyboard driver, and four hangs on purpose](024-every-service-watched.md) | written | `6dc5831` |
 | 025 | [Last words: the kernel says why it stopped, and a screen that survives its display](025-last-words.md) | written | `5d8c055` |
-| 026 | [Directories: a tree of names, changed without ever writing over anything](026-directories.md) | written | directories |
+| 026 | [Directories: a tree of names, changed without ever writing over anything](026-directories.md) | written | `34c5aca` |
+| 027 | [The kernel goes home: three repositories, each with its own work](027-the-kernel-goes-home.md) | written | the move |
 
 ## How to run what the entries describe
 

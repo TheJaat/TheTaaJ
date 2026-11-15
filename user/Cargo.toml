@@ -11,7 +11,7 @@ path = "src/lib.rs"
 test = false
 
 [dependencies]
-abi = { path = "../abi" }
+abi = { path = "../kernel/abi" }
 input = { path = "../input" }
 console = { path = "../console" }
 heap = { path = "../heap" }
@@ -26,7 +26,7 @@ panic = "abort"
 panic = "abort"
 # Small rather than fast: most of these programs are carried inside the
 # kernel image, and the bootloader loads a kernel only if it ends below
-# 2 MiB (see kernel64/linker.ld). Symbols are stripped for the same
+# 2 MiB (see kernel/kernel64/linker.ld). Symbols are stripped for the same
 # reason - to turn a fault address into a function, build once with
 # `strip = false`.
 opt-level = "s"
