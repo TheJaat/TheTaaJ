@@ -75,14 +75,43 @@ pub fn write(bytes: &[u8]) -> Result<u64, Error> {
     abi::decode(syscall(call::DEBUG_WRITE, bytes.as_ptr() as u64, bytes.len() as u64, 0))
 }
 
-/// Sends `bytes` as display TEXT messages on `channel`. A display that
-/// lags or is restarting loses some text; the program carries on.
+/// Sends `bytes` as display TEXT messages on `channel`.
+///
+/// A program can print faster than the display draws. When the
+/// display's queue is full the program steps aside and tries again:
+/// the text waits, it is not lost. But not forever - a display that has
+/// stopped for good must not stop every program that prints. After
+/// about a second without room the text is dropped, and from then on
+/// nothing waits for that display until a message gets through again.
 pub fn write_to_display(channel: Handle, bytes: &[u8]) {
+    use core::sync::atomic::AtomicBool;
+    /// Ticks to wait for room before giving up on a message.
+    const PATIENCE: u64 = 100;
+    static STALLED: AtomicBool = AtomicBool::new(false);
+
     let mut message = [0u8; 256];
     for chunk in bytes.chunks(message.len() - 1) {
         message[0] = abi::display::TEXT;
         message[1..=chunk.len()].copy_from_slice(chunk);
-        let _ = send(channel, &message[..=chunk.len()], &[]);
+        let started = ticks();
+        loop {
+            match send(channel, &message[..=chunk.len()], &[]) {
+                Err(Error::QueueFull) if ticks() - started < PATIENCE && !STALLED.load(Ordering::Relaxed) => {
+                    // A full queue means the display has work, so it is
+                    // ready to run: giving up the CPU lets it.
+                    yield_now();
+                }
+                Err(Error::QueueFull) => {
+                    STALLED.store(true, Ordering::Relaxed);
+                    break; // dropped
+                }
+                Ok(()) => {
+                    STALLED.store(false, Ordering::Relaxed);
+                    break;
+                }
+                Err(_) => break, // no display at all
+            }
+        }
     }
 }
 
@@ -262,6 +291,21 @@ pub fn spawn_image(
 /// process that ended, a pending interrupt); returns its index.
 pub fn object_wait(handles: &[Handle]) -> Result<usize, Error> {
     abi::decode(syscall(call::OBJECT_WAIT, handles.as_ptr() as u64, handles.len() as u64, 0)).map(|i| i as usize)
+}
+
+/// As `object_wait`, but only until the tick count reaches `deadline`:
+/// None if nothing was ready by then.
+pub fn object_wait_until(handles: &[Handle], deadline: u64) -> Result<Option<usize>, Error> {
+    match abi::decode(syscall(call::OBJECT_WAIT_UNTIL, handles.as_ptr() as u64, handles.len() as u64, deadline)) {
+        Ok(index) => Ok(Some(index as usize)),
+        Err(Error::TimedOut) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// Which of `handles` is ready right now, if any - without waiting.
+pub fn poll(handles: &[Handle]) -> Result<Option<usize>, Error> {
+    object_wait_until(handles, 0)
 }
 
 pub fn system_info(system: Handle) -> Result<abi::SystemInfo, Error> {

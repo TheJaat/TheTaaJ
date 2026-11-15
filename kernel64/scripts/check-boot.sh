@@ -32,7 +32,7 @@ grep -q "\[init\] started:.* shell kbd" "$LOG" || fail "init did not start the s
 if grep -q "framebuffer: .*handed to init" "$LOG"; then
     grep -q "\[display\] painted" "$LOG"            || fail "the display service did not paint"
     [ -f "$LOG.ppm" ]                                || fail "no screenshot"
-    python3 -I "$(dirname "$0")/check-screen.py" "$LOG.ppm" || fail "the screen is not what the display painted"
+    python3 -I "$(dirname "$0")/check-screen.py" "$LOG.ppm" ${SCREEN_MAX_INK:-} || fail "the screen is not what the display painted"
 fi
 ! grep -qE "KERNEL PANIC|CPU EXCEPTION" "$LOG"     || fail "panic or exception"
 if [ -n "$METHOD" ]; then

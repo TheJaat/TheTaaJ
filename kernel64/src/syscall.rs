@@ -51,6 +51,7 @@ pub fn dispatch(number: u64, args: [u64; 6]) -> u64 {
         call::PROCESS_SPAWN_IMAGE => ipc::spawn_image(args[0], args[1], args[2]),
         call::PROCESS_KILL => ipc::kill(args[0]),
         call::MEMORY_SIZE => ipc::memory_size(args[0]),
+        call::OBJECT_WAIT_UNTIL => ipc::object_wait_until(args[0], args[1], Some(args[2])),
         _ => Err(Error::UnknownCall),
     };
     // The way back to user mode: where a process someone asked to end,
@@ -67,7 +68,9 @@ fn debug_write(pointer: u64, length: u64) -> Result<u64, Error> {
         return Err(Error::InvalidArgument);
     }
     let bytes = process::copy_from_user(pointer, length)?;
-    // Not trusted to be UTF-8 either: invalid bytes print as U+FFFD.
-    kprint!("{}", String::from_utf8_lossy(&bytes));
+    // Not trusted to be UTF-8 either: invalid bytes become U+FFFD. Into
+    // the log's queue, not onto the serial line: the program does not
+    // wait for it (console.rs).
+    crate::console::write_later(String::from_utf8_lossy(&bytes).as_bytes());
     Ok(length)
 }

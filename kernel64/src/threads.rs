@@ -89,8 +89,14 @@ pub fn init() {
 
 /// The idle thread: sleeps until an interrupt. If the interrupt makes a
 /// thread ready, the switch happens on the way out of the interrupt.
+///
+/// While it has the CPU it also empties the debug log's queue: writing
+/// to the serial line is slow, and this is time nobody else wants. An
+/// interrupt that makes a thread ready ends it at once, as above - the
+/// queue is emptied a few bytes at a time, with interrupts on between.
 fn idle_loop() {
     loop {
+        while crate::console::write_queued() {}
         arch::wait_for_interrupt();
     }
 }
@@ -349,24 +355,53 @@ impl WaitQueue {
 /// channels, to processes) is released as usual. Ending the thread
 /// right here would strand them.
 #[must_use = "a wait can be cut short: check before relying on the condition"]
-pub fn wait_any(queues: &[&WaitQueue], mut condition: impl FnMut() -> bool) -> bool {
+pub fn wait_any(queues: &[&WaitQueue], condition: impl FnMut() -> bool) -> bool {
+    wait_any_until(queues, None, condition) == Waited::Done
+}
+
+/// How a wait ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Waited {
+    /// The condition no longer holds: what was waited for happened.
+    Done,
+    /// The thread's process is being killed.
+    Killed,
+    /// The deadline came first.
+    TimedOut,
+}
+
+/// `wait_any`, with a limit: gives up once the tick count reaches
+/// `deadline`.
+///
+/// A wait with a deadline is a sleep that can be woken early. The
+/// thread goes to sleep until the deadline - the scheduler wakes
+/// sleepers when their tick comes - while also sitting in the queues,
+/// whose wake-ups work on a sleeping thread as on a blocked one.
+/// Whichever comes first, it then looks at the condition and the clock
+/// again.
+#[must_use = "a wait can be cut short: check before relying on the condition"]
+pub fn wait_any_until(queues: &[&WaitQueue], deadline: Option<u64>, mut condition: impl FnMut() -> bool) -> Waited {
     loop {
         let were_enabled = arch::disable_interrupts();
         if !condition() {
             arch::restore_interrupts(were_enabled);
-            return true;
+            return Waited::Done;
         }
         // Checked with interrupts off, like the condition: a kill that
         // comes after this finds the thread blocked, and wakes it.
         if being_killed() {
             arch::restore_interrupts(were_enabled);
-            return false;
+            return Waited::Killed;
+        }
+        if deadline.is_some_and(|deadline| interrupts::ticks() >= deadline) {
+            arch::restore_interrupts(were_enabled);
+            return Waited::TimedOut;
         }
         let me = current();
         for queue in queues {
             queue.add(me);
         }
-        suspend(State::Blocked);
+        suspend(deadline.map_or(State::Blocked, State::Sleeping));
         for queue in queues {
             queue.remove(me);
         }

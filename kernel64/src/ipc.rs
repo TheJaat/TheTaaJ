@@ -480,6 +480,11 @@ impl Waitable {
 
 /// Waits until any of the handles is ready; returns its index.
 pub fn object_wait(handles: u64, count: u64) -> Result<u64, Error> {
+    object_wait_until(handles, count, None)
+}
+
+/// The same, giving up with TimedOut at tick `deadline`, if there is one.
+pub fn object_wait_until(handles: u64, count: u64, deadline: Option<u64>) -> Result<u64, Error> {
     if count == 0 || count > abi::SPAWN_HANDLES_MAX {
         return Err(Error::InvalidArgument);
     }
@@ -504,8 +509,10 @@ pub fn object_wait(handles: u64, count: u64) -> Result<u64, Error> {
             .collect::<Result<_, _>>()?
     };
     let queues: Vec<&crate::threads::WaitQueue> = waitables.iter().map(Waitable::queue).collect();
-    if !crate::threads::wait_any(&queues, || !waitables.iter().any(Waitable::ready)) {
-        return Err(Error::Interrupted);
+    match crate::threads::wait_any_until(&queues, deadline, || !waitables.iter().any(Waitable::ready)) {
+        crate::threads::Waited::Done => {}
+        crate::threads::Waited::Killed => return Err(Error::Interrupted),
+        crate::threads::Waited::TimedOut => return Err(Error::TimedOut),
     }
     Ok(waitables.iter().position(Waitable::ready).unwrap_or(0) as u64)
 }

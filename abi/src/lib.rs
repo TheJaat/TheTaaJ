@@ -125,6 +125,11 @@ pub mod call {
     /// service handed someone else's object must know how far it may
     /// go before it maps and touches it.
     pub const MEMORY_SIZE: u64 = 23;
+    /// object_wait_until(handles, count, deadline) - as object_wait,
+    /// but gives up with TimedOut once the tick count (TICKS) reaches
+    /// `deadline`. A deadline that has passed - 0, say - asks without
+    /// waiting: "is any of these ready now?"
+    pub const OBJECT_WAIT_UNTIL: u64 = 24;
 }
 
 /// The u64s process_spawn_image's request holds.
@@ -265,6 +270,8 @@ pub enum Error {
     /// A wait was cut short because the process is being ended. The
     /// process never sees it: it ends before the call returns.
     Interrupted = 14,
+    /// The deadline came before what was waited for.
+    TimedOut = 15,
 }
 
 impl Error {
@@ -284,6 +291,7 @@ impl Error {
             12 => Some(Error::OutOfMemory),
             13 => Some(Error::NotExecutable),
             14 => Some(Error::Interrupted),
+            15 => Some(Error::TimedOut),
             _ => None,
         }
     }

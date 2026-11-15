@@ -195,14 +195,15 @@ TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
                d i s k spc c h e c k ret t i m e spc l s ret \
                f o r e v e r ret ctrl-c f o r e v e r spc w a i t ret ctrl-c \
                r u n spc f o r e v e r spc s l e e p ret ctrl-c \
-               ~ o o p s ctrl-c p s ret
+               ~ o o p s ctrl-c p s ret \
+               c a t spc l o n g ret c l e a r ret e c h o spc s c r e e n ret
 TEST_TYPED   = Hi there
 # What those commands must print (grep patterns, separated by ";").
 # (Joined on one line: a continued line would start each pattern with a
 # space.)
 EXPECT_SHELL = unknown command: Hi;  PID  NAME;init +running;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
-EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^10 files, [0-9]+ bytes;^cat: notes: no such file;^cat exited with code 1;^kept\s*$$;^Hello from the host;^saved: 5 bytes
-EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(4096 KiB\);^0000  4a 41 46 53 .*JAFS;^disk: sector 5: the disk is read-only;^disk: sector 99999: no such sector;^disk check: all 9 checks passed;^took [0-9]+\.[0-9][0-9] s
+EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^11 files, [0-9]+ bytes;^cat: notes: no such file;^cat exited with code 1;^kept\s*$$;^Hello from the host;^saved: 5 bytes
+EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(4096 KiB\);^0000  4a 41 46 53 .*JAFS;^disk: sector 5: the disk is read-only;^disk: sector 99999: no such sector;^disk check: all 9 checks passed;^took [0-9]+\.[0-9][0-9] s;^line 300 of 300
 EXPECT_RUN   = \[init\] started primes for the shell, from a file;^primes below 50: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47;^primes exited with code 0;^error: welcome is not a program;^error: broken is not a program;^error: no such program;\[init\] started ls for the shell, from a file;^usage: cat FILE;^cat exited with code 2;^rm: notes: no such file;^rm: saved2: no such file;^rm exited with code 1;^usage: write FILE TEXT;^write exited with code 2;$(EXPECT_KILL)
 EXPECT_KILL  = ^forever: spin until stopped;^forever: wait until stopped;^forever: sleep until stopped;\[process\] [0-9]+ .forever. stopped: killed by request;^\^C;^forever was stopped
 TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN)
@@ -212,7 +213,8 @@ TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN)
 # Also on it: the programs that exist nowhere else - the kernel image
 # does not contain them: ls, cat, write, append and rm, which the shell
 # runs as commands, and primes - and the first 300 bytes of primes, as a file that looks
-# like a program and is not.
+# like a program and is not. And `long`, 300 lines: more than a screen,
+# printed faster than the display draws.
 USER_BIN     = user/target/x86_64-unknown-none/release
 TFSTOOL_RS   = tools/tfstool-rs/target/release/tfstool
 DISK_PROGRAMS = ls cat write append rm primes forever
@@ -221,6 +223,7 @@ define make-test-disk
 	@printf 'Hello from the host\n' > $(1).welcome && $(TFSTOOL_RS) put $(1) welcome $(1).welcome > /dev/null
 	@for program in $(DISK_PROGRAMS); do $(TFSTOOL_RS) put $(1) $$program $(USER_BIN)/$$program > /dev/null || exit 1; done
 	@head -c 300 $(USER_BIN)/primes > $(1).broken && $(TFSTOOL_RS) put $(1) broken $(1).broken > /dev/null
+	@seq 300 | sed 's/.*/line & of 300/' > $(1).long && $(TFSTOOL_RS) put $(1) long $(1).long > /dev/null
 endef
 
 # The disk `make run64` attaches: a 16 MiB TaajFS volume that is kept
@@ -307,7 +310,7 @@ boot64-test: iso64 tfstool-rs
 	@echo "Booting the 64-bit kernel headless via BIOS (serial log: $(SERIAL64_LOG))..."
 	$(call make-test-disk,$(SERIAL64_LOG).disk)
 	@DISK=$(SERIAL64_LOG).disk KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(SERIAL64_LOG)
-	@DISK=$(SERIAL64_LOG).disk TFSTOOL=$(TFSTOOL_RS) TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" \
+	@DISK=$(SERIAL64_LOG).disk TFSTOOL=$(TFSTOOL_RS) TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" SCREEN_MAX_INK=700 \
 	    $(KERNEL64_DIR)/scripts/check-boot.sh $(SERIAL64_LOG) BIOS
 	@echo "boot64-test passed"
 
@@ -319,7 +322,7 @@ endif
 	@echo "Booting the 64-bit kernel headless via UEFI (serial log: $(UEFI64_LOG))..."
 	$(call make-test-disk,$(UEFI64_LOG).disk)
 	@DISK=$(UEFI64_LOG).disk QEMU_ARGS="-bios $(OVMF)" KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(UEFI64_LOG) 30
-	@DISK=$(UEFI64_LOG).disk TFSTOOL=$(TFSTOOL_RS) TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" \
+	@DISK=$(UEFI64_LOG).disk TFSTOOL=$(TFSTOOL_RS) TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" SCREEN_MAX_INK=700 \
 	    $(KERNEL64_DIR)/scripts/check-boot.sh $(UEFI64_LOG) UEFI
 	@echo "boot64-uefi-test passed"
 

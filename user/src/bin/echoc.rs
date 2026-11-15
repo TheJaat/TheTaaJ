@@ -75,6 +75,17 @@ fn main() -> i64 {
     check!(taaj::send(a, b"ping", &[]) == Ok(()), "send for object_wait");
     check!(taaj::object_wait(&[boot, b]) == Ok(1), "object_wait found the ready channel");
     check!(taaj::receive(b, &mut buffer, &mut []) == Ok((4, 0)), "the message is still there");
+    // Waiting with a limit: asking without waiting, and giving up on time.
+    check!(taaj::poll(&[b]) == Ok(None), "poll found a message in an empty channel");
+    let before = taaj::ticks();
+    check!(taaj::object_wait_until(&[b], before + 3) == Ok(None), "a timed wait on an empty channel");
+    let waited = taaj::ticks() - before;
+    check!((3..=5).contains(&waited), "the timed wait did not last its 3 ticks");
+    check!(taaj::send(a, b"pong", &[]) == Ok(()), "send for poll");
+    check!(taaj::poll(&[boot, b]) == Ok(Some(1)), "poll missed the ready channel");
+    check!(taaj::object_wait_until(&[b], taaj::ticks() + 500) == Ok(Some(0)), "a timed wait with a message waiting");
+    check!(taaj::receive(b, &mut buffer, &mut []) == Ok((4, 0)), "poll must not consume the message");
+    check!(taaj::poll(&[]) == Err(Error::InvalidArgument), "poll on nothing");
     for n in 0..abi::CHANNEL_QUEUE_MAX {
         check!(taaj::send(a, &[n as u8; 5], &[]) == Ok(()), "send within the limit");
     }

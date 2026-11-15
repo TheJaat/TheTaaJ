@@ -47,8 +47,8 @@ fn write_byte(byte: u8) {
     }
 }
 
-pub fn write_str(text: &str) {
-    for byte in text.bytes() {
+pub fn write_bytes(bytes: &[u8]) {
+    for &byte in bytes {
         // Terminals expect "\r\n"; Rust strings use "\n".
         if byte == b'\n' {
             write_byte(b'\r');

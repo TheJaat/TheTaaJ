@@ -2,7 +2,13 @@
 display service paints: a navy-to-teal gradient with an amber band a
 third of the way down, and the console's text below it.
 
-    usage: check-screen.py SCREEN.ppm
+    usage: check-screen.py SCREEN.ppm [MAX_INK]
+
+With MAX_INK, also checks there is no more text than that on the screen
+(in sampled pixels). The boot test ends by printing 300 lines, clearing
+the screen and printing one word: the display draws only cells that
+changed, so a cell it wrongly believed unchanged would be left over
+from the 300 lines - far more ink than one word.
 
 Exits 0 if it matches, 1 (with the reason) if not. The display service
 runs in ring 3, so a correct screen proves the whole path: the kernel
@@ -59,6 +65,9 @@ def main():
     )
     if ink < 200:
         print(f"screen: only {ink} sampled pixels of text below the band - no console?")
+        return 1
+    if len(sys.argv) > 2 and ink > int(sys.argv[2]):
+        print(f"screen: {ink} sampled pixels of text, more than the {sys.argv[2]} a cleared screen should have - stale cells?")
         return 1
     print(f"screen: {width}x{height}, painted as expected, with text ({ink} sampled pixels)")
     return 0

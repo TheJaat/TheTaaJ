@@ -24,7 +24,13 @@ pub fn init_early_console() {
 }
 
 pub fn console_write(text: &str) {
-    serial::write_str(text);
+    serial::write_bytes(text.as_bytes());
+}
+
+/// The same for bytes that may not be whole text - a piece of a
+/// program's output, cut anywhere.
+pub fn console_write_bytes(bytes: &[u8]) {
+    serial::write_bytes(bytes);
 }
 
 /// Replaces the bootloader's descriptor tables with the kernel's own:
