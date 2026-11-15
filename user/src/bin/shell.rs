@@ -36,7 +36,7 @@ use core::fmt::Write;
 
 use abi::ProcessEntry;
 use taaj::disk::Disk;
-use taaj::files::Files;
+use taaj::files::{FileError, Files};
 use taaj::{println, Buffer, Error, Handle};
 
 taaj::program!(main);
@@ -46,6 +46,14 @@ const PROMPT: &[u8] = b"taaj> ";
 const CTRL_C: &[u8] = b"\x03";
 /// Keys kept while a program runs; more than this are dropped.
 const TYPED_AHEAD_MAX: usize = 256;
+
+/// The programs that are given the file service when run by name:
+/// the ones whose whole job is files. Everything else gets the screen
+/// and its arguments - `with files COMMAND` adds the files, by the
+/// user's own decision. The shell holds the authority, so the shell
+/// decides who shares it; a list in a file would let any program that
+/// can write files grant itself more.
+const FILE_PROGRAMS: &[&str] = &["ls", "cat", "write", "append", "rm"];
 
 struct Shell {
     keys: Handle,
@@ -102,6 +110,9 @@ impl Shell {
                   \x20   write FILE TEXT    make FILE hold TEXT\n\
                   \x20   append FILE TEXT   add TEXT to the end of FILE\n\
                   \x20   rm FILE...         remove files\n\
+                  \x20   given              say what it was given\n\
+                  \x20 with files COMMAND   run COMMAND with the files too\n\
+                  \x20              (only the five above get them)\n\
                   \x20 disk         the disk's size\n\
                   \x20 disk read N        show sector N\n\
                   \x20 disk write N TEXT  put TEXT in sector N\n\
@@ -122,12 +133,19 @@ impl Shell {
             "time" => self.write(b"usage: time COMMAND\n"),
             "run" if !rest.is_empty() => {
                 let (name, arguments) = rest.split_once(' ').unwrap_or((rest, ""));
-                self.run_program(name, arguments.trim(), true);
+                self.run_program(name, arguments.trim(), true, false);
             }
             "run" => self.write(b"usage: run NAME ARGS\n"),
+            "with" => match rest.strip_prefix("files ").map(str::trim) {
+                Some(command) if !command.is_empty() => {
+                    let (name, arguments) = command.split_once(' ').unwrap_or((command, ""));
+                    self.run_program(name, arguments.trim(), false, true);
+                }
+                _ => self.write(b"usage: with files COMMAND\n"),
+            },
             "disk" => self.disk(rest),
             // Not the shell's own: a program in a file, if there is one.
-            _ => self.run_program(command, rest, false),
+            _ => self.run_program(command, rest, false, false),
         }
     }
 
@@ -331,6 +349,8 @@ impl Shell {
         let Some(files) = &self.files else { return Ok(None) };
         let size = match files.size(name) {
             Ok(size) => size,
+            // Not answering is not "no such file": say what is wrong.
+            Err(error @ FileError::Unreachable(Error::TimedOut)) => return Err(error.describe()),
             Err(_) => return Ok(None), // no such file (or no file service): maybe built in
         };
         if size == 0 || size > abi::PROGRAM_IMAGE_MAX {
@@ -367,24 +387,29 @@ impl Shell {
     /// Asks init to start `name`, then waits for it - a foreground job.
     /// A file of that name is read and sent along; otherwise, for `run`
     /// (`explicit`), init looks among the programs built into the kernel
-    /// image. The program gets the screen and the files, as the shell
-    /// has them, and `arguments`.
+    /// image. The program gets `arguments` and the screen, as the shell
+    /// has it - and the files only if it is one of FILE_PROGRAMS, or
+    /// the user said so (`with_files`): a program gets what it needs,
+    /// not what the shell happens to hold.
     ///
     /// `run NAME` says how the program ended; a program run by its name
     /// alone is a command, and says nothing unless it failed.
-    fn run_program(&self, name: &str, arguments: &str, explicit: bool) {
+    fn run_program(&self, name: &str, arguments: &str, explicit: bool, with_files: bool) {
         let image = match self.program_image(name) {
             Ok(None) if !explicit => return say!(self, "unknown command: {name} (try help)\n"),
             Ok(image) => image,
             Err(why) => return say!(self, "run: {name} {why}\n"),
         };
+        // The files go only to a program from a file: "ls" built into
+        // the kernel image would be another program of the same name.
+        let files_too = with_files || (image.is_some() && FILE_PROGRAMS.contains(&name));
         let mut handles = [0u64; 3];
         let mut count = 0;
         let mut flags = 0;
         let offered = [
             (0, image),
             (abi::startup::STDOUT, Self::delegate(self.screen)),
-            (abi::startup::FILES, Self::delegate(self.files.as_ref().map(Files::channel))),
+            (abi::startup::FILES, Self::delegate(self.files.as_ref().filter(|_| files_too).map(Files::channel))),
         ];
         for (flag, handle) in offered {
             if let Some(handle) = handle {

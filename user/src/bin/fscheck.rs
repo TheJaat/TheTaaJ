@@ -138,7 +138,24 @@ fn main() -> i64 {
     let _ = taaj::close(mine);
     check!(files.size("big") == Ok(3000), "the service is still up");
 
-    // 7. Clean up: an empty file system.
+    // 7. A service that never answers: a channel nobody reads stands
+    //    in for it. The client must give up when its patience ends -
+    //    not sooner, and not never.
+    match taaj::channel_create() {
+        Ok((unread, silent)) => {
+            let deaf = Files::with_patience(silent, 10);
+            let start = taaj::ticks();
+            let answer = deaf.list(|_, _| {});
+            let waited = taaj::ticks() - start;
+            let _ = taaj::close(silent);
+            let _ = taaj::close(unread);
+            check!(answer == Err(FileError::Unreachable(Error::TimedOut)), "a silent service: timed out");
+            check!((10..=13).contains(&waited), "a silent service: after 10 ticks");
+        }
+        Err(_) => check!(false, "a channel for the silent service"),
+    }
+
+    // 8. Clean up: an empty file system.
     let mut names = [[0u8; NAME_MAX]; 4];
     let mut lengths = [0usize; 4];
     loop {
@@ -160,6 +177,6 @@ fn main() -> i64 {
     }
     check!(files.list(|_, _| {}) == Ok(0), "nothing left");
 
-    println!("[fscheck] long files, boundaries, appends, 104-file listing, refusals, careless requests: all passed");
+    println!("[fscheck] long files, boundaries, appends, 104-file listing, refusals, careless requests, a silent service: all passed");
     0
 }

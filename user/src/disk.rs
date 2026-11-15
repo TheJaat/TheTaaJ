@@ -28,6 +28,7 @@ impl DiskError {
         match self {
             DiskError::Refused(status) => block::describe(status),
             DiskError::Unreachable(Error::PeerClosed) => "no disk (or its driver stopped)",
+            DiskError::Unreachable(Error::TimedOut) => "the disk driver is not answering",
             DiskError::Unreachable(_) => "the disk service cannot be reached",
         }
     }
@@ -112,7 +113,8 @@ impl Disk {
                 let _ = crate::close(handle);
             }
         }
-        let received = sent.and_then(|()| crate::receive(answer, reply, &mut []));
+        let deadline = crate::ticks() + crate::ANSWER_WAIT;
+        let received = sent.and_then(|()| crate::receive_until(answer, reply, &mut [], deadline));
         let _ = crate::close(answer);
         match received.map_err(DiskError::Unreachable)? {
             (0, _) => Err(DiskError::Refused(block::BAD_REQUEST)),

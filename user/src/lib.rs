@@ -170,6 +170,22 @@ pub fn receive(channel: Handle, buffer: &mut [u8], handles: &mut [Handle]) -> Re
     Ok(((packed & 0xFFFF_FFFF) as usize, (packed >> 32) as usize))
 }
 
+/// As `receive`, but waits only until the tick count reaches
+/// `deadline`: `TimedOut` if no message (and no closed peer) by then.
+/// For a wait on someone who may never answer.
+pub fn receive_until(channel: Handle, buffer: &mut [u8], handles: &mut [Handle], deadline: u64) -> Result<(usize, usize), Error> {
+    match object_wait_until(&[channel], deadline)? {
+        Some(_) => receive(channel, buffer, handles),
+        None => Err(Error::TimedOut),
+    }
+}
+
+/// How long a client waits for a service's answer before it gives up,
+/// in ticks: 5 seconds. A service that is merely busy answers far
+/// sooner; one that has stopped answering must not take its clients
+/// with it.
+pub const ANSWER_WAIT: u64 = 500;
+
 pub fn close(handle: Handle) -> Result<(), Error> {
     abi::decode(syscall(call::HANDLE_CLOSE, handle, 0, 0)).map(|_| ())
 }

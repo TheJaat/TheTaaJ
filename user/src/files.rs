@@ -6,7 +6,10 @@
 //! end of a fresh channel, and the reply comes back on the other end -
 //! so replies cannot get mixed up between clients, and if the service
 //! dies before answering, its end of the reply channel dies with it and
-//! the wait ends in PeerClosed instead of lasting forever.
+//! the wait ends in PeerClosed instead of lasting forever. And if the
+//! service is alive but never answers - stuck - the wait ends anyway,
+//! after `patience` ticks, in TimedOut: a client is not obliged to hang
+//! because its server did.
 //!
 //! Files bigger than one message are read and written a message's worth
 //! at a time.
@@ -29,6 +32,7 @@ impl FileError {
         match self {
             FileError::Refused(status) => status.describe(),
             FileError::Unreachable(Error::PeerClosed) => "the file service stopped before answering",
+            FileError::Unreachable(Error::TimedOut) => "the file service is not answering",
             FileError::Unreachable(_) => "the file service cannot be reached",
         }
     }
@@ -36,11 +40,18 @@ impl FileError {
 
 pub struct Files {
     requests: Handle,
+    /// Ticks to wait for each answer.
+    patience: u64,
 }
 
 impl Files {
     pub fn new(requests: Handle) -> Files {
-        Files { requests }
+        Files { requests, patience: crate::ANSWER_WAIT }
+    }
+
+    /// The same, giving up on an answer after `ticks`.
+    pub fn with_patience(requests: Handle, ticks: u64) -> Files {
+        Files { requests, patience: ticks }
     }
 
     /// The request channel - to pass a copy of it on.
@@ -58,7 +69,10 @@ impl Files {
         if sent.is_err() {
             let _ = crate::close(theirs); // not sent: still ours
         }
-        let received = sent.and_then(|()| crate::receive(answer, reply, &mut []));
+        // Giving up closes our end: an answer that comes later after all
+        // finds no one, and the service's send fails - harmlessly.
+        let deadline = crate::ticks() + self.patience;
+        let received = sent.and_then(|()| crate::receive_until(answer, reply, &mut [], deadline));
         let _ = crate::close(answer);
         match received.map_err(FileError::Unreachable)? {
             (0, _) => Err(FileError::Refused(Status::BadRequest)),
