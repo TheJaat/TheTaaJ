@@ -107,6 +107,9 @@ extern "C" fn kernel_main(boot_info_address: u64) -> ! {
     // Files: the file service, tested by a client in ring 3.
     selftest::files();
 
+    // Kill: ending a program from outside, whatever it is doing.
+    selftest::kill();
+
     start_init(info);
 
     // Only in a build with one of the `fault-*` features: proves each

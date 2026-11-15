@@ -212,7 +212,9 @@ pub fn receive(handle: Handle, buffer: u64, capacity: u64, handles: u64, handle_
     let end = Arc::clone(process.handles.lock().get(handle, Rights(rights::RECEIVE))?.channel()?);
     loop {
         // Wait for a message (or a closed peer: peek's error).
-        end.shared.readable[end.end].wait_while(|| matches!(end.shared.state.lock().peek(end.end), Ok(None)));
+        if !end.shared.readable[end.end].wait_while(|| matches!(end.shared.state.lock().peek(end.end), Ok(None))) {
+            return Err(Error::Interrupted);
+        }
 
         let mut table = process.handles.lock();
         let mut state = end.shared.state.lock();
@@ -258,7 +260,7 @@ pub fn interrupt_wait(handle: Handle) -> Result<u64, Error> {
         Object::Interrupt(line) => *line,
         _ => return Err(Error::WrongType),
     };
-    Ok(line.wait())
+    line.wait().ok_or(Error::Interrupted)
 }
 
 pub fn ioports_enable(handle: Handle) -> Result<u64, Error> {
@@ -357,9 +359,20 @@ fn spawn_from(
     let moved = table.remove_all(&handles, Rights(rights::TRANSFER), |_| true)?;
     let given = moved.into_iter().zip(&pairs).map(|((object, _), &(_, wanted))| (object, wanted)).collect();
     process::start(&loaded, given, argument);
-    // Passing it on is fine (the shell's `run` relies on it): a process
-    // handle only lets its holder wait.
-    table.insert(Object::Process(Arc::clone(&loaded)), Rights(rights::TRANSFER))
+    // The handle lets its holder wait for the process, and end it; and
+    // pass it on (the shell's `run` relies on it), so that whoever asked
+    // for the program can do both.
+    table.insert(Object::Process(Arc::clone(&loaded)), Rights(rights::TRANSFER | rights::KILL))
+}
+
+/// Asks for a process to be ended.
+pub fn kill(handle: Handle) -> Result<u64, Error> {
+    let target = match me()?.handles.lock().get(handle, Rights(rights::KILL))? {
+        Object::Process(target) => Arc::clone(target),
+        _ => return Err(Error::WrongType),
+    };
+    process::kill(&target);
+    Ok(0)
 }
 
 /// Waits for any of several processes to end.
@@ -380,7 +393,9 @@ pub fn wait(handles: u64, count: u64, code: u64) -> Result<u64, Error> {
             })
             .collect::<Result<_, _>>()?
     };
-    process::EXITS.wait_while(|| watched.iter().all(|p| p.exit_code().is_none()));
+    if !process::EXITS.wait_while(|| watched.iter().all(|p| p.exit_code().is_none())) {
+        return Err(Error::Interrupted);
+    }
     let (index, exit_code) = watched
         .iter()
         .enumerate()
@@ -480,7 +495,9 @@ pub fn object_wait(handles: u64, count: u64) -> Result<u64, Error> {
             .collect::<Result<_, _>>()?
     };
     let queues: Vec<&crate::threads::WaitQueue> = waitables.iter().map(Waitable::queue).collect();
-    crate::threads::wait_any(&queues, || !waitables.iter().any(Waitable::ready));
+    if !crate::threads::wait_any(&queues, || !waitables.iter().any(Waitable::ready)) {
+        return Err(Error::Interrupted);
+    }
     Ok(waitables.iter().position(Waitable::ready).unwrap_or(0) as u64)
 }
 

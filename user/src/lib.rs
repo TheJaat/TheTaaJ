@@ -294,6 +294,13 @@ pub fn wait_any(processes: &[Handle]) -> Result<(usize, i64), Error> {
     Ok((index as usize, code))
 }
 
+/// Asks the kernel to end `process` (the handle needs the KILL right).
+/// It ends soon, not at once: wait for it, as for any other. Its exit
+/// code will be abi::STOPPED.
+pub fn kill(process: Handle) -> Result<(), Error> {
+    abi::decode(syscall(call::PROCESS_KILL, process, 0, 0)).map(|_| ())
+}
+
 /// A new memory object of at least `size` bytes, zeroed.
 pub fn memory_create(size: u64) -> Result<Handle, Error> {
     abi::decode(syscall(call::MEMORY_CREATE, size, 0, 0))

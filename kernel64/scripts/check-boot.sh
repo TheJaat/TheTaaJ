@@ -26,6 +26,7 @@ grep -q "\[selftest\] threads: sleep" "$LOG"      || fail "threads self-test"
 grep -q "\[selftest\] user:" "$LOG"               || fail "user-mode self-test"
 grep -q "\[selftest\] ipc:" "$LOG"                || fail "IPC self-test"
 grep -q "\[selftest\] files:" "$LOG"              || fail "file service self-test"
+grep -q "\[selftest\] kill:" "$LOG"               || fail "kill self-test"
 grep -q "\[kernel\] idle" "$LOG"                  || fail "did not reach idle"
 grep -q "\[init\] started:.* shell kbd" "$LOG" || fail "init did not start the services"
 if grep -q "framebuffer: .*handed to init" "$LOG"; then

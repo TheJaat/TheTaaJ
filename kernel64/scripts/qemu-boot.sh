@@ -13,7 +13,8 @@
 #   KEYS       QEMU key names to type once the keyboard driver is ready,
 #              through QEMU's monitor (`sendkey`) - e.g. "shift-h i ret".
 #              A "/" waits until a new keyboard driver is ready (after a
-#              crash and restart) before typing on. The script then waits
+#              crash and restart) before typing on. A "~" waits until
+#              the shell has run every line typed so far. The script then waits
 #              for the shell to echo a line.
 #   DISK       a raw disk image, attached as a virtio block device
 
@@ -61,6 +62,7 @@ if wait_for "$FINISHED" $((LIMIT * 10)); then
     if [ -n "$KEYS" ] && grep -q "\[kernel\] idle" "$LOG" && wait_for "\[kbd\] PS/2 keyboard ready" 50; then
         # One key at a time, with a pause: a real typist, not a burst.
         ready="\[kbd\] PS/2 keyboard ready"
+        entered=0
         for key in $KEYS; do
             if [ "$key" = "/" ]; then
                 # Wait for one more "ready" line than there is now.
@@ -72,6 +74,15 @@ if wait_for "$FINISHED" $((LIMIT * 10)); then
                 done
                 continue
             fi
+            if [ "$key" = "~" ]; then
+                ticks=100
+                while [ "$(grep -c '\[shell\] ran' "$LOG")" -lt "$entered" ] && [ $ticks -gt 0 ]; do
+                    sleep 0.1
+                    ticks=$((ticks - 1))
+                done
+                continue
+            fi
+            [ "$key" = "ret" ] && entered=$((entered + 1))
             echo "sendkey $key" | nc -U -N "$MONITOR" > /dev/null
             sleep 0.05
         done

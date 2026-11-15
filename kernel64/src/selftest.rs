@@ -350,3 +350,53 @@ pub fn files() {
     assert_eq!(ipc::live_channels(), 0, "channels leaked");
     kprintln!("[selftest] files: fs and fscheck, twice - every check passed, 0 channels and no frames left");
 }
+
+/// Kill: a program that never ends, ended from outside - in each state a
+/// thread can be in when the kill arrives. Computing in user mode (only
+/// the timer interrupt gets it back into the kernel), making system
+/// calls in a loop, asleep, waiting for a message that will never come,
+/// and not yet run at all. Each must end with STOPPED, promptly; and
+/// then nothing may be left: no frame, no channel (the waiting one made
+/// a channel of its own, which must close with it).
+pub fn kill() {
+    use crate::{ipc, process, programs};
+    use kernel64::cap::Rights;
+
+    // Starts `forever MODE`: its arguments arrive as a program's do, in
+    // a channel with one message.
+    let start = |mode: &str| {
+        let (tx, rx) = ipc::channel();
+        ipc::kernel_send(&tx, mode.as_bytes(), Vec::new()).expect("sending the arguments");
+        drop(tx);
+        let loaded = process::load("forever", programs::FOREVER).expect("loading forever");
+        let thread = process::start(&loaded, alloc::vec![(rx, Rights::ALL)], abi::startup::ARGUMENTS);
+        (Arc::clone(&loaded), thread)
+    };
+    let run = || {
+        for mode in ["spin", "yield", "sleep", "wait", "unborn"] {
+            let (process, thread) = start(mode);
+            if mode != "unborn" {
+                threads::sleep(3); // long enough to get where it is going
+            }
+            assert_eq!(process.exit_code(), None, "forever {mode} ended by itself");
+            let asked = interrupts::ticks();
+            process::kill(&process);
+            process::kill(&process); // asking twice is asking once
+            threads::join(thread);
+            let took = interrupts::ticks() - asked;
+            assert_eq!(process.exit_code(), Some(abi::STOPPED), "forever {mode} after the kill");
+            assert!(took <= 3, "forever {mode} took {took} ticks to end");
+            process::kill(&process); // already ended: nothing happens
+            assert_eq!(process.exit_code(), Some(abi::STOPPED));
+        }
+    };
+
+    run();
+    threads::yield_now(); // let the last exited thread be reaped
+    let frames = mm::with_memory(|_, f| f.free_frames());
+    run();
+    threads::yield_now();
+    assert_eq!(mm::with_memory(|_, f| f.free_frames()), frames, "killed processes leaked frames");
+    assert_eq!(ipc::live_channels(), 0, "killed processes leaked channels");
+    kprintln!("[selftest] kill: spinning, yielding, sleeping, waiting and not yet started - each stopped within 3 ticks; nothing leaked");
+}

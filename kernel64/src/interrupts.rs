@@ -68,13 +68,16 @@ impl InterruptLine {
     }
 
     /// Waits until the line has fired; returns how many times it did
-    /// since the last wait.
-    pub fn wait(&self) -> u64 {
+    /// since the last wait. None if the wait was cut short: the
+    /// waiting process is being killed.
+    pub fn wait(&self) -> Option<u64> {
         loop {
-            self.waiters.wait_while(|| self.pending.load(Ordering::Relaxed) == 0);
+            if !self.waiters.wait_while(|| self.pending.load(Ordering::Relaxed) == 0) {
+                return None;
+            }
             let count = self.pending.swap(0, Ordering::Relaxed);
             if count > 0 {
-                return count; // else another holder took it; wait again
+                return Some(count); // else another holder took it; wait again
             }
         }
     }

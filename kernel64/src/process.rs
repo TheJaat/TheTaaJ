@@ -12,7 +12,7 @@
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 
 use abi::Error;
 use kernel64::cap::{CapTable, Rights};
@@ -47,6 +47,10 @@ pub struct Process {
     root: u64,
     tables: IrqLock<Option<PageTables>>,
     exit_code: AtomicI64,
+    /// Set by `kill`: the process ends when it next heads for user mode.
+    kill_requested: AtomicBool,
+    /// Its thread, once started (0 before): whom a kill wakes.
+    thread: AtomicU64,
     pub handles: IrqLock<CapTable<Object>>,
     /// The I/O ports it may use directly; loaded into the TSS whenever
     /// it runs. Granted for the life of the process.
@@ -75,6 +79,11 @@ impl Process {
     pub fn exit_code(&self) -> Option<i64> {
         let code = self.exit_code.load(Ordering::Acquire);
         (code != RUNNING).then_some(code)
+    }
+
+    /// Whether someone has asked for this process to end.
+    pub fn kill_requested(&self) -> bool {
+        self.kill_requested.load(Ordering::Acquire)
     }
 }
 
@@ -267,6 +276,8 @@ pub fn load(name: &str, file: &[u8]) -> Result<Loaded, LoadError> {
         root: tables.root().as_u64(),
         tables: IrqLock::new(Some(tables)),
         exit_code: AtomicI64::new(RUNNING),
+        kill_requested: AtomicBool::new(false),
+        thread: AtomicU64::new(0),
         handles: IrqLock::new(CapTable::new(abi::HANDLES_MAX)),
         io_ports: IrqLock::new(PortBitmap::NONE),
         mappings: IrqLock::new(Regions::new(MAPPING_AREA)),
@@ -292,11 +303,13 @@ pub fn start(loaded: &Loaded, handles: Vec<(Object, Rights)>, argument: u64) -> 
     // RSP as if `_start` had just been called: 16-byte aligned, minus the
     // return address a call would have pushed.
     let stack = USER_STACK_TOP - 8;
-    threads::spawn_in(Some(Arc::clone(process)), "user", move || {
+    let thread = threads::spawn_in(Some(Arc::clone(process)), "user", move || {
         // SAFETY: this thread runs in `process`'s address space (the
         // switch loaded its CR3 and kernel stack), which maps both.
         unsafe { syscall::enter_user(entry, stack, count, argument) }
-    })
+    });
+    process.thread.store(thread, Ordering::Release);
+    thread
 }
 
 /// The process the running thread belongs to.
@@ -304,26 +317,66 @@ pub fn current() -> Option<Arc<Process>> {
     threads::current_process()
 }
 
-/// Ends the current process with `code`.
-pub fn exit_current(code: i64) -> ! {
+/// Ends the current process: records `code`, closes its handles, tells
+/// whoever waits for it, and ends its thread.
+fn end_current(code: i64, how: core::fmt::Arguments) -> ! {
     if let Some(process) = current() {
         process.exit_code.store(code, Ordering::Release);
-        kprintln!("[process] {} {:?} exited with code {code}", process.pid, process.name);
+        kprintln!("[process] {} {:?} {how}", process.pid, process.name);
         process.close_all_handles();
     }
     EXITS.wake_all();
     threads::exit()
 }
 
+/// Ends the current process with `code`.
+pub fn exit_current(code: i64) -> ! {
+    end_current(code, format_args!("exited with code {code}"))
+}
+
 /// Ends the current process for breaking the rules.
 pub fn kill_current(reason: &str) -> ! {
-    if let Some(process) = current() {
-        process.exit_code.store(abi::KILLED, Ordering::Release);
-        kprintln!("[process] {} {:?} killed: {reason}", process.pid, process.name);
-        process.close_all_handles();
+    end_current(abi::KILLED, format_args!("killed: {reason}"))
+}
+
+/// Asks for `target` to be ended. It returns at once; the process ends
+/// itself, soon.
+///
+/// A process cannot simply be taken apart from outside. Its thread may
+/// be in the middle of a system call - holding a lock, halfway through
+/// moving a handle - and a thread stopped there would leave the kernel's
+/// own data half-changed. So a kill is a request: a flag, which the
+/// thread checks at the two places where it is about to return to user
+/// mode and so holds nothing of the kernel's - the end of a system
+/// call, and the end of an interrupt that arrived in user mode
+/// (`stop_if_killed`). There it ends as if it had called exit.
+///
+/// A thread that is waiting - for a message, an interrupt, a time -
+/// would not get there, so the kill also wakes it: the wait returns
+/// early (threads::wait_any), the call gives up, and the exit path
+/// finds the flag.
+///
+/// How long it takes: a waiting thread ends the next time it runs; one
+/// computing in user mode, at the next timer tick - 10 ms at most.
+pub fn kill(target: &Arc<Process>) {
+    if target.exit_code().is_some() {
+        return; // already ended
     }
-    EXITS.wake_all();
-    threads::exit()
+    // The flag first: a thread woken before it was set would only go
+    // back to waiting.
+    target.kill_requested.store(true, Ordering::Release);
+    let thread = target.thread.load(Ordering::Acquire);
+    if thread != 0 {
+        threads::wake(thread); // if it is blocked or sleeping; else nothing
+    }
+}
+
+/// Ends the current process if a kill was asked for. Called only where
+/// the thread is about to return to user mode.
+pub fn stop_if_killed() {
+    if current().is_some_and(|process| process.kill_requested()) {
+        end_current(abi::STOPPED, format_args!("stopped: killed by request"));
+    }
 }
 
 /// The physical address behind each page of `pointer..pointer+length`

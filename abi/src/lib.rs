@@ -114,6 +114,13 @@ pub mod call {
     /// fit in six registers. Returns a handle to the new process;
     /// NotExecutable if the file is not a valid program.
     pub const PROCESS_SPAWN_IMAGE: u64 = 21;
+    /// process_kill(process) - asks for the process to be ended; the
+    /// handle needs KILL. It returns at once: the process ends when it
+    /// next would run in user mode - right away if it was waiting or
+    /// sleeping, which the kill cuts short - with the exit code STOPPED.
+    /// Wait for it as for any other. Killing one that has already ended
+    /// does nothing.
+    pub const PROCESS_KILL: u64 = 22;
 }
 
 /// The u64s process_spawn_image's request holds.
@@ -195,7 +202,10 @@ pub mod rights {
     pub const READ: u32 = 1 << 4;
     /// Map a memory object for writing.
     pub const WRITE: u32 = 1 << 5;
-    pub const ALL: u32 = SEND | RECEIVE | DUPLICATE | TRANSFER | READ | WRITE;
+    /// End a process. Whoever started it holds this; a copy of the
+    /// handle made without it can only wait.
+    pub const KILL: u32 = 1 << 6;
+    pub const ALL: u32 = SEND | RECEIVE | DUPLICATE | TRANSFER | READ | WRITE | KILL;
 }
 
 /// Most bytes in one message.
@@ -248,6 +258,9 @@ pub enum Error {
     OutOfMemory = 12,
     /// The file is not a program this system can run.
     NotExecutable = 13,
+    /// A wait was cut short because the process is being ended. The
+    /// process never sees it: it ends before the call returns.
+    Interrupted = 14,
 }
 
 impl Error {
@@ -266,6 +279,7 @@ impl Error {
             11 => Some(Error::NotFound),
             12 => Some(Error::OutOfMemory),
             13 => Some(Error::NotExecutable),
+            14 => Some(Error::Interrupted),
             _ => None,
         }
     }
@@ -297,6 +311,8 @@ pub const USER_END: u64 = 0x0000_8000_0000_0000;
 
 /// Exit code the kernel records for a process it killed for a fault.
 pub const KILLED: i64 = -1000;
+/// Exit code of a process ended by process_kill.
+pub const STOPPED: i64 = -1001;
 
 /// The display service's messages: the first byte says which.
 pub mod display {

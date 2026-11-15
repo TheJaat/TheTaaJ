@@ -330,6 +330,13 @@ extern "C" fn exception_handler(frame: &mut InterruptFrame) {
     let vector = frame.vector & 0xFF;
     if vector >= 32 {
         super::platform::handle_interrupt(vector as u8);
+        // About to return to user mode - possibly long after the
+        // interrupt, if it took the CPU away. A program that never
+        // makes a system call still passes here on every timer tick: if
+        // it has been asked to end meanwhile, this is where it does.
+        if frame.cs & 3 == 3 {
+            crate::process::stop_if_killed();
+        }
         return;
     }
     let name = NAMES.get(frame.vector as usize).copied().unwrap_or("unknown");

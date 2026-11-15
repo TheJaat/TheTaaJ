@@ -12,8 +12,9 @@
 //! It has no launcher and no hardware. To run a program it asks init,
 //! and sends along what the program is to have: a copy of its channel to
 //! the screen, a copy of its channel to the file service. init replies
-//! with a handle to the new process - all the shell can do with it is
-//! wait for it to end.
+//! with a handle to the new process, which lets the shell wait for it
+//! to end - and end it: Ctrl+C stops the program in the foreground.
+//! Keys typed meanwhile are kept, and read as the next line.
 //!
 //! A word that is not one of the shell's own commands is looked for as
 //! a file: `ls`, `cat`, `write`, `append` and `rm` are programs on the
@@ -26,6 +27,11 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
+use alloc::collections::VecDeque;
+use alloc::vec::Vec;
+use core::cell::RefCell;
 use core::fmt::Write;
 
 use abi::ProcessEntry;
@@ -37,8 +43,14 @@ taaj::program!(main);
 
 const LINE_MAX: usize = 256;
 const PROMPT: &[u8] = b"taaj> ";
+const CTRL_C: &[u8] = b"\x03";
+/// Keys kept while a program runs; more than this are dropped.
+const TYPED_AHEAD_MAX: usize = 256;
 
 struct Shell {
+    keys: Handle,
+    /// Keys that arrived while a program was running, oldest first.
+    typed_ahead: RefCell<VecDeque<Vec<u8>>>,
     screen: Option<Handle>,
     init: Option<Handle>,
     system: Option<Handle>,
@@ -82,6 +94,7 @@ impl Shell {
                   \x20 mem          memory in use\n\
                   \x20 ps           processes\n\
                   \x20 run NAME ARGS    run a program: a file, or hello, peek\n\
+                  \x20              (Ctrl+C stops it)\n\
                   \x20 NAME ARGS    the same, for a file. On the disk:\n\
                   \x20   ls                 list the files\n\
                   \x20   cat FILE...        show files\n\
@@ -323,8 +336,9 @@ impl Shell {
             }
             Err(error) => return say!(self, "no answer from init: {error:?}\n"),
         };
-        match taaj::wait_any(&[process]) {
+        match self.wait_for(process) {
             Ok((_, abi::KILLED)) => say!(self, "{name} was killed by the kernel (it broke a rule)\n"),
+            Ok((_, abi::STOPPED)) => say!(self, "{name} was stopped\n"),
             Ok((_, 0)) if !explicit => {}
             Ok((_, code)) => say!(self, "{name} exited with code {code}\n"),
             Err(error) => say!(self, "lost track of {name}: {error:?}\n"),
@@ -333,9 +347,51 @@ impl Shell {
     }
 }
 
+impl Shell {
+    /// Waits for the foreground program to end, watching the keyboard
+    /// meanwhile: Ctrl+C asks the kernel to end the program - and the
+    /// wait goes on, until it has. Any other key is kept for later.
+    fn wait_for(&self, process: Handle) -> Result<(usize, i64), Error> {
+        let mut input = [0u8; 16];
+        loop {
+            // Whichever comes first: the program's end, or a key.
+            if taaj::object_wait(&[process, self.keys])? == 0 {
+                return taaj::wait_any(&[process]);
+            }
+            match taaj::receive(self.keys, &mut input, &mut []) {
+                Ok((n, _)) if &input[..n] == CTRL_C => {
+                    self.write(b"^C\n");
+                    if let Err(error) = taaj::kill(process) {
+                        say!(self, "cannot stop it: {error:?}\n");
+                    }
+                }
+                Ok((n, _)) => {
+                    let mut typed = self.typed_ahead.borrow_mut();
+                    if typed.len() < TYPED_AHEAD_MAX {
+                        typed.push_back(input[..n].to_vec());
+                    }
+                }
+                // No keyboard: nothing to watch but the program.
+                Err(_) => return taaj::wait_any(&[process]),
+            }
+        }
+    }
+
+    /// The next key: one typed while a program ran, if any are left,
+    /// else one from the keyboard driver - waiting for it.
+    fn next_key(&self, input: &mut [u8; 16]) -> Result<usize, Error> {
+        if let Some(key) = self.typed_ahead.borrow_mut().pop_front() {
+            input[..key.len()].copy_from_slice(&key);
+            return Ok(key.len());
+        }
+        taaj::receive(self.keys, input, &mut []).map(|(n, _)| n)
+    }
+}
+
 fn main() -> i64 {
-    let keys = taaj::bootstrap();
     let shell = Shell {
+        keys: taaj::bootstrap(),
+        typed_ahead: RefCell::new(VecDeque::new()),
         screen: taaj::startup_handle(1),
         init: taaj::startup_handle(2),
         system: taaj::startup_handle(3),
@@ -350,8 +406,8 @@ fn main() -> i64 {
     let mut length = 0;
     let mut input = [0u8; 16];
     loop {
-        let n = match taaj::receive(keys, &mut input, &mut []) {
-            Ok((n, _)) => n,
+        let n = match shell.next_key(&mut input) {
+            Ok(n) => n,
             Err(Error::PeerClosed) => {
                 println!("[shell] the keyboard driver is gone");
                 return 0;
@@ -379,6 +435,12 @@ fn main() -> i64 {
                     }
                     shell.write(b"\x08 \x08"); // back, blank, back
                 }
+            }
+            CTRL_C => {
+                // Abandon the line.
+                shell.write(b"^C\n");
+                shell.screen_only(PROMPT);
+                length = 0;
             }
             [first, ..] if *first < 0x20 => {} // other control keys, escapes: not yet
             text if length + text.len() <= LINE_MAX => {

@@ -160,8 +160,17 @@ fn suspend(state: State) {
 }
 
 /// Sleeps for at least `ticks` timer ticks.
+///
+/// Less, if the thread's process is killed meanwhile: the kill wakes
+/// it. And not at all if it has been killed already - checked with
+/// interrupts off, so a kill cannot fall between the check and the
+/// sleep and be slept through.
 pub fn sleep(ticks: u64) {
-    suspend(State::Sleeping(interrupts::ticks() + ticks));
+    let were_enabled = arch::disable_interrupts();
+    if !being_killed() {
+        suspend(State::Sleeping(interrupts::ticks() + ticks));
+    }
+    arch::restore_interrupts(were_enabled);
 }
 
 /// Ends the current thread.
@@ -175,7 +184,17 @@ pub fn exit() -> ! {
 
 /// Waits until thread `id` has exited.
 pub fn join(id: ThreadId) {
-    EXITED.wait_while(|| with(|t| matches!(t.policy.state(id), Some(s) if s != State::Exited)));
+    // Kernel threads join; they belong to no process, so nothing cuts
+    // their waits short.
+    let done = EXITED.wait_while(|| with(|t| matches!(t.policy.state(id), Some(s) if s != State::Exited)));
+    debug_assert!(done, "join was interrupted");
+}
+
+/// Whether the running thread's process has been asked to end.
+fn being_killed() -> bool {
+    with(|t| {
+        t.table.get(&t.policy.current()).and_then(|thread| thread.process.as_ref()).is_some_and(|p| p.kill_requested())
+    })
 }
 
 /// Makes a blocked or sleeping thread ready.
@@ -287,8 +306,11 @@ impl WaitQueue {
     /// cannot slip in between them and be lost - the classic bug of
     /// "check, then sleep": the event arrives after the check, and the
     /// sleeper never hears of it.
-    pub fn wait_while(&self, condition: impl FnMut() -> bool) {
-        wait_any(&[self], condition);
+    ///
+    /// Returns false if the wait was cut short instead (see `wait_any`).
+    #[must_use = "a wait can be cut short: check before relying on the condition"]
+    pub fn wait_while(&self, condition: impl FnMut() -> bool) -> bool {
+        wait_any(&[self], condition)
     }
 
     fn add(&self, id: ThreadId) {
@@ -318,12 +340,27 @@ impl WaitQueue {
 /// that did not fire, so none keeps a stale entry. A wakeup from a queue
 /// that has nothing to do with the condition is harmless: every wait
 /// here re-checks its condition before it returns.
-pub fn wait_any(queues: &[&WaitQueue], mut condition: impl FnMut() -> bool) {
+///
+/// Returns true once the condition no longer holds. Returns false if
+/// the thread's process is being killed: the wait is over, though what
+/// was waited for has not happened. The caller must then give up and
+/// return to the system call's exit, where the process ends - returning
+/// normally, so that everything it holds on the way (references to
+/// channels, to processes) is released as usual. Ending the thread
+/// right here would strand them.
+#[must_use = "a wait can be cut short: check before relying on the condition"]
+pub fn wait_any(queues: &[&WaitQueue], mut condition: impl FnMut() -> bool) -> bool {
     loop {
         let were_enabled = arch::disable_interrupts();
         if !condition() {
             arch::restore_interrupts(were_enabled);
-            return;
+            return true;
+        }
+        // Checked with interrupts off, like the condition: a kill that
+        // comes after this finds the thread blocked, and wakes it.
+        if being_killed() {
+            arch::restore_interrupts(were_enabled);
+            return false;
         }
         let me = current();
         for queue in queues {
