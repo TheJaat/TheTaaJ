@@ -110,6 +110,8 @@ fn main() -> i64 {
     }
     println!("[kbd] PS/2 keyboard ready (driver in ring 3, process {})", taaj::process_id());
 
+    // Pings from init, if it watches this driver (abi::PING).
+    let mut pings = taaj::startup_handle(4);
     let mut decoder = Decoder::new();
     loop {
         // Everything waiting first: the interrupt may have fired before
@@ -123,6 +125,12 @@ fn main() -> i64 {
                 // SAFETY: none - this is the bug.
                 return unsafe { core::ptr::read_volatile(core::ptr::null::<i64>()) };
             }
+            if event.pressed && event.key == Key::Function(11) {
+                println!("[kbd] F11: simulating a driver bug - looping forever");
+                loop {
+                    core::hint::spin_loop();
+                }
+            }
             let Some(bytes) = terminal_bytes(event, decoder.control_held()) else { continue };
             match taaj::send(output, bytes.as_bytes(), &[]) {
                 Ok(()) | Err(Error::QueueFull) => {} // a reader that lags loses keys, not the driver
@@ -130,6 +138,20 @@ fn main() -> i64 {
                 Err(_) => return 4,
             }
         }
+        // A key, or init asking whether this loop still turns.
+        if let Some(channel) = pings {
+            match taaj::object_wait(&[interrupt, channel]) {
+                Ok(0) => {}
+                Ok(_) => {
+                    if !taaj::answer_pings(channel) {
+                        pings = None;
+                    }
+                    continue;
+                }
+                Err(_) => return 5,
+            }
+        }
+        // Pending (or there is nothing else to wait for): takes it.
         if taaj::interrupt_wait(interrupt).is_err() {
             return 5;
         }

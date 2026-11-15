@@ -133,6 +133,9 @@ impl Shell {
                   \x20 with files COMMAND      run COMMAND with the files too\n\
                   \x20 with readonly COMMAND   the same, but only to read them\n\
                   \x20 fs stall SECONDS   a test: the file service goes silent\n\
+                  \x20 disk stall SECONDS, display stall SECONDS   the same,\n\
+                  \x20              for the disk driver and the display\n\
+                  \x20 (F11 hangs the keyboard driver, F12 crashes it)\n\
                   \x20              (only the five above get them)\n\
                   \x20 disk         the disk's size\n\
                   \x20 disk read N        show sector N\n\
@@ -173,6 +176,17 @@ impl Shell {
                 }
             }
             "fs" => self.fs(rest),
+            "display" => match (rest.strip_prefix("stall ").and_then(|n| n.trim().parse::<u64>().ok()), self.screen) {
+                (Some(seconds @ 1..=30), Some(screen)) => {
+                    say!(self, "display: the screen will show nothing for {seconds} s\n");
+                    let mut message = [0u8; 9];
+                    message[0] = abi::display::STALL;
+                    message[1..].copy_from_slice(&(seconds * 100).to_le_bytes());
+                    let _ = taaj::send(screen, &message, &[]);
+                }
+                (Some(1..=30), None) => self.write(b"no display\n"),
+                _ => self.write(b"usage: display stall SECONDS (1 to 30)\n"),
+            },
             "disk" => self.disk(rest),
             // Not the shell's own: a program in a file, if there is one.
             _ => self.run_program(command, rest, false, Grant::Usual),
@@ -284,11 +298,20 @@ impl Shell {
                     Err(error) => say!(self, "disk: sector {sector}: {}\n", error.describe()),
                 }
             }
+            ("stall", Some(Ok(seconds @ 1..=30)), None) => {
+                let mut request = [0u8; abi::block::REQUEST_SIZE];
+                request[0] = abi::block::STALL;
+                request[1..].copy_from_slice(&(seconds * 100).to_le_bytes());
+                match disk.raw(&request, None) {
+                    Ok(()) => say!(self, "disk: the driver will answer nothing for {seconds} s\n"),
+                    Err(error) => say!(self, "disk: {}\n", error.describe()),
+                }
+            }
             ("check", None, None) => match self.disk_check(disk) {
                 Ok(checks) => say!(self, "disk check: all {checks} checks passed\n"),
                 Err(failed) => say!(self, "disk check: FAILED - {failed}\n"),
             },
-            _ => self.write(b"usage: disk, disk read N, disk write N TEXT, disk check\n"),
+            _ => self.write(b"usage: disk, disk read N, disk write N TEXT, disk check, disk stall SECONDS\n"),
         }
     }
 

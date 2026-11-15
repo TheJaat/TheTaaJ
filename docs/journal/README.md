@@ -28,7 +28,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 020 | [The console fills the screen](020-the-console-fills-the-screen.md) | written | `d6beacd` |
 | 021 | [What a program is given, and a client that does not wait forever](021-what-a-program-is-given.md) | written | `9039a12` |
 | 022 | [Read-only files, a service stalled on purpose, and a kernel too big to boot](022-read-only-files-a-stalled-service-and-a-kernel-too-big-to-boot.md) | written | `4fe68a7` |
-| 023 | [A watchdog: replacing a service that has stopped answering](023-a-watchdog.md) | written | watchdog |
+| 023 | [A watchdog: replacing a service that has stopped answering](023-a-watchdog.md) | written | `d4ff7ed` |
+| 024 | [Every service watched: pings for the display and the keyboard driver, and four hangs on purpose](024-every-service-watched.md) | written | watch all services |
 
 ## How to run what the entries describe
 

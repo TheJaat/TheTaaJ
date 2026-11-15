@@ -180,6 +180,30 @@ pub fn receive_until(channel: Handle, buffer: &mut [u8], handles: &mut [Handle],
     }
 }
 
+/// Answers every ping waiting on `pings` (abi::PING): init's way of
+/// asking a service whether it is still running. Called from the
+/// service's own loop - the point is that the loop is turning. False
+/// once the channel is closed: nobody is asking any more.
+pub fn answer_pings(pings: Handle) -> bool {
+    let mut message = [0u8; 8];
+    while let Ok(Some(_)) = poll(&[pings]) {
+        let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
+        match receive(pings, &mut message, &mut handles) {
+            Ok((_, count)) => {
+                if count == 1 {
+                    let _ = send(handles[0], &[abi::PING], &[]);
+                }
+                for &handle in &handles[..count] {
+                    let _ = close(handle);
+                }
+            }
+            Err(Error::BufferTooSmall) => return false, // not a ping: stop listening
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
 /// How long a client waits for a service's answer before it gives up,
 /// in ticks: 10 seconds. A service that is merely busy answers far
 /// sooner; one that has stopped answering must not take its clients

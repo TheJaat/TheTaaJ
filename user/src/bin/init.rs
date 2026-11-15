@@ -72,6 +72,8 @@ const MAX_RESTARTS: usize = 5;
 const RESTART_WINDOW: u64 = 30 * 100; // 30 seconds of 100 Hz ticks
 /// How often a watched service is asked whether it is there, in ticks.
 const PING_EVERY: u64 = 100;
+/// And how soon a ping that could not be sent is tried again.
+const RETRY_EVERY: u64 = 10;
 
 /// The watchdog's view of one service.
 struct Watch {
@@ -93,6 +95,8 @@ struct Watch {
     next_ping: u64,
     /// While a ping is unanswered: when to stop believing.
     deadline: Option<u64>,
+    /// Whether that ping could be sent, or is still to be tried.
+    sent: bool,
 }
 
 impl Watch {
@@ -100,22 +104,28 @@ impl Watch {
         let (answers_tx, answers_rx) = taaj::channel_create().ok()?;
         let mut bytes = [0u8; 16];
         bytes[..ping.len()].copy_from_slice(ping);
-        Some(Watch { requests, ping: bytes, ping_length: ping.len(), answers_tx, answers_rx, patience, next_ping: 0, deadline: None })
+        Some(Watch { requests, ping: bytes, ping_length: ping.len(), answers_tx, answers_rx, patience, next_ping: 0, deadline: None, sent: false })
     }
 
-    /// Sends a ping, if one is due. A ping that cannot be sent - the
-    /// queue is full - is as good as sent: a service that leaves its
-    /// queue full for this long is not answering either.
+    /// Sends a ping, if one is due. The time limit starts with the first
+    /// attempt, sent or not: a ping that cannot be sent - the queue is
+    /// full - is tried again each time round, and a service that leaves
+    /// its queue full for all of its patience is not answering either.
     fn ask(&mut self, now: u64) {
-        if self.deadline.is_some() || now < self.next_ping {
+        if now < self.next_ping || (self.deadline.is_some() && self.sent) {
             return;
         }
-        if let Ok(copy) = taaj::duplicate(self.answers_tx, SEND | TRANSFER) {
-            if taaj::send(self.requests, &self.ping[..self.ping_length], &[copy]).is_err() {
-                let _ = taaj::close(copy); // not sent: still ours
-            }
+        self.sent = match taaj::duplicate(self.answers_tx, SEND | TRANSFER) {
+            Ok(copy) => taaj::send(self.requests, &self.ping[..self.ping_length], &[copy])
+                .inspect_err(|_| {
+                    let _ = taaj::close(copy); // not sent: still ours
+                })
+                .is_ok(),
+            Err(_) => false,
+        };
+        if self.deadline.is_none() {
+            self.deadline = Some(now + self.patience);
         }
-        self.deadline = Some(now + self.patience);
     }
 
     /// Takes every answer that has come. Any answer means "alive" - also
@@ -144,8 +154,12 @@ impl Watch {
     }
 
     /// The next tick at which there is something to do.
-    fn wake_at(&self) -> u64 {
-        self.deadline.unwrap_or(self.next_ping)
+    fn wake_at(&self, now: u64) -> u64 {
+        match self.deadline {
+            Some(deadline) if self.sent => deadline,
+            Some(deadline) => deadline.min(now + RETRY_EVERY),
+            None => self.next_ping,
+        }
     }
 }
 
@@ -239,6 +253,10 @@ fn main() -> i64 {
     }
     let _ = taaj::close(devices);
     let Ok((display_tx, display_rx)) = taaj::channel_create() else { return 2 };
+    // The display and the keyboard driver answer no requests, so each
+    // gets a channel only for the watchdog's pings (abi::PING).
+    let Ok((display_ping_tx, display_ping_rx)) = taaj::channel_create() else { return 2 };
+    let Ok((kbd_ping_tx, kbd_ping_rx)) = taaj::channel_create() else { return 2 };
     let Ok((requests, shell_requests)) = taaj::channel_create() else { return 2 };
     // The file service's requests. init keeps both ends, as it does the
     // keyboard's: a restarted fs takes over the same queue, and clients
@@ -283,6 +301,8 @@ fn main() -> i64 {
         Grant { handle: disk_look_out, rights: SEND },    // 19: read-only requests, to blk
         Grant { handle: files_look_in, rights: RECEIVE }, // 20: read-only requests, for fs
         Grant { handle: files_look_out, rights: SEND | DELEGABLE }, // 21: read-only requests, to fs
+        Grant { handle: display_ping_rx, rights: RECEIVE }, // 22: pings, for display
+        Grant { handle: kbd_ping_rx, rights: RECEIVE },     // 23: pings, for kbd
     ];
     // Only the shell's screen and files can be copied and passed on.
     debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21)));
@@ -294,18 +314,21 @@ fn main() -> i64 {
     let fs_ping = [fileserver::protocol::ACCESS, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let fs_watch = Watch::new(files_look_out, &fs_ping, 400);
     let blk_watch = disk.and_then(|_| Watch::new(disk_look_out, &[abi::block::INFO], 200));
+    // The display and the keyboard driver: a ping on a channel of its own.
+    let display_watch = framebuffer.and_then(|_| Watch::new(display_ping_tx, &[abi::PING], 200));
+    let kbd_watch = Watch::new(kbd_ping_tx, &[abi::PING], 200);
 
     // The display first: it must have its info before the shell's text
     // arrives on the same channel.
     let mut services = [
         Service {
             name: "display",
-            grants: &[5, 6],
+            grants: &[5, 6, 22],
             process: 0,
             restarts: [0; MAX_RESTARTS],
             restart_count: 0,
             given_up: framebuffer.is_none(),
-            watch: None,
+            watch: display_watch,
         },
         Service { name: "fs", grants: &[10, 20, 16], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: fs_watch },
         Service {
@@ -321,7 +344,7 @@ fn main() -> i64 {
             watch: blk_watch,
         },
         Service { name: "shell", grants: &[4, 7, 8, 9, 11, 19, 21], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
-        Service { name: "kbd", grants: &[0, 1, 2, 3], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
+        Service { name: "kbd", grants: &[0, 1, 2, 3, 23], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: kbd_watch },
     ];
     let launch = |service: &Service| {
         let mut list = [&grants[0]; 8];
@@ -334,7 +357,17 @@ fn main() -> i64 {
             let mut info = [0u8; 1 + FramebufferInfo::SIZE];
             info[0] = abi::display::INFO;
             info[1..].copy_from_slice(&fb.to_bytes());
-            taaj::send(display_tx, &info, &[])?;
+            // The queue may be full of text nobody showed - that is how
+            // a display that stopped looks from here. The new one
+            // throws text away until its info comes, so there is room
+            // as soon as it has run.
+            let started = taaj::ticks();
+            loop {
+                match taaj::send(display_tx, &info, &[]) {
+                    Err(Error::QueueFull) if taaj::ticks() - started < 200 => taaj::yield_now(),
+                    sent => break sent?,
+                }
+            }
         }
         // And each new disk driver, what its device is.
         if let (Some((info, _, _)), "blk") = (disk, service.name) {
@@ -362,8 +395,8 @@ fn main() -> i64 {
 
     loop {
         // Watch every service still running, and the request channel.
-        let mut watched = [0u64; 12];
-        let mut which = [0usize; 12];
+        let mut watched = [0u64; 16];
+        let mut which = [0usize; 16];
         let mut count = 0;
         for (n, service) in services.iter().enumerate() {
             if !service.given_up {
@@ -391,7 +424,7 @@ fn main() -> i64 {
                 watch.deadline = None;
                 watch.next_ping = u64::MAX;
             }
-            wake = wake.min(watch.wake_at());
+            wake = wake.min(watch.wake_at(now));
             count += 1;
             watched[count] = watch.answers_rx;
             which[count] = n;
@@ -400,7 +433,11 @@ fn main() -> i64 {
         let index = match taaj::object_wait_until(&watched[..=count], wake) {
             Ok(Some(index)) => index,
             Ok(None) => continue, // time for the watchdog
-            Err(_) => return 3,
+            Err(error) => {
+                // Without init nothing is supervised: say why, at least.
+                println!("[init] cannot watch the services: {error:?} - giving up");
+                return 3;
+            }
         };
         if index == processes {
             serve_request(launcher, requests);

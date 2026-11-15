@@ -226,6 +226,9 @@ pub const CHANNEL_QUEUE_MAX: usize = 32;
 /// Most startup handles a process may be given, and most processes one
 /// process_wait may watch.
 pub const SPAWN_HANDLES_MAX: u64 = 8;
+/// Most handles one object_wait may watch. More than a process can be
+/// started with: init watches every service, and an answer from each.
+pub const WAIT_HANDLES_MAX: u64 = 32;
 /// Longest program name.
 pub const PROGRAM_NAME_MAX: u64 = 64;
 
@@ -333,7 +336,21 @@ pub mod display {
     pub const INFO: u8 = 1;
     /// Followed by terminal bytes to show.
     pub const TEXT: u8 = 2;
+    /// Followed by a number of ticks (u64 LE, at most STALL_MAX): a
+    /// test - the display does nothing for that long, as if stuck.
+    pub const STALL: u8 = 3;
 }
+
+/// A ping: the one message a service's ping channel carries - this
+/// byte, and one handle, a channel to answer on. The answer is one
+/// byte. For services with no requests to answer otherwise (the
+/// display, the keyboard driver), so that init can tell a service that
+/// is running from one that only exists.
+pub const PING: u8 = 1;
+
+/// The longest a service can be asked to play dead (the STALL test
+/// requests): 30 seconds of 100 Hz ticks.
+pub const STALL_MAX: u64 = 3000;
 
 /// The screen, as the kernel describes it to init: a linear framebuffer
 /// of `pitch` bytes per line, each pixel `bpp` bits with its red, green
@@ -557,6 +574,9 @@ pub mod block {
     /// Most sectors one READ_MANY or WRITE_MANY moves: 16 KiB.
     pub const SECTORS_MAX: u32 = 32;
     pub const MANY_REQUEST_SIZE: usize = 1 + 8 + 4;
+    /// Payload: a number of ticks (u64 LE, at most STALL_MAX). A test:
+    /// answered, and then the driver does nothing for that long.
+    pub const STALL: u8 = 6;
 
     pub const OK: u8 = 0;
     /// The disk reported an error.

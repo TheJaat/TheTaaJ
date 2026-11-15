@@ -42,6 +42,11 @@ if [ -n "$TYPED" ]; then
     grep -q "\[kbd\] PS/2 keyboard ready" "$LOG"     || fail "keyboard driver did not start"
     grep -qF "[shell] line: \"$TYPED\"" "$LOG"     || fail "keyboard: \"$TYPED\" not echoed by the shell"
     grep -q "\[init\] kbd ended .* restarting" "$LOG" || fail "init did not restart the crashed driver"
+    # The watchdog must end what was stalled on purpose, and only that:
+    # fs once (its own stall) - not again while blk, which it waits on,
+    # was being replaced - and nothing by mistake.
+    [ "$(grep -c "\[init\] fs has not answered" "$LOG")" -le 1 ] || fail "the watchdog stopped fs more than once"
+    [ "$(grep -c "\[init\] .* has not answered" "$LOG")" -le 4 ] || fail "the watchdog stopped a service that was not stalled"
 fi
 if [ -n "${DISK:-}" ]; then
     grep -q "\[pci\] .* virtio block device: .* handed to init" "$LOG" || fail "the kernel did not offer the disk"

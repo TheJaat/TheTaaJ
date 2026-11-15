@@ -357,10 +357,28 @@ fn main() -> i64 {
             continue;
         }
         let lent = (count == 2).then_some(handles[1]);
-        let length = disk.serve(&message[..n], &mut reply, may_write, lent);
+        // The test of a driver that has stopped: answered first.
+        let mut stall = 0;
+        if n == block::REQUEST_SIZE && message[0] == block::STALL {
+            let mut ticks = [0u8; 8];
+            ticks.copy_from_slice(&message[1..9]);
+            stall = u64::from_le_bytes(ticks);
+        }
+        let length = if (1..=abi::STALL_MAX).contains(&stall) {
+            reply[0] = block::OK;
+            1
+        } else {
+            stall = 0;
+            disk.serve(&message[..n], &mut reply, may_write, lent)
+        };
         let _ = taaj::send(handles[0], &reply[..length], &[]);
         for &handle in &handles[..count] {
             let _ = taaj::close(handle);
+        }
+        if stall > 0 {
+            println!("[blk] asked to stall: answering nothing for {stall} ticks");
+            taaj::sleep(stall);
+            println!("[blk] answering again");
         }
     }
 }

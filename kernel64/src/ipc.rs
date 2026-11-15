@@ -485,7 +485,7 @@ pub fn object_wait(handles: u64, count: u64) -> Result<u64, Error> {
 
 /// The same, giving up with TimedOut at tick `deadline`, if there is one.
 pub fn object_wait_until(handles: u64, count: u64, deadline: Option<u64>) -> Result<u64, Error> {
-    if count == 0 || count > abi::SPAWN_HANDLES_MAX {
+    if count == 0 || count > abi::WAIT_HANDLES_MAX {
         return Err(Error::InvalidArgument);
     }
     let handles = handles_from_user(handles, count)?;

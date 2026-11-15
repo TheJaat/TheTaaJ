@@ -55,6 +55,12 @@ for test in $TESTS; do
     else
         echo "fault-$test: FAILED - expected /$pattern/"
         sed -n '/\[test\]/,$p' "$log"
+        # Keep what there is: the next run overwrites these, and a boot
+        # that fails once in hundreds is not seen again on demand.
+        for kept in "$log" "$log.qemu" "$log.hang.ppm"; do
+            [ -f "$kept" ] && cp "$kept" "$kept.failed"
+        done
+        echo "fault-$test: evidence kept in $log*.failed"
         failed=1
     fi
 done

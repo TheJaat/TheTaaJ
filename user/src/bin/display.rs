@@ -183,13 +183,15 @@ fn main() -> i64 {
     let (Some(memory), Some(messages)) = (taaj::startup_handle(0), taaj::startup_handle(1)) else {
         return 1;
     };
+    // Pings from init, if it watches this service (abi::PING).
+    let mut pings = taaj::startup_handle(2);
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
 
     // INFO first. Anything before it is text from a previous display's
     // time, with no screen yet to show it on.
     let fb = loop {
-        match taaj::receive(messages, &mut message, &mut []) {
-            Ok((n, _)) if n > 0 && message[0] == abi::display::INFO => {
+        match receive(messages, &mut message) {
+            Ok(n) if n > 0 && message[0] == abi::display::INFO => {
                 match FramebufferInfo::from_bytes(&message[1..n]) {
                     Some(fb) => break fb,
                     None => return 2,
@@ -252,15 +254,33 @@ fn main() -> i64 {
     loop {
         // Wait for text; then take whatever else is already waiting,
         // up to BATCH messages, before drawing any of it.
+        // First, between batches, whoever asks if this loop is turning.
+        if let Some(channel) = pings {
+            if !taaj::answer_pings(channel) {
+                pings = None;
+            }
+            // Text or a ping, whichever comes; a ping is for the top.
+            match taaj::object_wait(&[messages, channel]) {
+                Ok(0) => {}
+                Ok(_) => continue,
+                Err(_) => return 5,
+            }
+        }
         let mut taken = 0;
+        let mut stall = 0;
         loop {
-            let n = match taaj::receive(messages, &mut message, &mut []) {
-                Ok((n, _)) => n,
+            let n = match receive(messages, &mut message) {
+                Ok(n) => n,
                 Err(Error::PeerClosed) => return 0,
                 Err(_) => return 5,
             };
             if n > 0 && message[0] == abi::display::TEXT {
                 grid.write_all(&message[1..n], &mut |_| {});
+            }
+            if n == 9 && message[0] == abi::display::STALL {
+                let mut ticks = [0u8; 8];
+                ticks.copy_from_slice(&message[1..9]);
+                stall = u64::from_le_bytes(ticks).min(abi::STALL_MAX);
             }
             taken += 1;
             // More, right now? (A closed channel also counts as ready:
@@ -270,5 +290,25 @@ fn main() -> i64 {
             }
         }
         screen.sync(grid, shown);
+        // The test of a display that has stopped: what was asked for
+        // is on the screen, and then nothing is done.
+        if stall > 0 {
+            println!("[display] asked to stall: drawing nothing for {stall} ticks");
+            taaj::sleep(stall);
+            println!("[display] drawing again");
+        }
     }
+}
+
+/// The next message's length. Handles are not part of this protocol,
+/// but a message may bring some - and one that did not fit would stay
+/// at the head of the queue, refused again forever, with every program
+/// that holds the screen able to send it. So they are taken, and closed.
+fn receive(messages: taaj::Handle, message: &mut [u8]) -> Result<usize, Error> {
+    let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
+    let (n, count) = taaj::receive(messages, message, &mut handles)?;
+    for &handle in &handles[..count] {
+        let _ = taaj::close(handle);
+    }
+    Ok(n)
 }
