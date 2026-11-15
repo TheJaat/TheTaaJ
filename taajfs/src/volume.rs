@@ -21,7 +21,8 @@ use core::fmt;
 use crate::device::{BlockDevice, DeviceError};
 use crate::format::{
     empty_block, Block, DirBlock, DirEntry, Inode, Superblock, BLOCK_SIZE, DIR_ENTRIES, FIRST_DATA,
-    MAGIC, MAX_BLOCKS, MAX_FILE_SIZE, NAME_MAX, SUPER_A, SUPER_B, TYPE_FILE,
+    MAGIC, MAX_BLOCKS, MAX_FILE_SIZE, NAME_MAX, SUPER_A, SUPER_B, TYPE_DIR, TYPE_FILE, VERSION,
+    VERSION_DIRECTORIES,
 };
 
 /// The most blocks a directory may span. The same limit as the guard in
@@ -48,6 +49,12 @@ pub enum Error {
     Name,
     TooBig,
     BadSize,
+    /// A name on the way to a file is not a directory.
+    NotDirectory,
+    /// A directory, where only a file will do.
+    IsDirectory,
+    /// A directory with something in it cannot be removed.
+    NotEmpty,
     /// The tree is damaged in a way that would make blind trust
     /// dangerous: a loop, or a block number outside the volume.
     Corrupt(String),
@@ -62,9 +69,12 @@ impl fmt::Display for Error {
             Error::Full => f.write_str("no free blocks"),
             Error::NotFound => f.write_str("not found"),
             Error::Exists => f.write_str("already exists"),
-            Error::Name => write!(f, "name must be 1 to {} bytes", NAME_MAX - 1),
+            Error::Name => write!(f, "each name in a path must be 1 to {} bytes, and not . or ..; at most {MAX_DEPTH} deep", NAME_MAX - 1),
             Error::TooBig => f.write_str("file would exceed the maximum size"),
             Error::BadSize => write!(f, "a volume must be 8 to {MAX_BLOCKS} blocks"),
+            Error::NotDirectory => f.write_str("not a directory"),
+            Error::IsDirectory => f.write_str("is a directory"),
+            Error::NotEmpty => f.write_str("directory is not empty"),
             Error::Corrupt(what) => write!(f, "volume is damaged: {what}"),
         }
     }
@@ -104,23 +114,36 @@ impl From<&DirEntry> for FileInfo {
     }
 }
 
-/// Leading slashes are accepted and ignored: TaajFS is flat, so "/a"
-/// and "a" are the same file.
-///
-/// The lifetime is inferred: the result borrows from `name`, so it is
-/// valid exactly as long as `name` is. No copy is made.
-fn trim_slashes(name: &str) -> &str {
-    name.trim_start_matches('/')
-}
+/// How many directories deep a path may go. A limit, so that walking
+/// the tree - which a damaged or hostile disk could make endless - has
+/// an end that does not depend on the disk.
+pub const MAX_DEPTH: usize = 16;
 
-/// The name rules `TfsCreate` enforces: not empty, and short enough to
-/// leave room for the terminating NUL in the 28-byte field.
-fn check_name(name: &str) -> Result<&str> {
-    let name = trim_slashes(name);
-    if name.is_empty() || name.len() >= NAME_MAX || name.contains('\0') {
+/// The names in a path, from the root down: "docs/notes" is docs, then
+/// notes. Slashes at either end, and doubled ones, mean nothing - "/a",
+/// "a/" and "a" are the same - and no names at all is the root itself.
+///
+/// Each name must fit the 28-byte field with its terminating NUL (the
+/// rule `TfsCreate` enforces). "." and ".." are refused: nothing on the
+/// disk has those names, and a path that climbs is the caller's to
+/// resolve before it gets here.
+///
+/// The result borrows from `path`: no copies, only views into it.
+fn components(path: &str) -> Result<Vec<&str>> {
+    let names: Vec<&str> = path.split('/').filter(|name| !name.is_empty()).collect();
+    let bad = |name: &&str| name.len() >= NAME_MAX || name.contains('\0') || *name == "." || *name == "..";
+    if names.len() > MAX_DEPTH + 1 || names.iter().any(bad) {
         return Err(Error::Name);
     }
-    Ok(name)
+    Ok(names)
+}
+
+/// A path that must name something in a directory: the directories on
+/// the way, and the last name.
+fn split_leaf(path: &str) -> Result<(Vec<&str>, &str)> {
+    let mut names = components(path)?;
+    let leaf = names.pop().ok_or(Error::Name)?;
+    Ok((names, leaf))
 }
 
 // ---- formatting -----------------------------------------------------
@@ -151,6 +174,9 @@ pub struct Volume<D: BlockDevice> {
     /// The live superblock, and which slot it came from.
     sb: Superblock,
     slot: u32,
+    /// Whether a superblock slot still says version 1 - so that an
+    /// implementation without directories would mount the volume.
+    old_format: bool,
     /// Which blocks the committed tree uses. Derived, never stored.
     used: Vec<bool>,
     used_count: u32,
@@ -163,6 +189,7 @@ impl<D: BlockDevice> Volume<D> {
     /// nothing else can write to the disk behind the volume's back.
     pub fn mount(mut device: D) -> Result<Volume<D>> {
         let mut best: Option<(u32, Superblock)> = None;
+        let mut old_format = false;
         let mut block = empty_block();
 
         for slot in [SUPER_A, SUPER_B] {
@@ -174,6 +201,7 @@ impl<D: BlockDevice> Volume<D> {
             if !sb.is_valid() {
                 continue;
             }
+            old_format |= sb.version == VERSION;
             // Strictly greater: on a tie, slot A wins, as in C.
             let newer = match best {
                 None => true,
@@ -189,6 +217,7 @@ impl<D: BlockDevice> Volume<D> {
             device,
             sb,
             slot,
+            old_format,
             used: Vec::new(),
             used_count: 0,
         };
@@ -237,15 +266,16 @@ impl<D: BlockDevice> Volume<D> {
         Ok(inode)
     }
 
-    /// Every block of the root directory, in chain order.
+    /// Every block of the directory that starts at block `first`, in
+    /// chain order.
     ///
     /// C guards against a looping chain with a counter. A set of the
     /// blocks already visited catches a loop on its first repeat, and
     /// says exactly where.
-    fn directory_chain(&mut self) -> Result<Vec<(u32, DirBlock)>> {
+    fn directory_chain(&mut self, first: u32) -> Result<Vec<(u32, DirBlock)>> {
         let mut chain = Vec::new();
         let mut seen = BTreeSet::new();
-        let mut next = self.sb.root_dir;
+        let mut next = first;
 
         while next != 0 {
             if next >= self.sb.total_blocks {
@@ -267,10 +297,11 @@ impl<D: BlockDevice> Volume<D> {
         Ok(chain)
     }
 
-    /// Every live entry in the root directory (unused slots skipped).
-    fn entries(&mut self) -> Result<Vec<DirEntry>> {
+    /// Every live entry of the directory that starts at block `first`
+    /// (unused slots skipped).
+    fn entries(&mut self, first: u32) -> Result<Vec<DirEntry>> {
         Ok(self
-            .directory_chain()?
+            .directory_chain(first)?
             .into_iter()
             .flat_map(|(_, dir)| dir.entries)
             .filter(|entry| entry.inode != 0)
@@ -309,13 +340,34 @@ impl<D: BlockDevice> Volume<D> {
         // iterating. Iterating something borrowed from `self` here would
         // not compile - the borrow checker forbids changing a thing
         // while you are reading through it.
-        for (number, dir) in self.directory_chain()? {
-            self.mark_used(number)?;
-            for entry in dir.entries.iter().filter(|e| e.inode != 0) {
-                self.mark_used(entry.inode)?;
-                let inode = self.read_inode(entry.inode)?;
-                for &block in inode.blocks.iter().filter(|&&b| b != 0) {
-                    self.mark_used(block)?;
+        //
+        // The tree is walked with a list of directories still to visit,
+        // not by a function calling itself: how deep it goes is up to
+        // what is on the disk, and a disk must not be able to exhaust
+        // the stack. Two more things a damaged disk could do are
+        // refused: a tree deeper than MAX_DEPTH, and a directory block
+        // reached twice - which, since a directory's blocks belong to it
+        // alone, means a loop or two names for one directory.
+        let mut to_visit = vec![(self.sb.root_dir, 0usize)];
+        while let Some((first, depth)) = to_visit.pop() {
+            if depth > MAX_DEPTH {
+                return Err(Error::Corrupt(format!("directories nest deeper than {MAX_DEPTH}")));
+            }
+            for (number, dir) in self.directory_chain(first)? {
+                if self.used.get(number as usize).copied().unwrap_or(false) {
+                    return Err(Error::Corrupt(format!("directory block {number} is reached twice")));
+                }
+                self.mark_used(number)?;
+                for entry in dir.entries.iter().filter(|e| e.inode != 0) {
+                    if entry.kind == TYPE_DIR {
+                        to_visit.push((entry.inode, depth + 1));
+                        continue;
+                    }
+                    self.mark_used(entry.inode)?;
+                    let inode = self.read_inode(entry.inode)?;
+                    for &block in inode.blocks.iter().filter(|&&b| b != 0) {
+                        self.mark_used(block)?;
+                    }
                 }
             }
         }
@@ -344,6 +396,11 @@ impl<D: BlockDevice> Volume<D> {
     /// NOT live. Until it lands the volume reads as before; after it
     /// lands every change is visible at once.
     fn commit(&mut self, new_root: u32) -> Result<()> {
+        self.commit_as(new_root, self.sb.version)
+    }
+
+    /// The same, saying which version of the format the volume now is.
+    fn commit_as(&mut self, new_root: u32, version: u32) -> Result<()> {
         let target = if self.slot == SUPER_A {
             SUPER_B
         } else {
@@ -362,6 +419,7 @@ impl<D: BlockDevice> Volume<D> {
         let sb = Superblock {
             root_dir: new_root,
             generation,
+            version,
             ..self.sb
         }
         .sealed();
@@ -372,6 +430,35 @@ impl<D: BlockDevice> Volume<D> {
 
         // The old tree is unreachable now; rebuilding is what frees it.
         self.rebuild_free_map()
+    }
+
+    /// Makes the volume one that may hold directories: version 2 in
+    /// both superblock slots, before the first directory exists.
+    ///
+    /// Why both, and why first. An implementation that knows only
+    /// version 1 - the C one - treats every entry as a file. Shown a
+    /// directory it would read the directory's block as an inode, take
+    /// whatever numbers are in it for the file's blocks, and build its
+    /// free map from that: its next write could land on live data. What
+    /// stops it is the version number: it mounts only slots that say 1.
+    /// But a commit writes ONE slot. After a single version-2 commit the
+    /// other slot still says 1, still verifies, and to the old code is
+    /// the volume - an older tree, whose "free" blocks the new tree is
+    /// using.
+    ///
+    /// So the tree as it is now - no directories yet - is committed
+    /// twice, unchanged, as version 2: once into each slot. A power cut
+    /// between the two leaves one slot of each version, both pointing at
+    /// the same tree, which either implementation may safely use. Only
+    /// when no slot says 1 any more is a directory made.
+    fn allow_directories(&mut self) -> Result<()> {
+        if !self.old_format {
+            return Ok(());
+        }
+        self.commit_as(self.sb.root_dir, VERSION_DIRECTORIES)?;
+        self.commit_as(self.sb.root_dir, VERSION_DIRECTORIES)?;
+        self.old_format = false;
+        Ok(())
     }
 
     /// Runs a change. If it fails partway, the blocks it allocated were
@@ -389,11 +476,55 @@ impl<D: BlockDevice> Volume<D> {
         result
     }
 
-    /// Writes a complete new copy of the directory with one entry
-    /// replaced, added (`replacement` named something new) or removed
-    /// (`replacement` None), and returns its first block.
-    fn rewrite_directory(&mut self, name: &str, replacement: Option<DirEntry>) -> Result<u32> {
-        let mut entries = self.entries()?;
+    /// The first block of each directory on the way down `dirs`: the
+    /// root's, then one per name. Fails if a name is missing, or is a
+    /// file.
+    fn descend(&mut self, dirs: &[&str]) -> Result<Vec<u32>> {
+        let mut firsts = vec![self.sb.root_dir];
+        for name in dirs {
+            let here = firsts[firsts.len() - 1];
+            let entry = self.entries(here)?.into_iter().find(|e| e.is_named(name)).ok_or(Error::NotFound)?;
+            if entry.kind != TYPE_DIR {
+                return Err(Error::NotDirectory);
+            }
+            firsts.push(entry.inode);
+        }
+        Ok(firsts)
+    }
+
+    /// The entry called `leaf` in the directory `dirs` leads to, if
+    /// there is one.
+    fn find(&mut self, dirs: &[&str], leaf: &str) -> Result<Option<DirEntry>> {
+        let firsts = self.descend(dirs)?;
+        Ok(self.entries(firsts[dirs.len()])?.into_iter().find(|e| e.is_named(leaf)))
+    }
+
+    /// Changes one entry of the directory `dirs` leads to - and, because
+    /// nothing committed is ever written over, every directory above it.
+    ///
+    /// The directory gets a new copy with the entry changed. That copy
+    /// starts at a new block, so the entry that names this directory in
+    /// its parent must change too - which is a change to the parent, and
+    /// so on up. What comes back is the first block of a new root: one
+    /// new path from the top of the tree down to the change, with
+    /// everything off that path shared, untouched, with the old tree.
+    /// Committing that root publishes the whole change at once.
+    fn rewrite_path(&mut self, dirs: &[&str], leaf: &str, replacement: Option<DirEntry>) -> Result<u32> {
+        let firsts = self.descend(dirs)?;
+        let mut new = self.rewrite_directory(firsts[dirs.len()], leaf, replacement)?;
+        for depth in (0..dirs.len()).rev() {
+            let entry = DirEntry::new(dirs[depth], new, 0, TYPE_DIR);
+            new = self.rewrite_directory(firsts[depth], dirs[depth], Some(entry))?;
+        }
+        Ok(new)
+    }
+
+    /// Writes a complete new copy of the directory that starts at
+    /// `first` with one entry replaced, added (`replacement` named
+    /// something new) or removed (`replacement` None), and returns the
+    /// copy's first block.
+    fn rewrite_directory(&mut self, first: u32, name: &str, replacement: Option<DirEntry>) -> Result<u32> {
+        let mut entries = self.entries(first)?;
         let position = entries.iter().position(|e| e.is_named(name));
 
         // Matching on a pair covers all four cases, and the compiler
@@ -438,21 +569,33 @@ impl<D: BlockDevice> Volume<D> {
 
     // ---- reading ----------------------------------------------------
 
+    /// What is in the root directory.
     pub fn list(&mut self) -> Result<Vec<FileInfo>> {
-        Ok(self.entries()?.iter().map(FileInfo::from).collect())
+        self.list_in("")
     }
 
-    pub fn lookup(&mut self, name: &str) -> Result<FileInfo> {
-        let name = trim_slashes(name);
-        self.entries()?
-            .iter()
-            .find(|entry| entry.is_named(name))
-            .map(FileInfo::from)
-            .ok_or(Error::NotFound)
+    /// What is in the directory `path` names ("" is the root).
+    pub fn list_in(&mut self, path: &str) -> Result<Vec<FileInfo>> {
+        let dirs = components(path)?;
+        let firsts = self.descend(&dirs)?;
+        Ok(self.entries(firsts[dirs.len()])?.iter().map(FileInfo::from).collect())
+    }
+
+    /// The file or directory `path` names. The root itself is a
+    /// directory with no name.
+    pub fn lookup(&mut self, path: &str) -> Result<FileInfo> {
+        let mut dirs = components(path)?;
+        let Some(leaf) = dirs.pop() else {
+            return Ok(FileInfo { name: String::new(), inode: self.sb.root_dir, size: 0, kind: TYPE_DIR });
+        };
+        self.find(&dirs, leaf)?.as_ref().map(FileInfo::from).ok_or(Error::NotFound)
     }
 
     /// Reads from `offset` into `buffer`; returns how many bytes it got.
     pub fn read_at(&mut self, file: &FileInfo, offset: u32, buffer: &mut [u8]) -> Result<usize> {
+        if file.kind == TYPE_DIR {
+            return Err(Error::IsDirectory);
+        }
         if offset >= file.size {
             return Ok(0);
         }
@@ -494,30 +637,54 @@ impl<D: BlockDevice> Volume<D> {
     // the disk, and failure - at ANY point - leaves the previous state.
 
     /// An empty file. The same as `TfsCreate`.
-    pub fn create(&mut self, name: &str) -> Result<()> {
-        let name = check_name(name)?;
-        match self.lookup(name) {
-            Ok(_) => return Err(Error::Exists),
-            Err(Error::NotFound) => {}
-            Err(other) => return Err(other),
+    pub fn create(&mut self, path: &str) -> Result<()> {
+        let (dirs, name) = split_leaf(path)?;
+        if self.find(&dirs, name)?.is_some() {
+            return Err(Error::Exists);
         }
 
         self.change(|v| {
             let inode = v.allocate()?;
             v.write(inode, &Inode::new(0, TYPE_FILE, Vec::new()).to_block())?;
-            let root = v.rewrite_directory(name, Some(DirEntry::new(name, inode, 0, TYPE_FILE)))?;
+            let root = v.rewrite_path(&dirs, name, Some(DirEntry::new(name, inode, 0, TYPE_FILE)))?;
+            v.commit(root)
+        })
+    }
+
+    /// An empty directory. Its parent must exist: one call makes one
+    /// directory.
+    pub fn make_directory(&mut self, path: &str) -> Result<()> {
+        let (dirs, name) = split_leaf(path)?;
+        if dirs.len() >= MAX_DEPTH {
+            return Err(Error::Name); // it would be deeper than a path can reach
+        }
+        if self.find(&dirs, name)?.is_some() {
+            return Err(Error::Exists);
+        }
+
+        self.allow_directories()?;
+        self.change(|v| {
+            // An empty directory is one block with no entries - as the
+            // root of a fresh volume is.
+            let first = v.allocate()?;
+            v.write(first, &DirBlock::new(Vec::new(), 0).to_block())?;
+            let root = v.rewrite_path(&dirs, name, Some(DirEntry::new(name, first, 0, TYPE_DIR)))?;
             v.commit(root)
         })
     }
 
     /// Writes `data` at `offset` into an existing file, growing it if
     /// needed. The same as `TfsWriteFile`, block for block.
-    pub fn write_at(&mut self, name: &str, offset: u32, data: &[u8]) -> Result<usize> {
+    pub fn write_at(&mut self, path: &str, offset: u32, data: &[u8]) -> Result<usize> {
         let end = offset as usize + data.len();
         if end > MAX_FILE_SIZE {
             return Err(Error::TooBig);
         }
-        let file = self.lookup(name)?;
+        let (dirs, name) = split_leaf(path)?;
+        let file = self.find(&dirs, name)?.as_ref().map(FileInfo::from).ok_or(Error::NotFound)?;
+        if file.kind == TYPE_DIR {
+            return Err(Error::IsDirectory);
+        }
 
         self.change(|v| {
             let mut inode = v.read_inode(file.inode)?;
@@ -574,7 +741,7 @@ impl<D: BlockDevice> Volume<D> {
             // leading '/' would make it add a second entry instead of
             // replacing the first.)
             let entry = DirEntry::new(&file.name, new_inode, new_size, TYPE_FILE);
-            let root = v.rewrite_directory(&file.name, Some(entry))?;
+            let root = v.rewrite_path(&dirs, &file.name, Some(entry))?;
             v.commit(root)?;
             Ok(done)
         })
@@ -587,10 +754,16 @@ impl<D: BlockDevice> Volume<D> {
     /// overwrite with shorter data keeps the old tail, because writing
     /// at offset 0 never shrinks a file. Building a fresh inode instead
     /// makes `put` both atomic and exact.
-    pub fn put(&mut self, name: &str, data: &[u8]) -> Result<()> {
-        let name = check_name(name)?;
+    pub fn put(&mut self, path: &str, data: &[u8]) -> Result<()> {
+        let (dirs, name) = split_leaf(path)?;
         if data.len() > MAX_FILE_SIZE {
             return Err(Error::TooBig);
+        }
+        // A file may replace a file. Replacing a directory would drop
+        // everything in it in passing: that takes `delete`, and an empty
+        // directory.
+        if self.find(&dirs, name)?.is_some_and(|entry| entry.kind == TYPE_DIR) {
+            return Err(Error::IsDirectory);
         }
 
         self.change(|v| {
@@ -607,18 +780,28 @@ impl<D: BlockDevice> Volume<D> {
             let inode = v.allocate()?;
             v.write(inode, &Inode::new(size, TYPE_FILE, blocks).to_block())?;
             let root =
-                v.rewrite_directory(name, Some(DirEntry::new(name, inode, size, TYPE_FILE)))?;
+                v.rewrite_path(&dirs, name, Some(DirEntry::new(name, inode, size, TYPE_FILE)))?;
             v.commit(root)
         })
     }
 
-    /// Removes a file. Nothing is erased: the entry is simply missing
-    /// from the new directory, so its blocks become unreachable - and
-    /// therefore free - the moment the commit lands.
-    pub fn delete(&mut self, name: &str) -> Result<()> {
-        let name = trim_slashes(name);
+    /// Removes a file, or a directory with nothing in it. Nothing is
+    /// erased: the entry is simply missing from the new directory, so
+    /// its blocks become unreachable - and therefore free - the moment
+    /// the commit lands.
+    ///
+    /// A directory must be empty first. Removing a whole tree in one
+    /// call would be easy here - drop one entry and everything under it
+    /// is unreachable - which is exactly why it is not offered: one
+    /// mistyped name should not cost more than one thing.
+    pub fn delete(&mut self, path: &str) -> Result<()> {
+        let (dirs, name) = split_leaf(path)?;
+        let entry = self.find(&dirs, name)?.ok_or(Error::NotFound)?;
+        if entry.kind == TYPE_DIR && !self.entries(entry.inode)?.is_empty() {
+            return Err(Error::NotEmpty);
+        }
         self.change(|v| {
-            let root = v.rewrite_directory(name, None)?;
+            let root = v.rewrite_path(&dirs, name, None)?;
             v.commit(root)
         })
     }
@@ -848,5 +1031,323 @@ mod tests {
 
         // Make sure the loop really exercised failures, not just success.
         assert!(cuts > 5, "only {cuts} cut points were tried");
+    }
+
+    /// The names in a directory, sorted, directories marked with a "/".
+    fn names(volume: &mut Volume<MemDevice>, path: &str) -> Vec<String> {
+        let mut names: Vec<String> = volume
+            .list_in(path)
+            .unwrap()
+            .iter()
+            .map(|e| if e.kind == TYPE_DIR { format!("{}/", e.name) } else { e.name.clone() })
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn directories_hold_files_and_directories() {
+        let mut v = fresh();
+        v.make_directory("docs").unwrap();
+        v.make_directory("docs/notes").unwrap();
+        v.put("docs/notes/today", b"deep").unwrap();
+        v.put("docs/plan", &pattern(3 * BLOCK_SIZE, 4)).unwrap();
+        v.put("top", b"root").unwrap();
+
+        let free = v.free_blocks();
+        let mut v = remount(v);
+        // What mounting works out from the tree is what the running
+        // volume believed: nothing leaked, nothing counted twice.
+        assert_eq!(v.free_blocks(), free);
+
+        assert_eq!(names(&mut v, ""), ["docs/", "top"]);
+        assert_eq!(names(&mut v, "docs"), ["notes/", "plan"]);
+        assert_eq!(names(&mut v, "/docs/notes/"), ["today"]);
+        assert_eq!(contents(&mut v, "docs/notes/today"), b"deep");
+        assert_eq!(contents(&mut v, "docs/plan"), pattern(3 * BLOCK_SIZE, 4));
+        assert_eq!(v.lookup("docs").unwrap().kind, TYPE_DIR);
+        assert_eq!(v.lookup("").unwrap().kind, TYPE_DIR);
+        assert_eq!(v.lookup("docs/plan").unwrap().kind, TYPE_FILE);
+    }
+
+    #[test]
+    fn the_same_name_in_two_directories_is_two_files() {
+        let mut v = fresh();
+        v.make_directory("a").unwrap();
+        v.make_directory("b").unwrap();
+        v.put("a/note", b"in a").unwrap();
+        v.put("b/note", b"in b").unwrap();
+        v.put("note", b"at the top").unwrap();
+
+        v.write_at("b/note", 3, b"B!").unwrap();
+        v.delete("a/note").unwrap();
+
+        let mut v = remount(v);
+        assert!(matches!(v.lookup("a/note"), Err(Error::NotFound)));
+        assert_eq!(contents(&mut v, "b/note"), b"in B!");
+        assert_eq!(contents(&mut v, "note"), b"at the top");
+    }
+
+    #[test]
+    fn a_path_must_lead_through_directories() {
+        let mut v = fresh();
+        v.make_directory("d").unwrap();
+        v.put("f", b"file").unwrap();
+
+        // Through a file, or through nothing.
+        assert!(matches!(v.put("f/x", b""), Err(Error::NotDirectory)));
+        assert!(matches!(v.lookup("f/x"), Err(Error::NotDirectory)));
+        assert!(matches!(v.list_in("f"), Err(Error::NotDirectory)));
+        assert!(matches!(v.put("missing/x", b""), Err(Error::NotFound)));
+        assert!(matches!(v.make_directory("missing/x"), Err(Error::NotFound)));
+
+        // A directory is not a file.
+        assert!(matches!(v.put("d", b"x"), Err(Error::IsDirectory)));
+        assert!(matches!(v.write_at("d", 0, b"x"), Err(Error::IsDirectory)));
+        let d = v.lookup("d").unwrap();
+        assert!(matches!(v.read_at(&d, 0, &mut [0u8; 4]), Err(Error::IsDirectory)));
+
+        // One name, one thing.
+        assert!(matches!(v.make_directory("d"), Err(Error::Exists)));
+        assert!(matches!(v.make_directory("f"), Err(Error::Exists)));
+        assert!(matches!(v.create("d"), Err(Error::Exists)));
+
+        // Names that mean "here" and "up" are not names on the disk.
+        for bad in [".", "..", "d/..", "d/./x", "../f"] {
+            assert!(matches!(v.put(bad, b""), Err(Error::Name)), "{bad}");
+            assert!(matches!(v.make_directory(bad), Err(Error::Name)), "{bad}");
+        }
+
+        // None of the refusals changed anything.
+        let mut v = remount(v);
+        assert_eq!(names(&mut v, ""), ["d/", "f"]);
+        assert_eq!(names(&mut v, "d"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn only_an_empty_directory_can_be_removed() {
+        let mut v = fresh();
+        let free_before = v.free_blocks();
+        v.make_directory("d").unwrap();
+        v.make_directory("d/inner").unwrap();
+        v.put("d/inner/f", &pattern(2 * BLOCK_SIZE, 1)).unwrap();
+
+        assert!(matches!(v.delete("d"), Err(Error::NotEmpty)));
+        assert!(matches!(v.delete("d/inner"), Err(Error::NotEmpty)));
+        assert_eq!(contents(&mut v, "d/inner/f"), pattern(2 * BLOCK_SIZE, 1));
+
+        v.delete("d/inner/f").unwrap();
+        v.delete("d/inner").unwrap();
+        v.delete("d").unwrap();
+        assert!(matches!(v.delete("d"), Err(Error::NotFound)));
+        assert!(matches!(v.delete(""), Err(Error::Name)));
+
+        // Every block came back, and a fresh mount agrees.
+        assert_eq!(v.free_blocks(), free_before);
+        assert_eq!(remount(v).free_blocks(), free_before);
+    }
+
+    #[test]
+    fn a_directory_inside_a_directory_can_span_several_blocks() {
+        let mut v = fresh();
+        v.make_directory("many").unwrap();
+        let count = DIR_ENTRIES * 2 + 3;
+        for i in 0..count {
+            v.create(&format!("many/file{i}")).unwrap();
+        }
+        v.put("many/file7", b"seven").unwrap();
+
+        let free = v.free_blocks();
+        let mut v = remount(v);
+        assert_eq!(v.free_blocks(), free);
+        assert_eq!(v.list_in("many").unwrap().len(), count);
+        assert_eq!(contents(&mut v, "many/file7"), b"seven");
+        assert_eq!(names(&mut v, ""), ["many/"]);
+    }
+
+    #[test]
+    fn directories_nest_to_the_limit_and_no_further() {
+        let mut v = fresh();
+        let mut path = String::new();
+        for level in 0..MAX_DEPTH {
+            path.push_str(&format!("/d{level}"));
+            v.make_directory(&path).unwrap();
+        }
+        // A file fits in the deepest one; another directory does not.
+        v.put(&format!("{path}/leaf"), b"bottom").unwrap();
+        assert!(matches!(v.make_directory(&format!("{path}/more")), Err(Error::Name)));
+        assert!(matches!(v.put(&format!("{path}/more/leaf"), b""), Err(Error::Name)));
+
+        // And a volume as deep as the limit allows still mounts.
+        let mut v = remount(v);
+        assert_eq!(contents(&mut v, &format!("{path}/leaf")), b"bottom");
+    }
+
+    /// What a disk says is not to be believed: a directory that contains
+    /// itself, or one reached by two names, must stop the mount - not
+    /// send it round for ever, and not let two directories share blocks.
+    #[test]
+    fn a_damaged_tree_is_refused_at_mount() {
+        // A directory whose entry leads back to the root.
+        let mut v = fresh();
+        v.make_directory("d").unwrap();
+        let inside = v.lookup("d").unwrap().inode;
+        let root = v.superblock().root_dir;
+        let mut device = v.into_device();
+        let back = DirEntry::new("back", root, 0, TYPE_DIR);
+        device.blocks[inside as usize] = DirBlock::new(vec![back], 0).to_block();
+        assert!(matches!(Volume::mount(device), Err(Error::Corrupt(_))));
+
+        // Two names for one directory.
+        let mut v = fresh();
+        v.make_directory("one").unwrap();
+        let shared = v.lookup("one").unwrap().inode;
+        let root = v.superblock().root_dir;
+        let mut device = v.into_device();
+        let entries = vec![
+            DirEntry::new("one", shared, 0, TYPE_DIR),
+            DirEntry::new("two", shared, 0, TYPE_DIR),
+        ];
+        device.blocks[root as usize] = DirBlock::new(entries, 0).to_block();
+        assert!(matches!(Volume::mount(device), Err(Error::Corrupt(_))));
+    }
+
+    /// The superblock slots an implementation that knows only version 1
+    /// would accept, newest first: the first is the one it would mount.
+    fn version_1_slots(device: &MemDevice) -> Vec<Superblock> {
+        let mut slots: Vec<Superblock> = [SUPER_A, SUPER_B]
+            .iter()
+            .map(|&slot| Superblock::parse(&device.blocks[slot as usize]))
+            .filter(|sb| sb.is_valid() && sb.version == VERSION)
+            .collect();
+        slots.sort_by_key(|sb| core::cmp::Reverse(sb.generation));
+        slots
+    }
+
+    #[test]
+    fn a_volume_without_directories_stays_version_1() {
+        let mut v = fresh();
+        v.put("a", b"1").unwrap();
+        v.write_at("a", 1, b"2").unwrap();
+        v.create("b").unwrap();
+        v.delete("b").unwrap();
+        assert_eq!(v.superblock().version, VERSION);
+        assert_eq!(version_1_slots(&v.into_device()).len(), 2);
+    }
+
+    /// The first directory changes the format's version - and at no
+    /// moment, whenever the power goes, may the disk hold a directory
+    /// while a slot still says "version 1": that slot is all an old
+    /// implementation would see.
+    #[test]
+    fn the_first_directory_locks_old_readers_out_before_it_exists() {
+        let mut v = fresh();
+        v.put("keep", b"safe").unwrap();
+        let base = v.into_device();
+        let mut cuts = 0;
+
+        for writes_allowed in 0.. {
+            let device = MemDevice { blocks: base.blocks.clone(), writes_left: Some(writes_allowed) };
+            let mut v = Volume::mount(device).unwrap();
+            let made = v.make_directory("d").is_ok();
+            // More changes after it, if it got that far: they must not
+            // bring version 1 back.
+            let finished = made && v.put("d/f", b"x").is_ok() && v.delete("d/f").is_ok() && v.delete("d").is_ok();
+
+            let mut device = v.into_device();
+            device.writes_left = None;
+            let old_slots = version_1_slots(&device);
+            let mut v = Volume::mount(device).expect("volume must always mount");
+            let at = format!("after {writes_allowed} writes");
+
+            assert_eq!(contents(&mut v, "keep"), b"safe", "{at}");
+            let has_directory = v.lookup("d").is_ok();
+            if has_directory {
+                assert!(old_slots.is_empty(), "{at}: a directory, and a slot an old reader would mount");
+            }
+            // If an old reader would still mount the volume, what it
+            // mounts is the tree as it is - not an older one, whose
+            // free blocks the live tree may be using.
+            if let Some(theirs) = old_slots.first() {
+                assert_eq!(theirs.root_dir, v.superblock().root_dir, "{at}");
+            }
+            if made {
+                assert_eq!(v.superblock().version, VERSION_DIRECTORIES, "{at}");
+            }
+            if finished {
+                // Empty of directories again - and still version 2.
+                assert_eq!(v.superblock().version, VERSION_DIRECTORIES);
+                break;
+            }
+            cuts += 1;
+        }
+        assert!(cuts > 6, "only {cuts} cut points were tried");
+    }
+
+    /// The power-cut property again, for a change deep in the tree. Such
+    /// a change rewrites every directory above it, so there are more
+    /// writes to be cut between - and still nothing may show until the
+    /// one write that commits it all.
+    #[test]
+    fn a_power_cut_during_a_nested_change_leaves_old_or_new_state() {
+        let mut v = fresh();
+        v.make_directory("docs").unwrap();
+        v.make_directory("docs/notes").unwrap();
+        v.put("docs/notes/old", b"before").unwrap();
+        v.put("docs/keep", b"untouched").unwrap();
+        let base = v.into_device();
+
+        let new_data = pattern(2 * BLOCK_SIZE + 10, 5);
+        let mut cuts = 0;
+
+        for writes_allowed in 0.. {
+            let device = MemDevice {
+                blocks: base.blocks.clone(),
+                writes_left: Some(writes_allowed),
+            };
+            let mut v = Volume::mount(device).unwrap();
+
+            // Four changes, each its own commit; each is tried only if
+            // the one before it finished.
+            let mut done = 0;
+            type Step<'a> = &'a dyn Fn(&mut Volume<MemDevice>) -> Result<()>;
+            let steps: [Step; 4] = [
+                &|v| v.put("docs/notes/old", b"after"),
+                &|v| v.make_directory("docs/notes/deep"),
+                &|v| v.put("docs/notes/deep/new", &new_data),
+                &|v| v.delete("docs/keep"),
+            ];
+            for step in steps {
+                if step(&mut v).is_err() {
+                    break;
+                }
+                done += 1;
+            }
+
+            let mut device = v.into_device();
+            device.writes_left = None; // power is back
+            let mut v = Volume::mount(device).expect("volume must always mount");
+            let at = format!("after {writes_allowed} writes, {done} changes done");
+
+            // Exactly the finished changes are visible, each complete.
+            let old = contents(&mut v, "docs/notes/old");
+            assert_eq!(old, if done >= 1 { &b"after"[..] } else { &b"before"[..] }, "{at}");
+            assert_eq!(v.lookup("docs/notes/deep").is_ok(), done >= 2, "{at}");
+            assert_eq!(v.lookup("docs/notes/deep/new").is_ok(), done >= 3, "{at}");
+            if done >= 3 {
+                assert_eq!(contents(&mut v, "docs/notes/deep/new"), new_data, "{at}");
+            }
+            assert_eq!(v.lookup("docs/keep").is_ok(), done < 4, "{at}");
+            if done < 4 {
+                assert_eq!(contents(&mut v, "docs/keep"), b"untouched", "{at}");
+            }
+
+            if done == 4 {
+                break;
+            }
+            cuts += 1;
+        }
+
+        assert!(cuts > 12, "only {cuts} cut points were tried");
     }
 }

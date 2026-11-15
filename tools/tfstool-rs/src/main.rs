@@ -6,12 +6,17 @@
 //!
 //!   tfstool mkfs  <image> [blocks]
 //!   tfstool dump  <image>
-//!   tfstool ls    <image>
+//!   tfstool ls    <image> [dir]
+//!   tfstool mkdir <image> <dir>               in a directory that exists
 //!   tfstool put   <image> <name> <file>       create or replace, one commit
 //!   tfstool get   <image> <name>              contents to stdout
 //!   tfstool rm    <image> <name>
 //!   tfstool touch <image> <name>              an empty file
 //!   tfstool write <image> <name> <offset> <file>
+//!
+//! A name is a path from the root: `docs/notes`. The C tool knows no
+//! directories; a volume that has had one made on it is marked (format
+//! version 2), and the C tool then refuses it.
 
 use std::env;
 use std::fs::{self, File, OpenOptions};
@@ -20,13 +25,14 @@ use std::process::ExitCode;
 
 use tfstool::device::FileDevice;
 use tfstool::dump::dump;
-use tfstool::format::BLOCK_SIZE;
+use tfstool::format::{BLOCK_SIZE, TYPE_DIR};
 use tfstool::volume::{self, Volume};
 
 const USAGE: &str = "\
 usage: tfstool mkfs  <image> [blocks]
        tfstool dump  <image>
-       tfstool ls    <image>
+       tfstool ls    <image> [dir]
+       tfstool mkdir <image> <dir>
        tfstool put   <image> <name> <file>
        tfstool get   <image> <name>
        tfstool rm    <image> <name>
@@ -73,13 +79,14 @@ fn run(args: &[&str]) -> Result<ExitCode, String> {
             })
         }
 
-        ["ls", image] => {
-            let mut v = open(image)?;
-            let files = v.list().map_err(|e| format!("ls: {e}"))?;
-            for file in &files {
-                println!("  {:<24} {:>8}", file.name, file.size);
-            }
-            println!("  {} files, {} blocks free", files.len(), v.free_blocks());
+        ["ls", image] => ls(image, ""),
+        ["ls", image, directory] => ls(image, directory),
+
+        ["mkdir", image, name] => {
+            open(image)?
+                .make_directory(name)
+                .map_err(|e| format!("mkdir: {name}: {e}"))?;
+            println!("mkdir: ok");
             Ok(ExitCode::SUCCESS)
         }
 
@@ -132,6 +139,29 @@ fn run(args: &[&str]) -> Result<ExitCode, String> {
 
         _ => Err(USAGE.to_string()),
     }
+}
+
+/// What is in one directory. Without directories in it, the output is
+/// what it always was - and what the C tool prints.
+fn ls(image: &str, directory: &str) -> Result<ExitCode, String> {
+    let mut v = open(image)?;
+    let entries = v.list_in(directory).map_err(|e| format!("ls: {directory}: {e}"))?;
+    let mut directories = 0;
+    for entry in &entries {
+        if entry.kind == TYPE_DIR {
+            println!("  {:<24} {:>8}", format!("{}/", entry.name), "dir");
+            directories += 1;
+        } else {
+            println!("  {:<24} {:>8}", entry.name, entry.size);
+        }
+    }
+    let files = entries.len() - directories;
+    if directories == 0 {
+        println!("  {files} files, {} blocks free", v.free_blocks());
+    } else {
+        println!("  {directories} directories, {files} files, {} blocks free", v.free_blocks());
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn mkfs(image: &str, blocks: u32) -> Result<ExitCode, String> {

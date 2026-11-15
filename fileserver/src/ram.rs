@@ -1,25 +1,52 @@
-//! Files in memory: a map from names to contents.
+//! Files in memory: a map from paths to what is there.
 //!
 //! Gone when the service ends. It is what `fs` uses when there is no
 //! disk, and what the kernel's self-test runs the protocol against.
+//!
+//! There is no tree here. Every file and directory is one entry in one
+//! sorted map, under its whole path - "docs", "docs/notes",
+//! "docs/notes/today" - and what is in a directory is the entries that
+//! start with its path and a '/', and have no further '/'. Sorted order
+//! puts those next to each other. The rules a tree would enforce by its
+//! shape (a file's directory must exist; a directory with something in
+//! it stays) are checked instead.
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::protocol::{self, Status};
-use crate::{valid_name, Store};
+use crate::protocol::{self, Kind, Status, DEPTH_MAX};
+use crate::{names, valid_directory, valid_path, Store};
 
 /// Limits, so that one client cannot take all of the service's memory.
 pub const FILE_MAX: usize = 1 << 20;
+/// Files and directories together.
 pub const FILES_MAX: usize = 256;
 pub const BYTES_MAX: usize = 8 << 20;
 
+enum Node {
+    File(Vec<u8>),
+    Directory,
+}
+
 #[derive(Default)]
 pub struct RamStore {
-    files: BTreeMap<String, Vec<u8>>,
+    nodes: BTreeMap<String, Node>,
     /// The sum of every file's size.
     bytes: usize,
+}
+
+/// The one spelling of a path that the map uses: its names, joined by
+/// single slashes.
+fn key(path: &str) -> String {
+    let mut key = String::new();
+    for name in names(path) {
+        if !key.is_empty() {
+            key.push('/');
+        }
+        key.push_str(name);
+    }
+    key
 }
 
 impl RamStore {
@@ -27,40 +54,73 @@ impl RamStore {
         RamStore::default()
     }
 
+    /// How many files and directories there are.
     pub fn count(&self) -> usize {
-        self.files.len()
+        self.nodes.len()
     }
 
     pub fn bytes(&self) -> usize {
         self.bytes
     }
 
-    /// Sets the size of `name` - creating it if needed, growing it with
-    /// zeros - after checking every limit, so a refused request changes
-    /// nothing. A failed allocation is reported, not a crash of the
-    /// service.
-    fn resize(&mut self, name: &str, size: usize) -> Result<(), Status> {
-        if !valid_name(name) {
+    /// Where `path` would be in the map - after checking that it is a
+    /// good path, and that every name before the last is a directory.
+    fn place(&self, path: &str) -> Result<String, Status> {
+        if !valid_path(path) {
             return Err(Status::BadName);
         }
+        let key = key(path);
+        for (at, _) in key.match_indices('/') {
+            match self.nodes.get(&key[..at]) {
+                None => return Err(Status::NotFound),
+                Some(Node::File(_)) => return Err(Status::NotDirectory),
+                Some(Node::Directory) => {}
+            }
+        }
+        Ok(key)
+    }
+
+    fn file(&self, path: &str) -> Result<&Vec<u8>, Status> {
+        match self.nodes.get(&self.place(path)?) {
+            None => Err(Status::NotFound),
+            Some(Node::Directory) => Err(Status::IsDirectory),
+            Some(Node::File(file)) => Ok(file),
+        }
+    }
+
+    /// Whether anything is in the directory at `key`.
+    fn has_children(&self, key: &str) -> bool {
+        let mut prefix = String::from(key);
+        prefix.push('/');
+        self.nodes.range::<String, _>(&prefix..).next().is_some_and(|(k, _)| k.starts_with(&prefix))
+    }
+
+    /// Sets the size of the file at `path` - creating it if needed,
+    /// growing it with zeros - after checking every limit, so a refused
+    /// request changes nothing. A failed allocation is reported, not a
+    /// crash of the service.
+    fn resize(&mut self, path: &str, size: usize) -> Result<(), Status> {
+        let key = self.place(path)?;
         if size > FILE_MAX {
             return Err(Status::TooBig);
         }
-        let old = self.files.get(name).map(Vec::len);
-        if old.is_none() && self.files.len() == FILES_MAX {
+        let old = match self.nodes.get(&key) {
+            Some(Node::File(file)) => Some(file.len()),
+            Some(Node::Directory) => return Err(Status::IsDirectory),
+            None => None,
+        };
+        if old.is_none() && self.nodes.len() == FILES_MAX {
             return Err(Status::Full);
         }
         let total = self.bytes - old.unwrap_or(0) + size;
         if total > BYTES_MAX {
             return Err(Status::Full);
         }
-        let file = match self.files.get_mut(name) {
-            Some(file) => file,
-            None => self.files.entry(String::from(name)).or_default(),
-        };
+        let node = self.nodes.entry(key.clone()).or_insert_with(|| Node::File(Vec::new()));
+        let Node::File(file) = node else { return Err(Status::IsDirectory) };
         if size > file.len() && file.try_reserve(size - file.len()).is_err() {
             if old.is_none() {
-                self.files.remove(name);
+                self.nodes.remove(&key);
             }
             return Err(Status::Full);
         }
@@ -71,21 +131,72 @@ impl RamStore {
 }
 
 impl Store for RamStore {
-    fn list(&mut self, from: usize, each: &mut dyn FnMut(&str, u64) -> bool) -> Result<(), Status> {
-        for (name, file) in self.files.iter().skip(from) {
-            if !each(name, file.len() as u64) {
+    fn list(
+        &mut self,
+        directory: &str,
+        from: usize,
+        each: &mut dyn FnMut(&str, Kind, u64) -> bool,
+    ) -> Result<(), Status> {
+        if !valid_directory(directory) {
+            return Err(Status::BadName);
+        }
+        let mut prefix = key(directory);
+        if !prefix.is_empty() {
+            match self.nodes.get(&self.place(directory)?) {
+                None => return Err(Status::NotFound),
+                Some(Node::File(_)) => return Err(Status::NotDirectory),
+                Some(Node::Directory) => {}
+            }
+            prefix.push('/');
+        }
+        // Everything under the directory sorts together, starting at the
+        // prefix; what is directly in it has no further slash. Those are
+        // in name order, because they differ only after the prefix.
+        let inside = self
+            .nodes
+            .range::<String, _>(&prefix..)
+            .take_while(|(path, _)| path.starts_with(&prefix))
+            .filter(|(path, _)| !path[prefix.len()..].contains('/'));
+        for (path, node) in inside.skip(from) {
+            let (kind, size) = match node {
+                Node::File(file) => (Kind::File, file.len() as u64),
+                Node::Directory => (Kind::Directory, 0),
+            };
+            if !each(&path[prefix.len()..], kind, size) {
                 break;
             }
         }
         Ok(())
     }
 
-    fn size(&mut self, name: &str) -> Result<u64, Status> {
-        self.files.get(name).map(|f| f.len() as u64).ok_or(Status::NotFound)
+    fn stat(&mut self, path: &str) -> Result<(Kind, u64), Status> {
+        if valid_directory(path) && names(path).next().is_none() {
+            return Ok((Kind::Directory, 0)); // the root
+        }
+        match self.nodes.get(&self.place(path)?) {
+            None => Err(Status::NotFound),
+            Some(Node::Directory) => Ok((Kind::Directory, 0)),
+            Some(Node::File(file)) => Ok((Kind::File, file.len() as u64)),
+        }
+    }
+
+    fn make_directory(&mut self, path: &str) -> Result<(), Status> {
+        let key = self.place(path)?;
+        if names(path).count() > DEPTH_MAX {
+            return Err(Status::BadName); // deeper than a path can reach into
+        }
+        if self.nodes.contains_key(&key) {
+            return Err(Status::Exists);
+        }
+        if self.nodes.len() == FILES_MAX {
+            return Err(Status::Full);
+        }
+        self.nodes.insert(key, Node::Directory);
+        Ok(())
     }
 
     fn read(&mut self, name: &str, offset: u64, out: &mut [u8]) -> Result<usize, Status> {
-        let file = self.files.get(name).ok_or(Status::NotFound)?;
+        let file = self.file(name)?;
         let start = usize::try_from(offset).unwrap_or(usize::MAX).min(file.len());
         let n = out.len().min(file.len() - start);
         out[..n].copy_from_slice(&file[start..start + n]);
@@ -93,13 +204,21 @@ impl Store for RamStore {
     }
 
     fn write(&mut self, name: &str, offset: u64, data: &[u8]) -> Result<u64, Status> {
-        let length = self.files.get(name).map_or(0, Vec::len);
+        let length = match self.file(name) {
+            Ok(file) => file.len(),
+            Err(Status::NotFound) => 0,
+            Err(status) => return Err(status),
+        };
         let start = if offset == protocol::APPEND { length } else { usize::try_from(offset).map_err(|_| Status::TooBig)? };
         let end = start.checked_add(data.len()).ok_or(Status::TooBig)?;
         self.resize(name, end.max(length))?;
-        let file = self.files.get_mut(name).expect("made by resize");
-        file[start..end].copy_from_slice(data);
-        Ok(file.len() as u64)
+        match self.nodes.get_mut(&key(name)) {
+            Some(Node::File(file)) => {
+                file[start..end].copy_from_slice(data);
+                Ok(file.len() as u64)
+            }
+            _ => Err(Status::BadRequest), // resize made it: not reached
+        }
     }
 
     fn truncate(&mut self, name: &str, length: u64) -> Result<(), Status> {
@@ -107,8 +226,15 @@ impl Store for RamStore {
     }
 
     fn remove(&mut self, name: &str) -> Result<(), Status> {
-        let file = self.files.remove(name).ok_or(Status::NotFound)?;
-        self.bytes -= file.len();
+        let key = self.place(name)?;
+        match self.nodes.get(&key) {
+            None => return Err(Status::NotFound),
+            Some(Node::Directory) if self.has_children(&key) => return Err(Status::NotEmpty),
+            Some(_) => {}
+        }
+        if let Some(Node::File(file)) = self.nodes.remove(&key) {
+            self.bytes -= file.len();
+        }
         Ok(())
     }
 }
@@ -202,7 +328,7 @@ mod tests {
         assert_eq!(call(&mut files, Request::new(READ, "notes", 0)), (Status::Ok, b"Jello world".to_vec()));
         assert_eq!(call(&mut files, Request::new(READ, "notes", 6)).1, b"world");
         assert_eq!(call(&mut files, Request::new(READ, "notes", 99)), (Status::Ok, vec![]), "past the end: nothing");
-        assert_eq!(call(&mut files, Request::new(STAT, "notes", 0)).1, 11u64.to_le_bytes());
+        assert_eq!(stat(&call(&mut files, Request::new(STAT, "notes", 0)).1), Some((Kind::File, 11)));
         assert_eq!(call(&mut files, Request::new(READ, "other", 0)).0, Status::NotFound);
         assert_eq!(files.bytes(), 11);
     }
@@ -231,7 +357,7 @@ mod tests {
         loop {
             let (status, payload) = call(&mut files, Request::new(LIST, "", seen.len() as u64));
             assert_eq!(status, Status::Ok);
-            let page: Vec<(String, u64)> = entries(&payload).map(|(n, s)| (n.to_string(), s)).collect();
+            let page: Vec<(String, u64)> = entries(&payload).map(|(n, _, s)| (n.to_string(), s)).collect();
             if page.is_empty() {
                 break;
             }
@@ -255,7 +381,9 @@ mod tests {
     fn bad_names_and_requests_are_refused() {
         let mut files = RamStore::new();
         let long = "n".repeat(NAME_MAX + 1);
-        for name in ["", ".", "..", "a/b", "tab\there", &long[..]] {
+        let wide = "w".repeat(COMPONENT_MAX + 1);
+        let deep = "d/".repeat(DEPTH_MAX + 1) + "leaf";
+        for name in ["", "/", ".", "..", "a/..", "./a", "tab\there", &long[..], &wide[..], &deep[..]] {
             let mut message = [0u8; MESSAGE_MAX];
             // Encode refuses an over-long name; build that one by hand.
             let n = Request { op: WRITE, name, number: 0, data: b"x" }.encode(&mut message).unwrap_or_else(|| {
@@ -276,6 +404,72 @@ mod tests {
         let invalid_utf8 = [READ, 1, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0];
         serve(&mut files, Access::ReadWrite, &invalid_utf8, &mut reply);
         assert_eq!(Status::from_u8(reply[0]), Status::BadRequest);
+    }
+
+    /// What is in a directory, as "name" or "name/".
+    fn listing(files: &mut RamStore, directory: &str) -> (Status, Vec<String>) {
+        let (status, payload) = call(files, Request::new(LIST, directory, 0));
+        let names = entries(&payload)
+            .map(|(name, kind, _)| if kind == Kind::Directory { format!("{name}/") } else { name.to_string() })
+            .collect();
+        (status, names)
+    }
+
+    #[test]
+    fn directories() {
+        let mut files = RamStore::new();
+        assert_eq!(call(&mut files, Request::new(MKDIR, "docs", 0)).0, Status::Ok);
+        assert_eq!(call(&mut files, Request::new(MKDIR, "docs/notes", 0)).0, Status::Ok);
+        assert_eq!(write(&mut files, "docs/notes/today", 0, b"deep").0, Status::Ok);
+        assert_eq!(write(&mut files, "docs/plan", 0, b"p").0, Status::Ok);
+        assert_eq!(write(&mut files, "docs.txt", 0, b"beside").0, Status::Ok);
+        assert_eq!(write(&mut files, "top", 0, b"t").0, Status::Ok);
+
+        // A listing is of one directory, not of everything under it.
+        assert_eq!(listing(&mut files, ""), (Status::Ok, vec!["docs/".into(), "docs.txt".into(), "top".into()]));
+        assert_eq!(listing(&mut files, "docs"), (Status::Ok, vec!["notes/".into(), "plan".into()]));
+        assert_eq!(listing(&mut files, "/docs//notes/").1, ["today"], "slashes around mean nothing");
+        assert_eq!(listing(&mut files, "docs/plan").0, Status::NotDirectory);
+        assert_eq!(listing(&mut files, "nowhere").0, Status::NotFound);
+
+        assert_eq!(call(&mut files, Request::new(READ, "/docs/notes/today", 0)).1, b"deep");
+        assert_eq!(stat(&call(&mut files, Request::new(STAT, "docs", 0)).1), Some((Kind::Directory, 0)));
+        assert_eq!(stat(&call(&mut files, Request::new(STAT, "", 0)).1), Some((Kind::Directory, 0)), "the root");
+        assert_eq!(stat(&call(&mut files, Request::new(STAT, "docs/plan", 0)).1), Some((Kind::File, 1)));
+
+        // A path leads through directories only, and they must be there.
+        assert_eq!(write(&mut files, "top/x", 0, b"x").0, Status::NotDirectory);
+        assert_eq!(write(&mut files, "nowhere/x", 0, b"x").0, Status::NotFound);
+        assert_eq!(call(&mut files, Request::new(MKDIR, "nowhere/x", 0)).0, Status::NotFound);
+        // A directory is not a file, and one name is one thing.
+        assert_eq!(write(&mut files, "docs", 0, b"x").0, Status::IsDirectory);
+        assert_eq!(call(&mut files, Request::new(READ, "docs", 0)).0, Status::IsDirectory);
+        assert_eq!(call(&mut files, Request::new(TRUNCATE, "docs", 0)).0, Status::IsDirectory);
+        assert_eq!(call(&mut files, Request::new(MKDIR, "docs", 0)).0, Status::Exists);
+        assert_eq!(call(&mut files, Request::new(MKDIR, "top", 0)).0, Status::Exists);
+        // Making a directory is a change.
+        assert_eq!(look(&mut files, Request::new(MKDIR, "other", 0)).0, Status::ReadOnly);
+
+        // Only an empty directory goes.
+        assert_eq!(call(&mut files, Request::new(REMOVE, "docs", 0)).0, Status::NotEmpty);
+        assert_eq!(call(&mut files, Request::new(REMOVE, "docs/notes", 0)).0, Status::NotEmpty);
+        for path in ["docs/notes/today", "docs/notes", "docs/plan", "docs"] {
+            assert_eq!(call(&mut files, Request::new(REMOVE, path, 0)).0, Status::Ok, "{path}");
+        }
+        assert_eq!(listing(&mut files, "").1, ["docs.txt", "top"], "the file beside it was not in it");
+        assert_eq!((files.count(), files.bytes()), (2, 7));
+    }
+
+    #[test]
+    fn directories_nest_to_the_limit() {
+        let mut files = RamStore::new();
+        let mut path = String::new();
+        for level in 0..DEPTH_MAX {
+            path.push_str(&format!("/d{level}"));
+            assert_eq!(files.make_directory(&path), Ok(()));
+        }
+        assert_eq!(files.write(&format!("{path}/leaf"), 0, b"x"), Ok(1));
+        assert_eq!(files.make_directory(&format!("{path}/more")), Err(Status::BadName));
     }
 
     #[test]

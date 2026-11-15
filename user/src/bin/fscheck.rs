@@ -16,7 +16,7 @@
 use core::fmt::Write;
 
 use fileserver::protocol::{Status, MESSAGE_MAX, NAME_MAX, READ_MAX};
-use taaj::files::{FileError, Files};
+use taaj::files::{FileError, Files, Kind};
 use taaj::{println, Buffer, Error};
 
 taaj::program!(main);
@@ -88,7 +88,7 @@ fn main() -> i64 {
     }
     let (mut count, mut previous_ok, mut sizes) = (0, true, 0);
     let mut last = Buffer::<NAME_MAX>::new();
-    let listed = files.list(|name, size| {
+    let listed = files.list("", |name, _, size| {
         // Name order, and every name once.
         previous_ok &= name.as_bytes() > last.as_bytes();
         last = Buffer::new();
@@ -104,7 +104,9 @@ fn main() -> i64 {
     check!(files.size("nothing") == refused(Status::NotFound), "missing file");
     check!(files.read("nothing", |_| {}) == refused(Status::NotFound), "read a missing file");
     check!(files.remove("nothing") == refused(Status::NotFound), "remove a missing file");
-    check!(files.write("a/b", b"x") == refused(Status::BadName), "a slash");
+    check!(files.write("a/b", b"x") == refused(Status::NotFound), "a path through nothing");
+    check!(files.write("big/b", b"x") == refused(Status::NotDirectory), "a path through a file");
+    check!(files.write("a/../b", b"x") == refused(Status::BadName), "a path that climbs");
     check!(files.write("", b"x") == refused(Status::BadName), "an empty name");
     let long = [b'n'; NAME_MAX + 1];
     let long = core::str::from_utf8(&long).unwrap_or("");
@@ -145,7 +147,7 @@ fn main() -> i64 {
         Ok((unread, silent)) => {
             let deaf = Files::with_patience(silent, 10);
             let start = taaj::ticks();
-            let answer = deaf.list(|_, _| {});
+            let answer = deaf.list("", |_, _, _| {});
             let waited = taaj::ticks() - start;
             let _ = taaj::close(silent);
             let _ = taaj::close(unread);
@@ -168,7 +170,7 @@ fn main() -> i64 {
     check!(matches(&look, "guarded", 3000), "read through the read-only channel");
     check!(look.size("guarded") == Ok(3000), "its size, too");
     let mut seen = false;
-    check!(look.list(|name, _| seen |= name == "guarded").is_ok() && seen, "and the listing");
+    check!(look.list("", |name, _, _| seen |= name == "guarded").is_ok() && seen, "and the listing");
     check!(look.write("guarded", b"x") == refused(Status::ReadOnly), "no write");
     check!(look.append("guarded", b"x") == refused(Status::ReadOnly), "no append");
     check!(look.remove("guarded") == refused(Status::ReadOnly), "no remove");
@@ -185,12 +187,48 @@ fn main() -> i64 {
     check!(files.size("guarded") == Ok(3000), "and back afterwards");
     check!(files.stall(1_000_000) == refused(Status::BadRequest), "a stall has a limit");
 
-    // 10. Clean up: an empty file system.
+    // 10. Directories: files in them, by path; what a directory is not;
+    //     and that only an empty one can be removed.
+    check!(files.make_directory("d") == Ok(()), "make a directory");
+    check!(files.make_directory("d/inner") == Ok(()), "and one inside it");
+    check!(files.make_directory("d") == refused(Status::Exists), "not twice");
+    check!(files.make_directory("big") == refused(Status::Exists), "not where a file is");
+    check!(files.make_directory("nowhere/x") == refused(Status::NotFound), "not in a directory that is not there");
+    check!(look.make_directory("sneaked") == refused(Status::ReadOnly), "not through the read-only channel");
+    check!(files.write("d/inner/deep", &data[..3000]) == Ok(3000), "a file two directories down");
+    check!(matches(&files, "/d//inner/deep", 3000), "read back, by a path with spare slashes");
+    check!(files.append("d/log", &data[..10]) == Ok(10), "append in a directory");
+    check!(files.stat("d") == Ok((Kind::Directory, 0)), "a directory, by stat");
+    check!(files.stat("") == Ok((Kind::Directory, 0)), "the root is a directory");
+    check!(files.stat("d/inner/deep") == Ok((Kind::File, 3000)), "a file, by stat");
+    check!(files.size("d") == refused(Status::IsDirectory), "a directory has no size");
+    check!(files.write("d", b"x") == refused(Status::IsDirectory), "a directory is not written");
+    check!(files.read("d", |_| {}) == refused(Status::IsDirectory), "nor read");
+    let (mut inner, mut log, mut others) = (false, false, 0);
+    let listed = files.list("d", |name, kind, size| match (name, kind, size) {
+        ("inner", Kind::Directory, 0) => inner = true,
+        ("log", Kind::File, 10) => log = true,
+        _ => others += 1,
+    });
+    check!(listed == Ok(2) && inner && log && others == 0, "a listing is of one directory");
+    let mut deep = false;
+    check!(files.list("d/inner", |name, _, size| deep = name == "deep" && size == 3000) == Ok(1) && deep, "and of the one inside");
+    check!(files.list("big", |_, _, _| {}) == refused(Status::NotDirectory), "a file cannot be listed");
+    check!(files.list("nowhere", |_, _, _| {}) == refused(Status::NotFound), "nor what is not there");
+    check!(files.remove("d") == refused(Status::NotEmpty), "a directory with something in it stays");
+    check!(files.remove("d/inner") == refused(Status::NotEmpty), "at any depth");
+    check!(files.remove("d/inner/deep") == Ok(()), "empty it");
+    check!(files.remove("d/inner") == Ok(()), "now it goes");
+    check!(files.remove("d/log") == Ok(()), "empty the outer one");
+    check!(files.remove("d") == Ok(()), "and it goes too");
+    check!(files.stat("d") == refused(Status::NotFound), "gone");
+
+    // 11. Clean up: an empty file system.
     let mut names = [[0u8; NAME_MAX]; 4];
     let mut lengths = [0usize; 4];
     loop {
         let mut n = 0;
-        let _ = files.list(|name, _| {
+        let _ = files.list("", |name, _, _| {
             if n < names.len() {
                 names[n][..name.len()].copy_from_slice(name.as_bytes());
                 lengths[n] = name.len();
@@ -205,8 +243,8 @@ fn main() -> i64 {
             check!(files.remove(name) == Ok(()), "remove");
         }
     }
-    check!(files.list(|_, _| {}) == Ok(0), "nothing left");
+    check!(files.list("", |_, _, _| {}) == Ok(0), "nothing left");
 
-    println!("[fscheck] long files, boundaries, appends, 104-file listing, refusals, careless requests, a silent service, read-only, a stall: all passed");
+    println!("[fscheck] long files, boundaries, appends, 104-file listing, refusals, careless requests, a silent service, read-only, a stall, directories: all passed");
     0
 }

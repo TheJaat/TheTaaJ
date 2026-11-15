@@ -13,7 +13,12 @@
 //!
 //! Files bigger than one message are read and written a message's worth
 //! at a time.
+//!
+//! A name here is a path from the root: "docs/notes/today". The service
+//! knows no other kind - it remembers nothing about its clients, so
+//! "the directory I am in" is not something it could hold.
 
+pub use fileserver::protocol::Kind;
 use fileserver::protocol::{self, Request, Status, MESSAGE_MAX};
 
 use crate::{Error, Handle};
@@ -83,15 +88,16 @@ impl Files {
         }
     }
 
-    /// Every file's name and size, in name order.
-    pub fn list(&self, mut each: impl FnMut(&str, u64)) -> Result<usize, FileError> {
+    /// The name, kind and size of everything in `directory` ("" is the
+    /// root), in name order. Returns how many there were.
+    pub fn list(&self, directory: &str, mut each: impl FnMut(&str, Kind, u64)) -> Result<usize, FileError> {
         let mut reply = [0u8; MESSAGE_MAX];
         let mut count = 0;
         loop {
-            let n = self.call(Request::new(protocol::LIST, "", count as u64), &mut reply)?;
+            let n = self.call(Request::new(protocol::LIST, directory, count as u64), &mut reply)?;
             let before = count;
-            for (name, size) in protocol::entries(&reply[1..=n]) {
-                each(name, size);
+            for (name, kind, size) in protocol::entries(&reply[1..=n]) {
+                each(name, kind, size);
                 count += 1;
             }
             if count == before {
@@ -149,10 +155,25 @@ impl Files {
         size.ok_or(FileError::Refused(Status::BadRequest))
     }
 
-    pub fn size(&self, name: &str) -> Result<u64, FileError> {
+    /// What `path` names - a file or a directory - and its size.
+    pub fn stat(&self, path: &str) -> Result<(Kind, u64), FileError> {
         let mut reply = [0u8; MESSAGE_MAX];
-        let n = self.call(Request::new(protocol::STAT, name, 0), &mut reply)?;
-        protocol::number(&reply[1..=n]).ok_or(FileError::Refused(Status::BadRequest))
+        let n = self.call(Request::new(protocol::STAT, path, 0), &mut reply)?;
+        protocol::stat(&reply[1..=n]).ok_or(FileError::Refused(Status::BadRequest))
+    }
+
+    /// The size of the file `name`. A directory has none.
+    pub fn size(&self, name: &str) -> Result<u64, FileError> {
+        match self.stat(name)? {
+            (Kind::File, size) => Ok(size),
+            (Kind::Directory, _) => Err(FileError::Refused(Status::IsDirectory)),
+        }
+    }
+
+    /// Makes an empty directory, in a directory that is already there.
+    pub fn make_directory(&self, path: &str) -> Result<(), FileError> {
+        let mut reply = [0u8; MESSAGE_MAX];
+        self.call(Request::new(protocol::MKDIR, path, 0), &mut reply).map(|_| ())
     }
 
     /// Whether this channel is for reading only.

@@ -89,4 +89,28 @@ for img in c r c2; do
     same "$WORK/$img.cdump" "$WORK/$img.rdump" "both dumps of $img.img agree"
 done
 
+# 6. Directories are the Rust implementation's alone. A volume keeps
+#    working with the C tool until the first directory is made on it;
+#    from then on the C tool must refuse it - at every step, including
+#    the ones in between - because it would take a directory for a file.
+RS mkfs  "$WORK/d.img" 1024
+RS put   "$WORK/d.img" small.txt "$WORK/small"
+C  put   "$WORK/d.img" multi.bin "$WORK/multi"
+RS mkdir "$WORK/d.img" docs
+RS put   "$WORK/d.img" docs/small.txt "$WORK/small"
+cp "$WORK/d.img" "$WORK/d.before"
+refused() { echo "FAIL: the C tool did '$1' on a volume with directories"; exit 1; }
+! "$C_TOOL" ls  "$WORK/d.img"                         >/dev/null 2>&1 || refused ls
+! "$C_TOOL" get "$WORK/d.img" small.txt               >/dev/null 2>&1 || refused get
+! "$C_TOOL" put "$WORK/d.img" again.txt "$WORK/small" >/dev/null 2>&1 || refused put
+! "$C_TOOL" rm  "$WORK/d.img" small.txt               >/dev/null 2>&1 || refused rm
+same "$WORK/d.before" "$WORK/d.img" "the C tool's attempts changed nothing on it"
+echo "ok    the C tool refuses a volume that has had a directory made on it"
+"$RS_TOOL" get "$WORK/d.img" docs/small.txt > "$WORK/out9"
+"$RS_TOOL" get "$WORK/d.img" multi.bin      > "$WORK/out10"
+same "$WORK/small" "$WORK/out9"  "a file in a directory reads back"
+same "$WORK/multi" "$WORK/out10" "and the file the C tool wrote before is intact"
+"$RS_TOOL" dump "$WORK/d.img" > /dev/null || { echo "FAIL: the volume with directories does not dump clean"; exit 1; }
+echo "ok    the volume with directories dumps clean"
+
 echo "crosscheck passed"

@@ -15,7 +15,8 @@
 //!     instead of create, then write
 //!   - truncate: `put` of the shortened (or zero-extended) contents
 //!
-//! TaajFS names are shorter than the protocol allows: 27 bytes.
+//! Each name in a path is shorter on TaajFS than the protocol allows:
+//! 27 bytes. Directories are TaajFS's own; a path is handed to it whole.
 
 use alloc::vec;
 use alloc::vec::Vec;
@@ -23,8 +24,8 @@ use alloc::vec::Vec;
 use taajfs::format::{MAX_FILE_SIZE, NAME_MAX as TAAJFS_NAME_MAX};
 use taajfs::{BlockDevice, Error, Volume};
 
-use crate::protocol::{self, Status};
-use crate::{valid_name, Store};
+use crate::protocol::{self, Kind, Status};
+use crate::{names, valid_directory, valid_path, Store};
 
 pub struct DiskStore<D: BlockDevice> {
     volume: Volume<D>,
@@ -37,18 +38,31 @@ fn status(error: Error) -> Status {
         Error::Name => Status::BadName,
         Error::Full => Status::Full,
         Error::TooBig => Status::TooBig,
-        Error::Exists | Error::BadSize => Status::BadRequest,
+        Error::Exists => Status::Exists,
+        Error::NotDirectory => Status::NotDirectory,
+        Error::IsDirectory => Status::IsDirectory,
+        Error::NotEmpty => Status::NotEmpty,
+        Error::BadSize => Status::BadRequest,
         Error::Device(_) | Error::Magic | Error::NoSuper | Error::Corrupt(_) => Status::DiskError,
     }
 }
 
-/// A protocol name that TaajFS can also store.
-fn check(name: &str) -> Result<&str, Status> {
-    if valid_name(name) && name.len() < TAAJFS_NAME_MAX {
-        Ok(name)
+/// A protocol path, to a file, that TaajFS can also store.
+fn check(path: &str) -> Result<&str, Status> {
+    if valid_path(path) { check_directory(path) } else { Err(Status::BadName) }
+}
+
+/// The same, for a path that may also be the root.
+fn check_directory(path: &str) -> Result<&str, Status> {
+    if valid_directory(path) && names(path).all(|name| name.len() < TAAJFS_NAME_MAX) {
+        Ok(path)
     } else {
         Err(Status::BadName)
     }
+}
+
+fn kind(file: &taajfs::FileInfo) -> Kind {
+    if file.kind == taajfs::format::TYPE_DIR { Kind::Directory } else { Kind::File }
 }
 
 impl<D: BlockDevice> DiskStore<D> {
@@ -71,9 +85,10 @@ impl<D: BlockDevice> DiskStore<D> {
         self.volume.into_device()
     }
 
-    /// The size of `name`, or None if there is no such file.
+    /// The size of the file `name`, or None if there is nothing there.
     fn existing(&mut self, name: &str) -> Result<Option<u64>, Status> {
         match self.volume.lookup(name) {
+            Ok(file) if kind(&file) == Kind::Directory => Err(Status::IsDirectory),
             Ok(file) => Ok(Some(u64::from(file.size))),
             Err(Error::NotFound) => Ok(None),
             Err(error) => Err(status(error)),
@@ -82,25 +97,35 @@ impl<D: BlockDevice> DiskStore<D> {
 }
 
 impl<D: BlockDevice> Store for DiskStore<D> {
-    fn list(&mut self, from: usize, each: &mut dyn FnMut(&str, u64) -> bool) -> Result<(), Status> {
-        // On disk, the directory is in the order files were made; the
+    fn list(
+        &mut self,
+        directory: &str,
+        from: usize,
+        each: &mut dyn FnMut(&str, Kind, u64) -> bool,
+    ) -> Result<(), Status> {
+        // On disk, a directory is in the order things were made; the
         // protocol promises name order, so that paging is stable.
-        let mut files = self.volume.list().map_err(status)?;
+        let mut files = self.volume.list_in(check_directory(directory)?).map_err(status)?;
         files.sort_by(|a, b| a.name.cmp(&b.name));
         for file in files.iter().skip(from) {
-            if !each(&file.name, u64::from(file.size)) {
+            if !each(&file.name, kind(file), u64::from(file.size)) {
                 break;
             }
         }
         Ok(())
     }
 
-    fn size(&mut self, name: &str) -> Result<u64, Status> {
-        self.existing(name)?.ok_or(Status::NotFound)
+    fn stat(&mut self, path: &str) -> Result<(Kind, u64), Status> {
+        let file = self.volume.lookup(check_directory(path)?).map_err(status)?;
+        Ok((kind(&file), u64::from(file.size)))
+    }
+
+    fn make_directory(&mut self, path: &str) -> Result<(), Status> {
+        self.volume.make_directory(check(path)?).map_err(status)
     }
 
     fn read(&mut self, name: &str, offset: u64, out: &mut [u8]) -> Result<usize, Status> {
-        let file = self.volume.lookup(name).map_err(status)?;
+        let file = self.volume.lookup(check(name)?).map_err(status)?;
         let Ok(offset) = u32::try_from(offset) else { return Ok(0) }; // far past the end
         self.volume.read_at(&file, offset, out).map_err(status)
     }
@@ -143,7 +168,7 @@ impl<D: BlockDevice> Store for DiskStore<D> {
     }
 
     fn remove(&mut self, name: &str) -> Result<(), Status> {
-        self.volume.delete(name).map_err(status)
+        self.volume.delete(check(name)?).map_err(status)
     }
 }
 
@@ -202,7 +227,7 @@ mod tests {
             assert_eq!(call(&mut s, Request { op: protocol::WRITE, name, number: 0, data: name.as_bytes() }).0, Status::Ok);
         }
         let (status, payload) = call(&mut s, Request::new(LIST, "", 0));
-        let names: Vec<&str> = protocol::entries(&payload).map(|(n, _)| n).collect();
+        let names: Vec<&str> = protocol::entries(&payload).map(|(n, _, _)| n).collect();
         assert_eq!((status, names), (Status::Ok, vec!["apple", "mango", "zebra"]), "name order, not creation order");
         let (_, payload) = call(&mut s, Request::new(LIST, "", 2));
         assert_eq!(protocol::entries(&payload).count(), 1, "paging from an index");
@@ -232,7 +257,9 @@ mod tests {
         let free = s.free_blocks();
         assert_eq!(s.write(&"n".repeat(27), 0, b"x").map(|_| ()), Ok(()), "27 bytes fit");
         assert_eq!(s.write(&"n".repeat(28), 0, b"x"), Err(Status::BadName), "28 do not, on TaajFS");
-        assert_eq!(s.write("a/b", 0, b"x"), Err(Status::BadName));
+        assert_eq!(s.write("a/b", 0, b"x"), Err(Status::NotFound), "no directory a");
+        assert_eq!(s.write("keep/b", 0, b"x"), Err(Status::NotDirectory));
+        assert_eq!(s.write("a/..", 0, b"x"), Err(Status::BadName));
         assert_eq!(s.write("big", 0, &vec![0; MAX_FILE_SIZE + 1]), Err(Status::TooBig));
         assert_eq!(s.write("big", u64::from(u32::MAX) + 1, b"x"), Err(Status::TooBig));
         // A disk of 256 blocks cannot hold a megabyte: full, and the
@@ -243,6 +270,51 @@ mod tests {
         s.remove(&"n".repeat(27)).unwrap();
         assert_eq!(s.free_blocks(), free, "every block of the refused writes came back");
         assert_eq!(contents(&mut remount(s), "keep"), b"safe");
+    }
+
+    #[test]
+    fn directories_on_a_disk() {
+        let mut s = fresh();
+        let free = s.free_blocks();
+        assert_eq!(s.make_directory("docs"), Ok(()));
+        assert_eq!(s.make_directory("docs/notes"), Ok(()));
+        assert_eq!(s.write("docs/notes/today", 0, b"deep"), Ok(4));
+        assert_eq!(s.write("docs/notes/today", APPEND, b"er"), Ok(6));
+        assert_eq!(s.truncate("docs/plan", 3), Ok(()));
+        assert_eq!(s.write("top", 0, b"t"), Ok(1));
+
+        let mut s = remount(s);
+        let call = |s: &mut DiskStore<MemDevice>, request: Request| {
+            let mut message = [0u8; MESSAGE_MAX];
+            let mut reply = [0u8; MESSAGE_MAX];
+            let n = request.encode(&mut message).unwrap();
+            let length = serve(s, Access::ReadWrite, &message[..n], &mut reply);
+            (Status::from_u8(reply[0]), reply[1..length].to_vec())
+        };
+        let listing = |payload: &[u8]| -> Vec<(String, Kind, u64)> {
+            protocol::entries(payload).map(|(n, k, s)| (n.to_string(), k, s)).collect()
+        };
+        let (status, payload) = call(&mut s, Request::new(LIST, "", 0));
+        assert_eq!(status, Status::Ok);
+        assert_eq!(listing(&payload), [("docs".to_string(), Kind::Directory, 0), ("top".to_string(), Kind::File, 1)]);
+        let (_, payload) = call(&mut s, Request::new(LIST, "/docs/", 0));
+        assert_eq!(listing(&payload), [("notes".to_string(), Kind::Directory, 0), ("plan".to_string(), Kind::File, 3)]);
+        assert_eq!(call(&mut s, Request::new(LIST, "top", 0)).0, Status::NotDirectory);
+        assert_eq!(call(&mut s, Request::new(LIST, "nowhere", 0)).0, Status::NotFound);
+        assert_eq!(call(&mut s, Request::new(READ, "docs/notes/today", 0)), (Status::Ok, b"deeper".to_vec()));
+        assert_eq!(protocol::stat(&call(&mut s, Request::new(protocol::STAT, "docs", 0)).1), Some((Kind::Directory, 0)));
+        assert_eq!(protocol::stat(&call(&mut s, Request::new(protocol::STAT, "", 0)).1), Some((Kind::Directory, 0)));
+        assert_eq!(call(&mut s, Request::new(protocol::MKDIR, "docs", 0)).0, Status::Exists);
+        assert_eq!(call(&mut s, Request::new(READ, "docs", 0)).0, Status::IsDirectory);
+        assert_eq!(call(&mut s, Request::new(protocol::TRUNCATE, "docs", 0)).0, Status::IsDirectory);
+        assert_eq!(call(&mut s, Request { op: protocol::WRITE, name: "docs", number: 0, data: b"x" }).0, Status::IsDirectory);
+        assert_eq!(call(&mut s, Request::new(protocol::REMOVE, "docs", 0)).0, Status::NotEmpty);
+
+        for path in ["docs/notes/today", "docs/notes", "docs/plan", "docs", "top"] {
+            assert_eq!(s.remove(path), Ok(()), "{path}");
+        }
+        assert_eq!(s.free_blocks(), free, "every block came back");
+        assert_eq!(remount(s).free_blocks(), free);
     }
 
     #[test]

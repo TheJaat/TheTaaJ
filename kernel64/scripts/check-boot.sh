@@ -58,6 +58,12 @@ if [ -n "${DISK:-}" ]; then
         [ "$("$TFSTOOL" get "$DISK" saved 2>&1)" = "kept" ] \
             || fail "tfstool does not find \"kept\" in the file \"saved\" on the disk"
         ! "$TFSTOOL" get "$DISK" notes > /dev/null 2>&1 || fail "the removed file \"notes\" is still on the disk"
+        # And directories: a file the OS wrote two directories down, in
+        # a directory it made inside one the host made; and the empty
+        # directory it made and removed again.
+        [ "$("$TFSTOOL" get "$DISK" docs/deep/note 2>&1)" = "nested" ] \
+            || fail "tfstool does not find \"nested\" in docs/deep/note on the disk"
+        ! "$TFSTOOL" ls "$DISK" work > /dev/null 2>&1 || fail "the removed directory \"work\" is still on the disk"
         "$TFSTOOL" dump "$DISK" > "$LOG.dump" || fail "tfstool cannot read the volume the OS left"
     fi
 fi

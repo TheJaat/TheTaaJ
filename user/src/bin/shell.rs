@@ -53,7 +53,7 @@ const TYPED_AHEAD_MAX: usize = 256;
 /// anything.
 const LOOK_PROGRAMS: &[&str] = &["ls", "cat"];
 /// And these change files.
-const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm"];
+const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir"];
 
 /// What a program is to be given of the files. Everything not on the
 /// lists above gets the screen and its arguments; `with files COMMAND`
@@ -124,19 +124,22 @@ impl Shell {
                   \x20 run NAME ARGS    run a program: a file, or hello, peek\n\
                   \x20              (Ctrl+C stops it)\n\
                   \x20 NAME ARGS    the same, for a file. On the disk:\n\
-                  \x20   ls                 list the files\n\
+                  \x20   ls [DIR...]        list a directory (the root)\n\
                   \x20   cat FILE...        show files\n\
                   \x20   write FILE TEXT    make FILE hold TEXT\n\
                   \x20   append FILE TEXT   add TEXT to the end of FILE\n\
-                  \x20   rm FILE...         remove files\n\
+                  \x20   mkdir DIR...       make directories\n\
+                  \x20   rm NAME...         remove files, empty directories\n\
+                  \x20   (a name is a path from the root: docs/notes)\n\
                   \x20   given              say what it was given\n\
                   \x20 with files COMMAND      run COMMAND with the files too\n\
                   \x20 with readonly COMMAND   the same, but only to read them\n\
+                  \x20              (of the programs above, all but given\n\
+                  \x20              get the files anyway)\n\
                   \x20 fs stall SECONDS   a test: the file service goes silent\n\
                   \x20 disk stall SECONDS, display stall SECONDS   the same,\n\
                   \x20              for the disk driver and the display\n\
                   \x20 (F11 hangs the keyboard driver, F12 crashes it)\n\
-                  \x20              (only the five above get them)\n\
                   \x20 disk         the disk's size\n\
                   \x20 disk read N        show sector N\n\
                   \x20 disk write N TEXT  put TEXT in sector N\n\

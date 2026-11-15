@@ -15,7 +15,14 @@ use alloc::vec::Vec;
 
 /// "JAFS" when read as bytes on disk.
 pub const MAGIC: u32 = 0x5346_414A;
+/// Version 1: files, in one directory. What the C implementation
+/// reads and writes, and what a new volume is.
 pub const VERSION: u32 = 1;
+/// Version 2: there may be directories in directories. A volume becomes
+/// this when its first directory is made, and stays it. The number is
+/// what keeps a version-1 implementation away: it would take a
+/// directory's blocks for a file's, and write over them.
+pub const VERSION_DIRECTORIES: u32 = 2;
 pub const BLOCK_SIZE: usize = 4096;
 pub const NAME_MAX: usize = 28;
 pub const MAX_BLOCKS: u32 = 65536;
@@ -25,6 +32,10 @@ pub const SUPER_B: u32 = 1;
 pub const FIRST_DATA: u32 = 2;
 
 pub const TYPE_FILE: u32 = 1;
+/// A directory inside a directory. Its entry's `inode` is not an inode
+/// but the first block of its own chain of directory blocks, and its
+/// `size` is 0. Only on a volume of VERSION_DIRECTORIES.
+pub const TYPE_DIR: u32 = 2;
 
 pub const DIR_HEADER: usize = 16;
 pub const DIR_ENTRY_SIZE: usize = 40;
@@ -181,7 +192,7 @@ impl Superblock {
     /// The same checks `TfsMount` applies before trusting a slot.
     pub fn is_valid(&self) -> bool {
         self.magic == MAGIC
-            && self.version == VERSION
+            && (self.version == VERSION || self.version == VERSION_DIRECTORIES)
             && self.block_size == BLOCK_SIZE as u32
             && self.total_blocks != 0
             && self.total_blocks <= MAX_BLOCKS

@@ -14,8 +14,12 @@
 //!     reply goes out.
 //!
 //! The service itself (user/src/bin/fs.rs) only moves messages between
-//! a channel and `serve`. The namespace is flat for now: names, no
-//! directories.
+//! a channel and `serve`.
+//!
+//! What a request names is a path: names separated by '/', from the
+//! root down - "docs/notes/today". Every request carries the whole path;
+//! the service keeps nothing about a client between requests, so there
+//! is no "current directory" here. That belongs to whoever types paths.
 
 #![cfg_attr(not(test), no_std)]
 
@@ -29,7 +33,7 @@ pub use ram::RamStore;
 
 /// The protocol: one request per message, one reply per request.
 ///
-/// A request:   [op: u8] [name length: u8] [name] [number: u64 LE] [data]
+/// A request:   [op: u8] [path length: u8] [path] [number: u64 LE] [data]
 /// A reply:     [status: u8] [payload]
 ///
 /// `number` is an offset, a length or an index, depending on `op`. Each
@@ -40,9 +44,10 @@ pub use ram::RamStore;
 pub mod protocol {
     pub const MESSAGE_MAX: usize = abi::MESSAGE_MAX as usize;
 
-    /// Names files from `number` on (an index): payload is entries of
-    /// [name length: u8] [name] [size: u64 LE], as many as fit. An empty
-    /// payload means there are no more.
+    /// What is in the directory the path names ("" is the root), from
+    /// the `number`th entry on: payload is entries of
+    /// [name length: u8] [name] [kind: u8] [size: u64 LE], as many as
+    /// fit. An empty payload means there are no more.
     pub const LIST: u8 = 1;
     /// Up to READ_MAX bytes from `number` (an offset). Fewer than asked
     /// for means the end of the file.
@@ -54,7 +59,7 @@ pub mod protocol {
     /// fills with zeros.
     pub const TRUNCATE: u8 = 4;
     pub const REMOVE: u8 = 5;
-    /// Payload: the size, u64 LE.
+    /// Payload: the size, u64 LE, then the kind, u8.
     pub const STAT: u8 = 6;
     /// A test of what happens when the service stops answering: it
     /// answers this, then does nothing for `number` ticks (at most
@@ -66,13 +71,36 @@ pub mod protocol {
     /// read-only, 0 if files can be changed through it.
     pub const ACCESS: u8 = 8;
 
+    /// Makes an empty directory. The directory it goes in must exist.
+    pub const MKDIR: u8 = 9;
+
     /// The longest STALL: 30 seconds of 100 Hz ticks.
     pub const STALL_MAX: u64 = 3000;
 
     /// As a WRITE offset: the end of the file.
     pub const APPEND: u64 = u64::MAX;
 
-    pub const NAME_MAX: usize = 64;
+    /// The longest path, in bytes. (Its length travels in one byte.)
+    pub const NAME_MAX: usize = 200;
+    /// The longest single name in a path.
+    pub const COMPONENT_MAX: usize = 64;
+    /// How many directories a path may go through.
+    pub const DEPTH_MAX: usize = 16;
+
+    /// What a name in a directory is.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[repr(u8)]
+    pub enum Kind {
+        File = 0,
+        Directory = 1,
+    }
+
+    impl Kind {
+        pub fn from_u8(byte: u8) -> Kind {
+            if byte == 1 { Kind::Directory } else { Kind::File }
+        }
+    }
+
     const HEADER: usize = 1 + 1 + 8;
     /// Most bytes one READ returns.
     pub const READ_MAX: usize = MESSAGE_MAX - 1;
@@ -87,7 +115,8 @@ pub mod protocol {
     pub enum Status {
         Ok = 0,
         NotFound = 1,
-        /// Empty, too long, or with '/' or control characters.
+        /// A name in the path is empty, too long, "." or "..", or has
+        /// control characters; or the path is too long or too deep.
         BadName = 2,
         /// Not a request this service understands.
         BadRequest = 3,
@@ -100,6 +129,14 @@ pub mod protocol {
         /// The request would change something, and came on a channel
         /// that is for reading.
         ReadOnly = 7,
+        /// A name on the way to the last one is a file.
+        NotDirectory = 8,
+        /// A directory, where only a file will do.
+        IsDirectory = 9,
+        /// Only an empty directory can be removed.
+        NotEmpty = 10,
+        /// A directory cannot be made where something already is.
+        Exists = 11,
     }
 
     impl Status {
@@ -112,6 +149,10 @@ pub mod protocol {
                 5 => Status::Full,
                 6 => Status::DiskError,
                 7 => Status::ReadOnly,
+                8 => Status::NotDirectory,
+                9 => Status::IsDirectory,
+                10 => Status::NotEmpty,
+                11 => Status::Exists,
                 _ => Status::BadRequest,
             }
         }
@@ -119,13 +160,17 @@ pub mod protocol {
         pub fn describe(self) -> &'static str {
             match self {
                 Status::Ok => "ok",
-                Status::NotFound => "no such file",
-                Status::BadName => "not a valid file name",
+                Status::NotFound => "no such file or directory",
+                Status::BadName => "not a valid name",
                 Status::BadRequest => "the file service did not understand",
                 Status::TooBig => "too big for a file",
                 Status::Full => "the file system is full",
                 Status::DiskError => "the disk failed, or the file system on it is damaged",
                 Status::ReadOnly => "the files are read-only here",
+                Status::NotDirectory => "not a directory",
+                Status::IsDirectory => "is a directory",
+                Status::NotEmpty => "the directory is not empty",
+                Status::Exists => "there is already something with that name",
             }
         }
     }
@@ -178,41 +223,82 @@ pub mod protocol {
     }
 
     /// The entries of a LIST reply's payload.
-    pub fn entries(payload: &[u8]) -> impl Iterator<Item = (&str, u64)> {
+    pub fn entries(payload: &[u8]) -> impl Iterator<Item = (&str, Kind, u64)> {
         let mut rest = payload;
         core::iter::from_fn(move || {
             let (&length, tail) = rest.split_first()?;
             let (name, tail) = tail.split_at_checked(length as usize)?;
+            let (&kind, tail) = tail.split_first()?;
             let (size, tail) = tail.split_at_checked(8)?;
             rest = tail;
-            Some((core::str::from_utf8(name).unwrap_or("?"), u64::from_le_bytes(size.try_into().ok()?)))
+            let name = core::str::from_utf8(name).unwrap_or("?");
+            Some((name, Kind::from_u8(kind), u64::from_le_bytes(size.try_into().ok()?)))
         })
     }
 
-    /// A u64 payload (WRITE, STAT).
+    /// A u64 payload (WRITE; the size in STAT's).
     pub fn number(payload: &[u8]) -> Option<u64> {
         Some(u64::from_le_bytes(payload.get(..8)?.try_into().ok()?))
+    }
+
+    /// A STAT payload: what the path names, and its size.
+    pub fn stat(payload: &[u8]) -> Option<(Kind, u64)> {
+        Some((Kind::from_u8(*payload.get(8)?), number(payload)?))
     }
 }
 
 
-use protocol::{Request, Status, MESSAGE_MAX, NAME_MAX};
+use protocol::{Kind, Request, Status, COMPONENT_MAX, DEPTH_MAX, MESSAGE_MAX, NAME_MAX};
 
-/// Whether `name` may name a file, in any store.
+/// Whether `name` may be one name in a path, in any store.
 pub fn valid_name(name: &str) -> bool {
-    (1..=NAME_MAX).contains(&name.len())
+    (1..=COMPONENT_MAX).contains(&name.len())
         && name != "."
         && name != ".."
         && !name.chars().any(|c| c == '/' || c.is_control())
 }
 
+/// The names in a path, from the root down. Slashes at either end, and
+/// doubled ones, mean nothing: "/a/", "a" and "//a" are the same path,
+/// and a path with no names in it is the root.
+pub fn names(path: &str) -> impl Iterator<Item = &str> {
+    path.split('/').filter(|name| !name.is_empty())
+}
+
+/// Whether `path` may name a directory: good names, not too many, and
+/// possibly none at all - the root.
+pub fn valid_directory(path: &str) -> bool {
+    path.len() <= NAME_MAX && names(path).count() <= DEPTH_MAX + 1 && names(path).all(valid_name)
+}
+
+/// Whether `path` may name a file: as a directory, but not the root.
+pub fn valid_path(path: &str) -> bool {
+    valid_directory(path) && names(path).next().is_some()
+}
+
 /// Wherever files are kept. Each method is one request's worth of work;
 /// a refused request must change nothing.
 pub trait Store {
-    /// Calls `each` with the name and size of every file from the
-    /// `from`th on, in name order, until it returns false.
-    fn list(&mut self, from: usize, each: &mut dyn FnMut(&str, u64) -> bool) -> Result<(), Status>;
-    fn size(&mut self, name: &str) -> Result<u64, Status>;
+    /// Calls `each` with the name, kind and size of everything in
+    /// `directory` ("" is the root) from the `from`th on, in name order,
+    /// until it returns false.
+    fn list(
+        &mut self,
+        directory: &str,
+        from: usize,
+        each: &mut dyn FnMut(&str, Kind, u64) -> bool,
+    ) -> Result<(), Status>;
+    /// What `path` names, and its size (0 for a directory).
+    fn stat(&mut self, path: &str) -> Result<(Kind, u64), Status>;
+    /// The size of the file `path` names.
+    fn size(&mut self, path: &str) -> Result<u64, Status> {
+        match self.stat(path)? {
+            (Kind::File, size) => Ok(size),
+            (Kind::Directory, _) => Err(Status::IsDirectory),
+        }
+    }
+    /// Makes an empty directory, in a directory that exists.
+    fn make_directory(&mut self, path: &str) -> Result<(), Status>;
     /// Bytes from `offset` into `out`; how many. Past the end: none.
     fn read(&mut self, name: &str, offset: u64, out: &mut [u8]) -> Result<usize, Status>;
     /// Writes at `offset` (or protocol::APPEND), creating the file if
@@ -220,6 +306,7 @@ pub trait Store {
     fn write(&mut self, name: &str, offset: u64, data: &[u8]) -> Result<u64, Status>;
     /// Sets the size, creating the file if needed.
     fn truncate(&mut self, name: &str, length: u64) -> Result<(), Status>;
+    /// Removes a file, or a directory with nothing in it.
     fn remove(&mut self, name: &str) -> Result<(), Status>;
 }
 
@@ -248,7 +335,10 @@ fn answer(store: &mut impl Store, access: Access, message: &[u8], out: &mut [u8]
     let request = Request::decode(message).ok_or(Status::BadRequest)?;
     // Checked here, once, before anything is done - not in each
     // operation, where a new one could forget.
-    let changes = matches!(request.op, protocol::WRITE | protocol::TRUNCATE | protocol::REMOVE | protocol::STALL);
+    let changes = matches!(
+        request.op,
+        protocol::WRITE | protocol::TRUNCATE | protocol::REMOVE | protocol::STALL | protocol::MKDIR
+    );
     if changes && access == Access::ReadOnly {
         return Err(Status::ReadOnly);
     }
@@ -261,14 +351,15 @@ fn answer(store: &mut impl Store, access: Access, message: &[u8], out: &mut [u8]
         protocol::LIST => {
             let mut at = 0;
             let from = usize::try_from(request.number).unwrap_or(usize::MAX);
-            store.list(from, &mut |name, size| {
-                let entry = 1 + name.len() + 8;
+            store.list(name, from, &mut |name, kind, size| {
+                let entry = 1 + name.len() + 1 + 8;
                 if at + entry > out.len() {
                     return false;
                 }
                 out[at] = name.len() as u8;
                 out[at + 1..at + 1 + name.len()].copy_from_slice(name.as_bytes());
-                out[at + 1 + name.len()..at + entry].copy_from_slice(&size.to_le_bytes());
+                out[at + 1 + name.len()] = kind as u8;
+                out[at + 2 + name.len()..at + entry].copy_from_slice(&size.to_le_bytes());
                 at += entry;
                 true
             })?;
@@ -278,7 +369,12 @@ fn answer(store: &mut impl Store, access: Access, message: &[u8], out: &mut [u8]
         protocol::WRITE => Ok(put_number(out, store.write(name, request.number, request.data)?)),
         protocol::TRUNCATE => store.truncate(name, request.number).map(|()| 0),
         protocol::REMOVE => store.remove(name).map(|()| 0),
-        protocol::STAT => Ok(put_number(out, store.size(name)?)),
+        protocol::STAT => {
+            let (kind, size) = store.stat(name)?;
+            out[8] = kind as u8;
+            Ok(put_number(out, size) + 1)
+        }
+        protocol::MKDIR => store.make_directory(name).map(|()| 0),
         protocol::STALL if request.number <= protocol::STALL_MAX => Ok(0),
         protocol::ACCESS => {
             out[0] = u8::from(access == Access::ReadOnly);

@@ -16,7 +16,7 @@ taaj::program!(main);
 fn main() -> i64 {
     let arguments = taaj::arguments();
     match taaj::file_service() {
-        Some(files) => match files.list(|_, _| {}) {
+        Some(files) => match files.list("", |_, _, _| {}) {
             Ok(count) => {
                 let how = match files.read_only() {
                     Ok(true) => "to read only",
