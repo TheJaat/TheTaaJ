@@ -121,6 +121,10 @@ pub mod call {
     /// Wait for it as for any other. Killing one that has already ended
     /// does nothing.
     pub const PROCESS_KILL: u64 = 22;
+    /// memory_size(handle) - the size of a memory object, in bytes. A
+    /// service handed someone else's object must know how far it may
+    /// go before it maps and touches it.
+    pub const MEMORY_SIZE: u64 = 23;
 }
 
 /// The u64s process_spawn_image's request holds.
@@ -529,9 +533,22 @@ pub mod block {
 
     /// Payload: the number of sectors (u64 LE), then 1 if read-only.
     pub const INFO: u8 = 1;
-    /// Payload: the sector.
+    /// Payload: the sector. One sector, carried in the messages: the
+    /// reply holds it (READ), or the request does (WRITE).
     pub const READ: u8 = 2;
     pub const WRITE: u8 = 3;
+    /// Payload: the first sector (u64 LE) and how many (u32 LE, 1 to
+    /// SECTORS_MAX). The data does not travel in messages: the request
+    /// carries a second handle, after the reply channel - a memory
+    /// object, whose first `count` sectors' worth of bytes the driver
+    /// fills (READ_MANY; the handle needs READ and WRITE) or writes to
+    /// the disk (WRITE_MANY; READ). The driver maps it for the one
+    /// request and keeps nothing: any client, any buffer, any time.
+    pub const READ_MANY: u8 = 4;
+    pub const WRITE_MANY: u8 = 5;
+    /// Most sectors one READ_MANY or WRITE_MANY moves: 16 KiB.
+    pub const SECTORS_MAX: u32 = 32;
+    pub const MANY_REQUEST_SIZE: usize = 1 + 8 + 4;
 
     pub const OK: u8 = 0;
     /// The disk reported an error.

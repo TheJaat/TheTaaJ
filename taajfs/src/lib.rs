@@ -16,9 +16,11 @@
 
 extern crate alloc;
 
+pub mod cache;
 pub mod device;
 pub mod format;
 pub mod volume;
 
+pub use cache::Cache;
 pub use device::{BlockDevice, DeviceError, MemDevice};
 pub use volume::{format as format_volume, Error, FileInfo, Volume};

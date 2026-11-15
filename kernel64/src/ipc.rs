@@ -443,6 +443,15 @@ pub fn memory_map(handle: Handle, writable: u64) -> Result<u64, Error> {
     process::map_memory(&object, writable)
 }
 
+/// How big a memory object is. No right needed: whoever holds the
+/// handle could find out by mapping it.
+pub fn memory_size(handle: Handle) -> Result<u64, Error> {
+    match me()?.handles.lock().get(handle, Rights(0))? {
+        Object::Memory(object) => Ok(object.size()),
+        _ => Err(Error::WrongType),
+    }
+}
+
 /// Something `object_wait` can wait for.
 enum Waitable {
     Channel(Arc<ChannelEnd>),

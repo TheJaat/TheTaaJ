@@ -19,12 +19,25 @@
 //!
 //!   0x0000  the virtqueue: descriptors, available ring, used ring
 //!   0x8000  the request header (16 bytes), then its status byte
-//!   0x9000  one sector of data
+//!   0x9000  the data: up to SECTORS_MAX sectors (16 KiB)
 //!
 //! One request at a time, start to finish: put three buffers - header,
 //! data, status - in the queue, notify the device, wait for the
-//! interrupt, take them back. Simple, and plenty for one shell; many
-//! requests in flight at once is how a disk gets fast, later.
+//! interrupt, take them back. Many requests in flight at once is how a
+//! disk gets faster still, later.
+//!
+//! A request for one sector carries its data in the messages. A request
+//! for many (READ_MANY, WRITE_MANY) comes with a memory object: the
+//! driver maps it, copies between it and the DMA buffer, and unmaps it
+//! again before replying. One device request and one copy for 16 KiB,
+//! where sector-sized messages would take 32 of each. The driver cannot
+//! let the device use the client's memory directly: the device needs
+//! physical addresses, and only DMA memory comes with those.
+//!
+//! A client's memory object is the client's: it may be smaller than the
+//! request claims, or not a memory object at all. Its size is asked of
+//! the kernel before anything is mapped or touched, so a wrong one
+//! costs the client its request and the driver nothing.
 //!
 //! On a restart init gives the new driver the same memory and ports; it
 //! resets the device, which forgets the old queue, and starts over.
@@ -43,7 +56,8 @@ const QUEUE_AREA: usize = 0x8000;
 const HEADER: usize = 0x8000;
 const STATUS: usize = 0x8000 + virtio::block::HEADER_SIZE;
 const DATA: usize = 0x9000;
-const DMA_NEEDED: u64 = 0xA000;
+const DATA_MAX: usize = block::SECTORS_MAX as usize * block::SECTOR;
+const DMA_NEEDED: u64 = (DATA + DATA_MAX) as u64;
 
 struct Disk {
     ports: u16,
@@ -111,9 +125,13 @@ impl Disk {
         }
     }
 
-    /// One sector, in or out of the DATA buffer. Returns a block status.
-    fn transfer(&mut self, write: bool, sector: u64) -> u8 {
-        if sector >= self.sectors {
+    /// `count` sectors (1 to SECTORS_MAX), in or out of the DATA
+    /// buffer, as one request to the device. Returns a block status.
+    fn transfer(&mut self, write: bool, sector: u64, count: u32) -> u8 {
+        if count == 0 || count > block::SECTORS_MAX {
+            return block::BAD_REQUEST;
+        }
+        if !sector.checked_add(u64::from(count)).is_some_and(|end| end <= self.sectors) {
             return block::OUT_OF_RANGE;
         }
         if write && self.read_only {
@@ -133,7 +151,7 @@ impl Disk {
         let at = |offset: usize| self.physical + offset as u64;
         let buffers = [
             Buffer { physical: at(HEADER), length: virtio::block::HEADER_SIZE as u32, device_writes: false },
-            Buffer { physical: at(DATA), length: block::SECTOR as u32, device_writes: !write },
+            Buffer { physical: at(DATA), length: count * block::SECTOR as u32, device_writes: !write },
             Buffer { physical: at(STATUS), length: 1, device_writes: true },
         ];
         if self.queue.submit(&buffers).is_none() {
@@ -161,16 +179,65 @@ impl Disk {
         }
     }
 
-    fn data(&mut self) -> &mut [u8] {
-        // SAFETY: one sector inside the DMA memory, not in the device's
-        // hands between requests.
-        unsafe { core::slice::from_raw_parts_mut(self.memory.add(DATA), block::SECTOR) }
+    /// The first `length` bytes of the DATA buffer.
+    fn data(&mut self, length: usize) -> &mut [u8] {
+        // SAFETY: inside the DMA memory (length is at most DATA_MAX),
+        // not in the device's hands between requests.
+        unsafe { core::slice::from_raw_parts_mut(self.memory.add(DATA), length.min(DATA_MAX)) }
+    }
+
+    /// READ_MANY or WRITE_MANY: `count` sectors between the disk and
+    /// the client's memory object `lent`. Returns a block status.
+    fn transfer_many(&mut self, write: bool, sector: u64, count: u32, lent: Handle) -> u8 {
+        if count == 0 || count > block::SECTORS_MAX {
+            return block::BAD_REQUEST;
+        }
+        let length = count as usize * block::SECTOR;
+        // Is it a memory object, and big enough? Asked before mapping:
+        // copying past the end of a smaller one would be a fault - in
+        // this process, the driver.
+        if !taaj::memory_size(lent).is_ok_and(|size| size >= length as u64) {
+            return block::BAD_REQUEST;
+        }
+        // Writable only to fill it; refused if the handle lacks the right.
+        let Ok(theirs) = taaj::memory_map(lent, !write) else {
+            return block::BAD_REQUEST;
+        };
+        // SAFETY (both copies): `theirs` is a mapping of at least
+        // `length` bytes, checked above, and stays mapped until the
+        // unmap below. The client may change the bytes meanwhile; then
+        // it reads or writes its own garbage, and nothing else.
+        let status = if write {
+            unsafe { theirs.copy_to_nonoverlapping(self.data(length).as_mut_ptr(), length) };
+            self.transfer(true, sector, count)
+        } else {
+            let status = self.transfer(false, sector, count);
+            if status == block::OK {
+                unsafe { theirs.copy_from_nonoverlapping(self.data(length).as_ptr(), length) };
+            }
+            status
+        };
+        let _ = taaj::memory_unmap(theirs);
+        status
     }
 
     /// Answers one request; returns the reply's length in `reply`.
-    fn serve(&mut self, request: &[u8], reply: &mut [u8], may_write: bool) -> usize {
-        if request.first() == Some(&block::WRITE) && !may_write {
+    /// `lent` is the memory object that came with it, if one did.
+    fn serve(&mut self, request: &[u8], reply: &mut [u8], may_write: bool, lent: Option<Handle>) -> usize {
+        let op = request.first().copied();
+        if matches!(op, Some(block::WRITE | block::WRITE_MANY)) && !may_write {
             reply[0] = block::READ_ONLY;
+            return 1;
+        }
+        if let (Some(op @ (block::READ_MANY | block::WRITE_MANY)), Some(lent)) = (op, lent) {
+            let count = request.get(9..13).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes);
+            let sector = request.get(1..9).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes);
+            reply[0] = match (sector, count) {
+                (Some(sector), Some(count)) if request.len() == block::MANY_REQUEST_SIZE => {
+                    self.transfer_many(op == block::WRITE_MANY, sector, count, lent)
+                }
+                _ => block::BAD_REQUEST,
+            };
             return 1;
         }
         let sector = request.get(1..9).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes);
@@ -181,17 +248,17 @@ impl Disk {
                 (block::OK, 9)
             }
             (Some(block::READ), Some(sector)) if request.len() == block::REQUEST_SIZE => {
-                match self.transfer(false, sector) {
+                match self.transfer(false, sector, 1) {
                     block::OK => {
-                        reply[1..=block::SECTOR].copy_from_slice(self.data());
+                        reply[1..=block::SECTOR].copy_from_slice(self.data(block::SECTOR));
                         (block::OK, block::SECTOR)
                     }
                     status => (status, 0),
                 }
             }
             (Some(block::WRITE), Some(sector)) if request.len() == block::REQUEST_SIZE + block::SECTOR => {
-                self.data().copy_from_slice(&request[block::REQUEST_SIZE..]);
-                (self.transfer(true, sector), 0)
+                self.data(block::SECTOR).copy_from_slice(&request[block::REQUEST_SIZE..]);
+                (self.transfer(true, sector, 1), 0)
             }
             _ => (block::BAD_REQUEST, 0),
         };
@@ -281,14 +348,19 @@ fn main() -> i64 {
                 return 6;
             }
         };
-        if count != 1 {
+        // The reply channel, and for the "many" requests the client's
+        // memory. Anything else: not a request.
+        if !(1..=2).contains(&count) {
             for &handle in &handles[..count] {
                 let _ = taaj::close(handle);
             }
             continue;
         }
-        let length = disk.serve(&message[..n], &mut reply, may_write);
+        let lent = (count == 2).then_some(handles[1]);
+        let length = disk.serve(&message[..n], &mut reply, may_write, lent);
         let _ = taaj::send(handles[0], &reply[..length], &[]);
-        let _ = taaj::close(handles[0]);
+        for &handle in &handles[..count] {
+            let _ = taaj::close(handle);
+        }
     }
 }

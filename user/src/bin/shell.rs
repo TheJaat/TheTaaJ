@@ -93,6 +93,7 @@ impl Shell {
                   \x20 uptime       time since boot\n\
                   \x20 mem          memory in use\n\
                   \x20 ps           processes\n\
+                  \x20 time COMMAND     run COMMAND, and say how long it took\n\
                   \x20 run NAME ARGS    run a program: a file, or hello, peek\n\
                   \x20              (Ctrl+C stops it)\n\
                   \x20 NAME ARGS    the same, for a file. On the disk:\n\
@@ -103,13 +104,22 @@ impl Shell {
                   \x20   rm FILE...         remove files\n\
                   \x20 disk         the disk's size\n\
                   \x20 disk read N        show sector N\n\
-                  \x20 disk write N TEXT  put TEXT in sector N\n",
+                  \x20 disk write N TEXT  put TEXT in sector N\n\
+                  \x20 disk check        test the disk driver\n",
             ),
             "echo" => say!(self, "{rest}\n"),
             "clear" => self.screen_only(b"\x0c"),
             "uptime" => self.uptime(),
             "mem" => self.mem(),
             "ps" => self.ps(),
+            "time" if !rest.is_empty() => {
+                // Ticks are 10 ms apart: good for "is it slow", no finer.
+                let start = taaj::ticks();
+                self.run(rest);
+                let hundredths = taaj::ticks() - start;
+                say!(self, "took {}.{:02} s\n", hundredths / 100, hundredths % 100);
+            }
+            "time" => self.write(b"usage: time COMMAND\n"),
             "run" if !rest.is_empty() => {
                 let (name, arguments) = rest.split_once(' ').unwrap_or((rest, ""));
                 self.run_program(name, arguments.trim(), true);
@@ -212,8 +222,84 @@ impl Shell {
                     Err(error) => say!(self, "disk: sector {sector}: {}\n", error.describe()),
                 }
             }
-            _ => self.write(b"usage: disk, disk read N, disk write N TEXT\n"),
+            ("check", None, None) => match self.disk_check(disk) {
+                Ok(checks) => say!(self, "disk check: all {checks} checks passed\n"),
+                Err(failed) => say!(self, "disk check: FAILED - {failed}\n"),
+            },
+            _ => self.write(b"usage: disk, disk read N, disk write N TEXT, disk check\n"),
         }
+    }
+
+    /// Tests the driver's many-sector requests through this shell's own
+    /// (read-only) channel: that they return what single reads do, and
+    /// that every wrong request is refused - by an answer, with the
+    /// driver still running afterwards. Returns how many checks passed,
+    /// or which one failed.
+    fn disk_check(&self, disk: &Disk) -> Result<u32, &'static str> {
+        use abi::block::{self, BAD_REQUEST, OUT_OF_RANGE, READ_MANY, READ_ONLY, SECTOR, SECTORS_MAX, WRITE_MANY};
+        use taaj::disk::{DiskError, Window};
+        use taaj::rights::{READ, TRANSFER, WRITE};
+
+        let request = |op: u8, sector: u64, count: u32| {
+            let mut bytes = [0u8; block::MANY_REQUEST_SIZE];
+            bytes[0] = op;
+            bytes[1..9].copy_from_slice(&sector.to_le_bytes());
+            bytes[9..].copy_from_slice(&count.to_le_bytes());
+            bytes
+        };
+        // A memory object of `bytes` bytes, as a handle to lend.
+        let memory = |bytes: u64, rights: u32| {
+            let object = taaj::memory_create(bytes).ok()?;
+            let lent = taaj::duplicate(object, rights | TRANSFER).ok();
+            let _ = taaj::close(object);
+            lent
+        };
+        let refused = |result: Result<(), DiskError>, status: u8| result == Err(DiskError::Refused(status));
+        let mut passed = 0;
+        let mut check = |ok: bool, what: &'static str| {
+            passed += 1;
+            if ok { Ok(()) } else { Err(what) }
+        };
+        let (sectors, _) = disk.info().map_err(|_| "the disk does not answer")?;
+        let full = u64::from(SECTORS_MAX) * SECTOR as u64;
+
+        // 1. Many sectors at once are the same bytes as one at a time.
+        let mut window = Window::new(SECTORS_MAX).map_err(|_| "no memory for a window")?;
+        let count = SECTORS_MAX.min(sectors as u32);
+        let many = disk.read_many(&mut window, 0, count).is_ok();
+        let mut same = many;
+        let mut single = [0u8; SECTOR];
+        for n in 0..count as usize {
+            same = same && disk.read(n as u64, &mut single).is_ok() && window.bytes()[n * SECTOR..][..SECTOR] == single;
+        }
+        check(same, "sectors read together differ from sectors read one by one")?;
+
+        // 2-5. Requests the driver must refuse without touching memory.
+        let small = memory(4096, READ | WRITE).ok_or("no memory")?;
+        check(refused(disk.raw(&request(READ_MANY, 0, 16), Some(small)), BAD_REQUEST), "a memory object too small was accepted")?;
+        let (ours, theirs) = taaj::channel_create().map_err(|_| "no channel")?;
+        check(refused(disk.raw(&request(READ_MANY, 0, 8), Some(theirs)), BAD_REQUEST), "a channel was accepted as memory")?;
+        let _ = taaj::close(ours);
+        let read_only = memory(full, READ).ok_or("no memory")?;
+        check(refused(disk.raw(&request(READ_MANY, 0, 8), Some(read_only)), BAD_REQUEST), "memory it may not write was accepted for a read")?;
+        let none = memory(full, READ | WRITE).ok_or("no memory")?;
+        check(refused(disk.raw(&request(READ_MANY, 0, 0), Some(none)), BAD_REQUEST), "a request for no sectors was accepted")?;
+        let many = memory(2 * full, READ | WRITE).ok_or("no memory")?;
+        check(refused(disk.raw(&request(READ_MANY, 0, SECTORS_MAX + 1), Some(many)), BAD_REQUEST), "more sectors than the limit were accepted")?;
+
+        // 6. Starting on the disk and running off its end.
+        let past = memory(full, READ | WRITE).ok_or("no memory")?;
+        check(refused(disk.raw(&request(READ_MANY, sectors.saturating_sub(4), 8), Some(past)), OUT_OF_RANGE), "a read past the end was accepted")?;
+        let wrapped = memory(full, READ | WRITE).ok_or("no memory")?;
+        check(refused(disk.raw(&request(READ_MANY, u64::MAX, 8), Some(wrapped)), OUT_OF_RANGE), "a sector number that wraps was accepted")?;
+
+        // 7. This channel may look, not change.
+        let data = memory(full, READ).ok_or("no memory")?;
+        check(refused(disk.raw(&request(WRITE_MANY, 0, 8), Some(data)), READ_ONLY), "a write was accepted on the read-only channel")?;
+
+        // And the driver is still there.
+        disk.info().map_err(|_| "the driver did not survive the checks")?;
+        Ok(passed)
     }
 
     /// A sector as hex and text, 16 bytes a line, up to the last line

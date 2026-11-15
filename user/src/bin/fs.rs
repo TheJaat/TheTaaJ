@@ -16,6 +16,11 @@
 //! It never formats a disk: a disk with something else on it is not
 //! this service's to erase. Volumes are made with tfstool, on the host.
 //!
+//! Between TaajFS and the disk sits a block cache (taajfs::Cache): the
+//! blocks every request needs again - the directory, the tree above it -
+//! are read from the disk once. Writes are not held back: each goes to
+//! the disk before the request is answered, as before.
+//!
 //! All the logic - the protocol, both stores, the mapping onto TaajFS -
 //! is in the `fileserver` crate, tested on the host. This program only
 //! connects it to channels: requests in, and disk sectors out.
@@ -25,20 +30,24 @@
 
 use fileserver::protocol::MESSAGE_MAX;
 use fileserver::{DiskStore, RamStore, Store};
-use taaj::disk::Disk;
+use taaj::disk::{Disk, Window};
 use taaj::{println, Error, Handle};
 use taajfs::format::{Block, BLOCK_SIZE};
-use taajfs::{BlockDevice, DeviceError};
+use taajfs::{BlockDevice, Cache, DeviceError};
 
 taaj::program!(main);
 
 const SECTOR: usize = abi::block::SECTOR;
 const SECTORS_PER_BLOCK: u64 = (BLOCK_SIZE / SECTOR) as u64;
+/// Blocks kept in memory: 1 MiB. Plenty for the metadata of a small
+/// volume, and for a program read twice.
+const CACHE_BLOCKS: usize = 256;
 
-/// The disk as TaajFS sees it: 4 KiB blocks, each eight sectors of
-/// requests to the block driver.
+/// The disk as TaajFS sees it: 4 KiB blocks, each one request to the
+/// block driver for eight sectors, through a window of shared memory.
 struct DiskDevice {
     disk: Disk,
+    window: Window,
     sectors: u64,
 }
 
@@ -65,23 +74,20 @@ impl DiskDevice {
 impl BlockDevice for DiskDevice {
     fn read_block(&mut self, number: u32, buffer: &mut Block) -> Result<(), DeviceError> {
         let first = self.first_sector(number)?;
-        for (n, sector) in buffer.as_chunks_mut::<SECTOR>().0.iter_mut().enumerate() {
-            self.disk.read(first + n as u64, sector).map_err(device_error("disk read"))?;
-        }
+        self.disk.read_many(&mut self.window, first, SECTORS_PER_BLOCK as u32).map_err(device_error("disk read"))?;
+        buffer.copy_from_slice(&self.window.bytes()[..BLOCK_SIZE]);
         Ok(())
     }
 
     fn write_block(&mut self, number: u32, buffer: &Block) -> Result<(), DeviceError> {
         let first = self.first_sector(number)?;
-        for (n, sector) in buffer.as_chunks::<SECTOR>().0.iter().enumerate() {
-            self.disk.write(first + n as u64, sector).map_err(device_error("disk write"))?;
-        }
-        Ok(())
+        self.window.bytes()[..BLOCK_SIZE].copy_from_slice(buffer);
+        self.disk.write_many(&mut self.window, first, SECTORS_PER_BLOCK as u32).map_err(device_error("disk write"))
     }
 }
 
 /// The volume on the disk, if there is one this service can use.
-fn mount(disk: Handle) -> Option<DiskStore<DiskDevice>> {
+fn mount(disk: Handle) -> Option<DiskStore<Cache<DiskDevice>>> {
     let disk = Disk::new(disk);
     let sectors = match disk.info() {
         Ok((sectors, false)) => sectors,
@@ -94,7 +100,14 @@ fn mount(disk: Handle) -> Option<DiskStore<DiskDevice>> {
             return None;
         }
     };
-    match DiskStore::mount(DiskDevice { disk, sectors }) {
+    let window = match Window::new(SECTORS_PER_BLOCK as u32) {
+        Ok(window) => window,
+        Err(error) => {
+            println!("[fs] no memory to share with the disk driver ({error:?}): files in memory only");
+            return None;
+        }
+    };
+    match DiskStore::mount(Cache::new(DiskDevice { disk, window, sectors }, CACHE_BLOCKS)) {
         Ok(store) if u64::from(store.total_blocks()) * SECTORS_PER_BLOCK <= sectors => Some(store),
         Ok(store) => {
             println!("[fs] the volume says it has {} blocks; the disk is smaller - not using it", store.total_blocks());
@@ -115,9 +128,10 @@ fn main() -> i64 {
     match taaj::startup_handle(1).and_then(mount) {
         Some(mut store) => {
             println!(
-                "[fs] ready: TaajFS on the disk, {} of {} blocks free",
+                "[fs] ready: TaajFS on the disk, {} of {} blocks free; a cache of {} blocks",
                 store.free_blocks(),
-                store.total_blocks()
+                store.total_blocks(),
+                CACHE_BLOCKS
             );
             serve(&mut store, requests)
         }
