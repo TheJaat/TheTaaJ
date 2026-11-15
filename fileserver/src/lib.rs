@@ -56,6 +56,18 @@ pub mod protocol {
     pub const REMOVE: u8 = 5;
     /// Payload: the size, u64 LE.
     pub const STAT: u8 = 6;
+    /// A test of what happens when the service stops answering: it
+    /// answers this, then does nothing for `number` ticks (at most
+    /// STALL_MAX). Only for clients that may change files - they can
+    /// keep the service busy as long by other means. The service loop
+    /// acts on it; `serve` only checks it.
+    pub const STALL: u8 = 7;
+    /// What this channel allows. Payload: one byte, 1 if it is
+    /// read-only, 0 if files can be changed through it.
+    pub const ACCESS: u8 = 8;
+
+    /// The longest STALL: 30 seconds of 100 Hz ticks.
+    pub const STALL_MAX: u64 = 3000;
 
     /// As a WRITE offset: the end of the file.
     pub const APPEND: u64 = u64::MAX;
@@ -85,6 +97,9 @@ pub mod protocol {
         Full = 5,
         /// The disk failed, or what is on it is damaged.
         DiskError = 6,
+        /// The request would change something, and came on a channel
+        /// that is for reading.
+        ReadOnly = 7,
     }
 
     impl Status {
@@ -96,6 +111,7 @@ pub mod protocol {
                 4 => Status::TooBig,
                 5 => Status::Full,
                 6 => Status::DiskError,
+                7 => Status::ReadOnly,
                 _ => Status::BadRequest,
             }
         }
@@ -109,6 +125,7 @@ pub mod protocol {
                 Status::TooBig => "too big for a file",
                 Status::Full => "the file system is full",
                 Status::DiskError => "the disk failed, or the file system on it is damaged",
+                Status::ReadOnly => "the files are read-only here",
             }
         }
     }
@@ -209,8 +226,8 @@ pub trait Store {
 /// Answers one request message: writes the reply into `reply` and
 /// returns its length. Never fails - a bad request gets a reply saying
 /// so.
-pub fn serve(store: &mut impl Store, message: &[u8], reply: &mut [u8; MESSAGE_MAX]) -> usize {
-    let (status, length) = match answer(store, message, &mut reply[1..]) {
+pub fn serve(store: &mut impl Store, access: Access, message: &[u8], reply: &mut [u8; MESSAGE_MAX]) -> usize {
+    let (status, length) = match answer(store, access, message, &mut reply[1..]) {
         Ok(length) => (Status::Ok, length),
         Err(status) => (status, 0),
     };
@@ -218,9 +235,23 @@ pub fn serve(store: &mut impl Store, message: &[u8], reply: &mut [u8; MESSAGE_MA
     1 + length
 }
 
+/// What the channel a request came on allows. The service has one
+/// channel for each: which one a client holds is its permission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Access {
+    ReadWrite,
+    ReadOnly,
+}
+
 /// The payload of the reply, written into `out`.
-fn answer(store: &mut impl Store, message: &[u8], out: &mut [u8]) -> Result<usize, Status> {
+fn answer(store: &mut impl Store, access: Access, message: &[u8], out: &mut [u8]) -> Result<usize, Status> {
     let request = Request::decode(message).ok_or(Status::BadRequest)?;
+    // Checked here, once, before anything is done - not in each
+    // operation, where a new one could forget.
+    let changes = matches!(request.op, protocol::WRITE | protocol::TRUNCATE | protocol::REMOVE | protocol::STALL);
+    if changes && access == Access::ReadOnly {
+        return Err(Status::ReadOnly);
+    }
     let name = request.name;
     let put_number = |out: &mut [u8], n: u64| {
         out[..8].copy_from_slice(&n.to_le_bytes());
@@ -248,6 +279,11 @@ fn answer(store: &mut impl Store, message: &[u8], out: &mut [u8]) -> Result<usiz
         protocol::TRUNCATE => store.truncate(name, request.number).map(|()| 0),
         protocol::REMOVE => store.remove(name).map(|()| 0),
         protocol::STAT => Ok(put_number(out, store.size(name)?)),
+        protocol::STALL if request.number <= protocol::STALL_MAX => Ok(0),
+        protocol::ACCESS => {
+            out[0] = u8::from(access == Access::ReadOnly);
+            Ok(1)
+        }
         _ => Err(Status::BadRequest),
     }
 }

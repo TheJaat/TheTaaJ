@@ -152,6 +152,8 @@ fn main() -> i64 {
     // keyboard's: a restarted fs takes over the same queue, and clients
     // keep the channel they have.
     let Ok((files_in, files_out)) = taaj::channel_create() else { return 2 };
+    // And a second: requests on it may read files, not change them.
+    let Ok((files_look_in, files_look_out)) = taaj::channel_create() else { return 2 };
     // The disk's: its description for each new driver, and requests.
     let Ok((disk_info_tx, disk_info_rx)) = taaj::channel_create() else { return 2 };
     // Two request channels: reads and writes for fs, which owns what is
@@ -187,9 +189,11 @@ fn main() -> i64 {
         Grant { handle: disk_interrupt, rights: RECEIVE }, // 17: its interrupt
         Grant { handle: disk_look_in, rights: RECEIVE },  // 18: read-only requests, for blk
         Grant { handle: disk_look_out, rights: SEND },    // 19: read-only requests, to blk
+        Grant { handle: files_look_in, rights: RECEIVE }, // 20: read-only requests, for fs
+        Grant { handle: files_look_out, rights: SEND | DELEGABLE }, // 21: read-only requests, to fs
     ];
     // Only the shell's screen and files can be copied and passed on.
-    debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11)));
+    debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21)));
 
     // The display first: it must have its info before the shell's text
     // arrives on the same channel.
@@ -202,7 +206,7 @@ fn main() -> i64 {
             restart_count: 0,
             given_up: framebuffer.is_none(),
         },
-        Service { name: "fs", grants: &[10, 16], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
+        Service { name: "fs", grants: &[10, 20, 16], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
         Service {
             name: "blk",
             grants: match disk {
@@ -214,7 +218,7 @@ fn main() -> i64 {
             restart_count: 0,
             given_up: disk.is_none(),
         },
-        Service { name: "shell", grants: &[4, 7, 8, 9, 11, 19], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
+        Service { name: "shell", grants: &[4, 7, 8, 9, 11, 19, 21], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
         Service { name: "kbd", grants: &[0, 1, 2, 3], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
     ];
     let launch = |service: &Service| {

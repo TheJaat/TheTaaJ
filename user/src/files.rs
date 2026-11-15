@@ -155,6 +155,20 @@ impl Files {
         protocol::number(&reply[1..=n]).ok_or(FileError::Refused(Status::BadRequest))
     }
 
+    /// Whether this channel is for reading only.
+    pub fn read_only(&self) -> Result<bool, FileError> {
+        let mut reply = [0u8; MESSAGE_MAX];
+        let n = self.call(Request::new(protocol::ACCESS, "", 0), &mut reply)?;
+        Ok(n == 1 && reply[1] == 1)
+    }
+
+    /// Asks the service to answer nothing for `ticks` - a test of what
+    /// its clients do meanwhile. This request itself is answered.
+    pub fn stall(&self, ticks: u64) -> Result<(), FileError> {
+        let mut reply = [0u8; MESSAGE_MAX];
+        self.call(Request::new(protocol::STALL, "", ticks), &mut reply).map(|_| ())
+    }
+
     pub fn remove(&self, name: &str) -> Result<(), FileError> {
         let mut reply = [0u8; MESSAGE_MAX];
         self.call(Request::new(protocol::REMOVE, name, 0), &mut reply).map(|_| ())

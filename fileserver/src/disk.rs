@@ -151,7 +151,7 @@ impl<D: BlockDevice> Store for DiskStore<D> {
 mod tests {
     use super::*;
     use crate::protocol::{Request, APPEND, LIST, MESSAGE_MAX, READ};
-    use crate::serve;
+    use crate::{serve, Access};
     use taajfs::format::BLOCK_SIZE;
     use taajfs::{format_volume, MemDevice};
 
@@ -195,7 +195,7 @@ mod tests {
         let mut reply = [0u8; MESSAGE_MAX];
         let mut call = |s: &mut DiskStore<MemDevice>, request: Request| {
             let n = request.encode(&mut message).unwrap();
-            let length = serve(s, &message[..n], &mut reply);
+            let length = serve(s, Access::ReadWrite, &message[..n], &mut reply);
             (Status::from_u8(reply[0]), reply[1..length].to_vec())
         };
         for name in ["zebra", "apple", "mango"] {

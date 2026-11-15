@@ -116,7 +116,7 @@ In the terminal log:
 |---|---|
 | `[process] N "heapcheck" exited with code 0` | The user heap grew, reused and refused correctly |
 | `[fs] ready: files in memory, up to 256 of 1024 KiB each, 8 MiB in all` | The in-memory file service (started by the self-test) |
-| `[fscheck] long files, boundaries, appends, 104-file listing, refusals, careless requests, a silent service: all passed` | The protocol, from a client's side |
+| `[fscheck] long files, boundaries, appends, 104-file listing, refusals, careless requests, a silent service, read-only, a stall: all passed` | The protocol, from a client's side |
 | `[selftest] files: fs and fscheck, twice - every check passed, 0 channels and no frames left` | …and nothing leaked |
 
 In the QEMU window (today these commands are programs on the disk, but the protocol underneath is this entry's):

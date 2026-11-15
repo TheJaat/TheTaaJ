@@ -331,10 +331,14 @@ pub fn files() {
 
     let run = || {
         let (service_end, client_end) = ipc::channel();
+        // The second channel: requests on it may only read.
+        let (service_look, client_look) = ipc::channel();
         let (service, service_thread) =
-            process::spawn("fs", programs::FS, alloc::vec![(service_end, Rights::ALL)]).expect("loading fs");
+            process::spawn("fs", programs::FS, alloc::vec![(service_end, Rights::ALL), (service_look, Rights::ALL)])
+                .expect("loading fs");
         let (client, client_thread) =
-            process::spawn("fscheck", programs::FSCHECK, alloc::vec![(client_end, Rights::ALL)]).expect("loading fscheck");
+            process::spawn("fscheck", programs::FSCHECK, alloc::vec![(client_end, Rights::ALL), (client_look, Rights::ALL)])
+                .expect("loading fscheck");
         threads::join(client_thread);
         threads::join(service_thread);
         assert_eq!(client.exit_code(), Some(0), "fscheck failed (the code is the line of the failed check)");

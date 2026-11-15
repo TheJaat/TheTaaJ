@@ -117,7 +117,7 @@ impl Store for RamStore {
 mod tests {
     use super::*;
     use crate::protocol::*;
-    use crate::{serve, Store};
+    use crate::{serve, Access, Store};
 
     /// Sends a request through encode, serve and the reply's layout -
     /// the whole path a message takes, minus the channel.
@@ -125,8 +125,51 @@ mod tests {
         let mut message = [0u8; MESSAGE_MAX];
         let length = request.encode(&mut message).expect("fits");
         let mut reply = [0u8; MESSAGE_MAX];
-        let n = serve(files, &message[..length], &mut reply);
+        let n = serve(files, Access::ReadWrite, &message[..length], &mut reply);
         (Status::from_u8(reply[0]), reply[1..n].to_vec())
+    }
+
+    /// The same, on the read-only channel.
+    fn look(files: &mut RamStore, request: Request) -> (Status, Vec<u8>) {
+        let mut message = [0u8; MESSAGE_MAX];
+        let length = request.encode(&mut message).expect("fits");
+        let mut reply = [0u8; MESSAGE_MAX];
+        let n = serve(files, Access::ReadOnly, &message[..length], &mut reply);
+        (Status::from_u8(reply[0]), reply[1..n].to_vec())
+    }
+
+    #[test]
+    fn a_read_only_channel_reads_and_changes_nothing() {
+        let mut files = RamStore::new();
+        assert_eq!(write(&mut files, "a", 0, b"kept").0, Status::Ok);
+        // Everything that looks, works.
+        assert_eq!(look(&mut files, Request::new(READ, "a", 0)), (Status::Ok, b"kept".to_vec()));
+        assert_eq!(look(&mut files, Request::new(STAT, "a", 0)).0, Status::Ok);
+        assert_eq!(look(&mut files, Request::new(LIST, "", 0)).0, Status::Ok);
+        // Everything that changes is refused - also what would create.
+        for request in [
+            Request { op: WRITE, name: "a", number: 0, data: b"lost" },
+            Request { op: WRITE, name: "new", number: 0, data: b"x" },
+            Request::new(TRUNCATE, "a", 0),
+            Request::new(TRUNCATE, "new", 0),
+            Request::new(REMOVE, "a", 0),
+            Request::new(STALL, "", 1),
+        ] {
+            assert_eq!(look(&mut files, request), (Status::ReadOnly, Vec::new()), "{request:?}");
+        }
+        // ... before the name is even looked at: no telling which exist.
+        assert_eq!(look(&mut files, Request::new(REMOVE, "missing", 0)).0, Status::ReadOnly);
+        assert_eq!(call(&mut files, Request::new(READ, "a", 0)), (Status::Ok, b"kept".to_vec()));
+        assert_eq!(call(&mut files, Request::new(STAT, "new", 0)).0, Status::NotFound);
+    }
+
+    #[test]
+    fn a_channel_says_what_it_allows_and_a_stall_has_a_limit() {
+        let mut files = RamStore::new();
+        assert_eq!(call(&mut files, Request::new(ACCESS, "", 0)), (Status::Ok, vec![0]));
+        assert_eq!(look(&mut files, Request::new(ACCESS, "", 0)), (Status::Ok, vec![1]));
+        assert_eq!(call(&mut files, Request::new(STALL, "", STALL_MAX)).0, Status::Ok);
+        assert_eq!(call(&mut files, Request::new(STALL, "", STALL_MAX + 1)).0, Status::BadRequest);
     }
 
     fn write(files: &mut RamStore, name: &str, offset: u64, data: &[u8]) -> (Status, Vec<u8>) {
@@ -222,16 +265,16 @@ mod tests {
                 2 + name.len() + 8
             });
             let mut reply = [0u8; MESSAGE_MAX];
-            serve(&mut files, &message[..n], &mut reply);
+            serve(&mut files, Access::ReadWrite, &message[..n], &mut reply);
             assert_eq!(Status::from_u8(reply[0]), Status::BadName, "{name:?}");
         }
         assert_eq!(files.count(), 0);
         let mut reply = [0u8; MESSAGE_MAX];
-        assert_eq!(serve(&mut files, &[WRITE], &mut reply), 1);
+        assert_eq!(serve(&mut files, Access::ReadWrite, &[WRITE], &mut reply), 1);
         assert_eq!(Status::from_u8(reply[0]), Status::BadRequest, "truncated");
         assert_eq!(call(&mut files, Request::new(99, "a", 0)).0, Status::BadRequest, "unknown op");
         let invalid_utf8 = [READ, 1, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0];
-        serve(&mut files, &invalid_utf8, &mut reply);
+        serve(&mut files, Access::ReadWrite, &invalid_utf8, &mut reply);
         assert_eq!(Status::from_u8(reply[0]), Status::BadRequest);
     }
 

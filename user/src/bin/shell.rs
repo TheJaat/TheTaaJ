@@ -48,12 +48,28 @@ const CTRL_C: &[u8] = b"\x03";
 const TYPED_AHEAD_MAX: usize = 256;
 
 /// The programs that are given the file service when run by name:
-/// the ones whose whole job is files. Everything else gets the screen
-/// and its arguments - `with files COMMAND` adds the files, by the
-/// user's own decision. The shell holds the authority, so the shell
-/// decides who shares it; a list in a file would let any program that
-/// can write files grant itself more.
-const FILE_PROGRAMS: &[&str] = &["ls", "cat", "write", "append", "rm"];
+/// the ones whose whole job is files - and each only as much of it as
+/// that job takes. These read; they get the channel that cannot change
+/// anything.
+const LOOK_PROGRAMS: &[&str] = &["ls", "cat"];
+/// And these change files.
+const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm"];
+
+/// What a program is to be given of the files. Everything not on the
+/// lists above gets the screen and its arguments; `with files COMMAND`
+/// and `with readonly COMMAND` add the files, by the user's own
+/// decision. The shell holds the authority, so the shell decides who
+/// shares it; a list in a file would let any program that can write
+/// files grant itself more.
+#[derive(Clone, Copy, PartialEq)]
+enum Grant {
+    /// What the lists say.
+    Usual,
+    /// The files, to read and to change.
+    Files,
+    /// The files, to read.
+    ReadOnly,
+}
 
 struct Shell {
     keys: Handle,
@@ -63,6 +79,9 @@ struct Shell {
     init: Option<Handle>,
     system: Option<Handle>,
     files: Option<Files>,
+    /// The file service again, by its read-only channel: what the shell
+    /// itself uses - it only ever reads the programs it runs.
+    look: Option<Files>,
     disk: Option<Disk>,
 }
 
@@ -111,7 +130,9 @@ impl Shell {
                   \x20   append FILE TEXT   add TEXT to the end of FILE\n\
                   \x20   rm FILE...         remove files\n\
                   \x20   given              say what it was given\n\
-                  \x20 with files COMMAND   run COMMAND with the files too\n\
+                  \x20 with files COMMAND      run COMMAND with the files too\n\
+                  \x20 with readonly COMMAND   the same, but only to read them\n\
+                  \x20 fs stall SECONDS   a test: the file service goes silent\n\
                   \x20              (only the five above get them)\n\
                   \x20 disk         the disk's size\n\
                   \x20 disk read N        show sector N\n\
@@ -133,19 +154,28 @@ impl Shell {
             "time" => self.write(b"usage: time COMMAND\n"),
             "run" if !rest.is_empty() => {
                 let (name, arguments) = rest.split_once(' ').unwrap_or((rest, ""));
-                self.run_program(name, arguments.trim(), true, false);
+                self.run_program(name, arguments.trim(), true, Grant::Usual);
             }
             "run" => self.write(b"usage: run NAME ARGS\n"),
-            "with" => match rest.strip_prefix("files ").map(str::trim) {
-                Some(command) if !command.is_empty() => {
-                    let (name, arguments) = command.split_once(' ').unwrap_or((command, ""));
-                    self.run_program(name, arguments.trim(), false, true);
+            "with" => {
+                let (what, command) = rest.split_once(' ').unwrap_or((rest, ""));
+                let grant = match what {
+                    "files" => Some(Grant::Files),
+                    "readonly" => Some(Grant::ReadOnly),
+                    _ => None,
+                };
+                match (grant, command.trim()) {
+                    (Some(grant), command) if !command.is_empty() => {
+                        let (name, arguments) = command.split_once(' ').unwrap_or((command, ""));
+                        self.run_program(name, arguments.trim(), false, grant);
+                    }
+                    _ => self.write(b"usage: with files COMMAND, with readonly COMMAND\n"),
                 }
-                _ => self.write(b"usage: with files COMMAND\n"),
-            },
+            }
+            "fs" => self.fs(rest),
             "disk" => self.disk(rest),
             // Not the shell's own: a program in a file, if there is one.
-            _ => self.run_program(command, rest, false, false),
+            _ => self.run_program(command, rest, false, Grant::Usual),
         }
     }
 
@@ -205,6 +235,20 @@ impl Shell {
         }
         if let Some(info) = self.system_info() {
             say!(self, "{} processes, {} threads, {} channels\n", info.processes, info.threads, info.channels);
+        }
+    }
+
+    /// `fs stall SECONDS`: makes the file service answer nothing for a
+    /// while - to see what its clients do then, this shell among them.
+    fn fs(&self, arguments: &str) {
+        let seconds = arguments.strip_prefix("stall ").and_then(|n| n.trim().parse::<u64>().ok());
+        match (seconds, &self.files) {
+            (Some(seconds @ 1..=30), Some(files)) => match files.stall(seconds * 100) {
+                Ok(()) => say!(self, "fs: the file service will answer nothing for {seconds} s\n"),
+                Err(error) => say!(self, "fs: {}\n", error.describe()),
+            },
+            (Some(1..=30), None) => self.write(b"no file service\n"),
+            _ => self.write(b"usage: fs stall SECONDS (1 to 30)\n"),
         }
     }
 
@@ -346,11 +390,11 @@ impl Shell {
     /// how a program gets from the file service to the kernel, which
     /// knows nothing of files. Ok(None) if there is no such file.
     fn program_image(&self, name: &str) -> Result<Option<Handle>, &'static str> {
-        let Some(files) = &self.files else { return Ok(None) };
+        let Some(files) = self.look.as_ref().or(self.files.as_ref()) else { return Ok(None) };
         let size = match files.size(name) {
             Ok(size) => size,
             // Not answering is not "no such file": say what is wrong.
-            Err(error @ FileError::Unreachable(Error::TimedOut)) => return Err(error.describe()),
+            Err(FileError::Unreachable(Error::TimedOut)) => return Err("cannot be looked up: the file service is not answering"),
             Err(_) => return Ok(None), // no such file (or no file service): maybe built in
         };
         if size == 0 || size > abi::PROGRAM_IMAGE_MAX {
@@ -389,12 +433,12 @@ impl Shell {
     /// (`explicit`), init looks among the programs built into the kernel
     /// image. The program gets `arguments` and the screen, as the shell
     /// has it - and the files only if it is one of FILE_PROGRAMS, or
-    /// the user said so (`with_files`): a program gets what it needs,
+    /// the user said so (`grant`): a program gets what it needs,
     /// not what the shell happens to hold.
     ///
     /// `run NAME` says how the program ended; a program run by its name
     /// alone is a command, and says nothing unless it failed.
-    fn run_program(&self, name: &str, arguments: &str, explicit: bool, with_files: bool) {
+    fn run_program(&self, name: &str, arguments: &str, explicit: bool, grant: Grant) {
         let image = match self.program_image(name) {
             Ok(None) if !explicit => return say!(self, "unknown command: {name} (try help)\n"),
             Ok(image) => image,
@@ -402,14 +446,21 @@ impl Shell {
         };
         // The files go only to a program from a file: "ls" built into
         // the kernel image would be another program of the same name.
-        let files_too = with_files || (image.is_some() && FILE_PROGRAMS.contains(&name));
+        let on_disk = |list: &[&str]| image.is_some() && list.contains(&name);
+        let files = match grant {
+            Grant::Files => self.files.as_ref(),
+            Grant::ReadOnly => self.look.as_ref(),
+            Grant::Usual if on_disk(CHANGE_PROGRAMS) => self.files.as_ref(),
+            Grant::Usual if on_disk(LOOK_PROGRAMS) => self.look.as_ref(),
+            Grant::Usual => None,
+        };
         let mut handles = [0u64; 3];
         let mut count = 0;
         let mut flags = 0;
         let offered = [
             (0, image),
             (abi::startup::STDOUT, Self::delegate(self.screen)),
-            (abi::startup::FILES, Self::delegate(self.files.as_ref().filter(|_| files_too).map(Files::channel))),
+            (abi::startup::FILES, Self::delegate(files.map(Files::channel))),
         ];
         for (flag, handle) in offered {
             if let Some(handle) = handle {
@@ -508,6 +559,7 @@ fn main() -> i64 {
         system: taaj::startup_handle(3),
         files: taaj::startup_handle(4).map(Files::new),
         disk: taaj::startup_handle(5).map(Disk::new),
+        look: taaj::startup_handle(6).map(Files::new),
     };
     println!("[shell] ready - type a command (try help)");
     shell.screen_only(b"Welcome to TheTaaJ. Type help for the commands.\n\n");

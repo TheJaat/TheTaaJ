@@ -155,7 +155,37 @@ fn main() -> i64 {
         Err(_) => check!(false, "a channel for the silent service"),
     }
 
-    // 8. Clean up: an empty file system.
+    // 8. The second channel is for reading: everything that looks
+    //    works, everything that would change is refused - and changes
+    //    nothing.
+    let Some(look) = taaj::startup_handle(1).map(Files::new) else {
+        println!("[fscheck] FAILED: no read-only channel");
+        return line!() as i64;
+    };
+    check!(files.read_only() == Ok(false), "the first channel changes files");
+    check!(look.read_only() == Ok(true), "the second only reads");
+    check!(files.write("guarded", &data[..3000]) == Ok(3000), "a file to guard");
+    check!(matches(&look, "guarded", 3000), "read through the read-only channel");
+    check!(look.size("guarded") == Ok(3000), "its size, too");
+    let mut seen = false;
+    check!(look.list(|name, _| seen |= name == "guarded").is_ok() && seen, "and the listing");
+    check!(look.write("guarded", b"x") == refused(Status::ReadOnly), "no write");
+    check!(look.append("guarded", b"x") == refused(Status::ReadOnly), "no append");
+    check!(look.remove("guarded") == refused(Status::ReadOnly), "no remove");
+    check!(look.write("sneaked", b"x") == refused(Status::ReadOnly), "no new file");
+    check!(look.stall(1) == Err(FileError::Refused(Status::ReadOnly)), "no stalling the service");
+    check!(matches(&files, "guarded", 3000), "unchanged after all that");
+    check!(files.size("sneaked") == refused(Status::NotFound), "and nothing was made");
+
+    // 9. A stall: answered at once, then the service is silent - a
+    //    client without the patience gives up, one with it is served.
+    let hasty = Files::with_patience(requests, 5);
+    check!(files.stall(20) == Ok(()), "the stall itself is answered");
+    check!(hasty.size("guarded") == Err(FileError::Unreachable(Error::TimedOut)), "silent while stalled");
+    check!(files.size("guarded") == Ok(3000), "and back afterwards");
+    check!(files.stall(1_000_000) == refused(Status::BadRequest), "a stall has a limit");
+
+    // 10. Clean up: an empty file system.
     let mut names = [[0u8; NAME_MAX]; 4];
     let mut lengths = [0usize; 4];
     loop {
@@ -177,6 +207,6 @@ fn main() -> i64 {
     }
     check!(files.list(|_, _| {}) == Ok(0), "nothing left");
 
-    println!("[fscheck] long files, boundaries, appends, 104-file listing, refusals, careless requests, a silent service: all passed");
+    println!("[fscheck] long files, boundaries, appends, 104-file listing, refusals, careless requests, a silent service, read-only, a stall: all passed");
     0
 }

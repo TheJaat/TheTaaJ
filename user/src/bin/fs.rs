@@ -4,7 +4,11 @@
 //! Startup handles, from init:
 //!   1  the request channel (receive only). Every client sends on the
 //!      other end; each request carries the end of a channel to reply on.
-//!   2  the disk: the block driver's request channel (send only) - if
+//!   2  a second request channel, for reading only: the same requests,
+//!      but any that would change a file is refused. Which channel a
+//!      client holds is its permission - there is nothing to check but
+//!      where the request came from.
+//!   3  the disk: the block driver's request channel (send only) - if
 //!      there is a disk
 //!
 //! With a disk that holds a TaajFS volume, files live there: each
@@ -28,8 +32,8 @@
 #![no_std]
 #![no_main]
 
-use fileserver::protocol::MESSAGE_MAX;
-use fileserver::{DiskStore, RamStore, Store};
+use fileserver::protocol::{self, Request, Status, MESSAGE_MAX};
+use fileserver::{Access, DiskStore, RamStore, Store};
 use taaj::disk::{Disk, Window};
 use taaj::{println, Error, Handle};
 use taajfs::format::{Block, BLOCK_SIZE};
@@ -125,7 +129,8 @@ fn main() -> i64 {
         println!("[fs] started without a request channel");
         return 1;
     };
-    match taaj::startup_handle(1).and_then(mount) {
+    let look = taaj::startup_handle(1);
+    match taaj::startup_handle(2).and_then(mount) {
         Some(mut store) => {
             println!(
                 "[fs] ready: TaajFS on the disk, {} of {} blocks free; a cache of {} blocks",
@@ -133,7 +138,7 @@ fn main() -> i64 {
                 store.total_blocks(),
                 CACHE_BLOCKS
             );
-            serve(&mut store, requests)
+            serve(&mut store, requests, look)
         }
         None => {
             println!(
@@ -142,22 +147,40 @@ fn main() -> i64 {
                 fileserver::ram::FILE_MAX / 1024,
                 fileserver::ram::BYTES_MAX >> 20
             );
-            serve(&mut RamStore::new(), requests)
+            serve(&mut RamStore::new(), requests, look)
         }
     }
 }
 
-fn serve(store: &mut impl Store, requests: Handle) -> i64 {
+fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 {
     let mut message = [0u8; MESSAGE_MAX];
     let mut reply = [0u8; MESSAGE_MAX];
+    // The channels watched: requests that may change files, then -
+    // while anyone holds its other end - requests that may only look.
+    let channels = [requests, look.unwrap_or(0)];
+    let mut watched = 1 + usize::from(look.is_some());
     loop {
+        let from = match taaj::object_wait(&channels[..watched]) {
+            Ok(from) => from,
+            Err(error) => {
+                println!("[fs] cannot wait: {error:?}");
+                return 2;
+            }
+        };
+        let access = if from == 0 { Access::ReadWrite } else { Access::ReadOnly };
         // Room for the largest message and the most handles one can
         // carry: a message that did not fit would stay at the head of
         // the queue, and be refused again, forever.
         let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
-        let (n, count) = match taaj::receive(requests, &mut message, &mut handles) {
+        let (n, count) = match taaj::receive(channels[from], &mut message, &mut handles) {
             Ok(received) => received,
-            Err(Error::PeerClosed) => return 0,
+            // The service lives as long as its first channel has a
+            // sender; the second going only means fewer to watch.
+            Err(Error::PeerClosed) if from == 0 => return 0,
+            Err(Error::PeerClosed) => {
+                watched = 1;
+                continue;
+            }
             Err(error) => {
                 println!("[fs] cannot receive: {error:?}");
                 return 2;
@@ -170,9 +193,18 @@ fn serve(store: &mut impl Store, requests: Handle) -> i64 {
             }
             continue;
         }
-        let length = fileserver::serve(store, &message[..n], &mut reply);
+        let length = fileserver::serve(store, access, &message[..n], &mut reply);
         // A client that gave up has closed its end: nothing to do.
         let _ = taaj::send(handles[0], &reply[..length], &[]);
         let _ = taaj::close(handles[0]);
+        // The test of a service that stops answering: answered - so
+        // the one who asked is not the one kept waiting - then silence.
+        if reply[0] == Status::Ok as u8 {
+            if let Some(Request { op: protocol::STALL, number, .. }) = Request::decode(&message[..n]) {
+                println!("[fs] asked to stall: answering nothing for {number} ticks");
+                taaj::sleep(number);
+                println!("[fs] answering again");
+            }
+        }
     }
 }

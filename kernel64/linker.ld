@@ -83,6 +83,16 @@ SECTIONS
     __data_end = .;
     __kernel_end = .;
 
+    /* The bootloader puts the ramdisk at physical 2 MiB and refuses a
+     * kernel that reaches it - with a message on the screen and nothing
+     * on the serial port, which in a headless test is a boot that just
+     * never starts. So the limit is checked here, where it is a build
+     * error with a reason. (Raising it means moving the ramdisk and the
+     * loader's staging area: RAMDISK_LOAD_ADDRESS in the bootloader.) */
+    KERNEL_LOAD_LIMIT = 0x200000;
+    ASSERT(__kernel_end - KERNEL_WINDOW <= KERNEL_LOAD_LIMIT,
+        "the kernel image ends above 2 MiB, where the bootloader refuses to load it - see linker.ld")
+
     /* Unwind tables are for panic=unwind, which this kernel never uses. */
     /DISCARD/ :
     {

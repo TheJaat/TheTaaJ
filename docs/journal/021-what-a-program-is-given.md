@@ -164,7 +164,7 @@ make run64
 | `help` | `given` and `with files COMMAND` in the list |
 | `ps` before and after all this | The same counts |
 
-In the terminal log, near the top: `[fscheck] … careless requests, a silent service: all passed`, twice.
+In the terminal log, near the top: `[fscheck] … careless requests, a silent service, read-only, a stall: all passed`, twice.
 
 The timeout cannot be triggered by hand yet (see "What is not tested"). If you ever *do* see `the file service is not answering` in normal use, that is a real finding — tell me what you had typed.
 

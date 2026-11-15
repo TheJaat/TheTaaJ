@@ -85,7 +85,7 @@ In the QEMU window:
 | `echo hello world` | `hello world` |
 | `uptime` | Time since boot; again a few seconds later, it has advanced |
 | `mem` | Frames in use and free, and the kernel heap's size |
-| `ps` | `init`, `display`, `fs`, `blk`, `shell`, `kbd` with their ids, then `6 processes, 7 threads, 7 channels` |
+| `ps` | `init`, `display`, `fs`, `blk`, `shell`, `kbd` with their ids, then `6 processes, 7 threads, 8 channels` |
 | `run hello` | The program's output, then `hello exited with code 42` |
 | `run peek` | `peek exited with code -1000` |
 | `run kbd` | A refusal: services cannot be run from the shell |

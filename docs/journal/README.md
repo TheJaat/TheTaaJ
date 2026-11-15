@@ -26,7 +26,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 018 | [A faster disk: shared memory and a block cache](018-a-faster-disk.md) | written | `f11bbb2` |
 | 019 | [Faster text: a display that draws only what changed](019-faster-text.md) | written | `fb49716` |
 | 020 | [The console fills the screen](020-the-console-fills-the-screen.md) | written | `d6beacd` |
-| 021 | [What a program is given, and a client that does not wait forever](021-what-a-program-is-given.md) | written | per-program grants |
+| 021 | [What a program is given, and a client that does not wait forever](021-what-a-program-is-given.md) | written | `9039a12` |
+| 022 | [Read-only files, a service stalled on purpose, and a kernel too big to boot](022-read-only-files-a-stalled-service-and-a-kernel-too-big-to-boot.md) | written | read-only files |
 
 ## How to run what the entries describe
 
