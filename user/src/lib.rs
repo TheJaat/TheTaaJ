@@ -181,10 +181,13 @@ pub fn receive_until(channel: Handle, buffer: &mut [u8], handles: &mut [Handle],
 }
 
 /// How long a client waits for a service's answer before it gives up,
-/// in ticks: 5 seconds. A service that is merely busy answers far
+/// in ticks: 10 seconds. A service that is merely busy answers far
 /// sooner; one that has stopped answering must not take its clients
-/// with it.
-pub const ANSWER_WAIT: u64 = 500;
+/// with it. Longer than init takes to notice a silent service and
+/// start another (see its watchdog): a request that was waiting when
+/// the service was replaced is answered by the new one, and the client
+/// sees a pause, not a failure.
+pub const ANSWER_WAIT: u64 = 1000;
 
 pub fn close(handle: Handle) -> Result<(), Error> {
     abi::decode(syscall(call::HANDLE_CLOSE, handle, 0, 0)).map(|_| ())

@@ -223,6 +223,8 @@ make run64
 
 **A stalled file service** — this one you can watch:
 
+*(Since entry #23, init notices the silent service and replaces it, so the first `ls` below now pauses and then succeeds. The table shows what this entry's code did; use entry #23's testing note for what you see today.)*
+
 | Type | You should see |
 |---|---|
 | `fs stall 10` | `fs: the file service will answer nothing for 10 s` |

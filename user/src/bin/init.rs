@@ -33,6 +33,18 @@
 //! never notices the driver was replaced. This is the point of drivers
 //! in user mode: a driver bug costs a restart, not the system.
 //!
+//! A service can also fail without ending: stuck in a loop, or waiting
+//! for something that never comes. Its process is alive, so nothing
+//! above would notice. For the services that answer requests - fs and
+//! blk - init keeps a watchdog: once a second it sends each a small
+//! request of the kind any client could send, and expects an answer
+//! within the service's patience. No answer, and init ends the process
+//! (kill) - after which it is a service that ended, restarted like any
+//! other, taking over the same queue with every request still in it.
+//! init never *waits* for those answers: they are one more thing in the
+//! set it watches, with a time limit. It must not hang because a
+//! service did.
+//!
 //! A service that keeps crashing is not restarted forever. More than
 //! MAX_RESTARTS within RESTART_WINDOW ticks and init gives up on it -
 //! restarting in a tight loop would only hide the bug and burn the CPU.
@@ -58,6 +70,84 @@ const DELEGABLE: u32 = DUPLICATE | TRANSFER;
 
 const MAX_RESTARTS: usize = 5;
 const RESTART_WINDOW: u64 = 30 * 100; // 30 seconds of 100 Hz ticks
+/// How often a watched service is asked whether it is there, in ticks.
+const PING_EVERY: u64 = 100;
+
+/// The watchdog's view of one service.
+struct Watch {
+    /// Where its requests go - init's own end of that channel.
+    requests: Handle,
+    /// A request that changes nothing and is answered at once.
+    ping: [u8; 16],
+    ping_length: usize,
+    /// One channel for all its answers, kept for good: each ping carries
+    /// a copy of the sending end. (A fresh channel per ping, as other
+    /// clients make, would do - but the number of channels in the system
+    /// would flicker, and the tests count them.)
+    answers_tx: Handle,
+    answers_rx: Handle,
+    /// Ticks an answer may take. Longer for a service that itself waits
+    /// on another: fs is silent while blk is being replaced.
+    patience: u64,
+    /// When to ask next.
+    next_ping: u64,
+    /// While a ping is unanswered: when to stop believing.
+    deadline: Option<u64>,
+}
+
+impl Watch {
+    fn new(requests: Handle, ping: &[u8], patience: u64) -> Option<Watch> {
+        let (answers_tx, answers_rx) = taaj::channel_create().ok()?;
+        let mut bytes = [0u8; 16];
+        bytes[..ping.len()].copy_from_slice(ping);
+        Some(Watch { requests, ping: bytes, ping_length: ping.len(), answers_tx, answers_rx, patience, next_ping: 0, deadline: None })
+    }
+
+    /// Sends a ping, if one is due. A ping that cannot be sent - the
+    /// queue is full - is as good as sent: a service that leaves its
+    /// queue full for this long is not answering either.
+    fn ask(&mut self, now: u64) {
+        if self.deadline.is_some() || now < self.next_ping {
+            return;
+        }
+        if let Ok(copy) = taaj::duplicate(self.answers_tx, SEND | TRANSFER) {
+            if taaj::send(self.requests, &self.ping[..self.ping_length], &[copy]).is_err() {
+                let _ = taaj::close(copy); // not sent: still ours
+            }
+        }
+        self.deadline = Some(now + self.patience);
+    }
+
+    /// Takes every answer that has come. Any answer means "alive" - also
+    /// a late one to an earlier ping.
+    fn answered(&mut self, now: u64) {
+        let mut reply = [0u8; 16];
+        let mut any = false;
+        while let Ok(Some(_)) = taaj::poll(&[self.answers_rx]) {
+            if taaj::receive(self.answers_rx, &mut reply, &mut []).is_err() {
+                break;
+            }
+            any = true;
+        }
+        if any {
+            self.deadline = None;
+            self.next_ping = now + PING_EVERY;
+        }
+    }
+
+    /// A new process serves this now: give it time to start, and forget
+    /// what the old one owed.
+    fn restarted(&mut self, now: u64) {
+        self.answered(now);
+        self.deadline = None;
+        self.next_ping = now + PING_EVERY;
+    }
+
+    /// The next tick at which there is something to do.
+    fn wake_at(&self) -> u64 {
+        self.deadline.unwrap_or(self.next_ping)
+    }
+}
 
 /// A startup handle a service gets: one of init's own, copied, and the
 /// rights the service's copy carries.
@@ -74,6 +164,8 @@ struct Service {
     restarts: [u64; MAX_RESTARTS],
     restart_count: usize,
     given_up: bool,
+    /// For a service that answers requests: is it still answering?
+    watch: Option<Watch>,
 }
 
 /// Starts `name` with a fresh duplicate of each grant. A duplicate is
@@ -195,6 +287,14 @@ fn main() -> i64 {
     // Only the shell's screen and files can be copied and passed on.
     debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21)));
 
+    // The watchdog's pings: for fs, "what does this channel allow?" on
+    // the read-only channel; for blk, "what disk is this?". fs gets the
+    // longer patience - it waits on blk, and must outlast blk's
+    // replacement.
+    let fs_ping = [fileserver::protocol::ACCESS, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let fs_watch = Watch::new(files_look_out, &fs_ping, 400);
+    let blk_watch = disk.and_then(|_| Watch::new(disk_look_out, &[abi::block::INFO], 200));
+
     // The display first: it must have its info before the shell's text
     // arrives on the same channel.
     let mut services = [
@@ -205,8 +305,9 @@ fn main() -> i64 {
             restarts: [0; MAX_RESTARTS],
             restart_count: 0,
             given_up: framebuffer.is_none(),
+            watch: None,
         },
-        Service { name: "fs", grants: &[10, 20, 16], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
+        Service { name: "fs", grants: &[10, 20, 16], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: fs_watch },
         Service {
             name: "blk",
             grants: match disk {
@@ -217,9 +318,10 @@ fn main() -> i64 {
             restarts: [0; MAX_RESTARTS],
             restart_count: 0,
             given_up: disk.is_none(),
+            watch: blk_watch,
         },
-        Service { name: "shell", grants: &[4, 7, 8, 9, 11, 19, 21], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
-        Service { name: "kbd", grants: &[0, 1, 2, 3], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false },
+        Service { name: "shell", grants: &[4, 7, 8, 9, 11, 19, 21], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
+        Service { name: "kbd", grants: &[0, 1, 2, 3], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
     ];
     let launch = |service: &Service| {
         let mut list = [&grants[0]; 8];
@@ -260,8 +362,8 @@ fn main() -> i64 {
 
     loop {
         // Watch every service still running, and the request channel.
-        let mut watched = [0u64; 8];
-        let mut which = [0usize; 8];
+        let mut watched = [0u64; 12];
+        let mut which = [0usize; 12];
         let mut count = 0;
         for (n, service) in services.iter().enumerate() {
             if !service.given_up {
@@ -271,12 +373,43 @@ fn main() -> i64 {
             }
         }
         watched[count] = requests;
-        let index = match taaj::object_wait(&watched[..=count]) {
-            Ok(index) => index,
+        let processes = count;
+
+        // The watchdog. Ask whoever is due; end whoever has been silent
+        // too long - its process then ends, and is restarted below like
+        // any service that ended.
+        let now = taaj::ticks();
+        let mut wake = u64::MAX;
+        for (n, service) in services.iter_mut().enumerate() {
+            let (process, name) = (service.process, service.name);
+            let Some(watch) = service.watch.as_mut().filter(|_| !service.given_up) else { continue };
+            watch.ask(now);
+            if watch.deadline.is_some_and(|deadline| now >= deadline) {
+                println!("[init] {name} has not answered for {} s - stopping it", watch.patience / 100);
+                let _ = taaj::kill(process);
+                // Until it has ended and been replaced: nothing to ask.
+                watch.deadline = None;
+                watch.next_ping = u64::MAX;
+            }
+            wake = wake.min(watch.wake_at());
+            count += 1;
+            watched[count] = watch.answers_rx;
+            which[count] = n;
+        }
+
+        let index = match taaj::object_wait_until(&watched[..=count], wake) {
+            Ok(Some(index)) => index,
+            Ok(None) => continue, // time for the watchdog
             Err(_) => return 3,
         };
-        if index == count {
+        if index == processes {
             serve_request(launcher, requests);
+            continue;
+        }
+        if index > processes {
+            if let Some(watch) = services[which[index]].watch.as_mut() {
+                watch.answered(taaj::ticks());
+            }
             continue;
         }
         // A service ended; it is ready, so this returns at once.
@@ -306,6 +439,9 @@ fn main() -> i64 {
                 println!("[init] could not restart {}: {error:?}", service.name);
                 service.given_up = true;
             }
+        }
+        if let Some(watch) = service.watch.as_mut() {
+            watch.restarted(taaj::ticks());
         }
     }
 }
