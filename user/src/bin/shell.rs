@@ -16,7 +16,9 @@
 //! wait for it to end.
 //!
 //! A word that is not one of the shell's own commands is looked for as
-//! a file: `ls` and `cat` are programs on the disk, like any other.
+//! a file: `ls`, `cat`, `write`, `append` and `rm` are programs on the
+//! disk, like any other. The shell itself never changes a file - it
+//! only reads the ones it runs.
 //!
 //! Output goes to the screen and to the kernel's debug log (the serial
 //! line), which is what the boot tests read.
@@ -80,10 +82,12 @@ impl Shell {
                   \x20 mem          memory in use\n\
                   \x20 ps           processes\n\
                   \x20 run NAME ARGS    run a program: a file, or hello, peek\n\
-                  \x20 NAME ARGS    the same, for a file - ls and cat are such\n\
-                  \x20 write FILE TEXT    make FILE hold TEXT\n\
-                  \x20 append FILE TEXT   add TEXT to the end of FILE\n\
-                  \x20 rm FILE      remove a file\n\
+                  \x20 NAME ARGS    the same, for a file. On the disk:\n\
+                  \x20   ls                 list the files\n\
+                  \x20   cat FILE...        show files\n\
+                  \x20   write FILE TEXT    make FILE hold TEXT\n\
+                  \x20   append FILE TEXT   add TEXT to the end of FILE\n\
+                  \x20   rm FILE...         remove files\n\
                   \x20 disk         the disk's size\n\
                   \x20 disk read N        show sector N\n\
                   \x20 disk write N TEXT  put TEXT in sector N\n",
@@ -98,12 +102,6 @@ impl Shell {
                 self.run_program(name, arguments.trim(), true);
             }
             "run" => self.write(b"usage: run NAME ARGS\n"),
-            "write" | "append" => match rest.split_once(' ') {
-                Some((file, text)) => self.write_file(file, text, command == "append"),
-                None => say!(self, "usage: {command} FILE TEXT\n"),
-            },
-            "rm" if !rest.is_empty() => self.rm(rest),
-            "rm" => self.write(b"usage: rm FILE\n"),
             "disk" => self.disk(rest),
             // Not the shell's own: a program in a file, if there is one.
             _ => self.run_program(command, rest, false),
@@ -166,32 +164,6 @@ impl Shell {
         }
         if let Some(info) = self.system_info() {
             say!(self, "{} processes, {} threads, {} channels\n", info.processes, info.threads, info.channels);
-        }
-    }
-
-    fn files(&self) -> Option<&Files> {
-        if self.files.is_none() {
-            self.write(b"no file service: this shell has no files\n");
-        }
-        self.files.as_ref()
-    }
-
-    /// `write` and `append`: the text, as a line.
-    fn write_file(&self, name: &str, text: &str, append: bool) {
-        let Some(files) = self.files() else { return };
-        let mut line = Buffer::<{ LINE_MAX + 1 }>::new();
-        let _ = writeln!(line, "{}", text.trim());
-        let result = if append { files.append(name, line.as_bytes()) } else { files.write(name, line.as_bytes()) };
-        match result {
-            Ok(size) => say!(self, "{name}: {size} bytes\n"),
-            Err(error) => say!(self, "{}: {name}: {}\n", if append { "append" } else { "write" }, error.describe()),
-        }
-    }
-
-    fn rm(&self, name: &str) {
-        let Some(files) = self.files() else { return };
-        if let Err(error) = files.remove(name) {
-            say!(self, "rm: {name}: {}\n", error.describe());
         }
     }
 
