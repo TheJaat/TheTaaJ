@@ -66,13 +66,138 @@ pub fn exit(code: i64) -> ! {
     unreachable!("exit returned")
 }
 
-/// Writes raw bytes to the kernel's debug log (the serial line), and to
-/// stdout - the display - if this program was given one.
+/// Writes raw bytes to standard output: wherever whoever started this
+/// program pointed it. A program does not know where that is, and does
+/// not need to - which is the point: the same `cat` shows a file on the
+/// screen, or copies it into another file.
+///
+///   - the screen: shown there, and copied to the kernel's debug log
+///     (the serial line), so that the log reads as the screen does;
+///   - anything else - a file being written, another program: sent
+///     there, all of it, and nowhere else;
+///   - no standard output at all (a service, a test program): the
+///     debug log.
 pub fn write(bytes: &[u8]) -> Result<u64, Error> {
-    if let Some(stdout) = stdout() {
-        write_to_display(stdout, bytes);
+    match stdout() {
+        Some(screen) if output_is_screen() => {
+            write_to_display(screen, bytes);
+            debug_write(bytes)
+        }
+        Some(output) => write_to_stream(output, bytes).map(|()| bytes.len() as u64),
+        None => debug_write(bytes),
     }
+}
+
+/// Whether standard output is the screen - someone is looking at it -
+/// and not a file or another program. Almost nothing should ask: a
+/// program that prints differently depending on who reads cannot be
+/// trusted in a pipeline. The fair use is decoration that is noise
+/// anywhere else - as `cat` ends an unfinished last line on the screen,
+/// and must not add a byte to a copy. (Unix calls the question isatty.)
+pub fn output_is_screen() -> bool {
+    stdout().is_some() && STARTUP_ARGUMENT.load(Ordering::Relaxed) & abi::startup::SCREEN != 0
+}
+
+/// Writes raw bytes to the kernel's debug log, whatever standard
+/// output is.
+pub fn debug_write(bytes: &[u8]) -> Result<u64, Error> {
     abi::decode(syscall(call::DEBUG_WRITE, bytes.as_ptr() as u64, bytes.len() as u64, 0))
+}
+
+/// Sends `bytes` on `channel` as a stream (abi::stream): every byte, in
+/// order. A channel holds only so many messages; when it is full the
+/// reader has work to do, and this steps aside until there is room -
+/// however long that takes. Nothing is dropped: what is on the other
+/// end may be a file. It ends early only if the other end is closed -
+/// nobody is reading any more - and says so.
+///
+/// (Stepping aside is a loop that asks again: the kernel has no "wake
+/// me when there is room" yet. It yields at first, since a reader with
+/// a full queue is ready to run, and then sleeps a tick at a time, so
+/// that a reader that is itself waiting for a disk is not raced.)
+pub fn write_to_stream(channel: Handle, bytes: &[u8]) -> Result<(), Error> {
+    let mut message = [0u8; abi::MESSAGE_MAX as usize];
+    message[0] = abi::stream::DATA;
+    for chunk in bytes.chunks(abi::stream::DATA_MAX) {
+        message[1..=chunk.len()].copy_from_slice(chunk);
+        let mut tries = 0u32;
+        loop {
+            match send(channel, &message[..=chunk.len()], &[]) {
+                Ok(()) => break,
+                Err(Error::QueueFull) if tries < 64 => yield_now(),
+                Err(Error::QueueFull) => sleep(1),
+                Err(error) => return Err(error),
+            }
+            tries += 1;
+        }
+    }
+    Ok(())
+}
+
+/// Standard input: what this program was given to read, if anything.
+///
+/// A stream has no lines and no fixed pieces - bytes arrive in
+/// messages of whatever size the sender chose - so this keeps what a
+/// message brought until the program has asked for all of it.
+pub struct Input {
+    channel: Option<Handle>,
+    /// The message being handed out, and how much of it already was.
+    held: alloc::vec::Vec<u8>,
+    taken: usize,
+}
+
+/// This program's standard input. Make one, and keep it: a second one
+/// would not have what the first had read but not yet handed out.
+pub fn input() -> Input {
+    Input { channel: flagged_handle(abi::startup::STDIN), held: alloc::vec::Vec::new(), taken: 0 }
+}
+
+impl Input {
+    /// Whether there is an input at all. Without one, `read` says "the
+    /// end" at once.
+    pub fn is_given(&self) -> bool {
+        self.channel.is_some()
+    }
+
+    /// Up to `out.len()` bytes, waiting until there are some. 0 means
+    /// the end: the sender closed its end and everything was read.
+    pub fn read(&mut self, out: &mut [u8]) -> usize {
+        loop {
+            if self.taken < self.held.len() {
+                let n = out.len().min(self.held.len() - self.taken);
+                out[..n].copy_from_slice(&self.held[self.taken..self.taken + n]);
+                self.taken += n;
+                return n;
+            }
+            let Some(channel) = self.channel else { return 0 };
+            let mut message = [0u8; abi::MESSAGE_MAX as usize];
+            match receive(channel, &mut message, &mut []) {
+                // A message with no bytes in it is not the end: only a
+                // closed channel is. Go round again.
+                Ok((length, _)) if length >= 1 && message[0] == abi::stream::DATA => {
+                    self.held.clear();
+                    self.held.extend_from_slice(&message[1..length]);
+                    self.taken = 0;
+                }
+                Ok(_) => {} // not part of the stream
+                Err(_) => {
+                    self.channel = None;
+                    return 0;
+                }
+            }
+        }
+    }
+
+    /// All of it, a piece at a time, until the end.
+    pub fn each(&mut self, mut piece: impl FnMut(&[u8])) {
+        let mut buffer = [0u8; 1024];
+        loop {
+            match self.read(&mut buffer) {
+                0 => return,
+                n => piece(&buffer[..n]),
+            }
+        }
+    }
 }
 
 /// Sends `bytes` as display TEXT messages on `channel`.
@@ -417,7 +542,7 @@ fn flagged_handle(flag: u64) -> Option<Handle> {
     (flags & flag != 0).then(|| startup_handle(u64::from((flags & (flag - 1)).count_ones()))).flatten()
 }
 
-/// The display channel to print to, if the parent gave one.
+/// Standard output's channel, if the parent gave one.
 pub fn stdout() -> Option<Handle> {
     flagged_handle(abi::startup::STDOUT)
 }

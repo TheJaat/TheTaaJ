@@ -18,8 +18,16 @@
 //!
 //! A word that is not one of the shell's own commands is looked for as
 //! a file: `ls`, `cat`, `write`, `append`, `rm`, `mv` and `cp` are
-//! programs on the disk, like any other. The shell itself never changes a file - it
-//! only reads the ones it runs.
+//! programs on the disk, like any other.
+//!
+//! A command's output can be sent to a file, and its input taken from
+//! one: `ls > list`, `echo more >> list`, `wc < list`. The program is
+//! not given the file, or the file service. It is given a channel -
+//! its standard output, or input - and the shell stands at the other
+//! end, writing what arrives into the file, or sending the file's
+//! contents a piece at a time. So redirection is the one way the shell
+//! changes files itself, on the user's word; and a program that was
+//! granted no files still has none.
 //!
 //! The shell is also where the current directory lives: `cd` changes
 //! it, `pwd` shows it, the prompt shows it. It is a path the shell
@@ -43,6 +51,7 @@ use core::fmt::Write;
 
 use abi::ProcessEntry;
 use taaj::disk::Disk;
+use input::line::Command;
 use taaj::files::{path, FileError, Files, Kind};
 use taaj::{println, Buffer, Error, Handle};
 
@@ -57,7 +66,7 @@ const TYPED_AHEAD_MAX: usize = 256;
 /// the ones whose whole job is files - and each only as much of it as
 /// that job takes. These read; they get the channel that cannot change
 /// anything.
-const LOOK_PROGRAMS: &[&str] = &["ls", "cat"];
+const LOOK_PROGRAMS: &[&str] = &["ls", "cat", "wc"];
 /// And these change files.
 const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp"];
 
@@ -94,9 +103,39 @@ struct Shell {
     /// it is used. (A RefCell because `run` takes `&self`: the borrow
     /// is checked when the program runs instead of when it is built.)
     directory: RefCell<String>,
+    /// Where the output of the line being run goes, and where its input
+    /// comes from, if the line said so. Set by `run` for the length of
+    /// one line.
+    redirection: RefCell<Redirection>,
 }
 
-/// Formats into a buffer, then writes it at once to screen and log.
+/// A line's redirections, as whole paths from the root.
+#[derive(Default)]
+struct Redirection {
+    output: Option<String>,
+    input: Option<String>,
+    /// The first thing that went wrong writing the output. After it
+    /// nothing more is written, and the line's end reports it.
+    failed: Option<FileError>,
+}
+
+/// A file being sent to a program as its standard input, a piece at a
+/// time: where in the file the next piece starts, and the piece that
+/// was read but has not fitted into the channel yet.
+struct Feed {
+    to: Handle,
+    path: String,
+    offset: u64,
+    /// A whole stream message: the DATA byte, then the piece.
+    message: [u8; abi::MESSAGE_MAX as usize],
+    /// Its length; 0 if no piece is waiting.
+    length: usize,
+    /// Whether the waiting piece is the file's last.
+    last: bool,
+}
+
+/// Formats into a buffer, then writes it at once as output of the
+/// command being run: to screen and log, or to where the line sent it.
 macro_rules! say {
     ($shell:expr, $($arg:tt)*) => {{
         let mut text = Buffer::<512>::new();
@@ -105,10 +144,100 @@ macro_rules! say {
     }};
 }
 
+/// The same, but always to the screen and the log: what the shell has
+/// to tell the user about a command, which is not the command's output.
+macro_rules! tell {
+    ($shell:expr, $($arg:tt)*) => {{
+        let mut text = Buffer::<512>::new();
+        let _ = write!(text, $($arg)*);
+        $shell.tell(text.as_bytes());
+    }};
+}
+
 impl Shell {
+    /// Output of the command being run: `echo`'s text, `ps`'s table.
+    /// It goes where the line said - a file - or else to the user.
     fn write(&self, bytes: &[u8]) {
+        // A copy of the path: the borrow must end before `to_file`
+        // borrows the same cell, to note a failure.
+        let output = self.redirection.borrow().output.clone();
+        match output {
+            Some(path) => self.to_file(&path, bytes),
+            None => self.tell(bytes),
+        }
+    }
+
+    /// To the user, whatever the line said about its output: the
+    /// screen, and the debug log.
+    fn tell(&self, bytes: &[u8]) {
         let _ = taaj::write(bytes);
         self.screen_only(bytes);
+    }
+
+    /// Adds `bytes` to the end of the output file. The first failure
+    /// is kept, and nothing is written after it: a file with a hole in
+    /// the middle would look whole.
+    fn to_file(&self, path: &str, bytes: &[u8]) {
+        if self.redirection.borrow().failed.is_some() {
+            return;
+        }
+        let written = match &self.files {
+            Some(files) => files.append(path, bytes).map(|_| ()),
+            None => Err(FileError::Unreachable(Error::PeerClosed)),
+        };
+        if let Err(error) = written {
+            self.redirection.borrow_mut().failed = Some(error);
+        }
+    }
+
+    /// Gets the line's output file and input file ready, before the
+    /// command runs. False - with the reason said - if either cannot
+    /// be: then nothing is run, and nothing was changed.
+    ///
+    /// The output file is made, or emptied, here - before the command
+    /// starts, as in a Unix shell. So `ls > list` lists `list` itself,
+    /// empty; and `cat < f > f` empties `f` before `cat` has read it.
+    /// The input is looked at first, so that a line whose input is not
+    /// there does not cost an output file its contents.
+    fn redirect(&self, command: &Command) -> bool {
+        let here = self.directory.borrow().clone();
+        let mut redirection = Redirection::default();
+        if let Some(name) = &command.input {
+            let path = path::resolve(&here, name);
+            let Some(files) = self.look.as_ref().or(self.files.as_ref()) else {
+                tell!(self, "{name}: no file service\n");
+                return false;
+            };
+            match files.stat(&path) {
+                Ok((Kind::File, _)) => {}
+                Ok((Kind::Directory, _)) => {
+                    tell!(self, "{name}: is a directory\n");
+                    return false;
+                }
+                Err(error) => {
+                    tell!(self, "{name}: {}\n", error.describe());
+                    return false;
+                }
+            }
+            redirection.input = Some(path);
+        }
+        if let Some((name, append)) = &command.output {
+            let path = path::resolve(&here, name);
+            let Some(files) = &self.files else {
+                tell!(self, "{name}: no file service\n");
+                return false;
+            };
+            // Adding nothing makes the file if it is not there, and
+            // leaves it alone if it is.
+            let made = if *append { files.append(&path, &[]) } else { files.write(&path, &[]) };
+            if let Err(error) = made {
+                tell!(self, "{name}: {}\n", error.describe());
+                return false;
+            }
+            redirection.output = Some(path);
+        }
+        *self.redirection.borrow_mut() = redirection;
+        true
     }
 
     fn screen_only(&self, bytes: &[u8]) {
@@ -145,10 +274,25 @@ impl Shell {
     /// quotes, backslashes (input::line) - and runs those. A line that
     /// cannot be divided, because a quote was never closed, is not run
     /// at all: half a command is worse than none.
+    ///
+    /// The line may also say where the command's output goes and where
+    /// its input comes from. That holds for the whole line - `time ls >
+    /// list` puts the listing and the time in `list` - and is forgotten
+    /// when the line is done.
     fn run(&self, line: &str) {
-        match input::line::words(line) {
-            Ok(words) => self.run_words(&words),
-            Err(error) => say!(self, "{}\n", error.describe()),
+        let command = match input::line::parse(line) {
+            Ok(command) => command,
+            Err(error) => return tell!(self, "{}\n", error.describe()),
+        };
+        if !self.redirect(&command) {
+            return;
+        }
+        self.run_words(&command.words);
+        // `take` leaves an empty Redirection behind: the next line
+        // starts with none.
+        let done = self.redirection.take();
+        if let (Some((name, _)), Some(error)) = (&command.output, done.failed) {
+            tell!(self, "{name}: {}\n", error.describe());
         }
     }
 
@@ -166,11 +310,11 @@ impl Shell {
         match command.as_str() {
             "help" => self.write(
                 b"commands:\n\
-                  \x20 help         this list\n\
-                  \x20 echo TEXT    print TEXT\n\
+                  \x20 help, echo TEXT   this list; print TEXT\n\
                   \x20   (a word with spaces: \"two words\", 'two words', two\\ words)\n\
-                  \x20 clear        clear the screen\n\
-                  \x20 uptime, mem  time since boot; memory in use\n\
+                  \x20 clear, uptime, mem   clear the screen; time since boot; memory\n\
+                  \x20 COMMAND > FILE   its output into FILE (>> adds to the end)\n\
+                  \x20 COMMAND < FILE   its input from FILE\n\
                   \x20 ps           processes\n\
                   \x20 cd [DIR], pwd    go to DIR (to the root); say where this is\n\
                   \x20 time COMMAND     run COMMAND, and say how long it took\n\
@@ -179,7 +323,7 @@ impl Shell {
                   \x20 NAME ARGS    the same, for a file in the root (./NAME, or a\n\
                   \x20              path with a /, for one elsewhere). On the disk:\n\
                   \x20   ls [DIR...]        list a directory (this one)\n\
-                  \x20   cat FILE...        show files\n\
+                  \x20   cat FILE..., wc FILE...   show files; count lines and words\n\
                   \x20   write FILE TEXT, append FILE TEXT   set, or add to, FILE\n\
                   \x20   mv FROM TO, cp FROM TO   move or rename; copy a file\n\
                   \x20   mkdir DIR...       make directories\n\
@@ -544,14 +688,41 @@ impl Shell {
         // so the program gets them divided as they are here.
         let mut encoded = [0u8; 2 * LINE_MAX];
         let Some(length) = abi::arguments::encode(arguments.iter().map(String::as_str), &mut encoded) else {
-            return say!(self, "run: {name}: the arguments are too long\n");
+            return tell!(self, "run: {name}: the arguments are too long\n");
         };
         let arguments = &encoded[..length];
         let image = match self.program_image(name) {
-            Ok(None) if !explicit => return say!(self, "unknown command: {name} (try help)\n"),
+            Ok(None) if !explicit => return tell!(self, "unknown command: {name} (try help)\n"),
             Ok(image) => image,
-            Err(why) => return say!(self, "run: {name} {why}\n"),
+            Err(why) => return tell!(self, "run: {name} {why}\n"),
         };
+        // Standard output and input. With no redirection: the screen,
+        // as the shell has it, and no input. With one: a new channel,
+        // one end for the program and the other kept here, where
+        // `wait_for` moves the bytes between it and the file.
+        let (output_path, input_path) = {
+            let redirection = self.redirection.borrow();
+            (redirection.output.clone(), redirection.input.clone())
+        };
+        let mut ours: [Option<Handle>; 2] = [None, None];
+        let mut theirs: [Option<Handle>; 2] = [None, None];
+        for (n, wanted) in [output_path.is_some(), input_path.is_some()].into_iter().enumerate() {
+            if !wanted {
+                continue;
+            }
+            match taaj::channel_create() {
+                Ok((here, there)) => (ours[n], theirs[n]) = (Some(here), Some(there)),
+                Err(error) => {
+                    for handle in ours.into_iter().chain(theirs).chain([image]).flatten() {
+                        let _ = taaj::close(handle);
+                    }
+                    return tell!(self, "run: {name}: no channel for its output or input: {error:?}\n");
+                }
+            }
+        }
+        let [our_output, our_input] = ours;
+        let on_screen = output_path.is_none();
+        let stdout = if on_screen { Self::delegate(self.screen) } else { theirs[0] };
         // The files go only to a program from a file: "ls" built into
         // the kernel image would be another program of the same name.
         let on_disk = |list: &[&str]| image.is_some() && list.contains(&name);
@@ -562,13 +733,17 @@ impl Shell {
             Grant::Usual if on_disk(LOOK_PROGRAMS) => self.look.as_ref(),
             Grant::Usual => None,
         };
-        let mut handles = [0u64; 3];
+        let mut handles = [0u64; 4];
         let mut count = 0;
-        let mut flags = 0;
+        // SCREEN brings no handle: it says what the output is.
+        let mut flags = if on_screen && stdout.is_some() { abi::startup::SCREEN as u8 } else { 0 };
+        // In the order of the flags' bits, which is the order init
+        // expects the handles in.
         let offered = [
             (0, image),
-            (abi::startup::STDOUT, Self::delegate(self.screen)),
+            (abi::startup::STDOUT, stdout),
             (abi::startup::FILES, Self::delegate(files.map(Files::channel))),
+            (abi::startup::STDIN, theirs[1]),
         ];
         for (flag, handle) in offered {
             if let Some(handle) = handle {
@@ -593,29 +768,52 @@ impl Shell {
             (Some(init), Some(length)) => taaj::send(init, &message[..length], handles).map(|()| init),
             _ => Err(Error::InvalidArgument),
         };
+        // The ends kept here, for when the program is not started.
+        let close_ours = || {
+            for handle in [our_output, our_input].into_iter().flatten() {
+                let _ = taaj::close(handle);
+            }
+        };
         let Ok(init) = sent else {
             for &handle in handles {
                 let _ = taaj::close(handle); // not sent: still ours
             }
-            return self.write(b"cannot reach init: cannot run programs\n");
+            close_ours();
+            return self.tell(b"cannot reach init: cannot run programs\n");
         };
         let mut reply = [0u8; 64];
         let mut handle = [0u64; 1];
         let process = match taaj::receive(init, &mut reply, &mut handle) {
             Ok((2, 1)) if &reply[..2] == b"ok" => handle[0],
             Ok((n, _)) => {
-                self.write(&reply[..n]);
-                self.write(b"\n");
+                close_ours();
+                self.tell(&reply[..n]);
+                self.tell(b"\n");
                 return;
             }
-            Err(error) => return say!(self, "no answer from init: {error:?}\n"),
+            Err(error) => {
+                close_ours();
+                return tell!(self, "no answer from init: {error:?}\n");
+            }
         };
-        match self.wait_for(process) {
-            Ok((_, abi::KILLED)) => say!(self, "{name} was killed by the kernel (it broke a rule)\n"),
-            Ok((_, abi::STOPPED)) => say!(self, "{name} was stopped\n"),
+        let output = our_output.zip(output_path);
+        let feed = our_input.zip(input_path).map(|(to, path)| Feed {
+            to,
+            path,
+            offset: 0,
+            message: [0; abi::MESSAGE_MAX as usize],
+            length: 0,
+            last: false,
+        });
+        // How it ended is the shell's to say, and not part of what the
+        // program printed: it goes to the user even when the output
+        // goes to a file.
+        match self.wait_for(process, output, feed) {
+            Ok((_, abi::KILLED)) => tell!(self, "{name} was killed by the kernel (it broke a rule)\n"),
+            Ok((_, abi::STOPPED)) => tell!(self, "{name} was stopped\n"),
             Ok((_, 0)) if !explicit => {}
-            Ok((_, code)) => say!(self, "{name} exited with code {code}\n"),
-            Err(error) => say!(self, "lost track of {name}: {error:?}\n"),
+            Ok((_, code)) => tell!(self, "{name} exited with code {code}\n"),
+            Err(error) => tell!(self, "lost track of {name}: {error:?}\n"),
         }
         let _ = taaj::close(process);
     }
@@ -625,28 +823,161 @@ impl Shell {
     /// Waits for the foreground program to end, watching the keyboard
     /// meanwhile: Ctrl+C asks the kernel to end the program - and the
     /// wait goes on, until it has. Any other key is kept for later.
-    fn wait_for(&self, process: Handle) -> Result<(usize, i64), Error> {
+    ///
+    /// And, if the line redirected them, moves the program's output and
+    /// input: what arrives on `output`'s channel is added to its file;
+    /// `feed`'s file is sent down its channel a piece at a time. The
+    /// shell is the far end of both, so it must keep doing this for as
+    /// long as the program runs - a program whose output nobody takes
+    /// would wait for ever with a full channel.
+    fn wait_for(&self, process: Handle, output: Option<(Handle, String)>, feed: Option<Feed>) -> Result<(usize, i64), Error> {
+        #[derive(Clone, Copy)]
+        enum Source {
+            Process,
+            Keys,
+            Output,
+        }
+        let (mut output, mut feed) = (output, feed);
+        let mut keys = Some(self.keys);
         let mut input = [0u8; 16];
-        loop {
-            // Whichever comes first: the program's end, or a key.
-            if taaj::object_wait(&[process, self.keys])? == 0 {
-                return taaj::wait_any(&[process]);
+        let finish = |output: &Option<(Handle, String)>, feed: &Option<Feed>| {
+            for handle in [output.as_ref().map(|(handle, _)| *handle), feed.as_ref().map(|feed| feed.to)].into_iter().flatten() {
+                let _ = taaj::close(handle);
             }
-            match taaj::receive(self.keys, &mut input, &mut []) {
-                Ok((n, _)) if &input[..n] == CTRL_C => {
-                    self.write(b"^C\n");
-                    if let Err(error) = taaj::kill(process) {
-                        say!(self, "cannot stop it: {error:?}\n");
+        };
+        loop {
+            // Send as much of the input as the channel will take now.
+            // False: all of it has gone, or it cannot go on - closing
+            // our end is what tells the program its input has ended.
+            if let Some(sending) = &mut feed {
+                if !self.feed(sending) {
+                    let _ = taaj::close(sending.to);
+                    feed = None;
+                }
+            }
+            // What to wait on: the program always; the keyboard while
+            // there is one; the output channel while it is open.
+            let mut handles = [0u64; 3];
+            let mut sources = [Source::Process; 3];
+            let mut count = 0;
+            let watched = [
+                (Some(process), Source::Process),
+                (keys, Source::Keys),
+                (output.as_ref().map(|(handle, _)| *handle), Source::Output),
+            ];
+            for (handle, source) in watched {
+                if let Some(handle) = handle {
+                    (handles[count], sources[count]) = (handle, source);
+                    count += 1;
+                }
+            }
+            // With input still to send, the wait is short: there is no
+            // way to wait for room in a channel, so the shell looks
+            // again a tick later.
+            let ready = match &feed {
+                Some(_) => taaj::object_wait_until(&handles[..count], taaj::ticks() + 1),
+                None => taaj::object_wait(&handles[..count]).map(Some),
+            };
+            let ready = match ready {
+                Ok(ready) => ready,
+                Err(error) => {
+                    finish(&output, &feed);
+                    return Err(error);
+                }
+            };
+            match ready.map(|index| sources[index]) {
+                None => {} // time to try the input again
+                Some(Source::Process) => {
+                    // It has ended; what it printed last may still be
+                    // in the channel. Only what is there already is
+                    // taken: nothing more can come.
+                    if let Some((channel, path)) = &output {
+                        while let Ok(Some(_)) = taaj::poll(&[*channel]) {
+                            if !self.take_output(*channel, path) {
+                                break;
+                            }
+                        }
+                    }
+                    finish(&output, &feed);
+                    return taaj::wait_any(&[process]);
+                }
+                Some(Source::Output) => {
+                    if let Some((channel, path)) = &output {
+                        if !self.take_output(*channel, path) {
+                            let _ = taaj::close(*channel);
+                            output = None;
+                        }
                     }
                 }
-                Ok((n, _)) => {
-                    let mut typed = self.typed_ahead.borrow_mut();
-                    if typed.len() < TYPED_AHEAD_MAX {
-                        typed.push_back(input[..n].to_vec());
+                Some(Source::Keys) => match taaj::receive(self.keys, &mut input, &mut []) {
+                    Ok((n, _)) if &input[..n] == CTRL_C => {
+                        self.tell(b"^C\n");
+                        if let Err(error) = taaj::kill(process) {
+                            tell!(self, "cannot stop it: {error:?}\n");
+                        }
+                    }
+                    Ok((n, _)) => {
+                        let mut typed = self.typed_ahead.borrow_mut();
+                        if typed.len() < TYPED_AHEAD_MAX {
+                            typed.push_back(input[..n].to_vec());
+                        }
+                    }
+                    // No keyboard: nothing to watch there any more.
+                    Err(_) => keys = None,
+                },
+            }
+        }
+    }
+
+    /// Takes one message of a program's output and adds it to the
+    /// file. False when there will be no more: the program closed its
+    /// end, and everything it sent has been taken.
+    fn take_output(&self, channel: Handle, path: &str) -> bool {
+        let mut message = [0u8; abi::MESSAGE_MAX as usize];
+        match taaj::receive(channel, &mut message, &mut []) {
+            Ok((length, _)) if length > 1 && message[0] == abi::stream::DATA => {
+                self.to_file(path, &message[1..length]);
+                true
+            }
+            Ok(_) => true, // empty, or not part of the stream
+            Err(_) => false,
+        }
+    }
+
+    /// Sends the next pieces of the input file to the program, as many
+    /// as its channel has room for. True if there is more to send
+    /// later; false when the file has all been sent, cannot be read, or
+    /// the program has stopped reading.
+    fn feed(&self, feed: &mut Feed) -> bool {
+        let Some(files) = self.look.as_ref().or(self.files.as_ref()) else { return false };
+        loop {
+            if feed.length == 0 {
+                // The closure fills `message`; the other fields of
+                // `feed` are free to be read while it is borrowed,
+                // because a closure borrows only the fields it uses.
+                let message = &mut feed.message;
+                let read = files.read_from(&feed.path, feed.offset, |piece| {
+                    message[0] = abi::stream::DATA;
+                    message[1..=piece.len()].copy_from_slice(piece);
+                });
+                match read {
+                    Ok(0) => return false, // the file ended on a boundary
+                    Ok(n) => {
+                        feed.length = n + 1;
+                        feed.offset += n as u64;
+                        feed.last = n < fileserver::protocol::READ_MAX;
+                    }
+                    Err(error) => {
+                        tell!(self, "the input stopped: {}\n", error.describe());
+                        return false;
                     }
                 }
-                // No keyboard: nothing to watch but the program.
-                Err(_) => return taaj::wait_any(&[process]),
+            }
+            match taaj::send(feed.to, &feed.message[..feed.length], &[]) {
+                Ok(()) if feed.last => return false,
+                Ok(()) => feed.length = 0,
+                Err(Error::QueueFull) => return true, // it has not read what it has: later
+                Err(_) => return false,               // it is not reading any more
             }
         }
     }
@@ -673,6 +1004,7 @@ fn main() -> i64 {
         disk: taaj::startup_handle(5).map(Disk::new),
         look: taaj::startup_handle(6).map(Files::new),
         directory: RefCell::new(String::new()),
+        redirection: RefCell::new(Redirection::default()),
     };
     println!("[shell] ready - type a command (try help)");
     shell.screen_only(b"Welcome to TheTaaJ. Type help for the commands.\n\n");

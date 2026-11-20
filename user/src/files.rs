@@ -150,6 +150,17 @@ impl Files {
         }
     }
 
+    /// One piece of the file, from `offset`: up to protocol::READ_MAX
+    /// bytes, given to `piece`. Returns how many; fewer than READ_MAX
+    /// means the file ends there. For reading a file a little at a
+    /// time, with other work in between.
+    pub fn read_from(&self, name: &str, offset: u64, piece: impl FnOnce(&[u8])) -> Result<usize, FileError> {
+        let mut reply = [0u8; MESSAGE_MAX];
+        let n = self.call(Request::new(protocol::READ, &self.path(name), offset), &mut reply)?;
+        piece(&reply[1..=n]);
+        Ok(n)
+    }
+
     /// Replaces the file's contents with `data`, creating it if needed.
     pub fn write(&self, name: &str, data: &[u8]) -> Result<u64, FileError> {
         let name = &self.path(name);
