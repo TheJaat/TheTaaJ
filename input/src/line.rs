@@ -35,9 +35,15 @@
 //! once the quotes are gone, a `>` that was typed as text and a `>`
 //! that was typed as an instruction look the same.
 //!
-//! Nothing else is special yet: no variables, no wildcards, no pipes. A
-//! quote that is never closed is an error, not a guess - the line is
-//! not run.
+//! And one that joins commands: `A | B` is two commands, and what A
+//! prints is what B reads - a pipeline, of any number of them. Only
+//! the first can take its input from a file and only the last can send
+//! its output to one: everywhere else that end is already joined to a
+//! neighbour. (A Unix shell lets the file win; that is nearly always a
+//! mistake when typed, so here it is refused.) A quoted `|` is text.
+//!
+//! Nothing else is special yet: no variables, no wildcards. A quote
+//! that is never closed is an error, not a guess - the line is not run.
 //!
 //! Pure logic, so it is tested on the host.
 
@@ -57,6 +63,11 @@ pub enum LineError {
     NoFile(Redirect),
     /// Two places for the output, or two for the input.
     Twice(Redirect),
+    /// A `|` with no command on one side of it.
+    NoCommand,
+    /// In a pipeline: an input file for a command that is not the
+    /// first, or an output file for one that is not the last.
+    Misplaced(Redirect),
 }
 
 /// Which way a redirection points.
@@ -70,8 +81,8 @@ pub enum Redirect {
     In,
 }
 
-/// A line, understood: the command and its arguments, and where its
-/// output and input are to go if not the usual places.
+/// One command of a line, understood: the command and its arguments,
+/// and where its output and input are to go if not the usual places.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Command {
     pub words: Vec<String>,
@@ -87,6 +98,8 @@ pub struct Command {
 enum Token {
     Word(String),
     To(Redirect),
+    /// `|`
+    Pipe,
 }
 
 impl LineError {
@@ -100,6 +113,9 @@ impl LineError {
             LineError::NoFile(Redirect::In) => "there is a < with no file name after it",
             LineError::Twice(Redirect::In) => "the input can come from only one file",
             LineError::Twice(_) => "the output can go to only one file",
+            LineError::NoCommand => "there is a | with no command on one side of it",
+            LineError::Misplaced(Redirect::In) => "only the first command of a pipeline can take its input from a file",
+            LineError::Misplaced(_) => "only the last command of a pipeline can send its output to a file",
         }
     }
 }
@@ -112,20 +128,24 @@ enum Within {
     Double,
 }
 
-/// The words of `line`, in order - its redirections, if it has any,
-/// left out. An empty or blank line has no words.
-pub fn words(line: &str) -> Result<Vec<String>, LineError> {
-    parse(line).map(|command| command.words)
-}
-
-/// The line as a command: its words, and its redirections.
-pub fn parse(line: &str) -> Result<Command, LineError> {
+/// The line as its commands, in order: one, or several joined by `|`.
+/// There is always at least one - for a blank line, one with no words.
+pub fn parse(line: &str) -> Result<Vec<Command>, LineError> {
+    let mut commands = Vec::new();
+    // The command being collected; a `|` finishes it and begins the
+    // next.
     let mut command = Command::default();
     let mut tokens = tokens(line)?.into_iter();
     while let Some(token) = tokens.next() {
         let redirect = match token {
             Token::Word(word) => {
                 command.words.push(word);
+                continue;
+            }
+            Token::Pipe => {
+                // `take` hands over the finished command and leaves an
+                // empty one in its place.
+                commands.push(core::mem::take(&mut command));
                 continue;
             }
             Token::To(redirect) => redirect,
@@ -145,7 +165,23 @@ pub fn parse(line: &str) -> Result<Command, LineError> {
             return Err(LineError::Twice(redirect));
         }
     }
-    Ok(command)
+    commands.push(command);
+    if commands.len() > 1 {
+        // `a |`, `| b`, `a | | b`: a side with nothing to run.
+        if commands.iter().any(|command| command.words.is_empty()) {
+            return Err(LineError::NoCommand);
+        }
+        let last = commands.len() - 1;
+        for (n, command) in commands.iter().enumerate() {
+            if n > 0 && command.input.is_some() {
+                return Err(LineError::Misplaced(Redirect::In));
+            }
+            if n < last && command.output.is_some() {
+                return Err(LineError::Misplaced(Redirect::Out));
+            }
+        }
+    }
+    Ok(commands)
 }
 
 /// The pieces of `line`, in order.
@@ -180,6 +216,11 @@ fn tokens(line: &str) -> Result<Vec<Token>, LineError> {
                 };
                 tokens.push(Token::To(redirect));
             }
+            // And so does a pipe.
+            (Within::Nothing, '|') => {
+                tokens.extend(word.take().map(Token::Word));
+                tokens.push(Token::Pipe);
+            }
             (Within::Nothing, '\'') => {
                 within = Within::Single;
                 word.get_or_insert_with(String::new);
@@ -213,6 +254,17 @@ fn tokens(line: &str) -> Result<Vec<Token>, LineError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The line as one command - which the lines of most tests are.
+    fn one(line: &str) -> Result<Command, LineError> {
+        let mut commands = parse(line)?;
+        assert_eq!(commands.len(), 1, "{line:?} is more than one command");
+        Ok(commands.remove(0))
+    }
+
+    fn words(line: &str) -> Result<Vec<String>, LineError> {
+        one(line).map(|command| command.words)
+    }
 
     fn split(line: &str) -> Vec<String> {
         words(line).unwrap()
@@ -295,46 +347,92 @@ mod tests {
 
     #[test]
     fn output_and_input_are_named_after_their_signs() {
-        assert_eq!(parse("ls > list"), Ok(command(&["ls"], Some(("list", false)), None)));
-        assert_eq!(parse("echo more >> list"), Ok(command(&["echo", "more"], Some(("list", true)), None)));
-        assert_eq!(parse("wc < list"), Ok(command(&["wc"], None, Some("list"))));
-        assert_eq!(parse("wc < in > out"), Ok(command(&["wc"], Some(("out", false)), Some("in"))));
-        assert_eq!(parse("ls docs"), Ok(command(&["ls", "docs"], None, None)));
+        assert_eq!(one("ls > list"), Ok(command(&["ls"], Some(("list", false)), None)));
+        assert_eq!(one("echo more >> list"), Ok(command(&["echo", "more"], Some(("list", true)), None)));
+        assert_eq!(one("wc < list"), Ok(command(&["wc"], None, Some("list"))));
+        assert_eq!(one("wc < in > out"), Ok(command(&["wc"], Some(("out", false)), Some("in"))));
+        assert_eq!(one("ls docs"), Ok(command(&["ls", "docs"], None, None)));
     }
 
     #[test]
     fn redirections_need_no_spaces_and_may_stand_anywhere() {
-        assert_eq!(parse("ls>list"), Ok(command(&["ls"], Some(("list", false)), None)));
-        assert_eq!(parse("echo a>>b c"), Ok(command(&["echo", "a", "c"], Some(("b", true)), None)));
-        assert_eq!(parse("> out echo hi"), Ok(command(&["echo", "hi"], Some(("out", false)), None)));
-        assert_eq!(parse("wc<in>out"), Ok(command(&["wc"], Some(("out", false)), Some("in"))));
-        assert_eq!(parse("cat >'my file'"), Ok(command(&["cat"], Some(("my file", false)), None)));
+        assert_eq!(one("ls>list"), Ok(command(&["ls"], Some(("list", false)), None)));
+        assert_eq!(one("echo a>>b c"), Ok(command(&["echo", "a", "c"], Some(("b", true)), None)));
+        assert_eq!(one("> out echo hi"), Ok(command(&["echo", "hi"], Some(("out", false)), None)));
+        assert_eq!(one("wc<in>out"), Ok(command(&["wc"], Some(("out", false)), Some("in"))));
+        assert_eq!(one("cat >'my file'"), Ok(command(&["cat"], Some(("my file", false)), None)));
         // Only the sign, with nothing run: the words are none.
-        assert_eq!(parse("> empty"), Ok(command(&[], Some(("empty", false)), None)));
+        assert_eq!(one("> empty"), Ok(command(&[], Some(("empty", false)), None)));
     }
 
     #[test]
     fn a_quoted_sign_is_text() {
-        assert_eq!(parse("echo \"a > b\""), Ok(command(&["echo", "a > b"], None, None)));
-        assert_eq!(parse("echo '<' \\> x\\>\\>y"), Ok(command(&["echo", "<", ">", "x>>y"], None, None)));
-        assert_eq!(parse("echo a\">\"b > c"), Ok(command(&["echo", "a>b"], Some(("c", false)), None)));
+        assert_eq!(one("echo \"a > b\""), Ok(command(&["echo", "a > b"], None, None)));
+        assert_eq!(one("echo '<' \\> x\\>\\>y"), Ok(command(&["echo", "<", ">", "x>>y"], None, None)));
+        assert_eq!(one("echo a\">\"b > c"), Ok(command(&["echo", "a>b"], Some(("c", false)), None)));
         // And a file may be named by one.
-        assert_eq!(parse("echo x > '>'"), Ok(command(&["echo", "x"], Some((">", false)), None)));
+        assert_eq!(one("echo x > '>'"), Ok(command(&["echo", "x"], Some((">", false)), None)));
     }
 
     #[test]
     fn a_redirection_to_nowhere_or_to_two_places_is_refused() {
-        assert_eq!(parse("ls >"), Err(LineError::NoFile(Redirect::Out)));
-        assert_eq!(parse("ls >>"), Err(LineError::NoFile(Redirect::Append)));
-        assert_eq!(parse("wc <"), Err(LineError::NoFile(Redirect::In)));
-        assert_eq!(parse("ls > > x"), Err(LineError::NoFile(Redirect::Out)));
-        assert_eq!(parse("ls >>> x"), Err(LineError::NoFile(Redirect::Append)));
-        assert_eq!(parse("ls > < x"), Err(LineError::NoFile(Redirect::Out)));
-        assert_eq!(parse("ls > a > b"), Err(LineError::Twice(Redirect::Out)));
-        assert_eq!(parse("ls > a >> b"), Err(LineError::Twice(Redirect::Append)));
-        assert_eq!(parse("wc < a < b"), Err(LineError::Twice(Redirect::In)));
+        assert_eq!(one("ls >"), Err(LineError::NoFile(Redirect::Out)));
+        assert_eq!(one("ls >>"), Err(LineError::NoFile(Redirect::Append)));
+        assert_eq!(one("wc <"), Err(LineError::NoFile(Redirect::In)));
+        assert_eq!(one("ls > > x"), Err(LineError::NoFile(Redirect::Out)));
+        assert_eq!(one("ls >>> x"), Err(LineError::NoFile(Redirect::Append)));
+        assert_eq!(one("ls > < x"), Err(LineError::NoFile(Redirect::Out)));
+        assert_eq!(one("ls > a > b"), Err(LineError::Twice(Redirect::Out)));
+        assert_eq!(one("ls > a >> b"), Err(LineError::Twice(Redirect::Append)));
+        assert_eq!(one("wc < a < b"), Err(LineError::Twice(Redirect::In)));
         // An empty name is a name - a bad one, for the file service to refuse.
-        assert_eq!(parse("ls > ''"), Ok(command(&["ls"], Some(("", false)), None)));
+        assert_eq!(one("ls > ''"), Ok(command(&["ls"], Some(("", false)), None)));
+    }
+
+    #[test]
+    fn a_pipe_joins_commands() {
+        assert_eq!(parse("ls | wc"), Ok(vec![command(&["ls"], None, None), command(&["wc"], None, None)]));
+        // No spaces needed, and any number of commands.
+        assert_eq!(
+            parse("cat a b|cat|wc"),
+            Ok(vec![command(&["cat", "a", "b"], None, None), command(&["cat"], None, None), command(&["wc"], None, None)])
+        );
+        // One command is a pipeline of one; a blank line, of one with no words.
+        assert_eq!(parse("ls").map(|commands| commands.len()), Ok(1));
+        assert_eq!(parse("  "), Ok(vec![Command::default()]));
+    }
+
+    #[test]
+    fn a_pipeline_reads_a_file_at_its_start_and_writes_one_at_its_end() {
+        assert_eq!(
+            parse("cat < in | wc > out"),
+            Ok(vec![command(&["cat"], None, Some("in")), command(&["wc"], Some(("out", false)), None)])
+        );
+        assert_eq!(parse("a | b >> out").map(|commands| commands[1].output.clone()), Ok(Some(("out".to_string(), true))));
+        assert_eq!(parse("a > x | b"), Err(LineError::Misplaced(Redirect::Out)));
+        assert_eq!(parse("a | b > x | c"), Err(LineError::Misplaced(Redirect::Out)));
+        assert_eq!(parse("a | b < x"), Err(LineError::Misplaced(Redirect::In)));
+        // Each command has its own: two outputs are "twice" only within one.
+        assert_eq!(parse("a | b > x > y"), Err(LineError::Twice(Redirect::Out)));
+    }
+
+    #[test]
+    fn a_pipe_needs_a_command_on_both_sides() {
+        assert_eq!(parse("ls |"), Err(LineError::NoCommand));
+        assert_eq!(parse("| wc"), Err(LineError::NoCommand));
+        assert_eq!(parse("ls | | wc"), Err(LineError::NoCommand));
+        assert_eq!(parse("ls || wc"), Err(LineError::NoCommand));
+        assert_eq!(parse("|"), Err(LineError::NoCommand));
+        // A redirection alone is not a command.
+        assert_eq!(parse("ls | > out"), Err(LineError::NoCommand));
+        // The file a redirection names cannot be a pipe.
+        assert_eq!(parse("ls > | wc"), Err(LineError::NoFile(Redirect::Out)));
+    }
+
+    #[test]
+    fn a_quoted_pipe_is_text() {
+        assert_eq!(one("echo \"p | q\""), Ok(command(&["echo", "p | q"], None, None)));
+        assert_eq!(one("echo a\\|b '|'"), Ok(command(&["echo", "a|b", "|"], None, None)));
     }
 
     #[test]

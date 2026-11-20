@@ -77,13 +77,24 @@ pub fn exit(code: i64) -> ! {
 ///     there, all of it, and nowhere else;
 ///   - no standard output at all (a service, a test program): the
 ///     debug log.
+///
+/// If the output is a stream and its reader has gone - the other end
+/// is closed - the program ends here, with the exit code NO_READER. A
+/// program writes for someone; with nobody left to read, going on is
+/// only work, and a program that writes for ever (`yes`) would never
+/// stop. (Unix does this with a signal, SIGPIPE.) Few programs check
+/// what a print returned, so it cannot be left to them.
 pub fn write(bytes: &[u8]) -> Result<u64, Error> {
     match stdout() {
         Some(screen) if output_is_screen() => {
             write_to_display(screen, bytes);
             debug_write(bytes)
         }
-        Some(output) => write_to_stream(output, bytes).map(|()| bytes.len() as u64),
+        Some(output) => match write_to_stream(output, bytes) {
+            Ok(()) => Ok(bytes.len() as u64),
+            Err(Error::PeerClosed) => exit(abi::NO_READER),
+            Err(error) => Err(error),
+        },
         None => debug_write(bytes),
     }
 }

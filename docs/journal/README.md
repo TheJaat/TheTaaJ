@@ -38,7 +38,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 028 | [The current directory: a place to stand that the file service never hears about](028-the-current-directory.md) | written | `09caaef` (TheKernel `73b2ab2`) |
 | 029 | [Moving and copying: one is a single commit, the other cannot be](029-moving-and-copying.md) | written | `bdb77dc` (TheKernel `4a18915`) |
 | 030 | [Quoting: who decides where one argument ends](030-quoting.md) | written | `6a1d21d` (TheKernel `9ec61a9`) |
-| 031 | [Standard output, standard input, and redirection: a program that does not know where its words go](031-standard-output-input-and-redirection.md) | written | this step (TheKernel `4330b55`) |
+| 031 | [Standard output, standard input, and redirection: a program that does not know where its words go](031-standard-output-input-and-redirection.md) | written | `7bb1162` (TheKernel `4330b55`) |
+| 032 | [Pipes: two programs, one channel, and a shell that lets go](032-pipes.md) | written | this step (TheKernel `36b4ffd`) |
 
 ## How to run what the entries describe
 

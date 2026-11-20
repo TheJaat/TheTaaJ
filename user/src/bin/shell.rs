@@ -29,6 +29,13 @@
 //! changes files itself, on the user's word; and a program that was
 //! granted no files still has none.
 //!
+//! Commands can be joined: in `cat notes | wc`, what `cat` prints is
+//! what `wc` reads. For that the shell makes a channel, gives one end
+//! to each program, and keeps neither: the bytes go from one program to
+//! the other, and the shell only waits for both to end. One of the
+//! shell's own commands may begin a pipeline (`ps | wc`); it runs
+//! first, to its end, and what it printed is then sent to the next.
+//!
 //! The shell is also where the current directory lives: `cd` changes
 //! it, `pwd` shows it, the prompt shows it. It is a path the shell
 //! remembers and nothing else - the file service is never told. A
@@ -69,6 +76,18 @@ const TYPED_AHEAD_MAX: usize = 256;
 const LOOK_PROGRAMS: &[&str] = &["ls", "cat", "wc"];
 /// And these change files.
 const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp"];
+/// The shell's own commands - the words `run_words` knows, and must be
+/// kept the same as. They read no input, so in a pipeline one may only
+/// stand first.
+const OWN_COMMANDS: &[&str] =
+    &["help", "echo", "cd", "pwd", "clear", "uptime", "mem", "ps", "time", "run", "with", "fs", "display", "disk"];
+/// Most commands in one pipeline. The wait watches them all at once,
+/// with the keyboard and an output, and the kernel waits on 32 things
+/// at most - but nobody types eight.
+const PIPELINE_MAX: usize = 8;
+/// Most output kept from one of the shell's own commands for the next
+/// command of a pipeline to read.
+const KEPT_MAX: usize = 1 << 20;
 
 /// What a program is to be given of the files. Everything not on the
 /// lists above gets the screen and its arguments; `with files COMMAND`
@@ -109,29 +128,61 @@ struct Shell {
     redirection: RefCell<Redirection>,
 }
 
-/// A line's redirections, as whole paths from the root.
+/// Where the output of what the shell runs goes, when not to the user.
+#[derive(Clone)]
+enum Sink {
+    /// Added to the end of this file: a whole path from the root.
+    File(String),
+    /// Kept in memory (`Redirection::kept`), for the next command of a
+    /// pipeline.
+    Memory,
+}
+
+/// Where a program's input comes from, when the shell provides it.
+enum Supply {
+    /// This file: a whole path from the root.
+    File(String),
+    /// These bytes: what one of the shell's own commands printed.
+    Memory(Vec<u8>),
+}
+
+/// A line's redirections.
 #[derive(Default)]
 struct Redirection {
-    output: Option<String>,
-    input: Option<String>,
+    output: Option<Sink>,
+    /// Taken by the first program the line starts.
+    input: Option<Supply>,
     /// The first thing that went wrong writing the output. After it
     /// nothing more is written, and the line's end reports it.
     failed: Option<FileError>,
+    /// What `Sink::Memory` has collected.
+    kept: Vec<u8>,
+    /// Whether more than KEPT_MAX arrived, and was dropped.
+    overflowed: bool,
 }
 
-/// A file being sent to a program as its standard input, a piece at a
-/// time: where in the file the next piece starts, and the piece that
-/// was read but has not fitted into the channel yet.
+/// An input being sent to a program as its standard input, a piece at
+/// a time: where the next piece starts, and the piece that was made
+/// ready but has not fitted into the channel yet.
 struct Feed {
     to: Handle,
-    path: String,
+    from: Supply,
     offset: u64,
     /// A whole stream message: the DATA byte, then the piece.
     message: [u8; abi::MESSAGE_MAX as usize],
     /// Its length; 0 if no piece is waiting.
     length: usize,
-    /// Whether the waiting piece is the file's last.
+    /// Whether the waiting piece is the last.
     last: bool,
+}
+
+/// What a program is to have as its standard output.
+enum Output {
+    /// The screen, as the shell has it.
+    Screen,
+    /// The sending end of a channel: to the shell, or to the next
+    /// program of a pipeline.
+    Channel(Handle),
 }
 
 /// Formats into a buffer, then writes it at once as output of the
@@ -156,13 +207,20 @@ macro_rules! tell {
 
 impl Shell {
     /// Output of the command being run: `echo`'s text, `ps`'s table.
-    /// It goes where the line said - a file - or else to the user.
+    /// It goes where the line said - a file, the next command - or
+    /// else to the user.
     fn write(&self, bytes: &[u8]) {
-        // A copy of the path: the borrow must end before `to_file`
-        // borrows the same cell, to note a failure.
+        // A copy: the borrow must end before `to_file` borrows the
+        // same cell, to note a failure.
         let output = self.redirection.borrow().output.clone();
         match output {
-            Some(path) => self.to_file(&path, bytes),
+            Some(Sink::File(path)) => self.to_file(&path, bytes),
+            Some(Sink::Memory) => {
+                let mut redirection = self.redirection.borrow_mut();
+                let room = KEPT_MAX - redirection.kept.len();
+                redirection.overflowed |= bytes.len() > room;
+                redirection.kept.extend_from_slice(&bytes[..bytes.len().min(room)]);
+            }
             None => self.tell(bytes),
         }
     }
@@ -199,10 +257,10 @@ impl Shell {
     /// empty; and `cat < f > f` empties `f` before `cat` has read it.
     /// The input is looked at first, so that a line whose input is not
     /// there does not cost an output file its contents.
-    fn redirect(&self, command: &Command) -> bool {
+    fn redirect(&self, input: Option<&String>, output: Option<&(String, bool)>) -> bool {
         let here = self.directory.borrow().clone();
         let mut redirection = Redirection::default();
-        if let Some(name) = &command.input {
+        if let Some(name) = input {
             let path = path::resolve(&here, name);
             let Some(files) = self.look.as_ref().or(self.files.as_ref()) else {
                 tell!(self, "{name}: no file service\n");
@@ -219,9 +277,9 @@ impl Shell {
                     return false;
                 }
             }
-            redirection.input = Some(path);
+            redirection.input = Some(Supply::File(path));
         }
-        if let Some((name, append)) = &command.output {
+        if let Some((name, append)) = output {
             let path = path::resolve(&here, name);
             let Some(files) = &self.files else {
                 tell!(self, "{name}: no file service\n");
@@ -234,7 +292,7 @@ impl Shell {
                 tell!(self, "{name}: {}\n", error.describe());
                 return false;
             }
-            redirection.output = Some(path);
+            redirection.output = Some(Sink::File(path));
         }
         *self.redirection.borrow_mut() = redirection;
         true
@@ -275,24 +333,167 @@ impl Shell {
     /// cannot be divided, because a quote was never closed, is not run
     /// at all: half a command is worse than none.
     ///
-    /// The line may also say where the command's output goes and where
-    /// its input comes from. That holds for the whole line - `time ls >
-    /// list` puts the listing and the time in `list` - and is forgotten
-    /// when the line is done.
+    /// The line may also say where the output goes and where the input
+    /// comes from. That holds for the whole line - `time ls > list`
+    /// puts the listing and the time in `list` - and is forgotten when
+    /// the line is done. And it may be several commands joined by `|`:
+    /// then the input is the first one's and the output the last one's.
     fn run(&self, line: &str) {
-        let command = match input::line::parse(line) {
-            Ok(command) => command,
+        let commands = match input::line::parse(line) {
+            Ok(commands) => commands,
             Err(error) => return tell!(self, "{}\n", error.describe()),
         };
-        if !self.redirect(&command) {
+        // `parse` gives at least one command, so there is a first and
+        // a last - the same one, on most lines.
+        let (Some(first), Some(last)) = (commands.first(), commands.last()) else { return };
+        if !self.redirect(first.input.as_ref(), last.output.as_ref()) {
             return;
         }
-        self.run_words(&command.words);
+        match commands.as_slice() {
+            [only] => self.run_words(&only.words),
+            several => self.run_pipeline(several),
+        }
         // `take` leaves an empty Redirection behind: the next line
         // starts with none.
         let done = self.redirection.take();
-        if let (Some((name, _)), Some(error)) = (&command.output, done.failed) {
+        if let (Some((name, _)), Some(error)) = (&last.output, done.failed) {
             tell!(self, "{name}: {}\n", error.describe());
+        }
+    }
+
+    /// Runs commands joined by `|`: each one's output is the next
+    /// one's input.
+    ///
+    /// Between two programs the shell makes a channel and gives away
+    /// both ends - the sending end as one program's standard output,
+    /// the receiving end as the other's standard input. It keeps
+    /// neither, and that matters: the end of a stream is its sender
+    /// closing, so a copy of the sending end left here would keep the
+    /// reader waiting for ever after the writer had gone.
+    ///
+    /// All the programs are started, and then all waited for together.
+    /// They must run at the same time: a channel holds 32 messages, so
+    /// a writer with more to say than that needs its reader running.
+    ///
+    /// One of the shell's own commands can only be first. It cannot
+    /// run "at the same time" - it is this code - so it runs to its
+    /// end with its output kept in memory, and that is then sent to
+    /// the next command as a file would be.
+    fn run_pipeline(&self, commands: &[Command]) {
+        if commands.len() > PIPELINE_MAX {
+            return tell!(self, "a pipeline can join {PIPELINE_MAX} commands at most\n");
+        }
+        if let Some(own) = commands[1..].iter().map(name).find(|name| OWN_COMMANDS.contains(name)) {
+            return tell!(self, "{own} is one of the shell's own commands: it reads nothing, so it can only begin a pipeline\n");
+        }
+        // Every program is found and read before any is started: a
+        // mistyped name at the end must not let the commands before it
+        // run - `rm notes | wcc` would have removed the file.
+        let own_first = OWN_COMMANDS.contains(&name(&commands[0]));
+        let programs = &commands[usize::from(own_first)..];
+        let mut images = Vec::new();
+        for command in programs {
+            let name = name(command);
+            let image = match self.program_image(name) {
+                Ok(Some(image)) => Ok(image),
+                Ok(None) => Err("unknown command"),
+                Err(why) => Err(why),
+            };
+            match image {
+                Ok(image) => images.push(image),
+                Err(why) => {
+                    close_all(images);
+                    return match why {
+                        "unknown command" => tell!(self, "unknown command: {name} (try help)\n"),
+                        why => tell!(self, "run: {name} {why}\n"),
+                    };
+                }
+            }
+        }
+        if own_first {
+            // Its output goes into memory for the length of the
+            // command, and then becomes the input of what follows.
+            let output = self.redirection.borrow_mut().output.replace(Sink::Memory);
+            self.run_words(&commands[0].words);
+            let mut redirection = self.redirection.borrow_mut();
+            redirection.output = output;
+            let kept = core::mem::take(&mut redirection.kept);
+            redirection.input = Some(Supply::Memory(kept));
+            if core::mem::take(&mut redirection.overflowed) {
+                // The borrow must end before `tell` - which does not
+                // use it, but the rule is simpler kept than argued.
+                drop(redirection);
+                tell!(self, "{}: more than {} KiB of output; the rest was dropped\n", name(&commands[0]), KEPT_MAX / 1024);
+            }
+        }
+        // Start them, first to last. `carried` is the receiving end of
+        // the channel the previous program writes to: this one's input.
+        let mut started: Vec<Handle> = Vec::new();
+        let mut carried: Option<Handle> = None;
+        let mut ours: (Option<Handle>, Option<Feed>) = (None, None);
+        let mut images = images.into_iter();
+        let mut failed = false;
+        for (n, command) in programs.iter().enumerate() {
+            let Some((name, arguments)) = command.words.split_first() else { break };
+            let image = images.next();
+            // Its input: the previous program, or - for the first -
+            // whatever the line gave.
+            let stdin = match carried.take() {
+                Some(previous) => Ok(Some(previous)),
+                None => self.input_end().map(|(theirs, feed)| {
+                    ours.1 = feed;
+                    theirs
+                }),
+            };
+            // Its output: the next program, or - for the last - the
+            // file or the screen.
+            let stdout = if n + 1 < programs.len() {
+                taaj::channel_create().map(|(send, receive)| {
+                    carried = Some(receive);
+                    Output::Channel(send)
+                })
+            } else {
+                self.output_end().map(|(theirs, kept)| {
+                    ours.0 = kept;
+                    theirs
+                })
+            };
+            let process = match (stdin, stdout) {
+                (Ok(stdin), Ok(stdout)) => self.start(name, arguments, image, Grant::Usual, stdout, stdin),
+                (stdin, stdout) => {
+                    tell!(self, "run: {name}: no channel for its output or input\n");
+                    let stdout = stdout.ok().and_then(|output| match output {
+                        Output::Channel(handle) => Some(handle),
+                        Output::Screen => None,
+                    });
+                    close_all(stdin.ok().flatten().into_iter().chain(stdout).chain(image));
+                    None
+                }
+            };
+            match process {
+                Some(process) => started.push(process),
+                None => {
+                    failed = true;
+                    break;
+                }
+            }
+        }
+        if failed {
+            // One could not be started: the ones before it have nobody
+            // to write to. End them, and let go of everything.
+            close_all(images.chain(carried));
+            for &process in &started {
+                let _ = taaj::kill(process);
+            }
+        }
+        let (output, feed) = ours;
+        let codes = self.wait_for(&started, output, feed);
+        for (n, &process) in started.iter().enumerate() {
+            if !failed {
+                let code = codes.as_ref().map(|codes| codes[n]).map_err(|&error| error);
+                self.report(name(&programs[n]), code, false);
+            }
+            let _ = taaj::close(process);
         }
     }
 
@@ -313,8 +514,8 @@ impl Shell {
                   \x20 help, echo TEXT   this list; print TEXT\n\
                   \x20   (a word with spaces: \"two words\", 'two words', two\\ words)\n\
                   \x20 clear, uptime, mem   clear the screen; time since boot; memory\n\
-                  \x20 COMMAND > FILE   its output into FILE (>> adds to the end)\n\
-                  \x20 COMMAND < FILE   its input from FILE\n\
+                  \x20 COMMAND > FILE, >> FILE, < FILE   output into, added to; input from\n\
+                  \x20 A | B        what A prints is what B reads\n\
                   \x20 ps           processes\n\
                   \x20 cd [DIR], pwd    go to DIR (to the root); say where this is\n\
                   \x20 time COMMAND     run COMMAND, and say how long it took\n\
@@ -324,6 +525,7 @@ impl Shell {
                   \x20              path with a /, for one elsewhere). On the disk:\n\
                   \x20   ls [DIR...]        list a directory (this one)\n\
                   \x20   cat FILE..., wc FILE...   show files; count lines and words\n\
+                  \x20   yes [TEXT]         print TEXT (y) for ever\n\
                   \x20   write FILE TEXT, append FILE TEXT   set, or add to, FILE\n\
                   \x20   mv FROM TO, cp FROM TO   move or rename; copy a file\n\
                   \x20   mkdir DIR...       make directories\n\
@@ -332,8 +534,7 @@ impl Shell {
                   \x20   given              say what it was given\n\
                   \x20 with files COMMAND      run COMMAND with the files too\n\
                   \x20 with readonly COMMAND   the same, but only to read them\n\
-                  \x20              (of the programs above, all but given\n\
-                  \x20              get the files anyway)\n\
+                  \x20              (ls to rm above get the files anyway)\n\
                   \x20 fs stall SECONDS   a test: the file service goes silent\n\
                   \x20 disk stall SECONDS, display stall SECONDS   the same,\n\
                   \x20              for the disk driver and the display\n\
@@ -394,6 +595,7 @@ impl Shell {
             },
             "disk" => self.disk(rest),
             // Not the shell's own: a program in a file, if there is one.
+            // Any word added above belongs in OWN_COMMANDS too.
             _ => self.run_program(command, arguments, false, Grant::Usual),
         }
     }
@@ -671,26 +873,34 @@ impl Shell {
         taaj::duplicate(handle?, taaj::rights::SEND | taaj::rights::TRANSFER).ok()
     }
 
+    /// The program's end of a channel for its output, and ours - if
+    /// the line sent the output anywhere but the screen.
+    fn output_end(&self) -> Result<(Output, Option<Handle>), Error> {
+        if self.redirection.borrow().output.is_none() {
+            return Ok((Output::Screen, None));
+        }
+        let (ours, theirs) = taaj::channel_create()?;
+        Ok((Output::Channel(theirs), Some(ours)))
+    }
+
+    /// The program's end of a channel for its input, and what is to be
+    /// sent down ours - if the line has an input to give. It is given
+    /// once: to the first program the line starts.
+    fn input_end(&self) -> Result<(Option<Handle>, Option<Feed>), Error> {
+        let Some(from) = self.redirection.borrow_mut().input.take() else { return Ok((None, None)) };
+        let (ours, theirs) = taaj::channel_create()?;
+        let feed = Feed { to: ours, from, offset: 0, message: [0; abi::MESSAGE_MAX as usize], length: 0, last: false };
+        Ok((Some(theirs), Some(feed)))
+    }
+
     /// Asks init to start `name`, then waits for it - a foreground job.
     /// A file of that name is read and sent along; otherwise, for `run`
     /// (`explicit`), init looks among the programs built into the kernel
-    /// image. The program gets `arguments` and the screen, as the shell
-    /// has it - and the files only if it is one of FILE_PROGRAMS, or
-    /// the user said so (`grant`): a program gets what it needs,
-    /// not what the shell happens to hold. A program that gets the
-    /// files is also told the current directory; one that does not has
-    /// no use for it.
+    /// image.
     ///
     /// `run NAME` says how the program ended; a program run by its name
     /// alone is a command, and says nothing unless it failed.
     fn run_program(&self, name: &str, arguments: &[String], explicit: bool, grant: Grant) {
-        // The arguments as they travel: each followed by a zero byte,
-        // so the program gets them divided as they are here.
-        let mut encoded = [0u8; 2 * LINE_MAX];
-        let Some(length) = abi::arguments::encode(arguments.iter().map(String::as_str), &mut encoded) else {
-            return tell!(self, "run: {name}: the arguments are too long\n");
-        };
-        let arguments = &encoded[..length];
         let image = match self.program_image(name) {
             Ok(None) if !explicit => return tell!(self, "unknown command: {name} (try help)\n"),
             Ok(image) => image,
@@ -700,29 +910,78 @@ impl Shell {
         // as the shell has it, and no input. With one: a new channel,
         // one end for the program and the other kept here, where
         // `wait_for` moves the bytes between it and the file.
-        let (output_path, input_path) = {
-            let redirection = self.redirection.borrow();
-            (redirection.output.clone(), redirection.input.clone())
+        let (stdout, output, stdin, feed) = match (self.output_end(), self.input_end()) {
+            (Ok((stdout, output)), Ok((stdin, feed))) => (stdout, output, stdin, feed),
+            (output, input) => {
+                tell!(self, "run: {name}: no channel for its output or input\n");
+                // Whichever was made is let go of.
+                let output = output.ok().into_iter().flat_map(|(theirs, ours)| match theirs {
+                    Output::Channel(theirs) => [Some(theirs), ours],
+                    Output::Screen => [None, ours],
+                });
+                let input = input.ok().into_iter().flat_map(|(theirs, feed)| [theirs, feed.map(|feed| feed.to)]);
+                return close_all(output.chain(input).flatten().chain(image));
+            }
         };
-        let mut ours: [Option<Handle>; 2] = [None, None];
-        let mut theirs: [Option<Handle>; 2] = [None, None];
-        for (n, wanted) in [output_path.is_some(), input_path.is_some()].into_iter().enumerate() {
-            if !wanted {
-                continue;
-            }
-            match taaj::channel_create() {
-                Ok((here, there)) => (ours[n], theirs[n]) = (Some(here), Some(there)),
-                Err(error) => {
-                    for handle in ours.into_iter().chain(theirs).chain([image]).flatten() {
-                        let _ = taaj::close(handle);
-                    }
-                    return tell!(self, "run: {name}: no channel for its output or input: {error:?}\n");
-                }
-            }
+        let Some(process) = self.start(name, arguments, image, grant, stdout, stdin) else {
+            return close_all(output.into_iter().chain(feed.map(|feed| feed.to)));
+        };
+        let code = self.wait_for(&[process], output, feed).map(|codes| codes[0]);
+        self.report(name, code, explicit);
+        let _ = taaj::close(process);
+    }
+
+    /// Says how a program ended, if that needs saying. It is the
+    /// shell's to say, and not part of what the program printed: it
+    /// goes to the user even when the output goes to a file.
+    fn report(&self, name: &str, code: Result<i64, Error>, explicit: bool) {
+        match code {
+            Ok(abi::KILLED) => tell!(self, "{name} was killed by the kernel (it broke a rule)\n"),
+            Ok(abi::STOPPED) => tell!(self, "{name} was stopped\n"),
+            // Its reader went away and it stopped writing: in `yes |
+            // given` that is how things are meant to end.
+            Ok(abi::NO_READER) => {}
+            Ok(0) if !explicit => {}
+            Ok(code) => tell!(self, "{name} exited with code {code}\n"),
+            Err(error) => tell!(self, "lost track of {name}: {error:?}\n"),
         }
-        let [our_output, our_input] = ours;
-        let on_screen = output_path.is_none();
-        let stdout = if on_screen { Self::delegate(self.screen) } else { theirs[0] };
+    }
+
+    /// Asks init to start `name`, and returns the new process - not
+    /// waiting for it. `image` is the program, read from its file; with
+    /// none, init looks among the programs built into the kernel image.
+    /// The program gets `arguments`, `stdout` and `stdin` - and the
+    /// files only if it is one of the listed programs, or the user said
+    /// so (`grant`): a program gets what it needs, not what the shell
+    /// happens to hold. A program that gets the files is also told the
+    /// current directory; one that does not has no use for it.
+    ///
+    /// The image and the two channel ends are given away here whatever
+    /// happens: if the program cannot be started, this says why and
+    /// closes them.
+    fn start(
+        &self,
+        name: &str,
+        arguments: &[String],
+        image: Option<Handle>,
+        grant: Grant,
+        stdout: Output,
+        stdin: Option<Handle>,
+    ) -> Option<Handle> {
+        let on_screen = matches!(stdout, Output::Screen);
+        let stdout = match stdout {
+            Output::Screen => Self::delegate(self.screen),
+            Output::Channel(handle) => Some(handle),
+        };
+        // The arguments as they travel: each followed by a zero byte,
+        // so the program gets them divided as they are here.
+        let mut encoded = [0u8; 2 * LINE_MAX];
+        let Some(length) = abi::arguments::encode(arguments.iter().map(String::as_str), &mut encoded) else {
+            close_all([image, stdout, stdin].into_iter().flatten());
+            tell!(self, "run: {name}: the arguments are too long\n");
+            return None;
+        };
+        let arguments = &encoded[..length];
         // The files go only to a program from a file: "ls" built into
         // the kernel image would be another program of the same name.
         let on_disk = |list: &[&str]| image.is_some() && list.contains(&name);
@@ -743,7 +1002,7 @@ impl Shell {
             (0, image),
             (abi::startup::STDOUT, stdout),
             (abi::startup::FILES, Self::delegate(files.map(Files::channel))),
-            (abi::startup::STDIN, theirs[1]),
+            (abi::startup::STDIN, stdin),
         ];
         for (flag, handle) in offered {
             if let Some(handle) = handle {
@@ -768,84 +1027,72 @@ impl Shell {
             (Some(init), Some(length)) => taaj::send(init, &message[..length], handles).map(|()| init),
             _ => Err(Error::InvalidArgument),
         };
-        // The ends kept here, for when the program is not started.
-        let close_ours = || {
-            for handle in [our_output, our_input].into_iter().flatten() {
-                let _ = taaj::close(handle);
-            }
-        };
         let Ok(init) = sent else {
-            for &handle in handles {
-                let _ = taaj::close(handle); // not sent: still ours
-            }
-            close_ours();
-            return self.tell(b"cannot reach init: cannot run programs\n");
+            close_all(handles.iter().copied()); // not sent: still ours
+            self.tell(b"cannot reach init: cannot run programs\n");
+            return None;
         };
         let mut reply = [0u8; 64];
         let mut handle = [0u64; 1];
-        let process = match taaj::receive(init, &mut reply, &mut handle) {
-            Ok((2, 1)) if &reply[..2] == b"ok" => handle[0],
+        match taaj::receive(init, &mut reply, &mut handle) {
+            Ok((2, 1)) if &reply[..2] == b"ok" => Some(handle[0]),
             Ok((n, _)) => {
-                close_ours();
                 self.tell(&reply[..n]);
                 self.tell(b"\n");
-                return;
+                None
             }
             Err(error) => {
-                close_ours();
-                return tell!(self, "no answer from init: {error:?}\n");
+                tell!(self, "no answer from init: {error:?}\n");
+                None
             }
-        };
-        let output = our_output.zip(output_path);
-        let feed = our_input.zip(input_path).map(|(to, path)| Feed {
-            to,
-            path,
-            offset: 0,
-            message: [0; abi::MESSAGE_MAX as usize],
-            length: 0,
-            last: false,
-        });
-        // How it ended is the shell's to say, and not part of what the
-        // program printed: it goes to the user even when the output
-        // goes to a file.
-        match self.wait_for(process, output, feed) {
-            Ok((_, abi::KILLED)) => tell!(self, "{name} was killed by the kernel (it broke a rule)\n"),
-            Ok((_, abi::STOPPED)) => tell!(self, "{name} was stopped\n"),
-            Ok((_, 0)) if !explicit => {}
-            Ok((_, code)) => tell!(self, "{name} exited with code {code}\n"),
-            Err(error) => tell!(self, "lost track of {name}: {error:?}\n"),
         }
-        let _ = taaj::close(process);
     }
 }
 
 impl Shell {
-    /// Waits for the foreground program to end, watching the keyboard
-    /// meanwhile: Ctrl+C asks the kernel to end the program - and the
-    /// wait goes on, until it has. Any other key is kept for later.
+    /// Waits for the foreground programs to end - one, or the several
+    /// of a pipeline - and returns their exit codes, in their order.
+    /// The keyboard is watched meanwhile: Ctrl+C asks the kernel to end
+    /// every one still running - and the wait goes on, until they have.
+    /// Any other key is kept for later.
     ///
-    /// And, if the line redirected them, moves the program's output and
-    /// input: what arrives on `output`'s channel is added to its file;
-    /// `feed`'s file is sent down its channel a piece at a time. The
-    /// shell is the far end of both, so it must keep doing this for as
-    /// long as the program runs - a program whose output nobody takes
-    /// would wait for ever with a full channel.
-    fn wait_for(&self, process: Handle, output: Option<(Handle, String)>, feed: Option<Feed>) -> Result<(usize, i64), Error> {
+    /// And, if the line redirected them, moves the output and input:
+    /// what arrives on `output` is added to the line's file (or kept,
+    /// for a pipeline); `feed` is sent down its channel a piece at a
+    /// time. The shell is the far end of both, so it must keep doing
+    /// this for as long as the programs run - a program whose output
+    /// nobody takes would wait for ever with a full channel.
+    fn wait_for(&self, processes: &[Handle], output: Option<Handle>, feed: Option<Feed>) -> Result<Vec<i64>, Error> {
         #[derive(Clone, Copy)]
         enum Source {
-            Process,
+            /// The process at this place in `processes`.
+            Process(usize),
             Keys,
             Output,
         }
         let (mut output, mut feed) = (output, feed);
         let mut keys = Some(self.keys);
         let mut input = [0u8; 16];
-        let finish = |output: &Option<(Handle, String)>, feed: &Option<Feed>| {
-            for handle in [output.as_ref().map(|(handle, _)| *handle), feed.as_ref().map(|feed| feed.to)].into_iter().flatten() {
-                let _ = taaj::close(handle);
-            }
-        };
+        // None while the process is running.
+        let mut codes: Vec<Option<i64>> = alloc::vec![None; processes.len()];
+        let finish = |output: Option<Handle>, feed: Option<Feed>| close_all(output.into_iter().chain(feed.map(|feed| feed.to)));
         loop {
+            // `collect` on Options: Some(all of them) if every one is
+            // Some - every program has ended - and None otherwise.
+            if let Some(codes) = codes.iter().copied().collect::<Option<Vec<i64>>>() {
+                // What was printed last may still be in the channel.
+                // Only what is there already is taken: nothing more
+                // can come.
+                if let Some(channel) = output {
+                    while let Ok(Some(_)) = taaj::poll(&[channel]) {
+                        if !self.take_output(channel) {
+                            break;
+                        }
+                    }
+                }
+                finish(output, feed);
+                return Ok(codes);
+            }
             // Send as much of the input as the channel will take now.
             // False: all of it has gone, or it cannot go on - closing
             // our end is what tells the program its input has ended.
@@ -855,56 +1102,41 @@ impl Shell {
                     feed = None;
                 }
             }
-            // What to wait on: the program always; the keyboard while
-            // there is one; the output channel while it is open.
-            let mut handles = [0u64; 3];
-            let mut sources = [Source::Process; 3];
-            let mut count = 0;
-            let watched = [
-                (Some(process), Source::Process),
-                (keys, Source::Keys),
-                (output.as_ref().map(|(handle, _)| *handle), Source::Output),
-            ];
-            for (handle, source) in watched {
-                if let Some(handle) = handle {
-                    (handles[count], sources[count]) = (handle, source);
-                    count += 1;
-                }
-            }
+            // What to wait on: the programs still running; the keyboard
+            // while there is one; the output channel while it is open.
+            let running = processes.iter().enumerate().filter(|(n, _)| codes[*n].is_none());
+            let (handles, sources): (Vec<Handle>, Vec<Source>) = running
+                .map(|(n, &process)| (process, Source::Process(n)))
+                .chain(keys.map(|keys| (keys, Source::Keys)))
+                .chain(output.map(|output| (output, Source::Output)))
+                .unzip();
             // With input still to send, the wait is short: there is no
             // way to wait for room in a channel, so the shell looks
             // again a tick later.
             let ready = match &feed {
-                Some(_) => taaj::object_wait_until(&handles[..count], taaj::ticks() + 1),
-                None => taaj::object_wait(&handles[..count]).map(Some),
+                Some(_) => taaj::object_wait_until(&handles, taaj::ticks() + 1),
+                None => taaj::object_wait(&handles).map(Some),
             };
             let ready = match ready {
                 Ok(ready) => ready,
                 Err(error) => {
-                    finish(&output, &feed);
+                    finish(output, feed);
                     return Err(error);
                 }
             };
             match ready.map(|index| sources[index]) {
                 None => {} // time to try the input again
-                Some(Source::Process) => {
-                    // It has ended; what it printed last may still be
-                    // in the channel. Only what is there already is
-                    // taken: nothing more can come.
-                    if let Some((channel, path)) = &output {
-                        while let Ok(Some(_)) = taaj::poll(&[*channel]) {
-                            if !self.take_output(*channel, path) {
-                                break;
-                            }
-                        }
+                Some(Source::Process(n)) => match taaj::wait_any(&[processes[n]]) {
+                    Ok((_, code)) => codes[n] = Some(code),
+                    Err(error) => {
+                        finish(output, feed);
+                        return Err(error);
                     }
-                    finish(&output, &feed);
-                    return taaj::wait_any(&[process]);
-                }
+                },
                 Some(Source::Output) => {
-                    if let Some((channel, path)) = &output {
-                        if !self.take_output(*channel, path) {
-                            let _ = taaj::close(*channel);
+                    if let Some(channel) = output {
+                        if !self.take_output(channel) {
+                            let _ = taaj::close(channel);
                             output = None;
                         }
                     }
@@ -912,8 +1144,13 @@ impl Shell {
                 Some(Source::Keys) => match taaj::receive(self.keys, &mut input, &mut []) {
                     Ok((n, _)) if &input[..n] == CTRL_C => {
                         self.tell(b"^C\n");
-                        if let Err(error) = taaj::kill(process) {
-                            tell!(self, "cannot stop it: {error:?}\n");
+                        for (n, &process) in processes.iter().enumerate() {
+                            // One that ended a moment ago, and has not
+                            // been noticed here yet, cannot be stopped:
+                            // nothing to say about that.
+                            if codes[n].is_none() {
+                                let _ = taaj::kill(process);
+                            }
                         }
                     }
                     Ok((n, _)) => {
@@ -929,14 +1166,14 @@ impl Shell {
         }
     }
 
-    /// Takes one message of a program's output and adds it to the
-    /// file. False when there will be no more: the program closed its
-    /// end, and everything it sent has been taken.
-    fn take_output(&self, channel: Handle, path: &str) -> bool {
+    /// Takes one message of a program's output and puts it where the
+    /// line's output goes. False when there will be no more: the
+    /// program closed its end, and everything it sent has been taken.
+    fn take_output(&self, channel: Handle) -> bool {
         let mut message = [0u8; abi::MESSAGE_MAX as usize];
         match taaj::receive(channel, &mut message, &mut []) {
             Ok((length, _)) if length > 1 && message[0] == abi::stream::DATA => {
-                self.to_file(path, &message[1..length]);
+                self.write(&message[1..length]);
                 true
             }
             Ok(_) => true, // empty, or not part of the stream
@@ -944,32 +1181,43 @@ impl Shell {
         }
     }
 
-    /// Sends the next pieces of the input file to the program, as many
-    /// as its channel has room for. True if there is more to send
-    /// later; false when the file has all been sent, cannot be read, or
-    /// the program has stopped reading.
+    /// Sends the next pieces of the input to the program, as many as
+    /// its channel has room for. True if there is more to send later;
+    /// false when all has been sent, the file cannot be read, or the
+    /// program has stopped reading.
     fn feed(&self, feed: &mut Feed) -> bool {
-        let Some(files) = self.look.as_ref().or(self.files.as_ref()) else { return false };
         loop {
             if feed.length == 0 {
-                // The closure fills `message`; the other fields of
-                // `feed` are free to be read while it is borrowed,
-                // because a closure borrows only the fields it uses.
+                // The next piece, into `message`. The fields of `feed`
+                // are borrowed one by one - `from` to read, `message`
+                // to write - which is allowed, since they are apart.
                 let message = &mut feed.message;
-                let read = files.read_from(&feed.path, feed.offset, |piece| {
-                    message[0] = abi::stream::DATA;
-                    message[1..=piece.len()].copy_from_slice(piece);
-                });
-                match read {
-                    Ok(0) => return false, // the file ended on a boundary
-                    Ok(n) => {
+                message[0] = abi::stream::DATA;
+                let taken = match &feed.from {
+                    Supply::File(path) => {
+                        let Some(files) = self.look.as_ref().or(self.files.as_ref()) else { return false };
+                        let read = files.read_from(path, feed.offset, |piece| message[1..=piece.len()].copy_from_slice(piece));
+                        match read {
+                            Ok(n) => (n, n < fileserver::protocol::READ_MAX),
+                            Err(error) => {
+                                tell!(self, "the input stopped: {}\n", error.describe());
+                                return false;
+                            }
+                        }
+                    }
+                    Supply::Memory(bytes) => {
+                        let at = feed.offset as usize;
+                        let piece = &bytes[at..bytes.len().min(at + abi::stream::DATA_MAX)];
+                        message[1..=piece.len()].copy_from_slice(piece);
+                        (piece.len(), at + piece.len() == bytes.len())
+                    }
+                };
+                match taken {
+                    (0, _) => return false, // it ended on a boundary, or was empty
+                    (n, last) => {
                         feed.length = n + 1;
                         feed.offset += n as u64;
-                        feed.last = n < fileserver::protocol::READ_MAX;
-                    }
-                    Err(error) => {
-                        tell!(self, "the input stopped: {}\n", error.describe());
-                        return false;
+                        feed.last = last;
                     }
                 }
             }
@@ -990,6 +1238,19 @@ impl Shell {
             return Ok(key.len());
         }
         taaj::receive(self.keys, input, &mut []).map(|(n, _)| n)
+    }
+}
+
+/// The name of a command of a pipeline. Every one has a name: `parse`
+/// refuses a pipeline with an empty side.
+fn name(command: &Command) -> &str {
+    command.words.first().map_or("", String::as_str)
+}
+
+/// Closes handles the shell has no more use for.
+fn close_all(handles: impl IntoIterator<Item = Handle>) {
+    for handle in handles {
+        let _ = taaj::close(handle);
     }
 }
 
