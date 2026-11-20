@@ -7,24 +7,24 @@
 #![no_std]
 #![no_main]
 
-use taaj::println;
+use taaj::eprintln;
 
 taaj::program!(main);
 
 fn main() -> i64 {
     let arguments = taaj::arguments();
     let Some(files) = taaj::file_service() else {
-        println!("rm: started without the file service");
+        eprintln!("rm: started without the file service");
         return 2;
     };
     if arguments.is_empty() {
-        println!("usage: rm FILE...");
+        eprintln!("usage: rm FILE...");
         return 2;
     }
     let mut failed = false;
     for name in &arguments {
         if let Err(error) = files.remove(name) {
-            println!("rm: {name}: {}", error.describe());
+            eprintln!("rm: {name}: {}", error.describe());
             failed = true;
         }
     }

@@ -21,7 +21,7 @@
 //! So far:
 //!   _start   where the kernel starts the program: gets the arguments,
 //!            calls main, exits with what main returned
-//!   write    to descriptor 1 or 2: standard output
+//!   write    to descriptor 1, standard output, or 2, standard error
 //!   exit, _exit
 //!
 //! The headers a C program includes for these are in `include/`.
@@ -94,8 +94,8 @@ pub extern "C" fn _exit(code: c_int) -> ! {
 /// `write(fd, buffer, count)`: writes `count` bytes to a descriptor.
 /// Returns how many were written, or -1.
 ///
-/// Descriptor 1 is standard output, and so - until there is a standard
-/// error of its own - is 2. Nothing else is open yet.
+/// Descriptor 1 is standard output and 2 is standard error. Nothing
+/// else is open yet.
 ///
 /// # Safety
 /// `buffer` must point to `count` readable bytes, as C's `write` asks.
@@ -110,7 +110,8 @@ pub unsafe extern "C" fn write(fd: c_int, buffer: *const c_void, count: usize) -
     // SAFETY: the caller's promise: `count` readable bytes at `buffer`,
     // which is not null.
     let bytes = unsafe { core::slice::from_raw_parts(buffer.cast::<u8>(), count) };
-    match taaj::write(bytes) {
+    let written = if fd == 2 { taaj::write_error(bytes) } else { taaj::write(bytes) };
+    match written {
         Ok(_) => count as isize,
         Err(_) => -1,
     }

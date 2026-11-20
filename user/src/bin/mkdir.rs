@@ -8,24 +8,24 @@
 #![no_std]
 #![no_main]
 
-use taaj::println;
+use taaj::eprintln;
 
 taaj::program!(main);
 
 fn main() -> i64 {
     let arguments = taaj::arguments();
     let Some(files) = taaj::file_service() else {
-        println!("mkdir: started without the file service");
+        eprintln!("mkdir: started without the file service");
         return 2;
     };
     if arguments.is_empty() {
-        println!("usage: mkdir DIR...");
+        eprintln!("usage: mkdir DIR...");
         return 2;
     }
     let mut failed = false;
     for path in &arguments {
         if let Err(error) = files.make_directory(path) {
-            println!("mkdir: {path}: {}", error.describe());
+            eprintln!("mkdir: {path}: {}", error.describe());
             failed = true;
         }
     }

@@ -4,7 +4,7 @@
 
 use alloc::string::String;
 
-use taaj::println;
+use taaj::{eprintln, println};
 
 /// Runs the command: its arguments are FILE and TEXT. TEXT is stored
 /// as a line - replacing the file's contents, or added to their end.
@@ -14,12 +14,12 @@ use taaj::println;
 pub fn store(command: &str, append: bool) -> i64 {
     let arguments = taaj::arguments();
     let Some(files) = taaj::file_service() else {
-        println!("{command}: started without the file service");
+        eprintln!("{command}: started without the file service");
         return 2;
     };
     // The first argument and the rest - and there must be a rest.
     let Some((name, text)) = arguments.split_first().filter(|(_, text)| !text.is_empty()) else {
-        println!("usage: {command} FILE TEXT");
+        eprintln!("usage: {command} FILE TEXT");
         return 2;
     };
     let mut line: String = text.join(" ");
@@ -31,7 +31,7 @@ pub fn store(command: &str, append: bool) -> i64 {
             0
         }
         Err(error) => {
-            println!("{command}: {name}: {}", error.describe());
+            eprintln!("{command}: {name}: {}", error.describe());
             1
         }
     }

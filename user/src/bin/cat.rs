@@ -12,7 +12,7 @@
 #![no_std]
 #![no_main]
 
-use taaj::println;
+use taaj::{eprintln, println};
 
 taaj::program!(main);
 
@@ -27,11 +27,11 @@ fn main() -> i64 {
         return 0;
     }
     let Some(files) = taaj::file_service() else {
-        println!("cat: started without the file service");
+        eprintln!("cat: started without the file service");
         return 2;
     };
     if arguments.is_empty() {
-        println!("usage: cat FILE...");
+        eprintln!("usage: cat FILE...");
         return 2;
     }
     let mut failed = false;
@@ -47,7 +47,7 @@ fn main() -> i64 {
             Ok(size) if size > 0 && last != b'\n' && taaj::output_is_screen() => println!(),
             Ok(_) => {}
             Err(error) => {
-                println!("cat: {name}: {}", error.describe());
+                eprintln!("cat: {name}: {}", error.describe());
                 failed = true;
             }
         }

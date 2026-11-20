@@ -43,7 +43,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 033 | [Background jobs: everything the shell runs is a job, and one loop looks after them all](033-background-jobs.md) | written | `f79925e` (TheKernel `41dd0ba`) |
 | 034 | [The service registry: asking for a service by name, on a channel that decides what names exist](034-the-service-registry.md) | written | `2206f6b` (TheKernel `8e3ff1c`) |
 | 035 | [Namespaces for programs: `ls` asks for "files", and the shell decides what that means](035-namespaces-for-programs.md) | written | `3b02b2f` (TheKernel `fab4327`) |
-| 036 | [The first C program: what has to exist before `main`](036-the-first-c-program.md) | written | this step (TheKernel `055c353`) |
+| 036 | [The first C program: what has to exist before `main`](036-the-first-c-program.md) | written | `fc11db8` (TheKernel `055c353`) |
+| 037 | [Standard error: a second way out](037-standard-error.md) | written | this step (TheKernel `2142a4a`) |
 
 ## How to run what the entries describe
 

@@ -10,14 +10,14 @@
 #![no_main]
 
 use taaj::files::{Files, Kind};
-use taaj::println;
+use taaj::{eprintln, println};
 
 taaj::program!(main);
 
 fn main() -> i64 {
     let arguments = taaj::arguments();
     let Some(files) = taaj::file_service() else {
-        println!("ls: started without the file service");
+        eprintln!("ls: started without the file service");
         return 2;
     };
     let several = arguments.len() > 1;
@@ -43,7 +43,7 @@ fn show(files: &Files, path: &str, headed: bool) -> bool {
         }
         Ok((Kind::Directory, _)) => {}
         Err(error) => {
-            println!("ls: {path}: {}", error.describe());
+            eprintln!("ls: {path}: {}", error.describe());
             return false;
         }
     }
@@ -72,7 +72,7 @@ fn show(files: &Files, path: &str, headed: bool) -> bool {
             println!("{count} file{}, {bytes} bytes", plural(count, "", "s"));
         }
         Err(error) => {
-            println!("ls: {path}: {}", error.describe());
+            eprintln!("ls: {path}: {}", error.describe());
             return false;
         }
     }

@@ -1197,7 +1197,7 @@ impl Shell {
                 }
             },
         };
-        let mut handles = [0u64; 4];
+        let mut handles = [0u64; 5];
         let mut count = 0;
         // SCREEN brings no handle: it says what the output is.
         let mut flags = if on_screen && stdout.is_some() { abi::startup::SCREEN as u8 } else { 0 };
@@ -1208,6 +1208,10 @@ impl Shell {
             (abi::startup::STDOUT, stdout),
             (abi::startup::SERVICES, services),
             (abi::startup::STDIN, stdin),
+            // Standard error is the screen, wherever the output goes:
+            // a complaint is for whoever is watching, not for the file
+            // or the next program.
+            (abi::startup::STDERR, Self::delegate(self.screen)),
         ];
         for (flag, handle) in offered {
             if let Some(handle) = handle {

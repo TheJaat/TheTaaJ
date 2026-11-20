@@ -201,8 +201,8 @@ TAAJ_LDFLAGS = -static -nostdlib --gc-sections -s -T user/user.ld
 ifeq ($(HAVE_CC),yes)
 C_PROGRAMS   = chello
 ROOT_FILES   = 18
-C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret
-EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^3 lines, 7 words, 30 bytes
+C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret
+EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^3 lines, 7 words, 30 bytes
 else
 C_PROGRAMS   =
 ROOT_FILES   = 17
@@ -293,6 +293,7 @@ TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
                s e r v i c e s ret \
                s e r v i c e s spc f i l e s ret \
                s e r v i c e s spc d i s k ret \
+               c a t spc n o f i l e spc shift-backslash spc w c ret l s spc n o d i r spc shift-dot spc l s o u t ret \
                s e r v i c e s spc n o s u c h ret \
                r e g i s t r y spc c r a s h ret \
                s e r v i c e s spc f i l e s dot l o o k ret \
@@ -333,7 +334,8 @@ EXPECT_PIPE  = ^1 line, 3 words, 14 bytes;^301 lines, 1203 words;^given: argumen
 EXPECT_JOBS  = ^\[1\] cat ls ls . cat > big4;^\[2\] forever sleep > flog;^\[3\] forever yield;^forever: yield until stopped;^\[2\] running  forever sleep > flog;^\[3\] running  forever yield;^\[3\] stopped  forever yield;^\[2\] stopped  forever sleep > flog;^kill: no job 9;^\[1\] done  cat ls ls . cat > big4;^no jobs;^echo is one of the shell.s own commands: it cannot run in the background;^a & can only end the line;^x & y\s*$$
 EXPECT_NAMES = \[registry\] ready;\[registry\] fs may ask for: disk\s*$$;\[registry\] shell may ask for: keys display init system files files.look disk.look;^keys display init system files files.look disk.look\s*$$;^files: there for the shell;^disk: no such service - for the shell;\[registry\] shell asked for .disk.: it is not in its namespace;^nosuch: no such service - for the shell;\[registry\] asked to crash;\[init\] registry ended with code 1 - restarting it;^files.look: there for the shell
 EXPECT_GIVE  = \[registry\] shell gave ls: files=files.look;\[registry\] shell gave write: files\s*$$;\[registry\] shell gave given: files\s*$$;\[registry\] shell gave given: files=files.look;^given: it may ask for: files\s*$$
-TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EXPECT_DIRS);$(EXPECT_CD);$(EXPECT_MOVE);$(EXPECT_QUOTE);$(EXPECT_REDIR);$(EXPECT_PIPE);$(EXPECT_JOBS);$(EXPECT_NAMES);$(EXPECT_GIVE)$(EXPECT_C)
+EXPECT_ERR   = ^cat: nofile: no such file or directory;^0 lines, 0 words, 0 bytes;^ls: nodir: no such file or directory
+TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EXPECT_DIRS);$(EXPECT_CD);$(EXPECT_MOVE);$(EXPECT_QUOTE);$(EXPECT_REDIR);$(EXPECT_PIPE);$(EXPECT_JOBS);$(EXPECT_NAMES);$(EXPECT_GIVE);$(EXPECT_ERR)$(EXPECT_C)
 # The disk the boot tests attach: a 4 MiB TaajFS volume made on the host
 # by tfstool, with one file in it for the OS to read. After the boot,
 # check-boot.sh reads back - with tfstool again - the file the OS wrote.
@@ -373,6 +375,9 @@ TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EX
 # what it returns from main and what it passes to exit as its exit
 # code, and its output - through write - on the screen, into a file,
 # and down a pipe.
+# And complaints go to standard error: on the screen though the output
+# went to a file (which must hold none of it) or down a pipe (where
+# the next program must count nothing).
 # And it redirects: the shell's own output and a program's into files,
 # replacing and adding; a file as a program's input; both at once, for a
 # text and for a file of 50 messages - more than a channel holds, so

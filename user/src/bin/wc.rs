@@ -9,7 +9,7 @@
 #![no_std]
 #![no_main]
 
-use taaj::println;
+use taaj::{eprintln, println};
 
 taaj::program!(main);
 
@@ -61,11 +61,11 @@ fn main() -> i64 {
         return 0;
     }
     let Some(files) = taaj::file_service() else {
-        println!("wc: started without the file service");
+        eprintln!("wc: started without the file service");
         return 2;
     };
     if arguments.is_empty() {
-        println!("usage: wc FILE...  or  wc < FILE");
+        eprintln!("usage: wc FILE...  or  wc < FILE");
         return 2;
     }
     let mut failed = false;
@@ -74,7 +74,7 @@ fn main() -> i64 {
         match files.read(name, |piece| count.add(piece)) {
             Ok(_) => count.show(Some(name)),
             Err(error) => {
-                println!("wc: {name}: {}", error.describe());
+                eprintln!("wc: {name}: {}", error.describe());
                 failed = true;
             }
         }

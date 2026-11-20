@@ -100,6 +100,19 @@ pub fn write(bytes: &[u8]) -> Result<u64, Error> {
     }
 }
 
+/// Writes raw bytes to standard error: where a program says what went
+/// wrong, apart from what it was asked to produce. `eprintln!` ends up
+/// here. For now that is always the screen (and the debug log, as for
+/// anything shown there) - so it is written as text for the display
+/// is written, and given up on if the display has stopped. A program started
+/// without one - a service, a test - has only the debug log.
+pub fn write_error(bytes: &[u8]) -> Result<u64, Error> {
+    if let Some(screen) = flagged_handle(abi::startup::STDERR) {
+        write_to_display(screen, bytes);
+    }
+    debug_write(bytes)
+}
+
 /// Whether standard output is the screen - someone is looking at it -
 /// and not a file or another program. Almost nothing should ask: a
 /// program that prints differently depending on who reads cannot be
@@ -629,6 +642,18 @@ impl Write for Console {
     }
 }
 
+/// The same for standard error.
+pub struct ErrorConsole;
+
+impl Write for ErrorConsole {
+    fn write_str(&mut self, text: &str) -> fmt::Result {
+        for chunk in text.as_bytes().chunks(abi::DEBUG_WRITE_MAX as usize) {
+            write_error(chunk).map_err(|_| fmt::Error)?;
+        }
+        Ok(())
+    }
+}
+
 /// Text formatted into a fixed buffer, with no allocation - so printing
 /// works even when the heap does not. Writes past the end are cut off
 /// (and reported as an error by `write_str`).
@@ -678,6 +703,32 @@ pub fn print_args(args: fmt::Arguments) {
     }
 }
 
+/// The same, to standard error.
+#[doc(hidden)]
+pub fn eprint_args(args: fmt::Arguments) {
+    let mut buffer = Buffer::<512>::new();
+    if buffer.write_fmt(args).is_ok() {
+        let _ = write_error(buffer.as_bytes());
+    } else {
+        let _ = ErrorConsole.write_fmt(args);
+    }
+}
+
+/// `eprint!` and `eprintln!`: as `print!` and `println!`, to standard
+/// error. For complaints and usage lines - whatever is about the
+/// program rather than from it - so that `ls nosuch > list` shows the
+/// complaint and leaves `list` holding only a listing.
+#[macro_export]
+macro_rules! eprint {
+    ($($arg:tt)*) => { $crate::eprint_args(format_args!($($arg)*)) };
+}
+
+#[macro_export]
+macro_rules! eprintln {
+    () => { $crate::eprint!("\n") };
+    ($($arg:tt)*) => { $crate::eprint!("{}\n", format_args!($($arg)*)) };
+}
+
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => { $crate::print_args(format_args!($($arg)*)) };
@@ -709,6 +760,6 @@ macro_rules! program {
 
 #[panic_handler]
 fn panic(info: &core::panic::PanicInfo) -> ! {
-    println!("panic: {info}");
+    eprintln!("panic: {info}");
     exit(-2)
 }

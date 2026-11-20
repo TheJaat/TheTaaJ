@@ -9,6 +9,7 @@
  *   chello fail          the same, and exits with code 3
  *   chello exit          the same, by calling exit(4)
  *   chello float         the same, and a sum with a fraction in it
+ *   chello err           the same, and a line on standard error
  *
  * There is no printf yet, so it writes its numbers itself. */
 
@@ -64,6 +65,12 @@ int main(int argc, char **argv)
     /* The array ends in a null pointer: C promises it. */
     if (argv[argc] != NULL)
         print("argv does not end in NULL\n");
+    if (argc > 1 && same(argv[1], "err")) {
+        /* Descriptor 2: not part of the output. With `chello err > f`
+         * this line is on the screen, and not in f. */
+        const char *complaint = "chello: this line is on standard error\n";
+        write(STDERR_FILENO, complaint, length(complaint));
+    }
     if (argc > 1 && same(argv[1], "float")) {
         /* The kernel does not save the floating-point registers when it
          * switches programs, so this is compiled to use none: the

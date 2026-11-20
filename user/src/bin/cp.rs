@@ -23,29 +23,29 @@ mod target;
 
 use fileserver::protocol::Status;
 use taaj::files::{FileError, Kind};
-use taaj::println;
+use taaj::{eprintln, println};
 
 taaj::program!(main);
 
 fn main() -> i64 {
     let arguments = taaj::arguments();
     let Some(files) = taaj::file_service() else {
-        println!("cp: started without the file service");
+        eprintln!("cp: started without the file service");
         return 2;
     };
     // A slice pattern: exactly two arguments, and names for both.
     let [from, to] = &arguments[..] else {
-        println!("usage: cp FROM TO");
+        eprintln!("usage: cp FROM TO");
         return 2;
     };
     match files.stat(from) {
         Ok((Kind::File, _)) => {}
         Ok((Kind::Directory, _)) => {
-            println!("cp: {from}: is a directory");
+            eprintln!("cp: {from}: is a directory");
             return 1;
         }
         Err(error) => {
-            println!("cp: {from}: {}", error.describe());
+            eprintln!("cp: {from}: {}", error.describe());
             return 1;
         }
     }
@@ -57,11 +57,11 @@ fn main() -> i64 {
     match files.stat(&to) {
         Err(FileError::Refused(Status::NotFound)) => {}
         Ok(_) => {
-            println!("cp: {to}: {}", Status::Exists.describe());
+            eprintln!("cp: {to}: {}", Status::Exists.describe());
             return 1;
         }
         Err(error) => {
-            println!("cp: {to}: {}", error.describe());
+            eprintln!("cp: {to}: {}", error.describe());
             return 1;
         }
     }
@@ -69,7 +69,7 @@ fn main() -> i64 {
     // so a bad path is found out before anything is read.
     let mut copied = files.write(&to, &[]);
     if let Err(error) = copied {
-        println!("cp: {to}: {}", error.describe());
+        eprintln!("cp: {to}: {}", error.describe());
         return 1;
     }
     // `read` hands over the file piece by piece; each piece is appended
@@ -88,12 +88,12 @@ fn main() -> i64 {
         (read, copied) => {
             // Which of the two failed says whose name goes in the message.
             match (read, copied) {
-                (Err(error), _) => println!("cp: {from}: {}", error.describe()),
-                (_, Err(error)) => println!("cp: {to}: {}", error.describe()),
+                (Err(error), _) => eprintln!("cp: {from}: {}", error.describe()),
+                (_, Err(error)) => eprintln!("cp: {to}: {}", error.describe()),
                 _ => {}
             }
             if files.remove(&to).is_err() {
-                println!("cp: {to}: is incomplete, and could not be removed");
+                eprintln!("cp: {to}: is incomplete, and could not be removed");
             }
             1
         }

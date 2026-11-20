@@ -16,26 +16,26 @@ extern crate alloc;
 #[path = "common/target.rs"]
 mod target;
 
-use taaj::println;
+use taaj::eprintln;
 
 taaj::program!(main);
 
 fn main() -> i64 {
     let arguments = taaj::arguments();
     let Some(files) = taaj::file_service() else {
-        println!("mv: started without the file service");
+        eprintln!("mv: started without the file service");
         return 2;
     };
     // A slice pattern: exactly two arguments, and names for both.
     let [from, to] = &arguments[..] else {
-        println!("usage: mv FROM TO");
+        eprintln!("usage: mv FROM TO");
         return 2;
     };
     let to = target::target(&files, from, to);
     match files.rename(from, &to) {
         Ok(()) => 0,
         Err(error) => {
-            println!("mv: {from} to {to}: {}", error.describe());
+            eprintln!("mv: {from} to {to}: {}", error.describe());
             1
         }
     }
