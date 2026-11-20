@@ -16,6 +16,7 @@ input = { path = "../input" }
 console = { path = "../console" }
 heap = { path = "../heap" }
 fileserver = { path = "../fileserver" }
+registry = { path = "../registry" }
 taajfs = { path = "../taajfs" }
 virtio = { path = "../virtio" }
 

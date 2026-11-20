@@ -1,0 +1,9 @@
+[package]
+name = "registry"
+version = "0.1.0"
+edition = "2021"
+description = "The service registry: its protocol, and the table of services and of who may ask for which"
+publish = false
+
+[dependencies]
+abi = { path = "../kernel/abi" }

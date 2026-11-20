@@ -11,9 +11,19 @@
 //!   6  the system handle: the right to look at memory and processes
 //! (all with every right but the launcher's, so init can share them out.)
 //!
-//! The services: display (the screen), fs (files - on the disk, if
-//! there is one), blk (the disk driver), shell, and kbd (the keyboard
-//! driver).
+//! The services: registry (where the others are found), display (the
+//! screen), fs (files - on the disk, if there is one), blk (the disk
+//! driver), shell, and kbd (the keyboard driver).
+//!
+//! What a service works *on* - an interrupt line, ports, the
+//! framebuffer's memory, the channel its requests arrive on - init
+//! hands it at its start, in a fixed order: those are its own, and
+//! nobody else's. What a service *uses of another service* it asks the
+//! registry for, by name. init tells the registry what answers to each
+//! name, and gives each client a channel to the registry on which only
+//! the names meant for that client exist (the `registry` crate): the
+//! shell can ask for the screen, the files, the keyboard; fs can ask
+//! for the disk, and for nothing else.
 //!
 //! init also runs programs for the shell. The shell has no launcher; it
 //! sends a request (abi::init) on a channel to init, with the handles
@@ -52,7 +62,10 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
 use abi::{FramebufferInfo, PciDeviceInfo};
+use registry::protocol::Admin;
 use taaj::rights::{DUPLICATE, READ, RECEIVE, SEND, TRANSFER, WRITE};
 use core::fmt::Write;
 
@@ -281,6 +294,13 @@ fn main() -> i64 {
         let _ = (taaj::close(disk_in), taaj::close(disk_look_in));
     }
     let [disk_ports, disk_dma, disk_interrupt] = disk.map_or([0; 3], |(_, handles, _)| handles);
+    // The registry's: one channel for what init tells it, and one per
+    // client for what that client asks. init keeps both ends of each,
+    // as it does of every channel: a registry that is replaced takes
+    // over the same queues, and clients keep the channel they have.
+    let Ok((admin_tx, admin_rx)) = taaj::channel_create() else { return 2 };
+    let Ok((shell_names_tx, shell_names_rx)) = taaj::channel_create() else { return 2 };
+    let Ok((fs_names_tx, fs_names_rx)) = taaj::channel_create() else { return 2 };
 
     // Everything a service may be given, and the rights it gets.
     let grants = [
@@ -309,6 +329,9 @@ fn main() -> i64 {
         Grant { handle: display_ping_rx, rights: RECEIVE }, // 22: pings, for display
         Grant { handle: kbd_ping_rx, rights: RECEIVE },     // 23: pings, for kbd
         Grant { handle: screen_text, rights: READ | WRITE }, // 24: the screen's text, kept
+        Grant { handle: admin_rx, rights: RECEIVE },          // 25: registrations, for registry
+        Grant { handle: shell_names_tx, rights: SEND },       // 26: lookups, from the shell
+        Grant { handle: fs_names_tx, rights: SEND },          // 27: lookups, from fs
     ];
     // Only the shell's screen and files can be copied and passed on.
     debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21)));
@@ -324,9 +347,51 @@ fn main() -> i64 {
     let display_watch = framebuffer.and_then(|_| Watch::new(display_ping_tx, &[abi::PING], 200));
     let kbd_watch = Watch::new(kbd_ping_tx, &[abi::PING], 200);
 
-    // The display first: it must have its info before the shell's text
+    // What the registry is told, each time one is started. The
+    // services: a name, and which grant it means - the handle, and the
+    // rights a client's copy gets. (The shell's old startup handles,
+    // now asked for by name; and the disk, for fs.)
+    let registered: [(&str, usize); 8] = [
+        ("keys", 4),
+        ("display", 7),
+        ("init", 8),
+        ("system", 9),
+        ("files", 11),
+        ("files.look", 21),
+        ("disk", 16),
+        ("disk.look", 19),
+    ];
+    // And the namespaces: whose, the receiving end of its channel, and
+    // the names that exist on it. This table is the system's policy,
+    // in one place: who may reach what.
+    let namespaces: [(&str, Handle, &[&str]); 2] = [
+        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "disk.look"]),
+        ("fs", fs_names_rx, &["disk"]),
+    ];
+    // Sends one message to the registry, with a copy of `handle` that
+    // carries `rights` and can be copied and passed on from there. The
+    // queue may be full of what a registry that crashed never read;
+    // the new one empties it as soon as it runs.
+    let tell = |message: &[u8], handle: Handle, rights: u32| -> Result<(), Error> {
+        let copy = taaj::duplicate(handle, rights | DELEGABLE)?;
+        let started = taaj::ticks();
+        loop {
+            match taaj::send(admin_tx, message, &[copy]) {
+                Err(Error::QueueFull) if taaj::ticks() - started < 200 => taaj::yield_now(),
+                Ok(()) => return Ok(()),
+                Err(error) => {
+                    let _ = taaj::close(copy); // not sent: still ours
+                    return Err(error);
+                }
+            }
+        }
+    };
+
+    // The registry first: everything after it may ask it for something.
+    // Then the display: it must have its info before the shell's text
     // arrives on the same channel.
     let mut services = [
+        Service { name: "registry", grants: &[25], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
         Service {
             name: "display",
             grants: if screen_text != 0 { &[5, 6, 22, 24] } else { &[5, 6, 22] },
@@ -336,7 +401,7 @@ fn main() -> i64 {
             given_up: framebuffer.is_none(),
             watch: display_watch,
         },
-        Service { name: "fs", grants: &[10, 20, 16], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: fs_watch },
+        Service { name: "fs", grants: &[10, 20, 27], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: fs_watch },
         Service {
             name: "blk",
             grants: match disk {
@@ -349,7 +414,7 @@ fn main() -> i64 {
             given_up: disk.is_none(),
             watch: blk_watch,
         },
-        Service { name: "shell", grants: &[4, 7, 8, 9, 11, 19, 21], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
+        Service { name: "shell", grants: &[26], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
         Service { name: "kbd", grants: &[0, 1, 2, 3, 23], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: kbd_watch },
     ];
     let launch = |service: &Service| {
@@ -373,6 +438,21 @@ fn main() -> i64 {
                     Err(Error::QueueFull) if taaj::ticks() - started < 200 => taaj::yield_now(),
                     sent => break sent?,
                 }
+            }
+        }
+        // Each new registry, everything: the services first, then the
+        // namespaces - so that when it learns of a client it already
+        // knows all that client may find.
+        if service.name == "registry" {
+            let mut message = [0u8; 256];
+            for &(name, grant) in &registered {
+                let rights = grants[grant].rights;
+                let length = Admin::Register { name, rights }.encode(&mut message).ok_or(Error::InvalidArgument)?;
+                tell(&message[..length], grants[grant].handle, rights)?;
+            }
+            for &(label, channel, names) in &namespaces {
+                let length = Admin::Namespace { label, names: names.to_vec() }.encode(&mut message).ok_or(Error::InvalidArgument)?;
+                tell(&message[..length], channel, RECEIVE)?;
             }
         }
         // And each new disk driver, what its device is.

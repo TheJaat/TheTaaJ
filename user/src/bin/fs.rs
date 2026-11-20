@@ -8,8 +8,8 @@
 //!      but any that would change a file is refused. Which channel a
 //!      client holds is its permission - there is nothing to check but
 //!      where the request came from.
-//!   3  the disk: the block driver's request channel (send only) - if
-//!      there is a disk
+//!   3  the channel to the registry, on which fs asks for the one
+//!      service it uses: "disk", the block driver's request channel
 //!
 //! With a disk that holds a TaajFS volume, files live there: each
 //! request is one copy-on-write commit, on the disk before the reply goes
@@ -35,6 +35,7 @@
 use fileserver::protocol::{self, Request, Status, MESSAGE_MAX};
 use fileserver::{Access, DiskStore, RamStore, Store};
 use taaj::disk::{Disk, Window};
+use taaj::services::{ServiceError, Services};
 use taaj::{println, Error, Handle};
 use taajfs::format::{Block, BLOCK_SIZE};
 use taajfs::{BlockDevice, Cache, DeviceError};
@@ -130,7 +131,20 @@ fn main() -> i64 {
         return 1;
     };
     let look = taaj::startup_handle(1);
-    match taaj::startup_handle(2).and_then(mount) {
+    // The disk driver is asked for by name, on the channel to the
+    // registry - if there is one: a test may start this with none.
+    let disk = match taaj::startup_handle(2).map(|registry| Services::new(registry).lookup("disk")) {
+        Some(Ok(disk)) => Some(disk),
+        Some(Err(ServiceError::NotFound)) | None => None,
+        // Not knowing is not the same as there being no disk: to go on
+        // with files in memory would hide every file there is. End,
+        // and be started again.
+        Some(Err(error)) => {
+            println!("[fs] cannot ask for the disk: {}", error.describe());
+            return 1;
+        }
+    };
+    match disk.and_then(mount) {
         Some(mut store) => {
             println!(
                 "[fs] ready: TaajFS on the disk, {} of {} blocks free; a cache of {} blocks",

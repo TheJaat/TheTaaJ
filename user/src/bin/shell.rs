@@ -1,13 +1,18 @@
 //! The shell: reads a line from the keyboard, runs it as a command.
 //!
-//! Startup handles, from init:
-//!   1  the channel from the keyboard driver (receive only)
-//!   2  the channel to the display (send only) - may be absent
-//!   3  the request channel to init: "start this program" (abi::init)
-//!   4  the system handle: looking at memory and processes, not touching
-//!   5  the request channel to the file service (send only)
-//!   6  the request channel to the disk driver: reads only - files on
-//!      the disk are the file service's to change
+//! One startup handle, from init: the channel to the registry. What
+//! the shell works with it asks for there, by name (taaj::services):
+//!   keys        the channel from the keyboard driver (receive only)
+//!   display     the channel to the display (send only)
+//!   init        the request channel to init: "start this program"
+//!   system      the system handle: looking at memory and processes
+//!   files       the request channel to the file service
+//!   files.look  the same, for requests that only read
+//!   disk.look   the request channel to the disk driver: reads only -
+//!               files on the disk are the file service's to change
+//! Those are the names that exist for the shell; `services` lists
+//! them, and `services NAME` asks for one. The disk driver's other
+//! channel, "disk", exists too - for the file service, not here.
 //!
 //! It has no launcher and no hardware. To run a program it asks init,
 //! and sends along what the program is to have: a copy of its channel to
@@ -75,6 +80,7 @@ use abi::ProcessEntry;
 use taaj::disk::Disk;
 use input::line::Command;
 use taaj::files::{path, FileError, Files, Kind};
+use taaj::services::{ServiceError, Services};
 use taaj::{println, Buffer, Error, Handle};
 
 taaj::program!(main);
@@ -95,7 +101,7 @@ const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp"]
 /// kept the same as. They read no input, so in a pipeline one may only
 /// stand first.
 const OWN_COMMANDS: &[&str] =
-    &["help", "echo", "cd", "pwd", "clear", "uptime", "mem", "ps", "time", "run", "with", "fs", "display", "disk", "jobs", "kill", "wait"];
+    &["help", "echo", "cd", "pwd", "clear", "uptime", "mem", "ps", "time", "run", "with", "fs", "display", "disk", "jobs", "kill", "wait", "services", "registry"];
 /// Most commands in one pipeline. The wait watches them all at once,
 /// with the keyboard and an output, and the kernel waits on 32 things
 /// at most - but nobody types eight.
@@ -126,6 +132,8 @@ enum Grant {
 }
 
 struct Shell {
+    /// Where the shell asks for services by name.
+    services: Services,
     keys: Handle,
     /// Keys that arrived while a program was running, oldest first.
     typed_ahead: RefCell<VecDeque<Vec<u8>>>,
@@ -678,8 +686,8 @@ impl Shell {
                   \x20 disk stall SECONDS, display stall SECONDS   the same,\n\
                   \x20              for the disk driver and the display\n\
                   \x20 (F11 hangs the keyboard driver, F12 crashes it)\n\
-                  \x20 disk         the disk's size\n\
-                  \x20 disk read N, disk write N TEXT   show sector N, put TEXT in it\n\
+                  \x20 services [NAME]   the services the shell can ask for; ask for one\n\
+                  \x20 disk, disk read N, disk write N TEXT   size; show sector N; set it\n\
                   \x20 disk check        test the disk driver\n",
             ),
             "echo" => say!(self, "{rest}\n"),
@@ -747,6 +755,28 @@ impl Shell {
                 _ => self.write(b"usage: display stall SECONDS (1 to 30)\n"),
             },
             "disk" => self.disk(rest),
+            "services" => match arguments {
+                [] => match self.services.list() {
+                    Ok(names) => say!(self, "{}\n", names.join(" ")),
+                    Err(error) => say!(self, "services: {}\n", error.describe()),
+                },
+                // Asks, as a program would - and gives back at once
+                // what it gets: the answer is what is being shown.
+                [name] => match self.services.lookup(name) {
+                    Ok(handle) => {
+                        let _ = taaj::close(handle);
+                        say!(self, "{name}: there for the shell\n");
+                    }
+                    Err(ServiceError::NotFound) => say!(self, "{name}: no such service - for the shell\n"),
+                    Err(error) => say!(self, "{name}: {}\n", error.describe()),
+                },
+                _ => self.write(b"usage: services [NAME]\n"),
+            },
+            "registry" => match (rest, self.services.crash()) {
+                ("crash", Ok(())) => self.write(b"registry: asked to crash\n"),
+                ("crash", Err(error)) => say!(self, "registry: {}\n", error.describe()),
+                _ => self.write(b"usage: registry crash (a test: init starts another)\n"),
+            },
             // Not the shell's own: a program in a file, if there is one.
             // Any word added above belongs in OWN_COMMANDS too.
             _ => self.run_program(command, arguments, false, Grant::Usual),
@@ -1583,18 +1613,32 @@ fn close_all(handles: impl IntoIterator<Item = Handle>) {
 }
 
 fn main() -> i64 {
+    // Everything the shell works with, asked for by name. Only the
+    // keyboard is needed: without the others there is less it can do,
+    // and it says so when asked to.
+    let services = Services::new(taaj::bootstrap());
+    let service = |name: &str| services.lookup(name).ok();
+    let keys = match services.lookup("keys") {
+        Ok(keys) => keys,
+        Err(error) => {
+            println!("[shell] no keyboard: {}", error.describe());
+            return 1;
+        }
+    };
     let shell = Shell {
-        keys: taaj::bootstrap(),
+        keys,
         typed_ahead: RefCell::new(VecDeque::new()),
-        screen: taaj::startup_handle(1),
-        init: taaj::startup_handle(2),
-        system: taaj::startup_handle(3),
-        files: taaj::startup_handle(4).map(Files::new),
-        disk: taaj::startup_handle(5).map(Disk::new),
-        look: taaj::startup_handle(6).map(Files::new),
+        screen: service("display"),
+        init: service("init"),
+        system: service("system"),
+        files: service("files").map(Files::new),
+        disk: service("disk.look").map(Disk::new),
+        look: service("files.look").map(Files::new),
         directory: RefCell::new(String::new()),
         redirection: RefCell::new(Redirection::default()),
         jobs: RefCell::new(Vec::new()),
+        // Last: the lookups above borrow it, and this moves it.
+        services,
     };
     println!("[shell] ready - type a command (try help)");
     shell.screen_only(b"Welcome to TheTaaJ. Type help for the commands.\n\n");

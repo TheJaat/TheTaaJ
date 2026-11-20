@@ -27,6 +27,13 @@ name = "input"
 version = "0.1.0"
 
 [[package]]
+name = "registry"
+version = "0.1.0"
+dependencies = [
+ "abi",
+]
+
+[[package]]
 name = "taajfs"
 version = "0.1.0"
 
@@ -39,6 +46,7 @@ dependencies = [
  "fileserver",
  "heap",
  "input",
+ "registry",
  "taajfs",
  "virtio",
 ]

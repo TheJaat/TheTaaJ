@@ -260,6 +260,13 @@ TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
                e c h o spc h i spc shift-7 ret \
                l s spc shift-7 spc w c ret \
                e c h o spc shift-apostrophe x spc shift-7 spc y shift-apostrophe ret \
+               s e r v i c e s ret \
+               s e r v i c e s spc f i l e s ret \
+               s e r v i c e s spc d i s k ret \
+               s e r v i c e s spc n o s u c h ret \
+               r e g i s t r y spc c r a s h ret \
+               s e r v i c e s spc f i l e s dot l o o k ret \
+               c a t spc w e l c o m e ret \
                w i t h spc r e a d o n l y spc m k d i r spc x ret \
                g i v e n spc a spc b ret w i t h spc f i l e s spc g i v e n ret w i t h ret \
                w i t h spc r e a d o n l y spc g i v e n ret \
@@ -294,7 +301,8 @@ EXPECT_WATCH = \[blk\] asked to stall;\[init\] blk has not answered for 2 s - st
 EXPECT_KILL  = ^forever: spin until stopped;^forever: wait until stopped;^forever: sleep until stopped;\[process\] [0-9]+ .forever. stopped: killed by request;^\^C;^forever was stopped
 EXPECT_PIPE  = ^1 line, 3 words, 14 bytes;^301 lines, 1203 words;^given: arguments .xpipe.;^p . q\s*$$;^there is a . with no command on one side of it;^cd is one of the shell.s own commands;^unknown command: nosuch2;^only the last command of a pipeline
 EXPECT_JOBS  = ^\[1\] cat ls ls . cat > big4;^\[2\] forever sleep > flog;^\[3\] forever yield;^forever: yield until stopped;^\[2\] running  forever sleep > flog;^\[3\] running  forever yield;^\[3\] stopped  forever yield;^\[2\] stopped  forever sleep > flog;^kill: no job 9;^\[1\] done  cat ls ls . cat > big4;^no jobs;^echo is one of the shell.s own commands: it cannot run in the background;^a & can only end the line;^x & y\s*$$
-TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EXPECT_DIRS);$(EXPECT_CD);$(EXPECT_MOVE);$(EXPECT_QUOTE);$(EXPECT_REDIR);$(EXPECT_PIPE);$(EXPECT_JOBS)
+EXPECT_NAMES = \[registry\] ready;\[registry\] fs may ask for: disk\s*$$;\[registry\] shell may ask for: keys display init system files files.look disk.look;^keys display init system files files.look disk.look\s*$$;^files: there for the shell;^disk: no such service - for the shell;\[registry\] shell asked for .disk.: it is not in its namespace;^nosuch: no such service - for the shell;\[registry\] asked to crash;\[init\] registry ended with code 1 - restarting it;^files.look: there for the shell
+TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EXPECT_DIRS);$(EXPECT_CD);$(EXPECT_MOVE);$(EXPECT_QUOTE);$(EXPECT_REDIR);$(EXPECT_PIPE);$(EXPECT_JOBS);$(EXPECT_NAMES)
 # The disk the boot tests attach: a 4 MiB TaajFS volume made on the host
 # by tfstool, with one file in it for the OS to read. After the boot,
 # check-boot.sh reads back - with tfstool again - the file the OS wrote.
@@ -325,6 +333,11 @@ TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EX
 # arrive exact; two programs that never end, listed by jobs and ended by
 # kill; one of the shell's own commands before a program; wait; and the
 # lines that must not run.
+# And services are found by name: the shell lists the names that exist
+# for it, asks for one that does and for one that exists only for fs;
+# then the registry is made to crash, and after init has started
+# another and told it everything again, a name is still found and a
+# file still read.
 # And it redirects: the shell's own output and a program's into files,
 # replacing and adding; a file as a program's input; both at once, for a
 # text and for a file of 50 messages - more than a channel holds, so
@@ -455,6 +468,7 @@ kernel64-test:
 	cd console && cargo test
 	cd heap && cargo test
 	cd fileserver && cargo test
+	cd registry && cargo test
 	cd taajfs && cargo test
 	cd virtio && cargo test
 

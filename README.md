@@ -9,7 +9,7 @@ The system is split across four repositories. This one ties them together; the o
 | `bootloader/` | [TheBootloader](https://github.com/TheJaat/TheBootloader) | The BIOS and UEFI loaders |
 | `kernel/` | [TheKernel](https://github.com/TheJaat/TheKernel) | The 64-bit Rust kernel (`kernel/kernel64`), its interface (`kernel/abi`), and the original 32-bit C kernel |
 | `toolchain/` | [TheToolchain](https://github.com/TheJaat/TheToolchain) | The i686 cross compiler, used for the bootloader and the 32-bit system |
-| everything else | this repository | User space (`user/`), libraries (`fileserver/`, `taajfs/`, `console/`, `input/`, `heap/`, `virtio/`), host tools (`tools/`), the 32-bit user space (`servers/`, `modules/`, `librt/`), and the journal (`docs/journal/`) |
+| everything else | this repository | User space (`user/`), libraries (`fileserver/`, `registry/`, `taajfs/`, `console/`, `input/`, `heap/`, `virtio/`), host tools (`tools/`), the 32-bit user space (`servers/`, `modules/`, `librt/`), and the journal (`docs/journal/`) |
 
 ## **Features**
 - A 64-bit microkernel written in Rust, booted by the project's own BIOS and UEFI loaders.
