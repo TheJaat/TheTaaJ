@@ -26,8 +26,8 @@ fn main() -> i64 {
         println!("mv: started without the file service");
         return 2;
     };
-    let mut words = arguments.split_whitespace();
-    let (Some(from), Some(to), None) = (words.next(), words.next(), words.next()) else {
+    // A slice pattern: exactly two arguments, and names for both.
+    let [from, to] = &arguments[..] else {
         println!("usage: mv FROM TO");
         return 2;
     };

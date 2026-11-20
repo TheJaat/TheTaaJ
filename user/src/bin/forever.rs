@@ -22,7 +22,7 @@ taaj::program!(main);
 
 fn main() -> i64 {
     let arguments = taaj::arguments();
-    let mode = arguments.trim();
+    let mode = arguments.first().map_or("", |mode| mode.as_str());
     println!("forever: {} until stopped (Ctrl+C)", if mode.is_empty() { "spin" } else { mode });
     match mode {
         "yield" => loop {

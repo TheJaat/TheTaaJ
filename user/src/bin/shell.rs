@@ -141,19 +141,36 @@ impl Shell {
         }
     }
 
+    /// Runs a line as it was typed: divides it into words - spaces,
+    /// quotes, backslashes (input::line) - and runs those. A line that
+    /// cannot be divided, because a quote was never closed, is not run
+    /// at all: half a command is worse than none.
     fn run(&self, line: &str) {
-        let line = line.trim();
-        let (command, rest) = line.split_once(' ').unwrap_or((line, ""));
-        let rest = rest.trim();
-        match command {
-            "" => {}
+        match input::line::words(line) {
+            Ok(words) => self.run_words(&words),
+            Err(error) => say!(self, "{}\n", error.describe()),
+        }
+    }
+
+    /// Runs a command: its name, then its arguments. Where one argument
+    /// ends and the next begins was settled by `run`, and is not looked
+    /// at again - not here, and not by the program that gets them.
+    fn run_words(&self, words: &[String]) {
+        // `split_first` gives the first element and a slice of the
+        // rest, or None for an empty slice: a blank line.
+        let Some((command, arguments)) = words.split_first() else { return };
+        // The arguments as one text, for the commands that print them
+        // or read numbers from them.
+        let rest = arguments.join(" ");
+        let rest = rest.as_str();
+        match command.as_str() {
             "help" => self.write(
                 b"commands:\n\
                   \x20 help         this list\n\
                   \x20 echo TEXT    print TEXT\n\
+                  \x20   (a word with spaces: \"two words\", 'two words', two\\ words)\n\
                   \x20 clear        clear the screen\n\
-                  \x20 uptime       time since boot\n\
-                  \x20 mem          memory in use\n\
+                  \x20 uptime, mem  time since boot; memory in use\n\
                   \x20 ps           processes\n\
                   \x20 cd [DIR], pwd    go to DIR (to the root); say where this is\n\
                   \x20 time COMMAND     run COMMAND, and say how long it took\n\
@@ -182,38 +199,40 @@ impl Shell {
                   \x20 disk check        test the disk driver\n",
             ),
             "echo" => say!(self, "{rest}\n"),
-            "cd" if rest.contains(' ') => self.write(b"usage: cd [DIR]\n"),
-            "cd" => self.cd(if rest.is_empty() { "/" } else { rest }),
+            // Slice patterns: no argument, exactly one, or anything else.
+            "cd" => match arguments {
+                [] => self.cd("/"),
+                [directory] => self.cd(directory),
+                _ => self.write(b"usage: cd [DIR]\n"),
+            },
             "pwd" => say!(self, "{}\n", path::display(&self.directory.borrow())),
             "clear" => self.screen_only(b"\x0c"),
             "uptime" => self.uptime(),
             "mem" => self.mem(),
             "ps" => self.ps(),
-            "time" if !rest.is_empty() => {
+            "time" if !arguments.is_empty() => {
                 // Ticks are 10 ms apart: good for "is it slow", no finer.
                 let start = taaj::ticks();
-                self.run(rest);
+                // The words that follow are a command, already divided.
+                self.run_words(arguments);
                 let hundredths = taaj::ticks() - start;
                 say!(self, "took {}.{:02} s\n", hundredths / 100, hundredths % 100);
             }
             "time" => self.write(b"usage: time COMMAND\n"),
-            "run" if !rest.is_empty() => {
-                let (name, arguments) = rest.split_once(' ').unwrap_or((rest, ""));
-                self.run_program(name, arguments.trim(), true, Grant::Usual);
-            }
-            "run" => self.write(b"usage: run NAME ARGS\n"),
+            // `[name, arguments @ ..]`: a first element, and a name for
+            // the slice of all the others (which may be empty).
+            "run" => match arguments {
+                [name, arguments @ ..] => self.run_program(name, arguments, true, Grant::Usual),
+                [] => self.write(b"usage: run NAME ARGS\n"),
+            },
             "with" => {
-                let (what, command) = rest.split_once(' ').unwrap_or((rest, ""));
-                let grant = match what {
-                    "files" => Some(Grant::Files),
-                    "readonly" => Some(Grant::ReadOnly),
+                let grant = match arguments.first().map(String::as_str) {
+                    Some("files") => Some(Grant::Files),
+                    Some("readonly") => Some(Grant::ReadOnly),
                     _ => None,
                 };
-                match (grant, command.trim()) {
-                    (Some(grant), command) if !command.is_empty() => {
-                        let (name, arguments) = command.split_once(' ').unwrap_or((command, ""));
-                        self.run_program(name, arguments.trim(), false, grant);
-                    }
+                match (grant, arguments) {
+                    (Some(grant), [_, name, arguments @ ..]) => self.run_program(name, arguments, false, grant),
                     _ => self.write(b"usage: with files COMMAND, with readonly COMMAND\n"),
                 }
             }
@@ -231,7 +250,7 @@ impl Shell {
             },
             "disk" => self.disk(rest),
             // Not the shell's own: a program in a file, if there is one.
-            _ => self.run_program(command, rest, false, Grant::Usual),
+            _ => self.run_program(command, arguments, false, Grant::Usual),
         }
     }
 
@@ -520,7 +539,14 @@ impl Shell {
     ///
     /// `run NAME` says how the program ended; a program run by its name
     /// alone is a command, and says nothing unless it failed.
-    fn run_program(&self, name: &str, arguments: &str, explicit: bool, grant: Grant) {
+    fn run_program(&self, name: &str, arguments: &[String], explicit: bool, grant: Grant) {
+        // The arguments as they travel: each followed by a zero byte,
+        // so the program gets them divided as they are here.
+        let mut encoded = [0u8; 2 * LINE_MAX];
+        let Some(length) = abi::arguments::encode(arguments.iter().map(String::as_str), &mut encoded) else {
+            return say!(self, "run: {name}: the arguments are too long\n");
+        };
+        let arguments = &encoded[..length];
         let image = match self.program_image(name) {
             Ok(None) if !explicit => return say!(self, "unknown command: {name} (try help)\n"),
             Ok(image) => image,
@@ -560,7 +586,7 @@ impl Shell {
             flags,
             name,
             directory: &directory,
-            arguments: arguments.as_bytes(),
+            arguments,
         };
         let mut message = [0u8; abi::MESSAGE_MAX as usize];
         let sent = match (self.init, request.encode(&mut message)) {

@@ -36,7 +36,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 026 | [Directories: a tree of names, changed without ever writing over anything](026-directories.md) | written | `34c5aca` |
 | 027 | [The kernel goes home: three repositories, each with its own work](027-the-kernel-goes-home.md) | written | `9a9a52c` |
 | 028 | [The current directory: a place to stand that the file service never hears about](028-the-current-directory.md) | written | `09caaef` (TheKernel `73b2ab2`) |
-| 029 | [Moving and copying: one is a single commit, the other cannot be](029-moving-and-copying.md) | written | this step (TheKernel `4a18915`) |
+| 029 | [Moving and copying: one is a single commit, the other cannot be](029-moving-and-copying.md) | written | `bdb77dc` (TheKernel `4a18915`) |
+| 030 | [Quoting: who decides where one argument ends](030-quoting.md) | written | this step (TheKernel `9ec61a9`) |
 
 ## How to run what the entries describe
 

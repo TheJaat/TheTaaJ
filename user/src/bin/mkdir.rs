@@ -18,12 +18,12 @@ fn main() -> i64 {
         println!("mkdir: started without the file service");
         return 2;
     };
-    if arguments.trim().is_empty() {
+    if arguments.is_empty() {
         println!("usage: mkdir DIR...");
         return 2;
     }
     let mut failed = false;
-    for path in arguments.split_whitespace() {
+    for path in &arguments {
         if let Err(error) = files.make_directory(path) {
             println!("mkdir: {path}: {}", error.describe());
             failed = true;

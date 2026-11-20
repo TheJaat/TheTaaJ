@@ -20,14 +20,14 @@ fn main() -> i64 {
         println!("ls: started without the file service");
         return 2;
     };
-    let several = arguments.split_whitespace().count() > 1;
+    let several = arguments.len() > 1;
     let mut failed = false;
-    if arguments.trim().is_empty() {
+    if arguments.is_empty() {
         // "." and not "": if the directory is gone, the message has
         // something to name.
         failed = !show(&files, ".", false);
     }
-    for path in arguments.split_whitespace() {
+    for path in &arguments {
         failed |= !show(&files, path, several);
     }
     i64::from(failed)

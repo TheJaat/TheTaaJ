@@ -422,15 +422,19 @@ pub fn stdout() -> Option<Handle> {
     flagged_handle(abi::startup::STDOUT)
 }
 
-/// The program's arguments: the text typed after its name, or nothing.
-/// They arrive as one message, so this reads them once - call it once.
-pub fn arguments() -> alloc::string::String {
+/// The program's arguments: what was typed after its name, as whoever
+/// started it divided it - `write "my file" hello` gives "my file" and
+/// "hello". None at all is an empty list. They arrive as one message,
+/// so this reads them once - call it once.
+pub fn arguments() -> alloc::vec::Vec<alloc::string::String> {
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
     let length = match flagged_handle(abi::startup::ARGUMENTS).map(|channel| receive(channel, &mut message, &mut [])) {
         Some(Ok((length, _))) => length,
         _ => 0,
     };
-    alloc::string::String::from_utf8_lossy(&message[..length]).into_owned()
+    abi::arguments::decode(&message[..length])
+        .map(|word| alloc::string::String::from_utf8_lossy(word).into_owned())
+        .collect()
 }
 
 /// The file service, if the parent passed its channel on - with the

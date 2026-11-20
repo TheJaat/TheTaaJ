@@ -10,6 +10,8 @@
 #![no_std]
 #![no_main]
 
+use core::fmt::Write;
+
 use taaj::println;
 
 taaj::program!(main);
@@ -34,7 +36,13 @@ fn main() -> i64 {
         None => println!("given: the screen, no files"),
     }
     if !arguments.is_empty() {
-        println!("given: arguments \"{}\"", arguments.trim());
+        // Each in quotes, so that where one ends and the next begins -
+        // and an argument that is empty - can be seen.
+        let mut text = taaj::Buffer::<400>::new();
+        for argument in &arguments {
+            let _ = write!(text, " \"{argument}\"");
+        }
+        println!("given: arguments{}", core::str::from_utf8(text.as_bytes()).unwrap_or(" (not shown)"));
     }
     0
 }

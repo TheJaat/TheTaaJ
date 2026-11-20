@@ -17,12 +17,12 @@ fn main() -> i64 {
         println!("cat: started without the file service");
         return 2;
     };
-    if arguments.trim().is_empty() {
+    if arguments.is_empty() {
         println!("usage: cat FILE...");
         return 2;
     }
     let mut failed = false;
-    for name in arguments.split_whitespace() {
+    for name in &arguments {
         let mut last = b'\n';
         match files.read(name, |piece| {
             let _ = taaj::write(piece);

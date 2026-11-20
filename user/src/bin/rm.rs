@@ -17,12 +17,12 @@ fn main() -> i64 {
         println!("rm: started without the file service");
         return 2;
     };
-    if arguments.trim().is_empty() {
+    if arguments.is_empty() {
         println!("usage: rm FILE...");
         return 2;
     }
     let mut failed = false;
-    for name in arguments.split_whitespace() {
+    for name in &arguments {
         if let Err(error) = files.remove(name) {
             println!("rm: {name}: {}", error.describe());
             failed = true;
