@@ -4,7 +4,7 @@ KERNEL_DIR = kernel
 
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
         kernel64 iso64 run64 run-disk boot64-test kernel64-test fault64-test test64 \
-        uefi-loader run64-uefi boot64-uefi-test user64
+        uefi-loader run64-uefi boot64-uefi-test user64 libc64 cprogs64
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
@@ -181,6 +181,35 @@ UEFI64_LOG   = $(BUILD_DIR)/serial64-uefi.log
 # would fail. The "~" before it waits for the shell to be back at its
 # prompt: keys typed while a program runs belong to that run (a Ctrl+C
 # among them stops the program), and this one is meant for the prompt.
+# C programs: compiled by Clang for a bare x86_64 machine, linked with
+# libc.a (libc/, the taaj runtime under C names) by the same linker
+# script as the Rust programs, and put on the disk as files. Without
+# Clang and lld there are none, and the tests do not ask for them.
+HAVE_CC     := $(shell command -v clang >/dev/null && command -v ld.lld >/dev/null && echo yes)
+LIBC_DIR     = libc
+LIBC_A       = $(LIBC_DIR)/target/x86_64-unknown-none/release/libc.a
+C_BIN        = $(BUILD_DIR)/c
+# Freestanding: no host headers or libraries, only libc/include and the
+# compiler's own (stddef.h, stdarg.h). General registers only: the
+# kernel does not save FPU or SSE state on a switch yet, so a C program
+# must not use them - float and double are done by library calls
+# (soft float; the functions are in libc.a).
+TAAJ_CFLAGS  = --target=x86_64-unknown-none-elf -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding \
+               -fno-stack-protector -fno-pic -mno-red-zone -mgeneral-regs-only \
+               -nostdlibinc -isystem $(LIBC_DIR)/include
+TAAJ_LDFLAGS = -static -nostdlib --gc-sections -s -T user/user.ld
+ifeq ($(HAVE_CC),yes)
+C_PROGRAMS   = chello
+ROOT_FILES   = 18
+C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret
+EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^3 lines, 7 words, 30 bytes
+else
+C_PROGRAMS   =
+ROOT_FILES   = 17
+C_KEYS       =
+EXPECT_C     =
+endif
+
 TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
                p s ret m e m ret r u n spc h e l l o ret r u n spc p e e k ret \
                w r i t e spc n o t e s spc h e l l o ret \
@@ -260,6 +289,7 @@ TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
                e c h o spc h i spc shift-7 ret \
                l s spc shift-7 spc w c ret \
                e c h o spc shift-apostrophe x spc shift-7 spc y shift-apostrophe ret \
+               $(C_KEYS) \
                s e r v i c e s ret \
                s e r v i c e s spc f i l e s ret \
                s e r v i c e s spc d i s k ret \
@@ -288,7 +318,7 @@ TEST_TYPED   = Hi there
 # (Joined on one line: a continued line would start each pattern with a
 # space.)
 EXPECT_SHELL = unknown command: Hi;  PID  NAME;init +running;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
-EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^ +dir  docs/;^2 directories, 17 files, [0-9]+ bytes;^cat: notes: no such file;^cat exited with code 1;^kept\s*$$;^Hello from the host;^saved: 5 bytes
+EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^ +dir  docs/;^2 directories, $(ROOT_FILES) files, [0-9]+ bytes;^cat: notes: no such file;^cat exited with code 1;^kept\s*$$;^Hello from the host;^saved: 5 bytes
 EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(4096 KiB\);^0000  4a 41 46 53 .*JAFS;^disk: sector 5: the disk is read-only;^disk: sector 99999: no such sector;^disk check: all 9 checks passed;^took [0-9]+\.[0-9][0-9] s;^line 300 of 300
 EXPECT_RUN   = \[init\] started primes for the shell, from a file;^primes below 50: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47;^primes exited with code 0;^error: welcome is not a program;^error: broken is not a program;^error: no such program;\[init\] started ls for the shell, from a file;^usage: cat FILE;^cat exited with code 2;^rm: notes: no such file;^rm: saved2: no such file;^rm exited with code 1;^usage: write FILE TEXT;^write exited with code 2;$(EXPECT_GIVEN);$(EXPECT_WATCH);$(EXPECT_KILL)
 EXPECT_DIRS  = ^ +23  readme;^1 file, 23 bytes;^Read me, from the host;^docs/deep/note: 7 bytes;^docs:;^ +dir  deep/;^1 directory, 1 file, 23 bytes;^docs/deep:;^ +7  note;^rm: docs: the directory is not empty;^mkdir: docs: there is already something with that name;^cat: docs: is a directory;^write: welcome/x: not a directory;^ls: work: no such file or directory;\[init\] started tools/given for the shell, from a file;^mkdir: x: the files are read-only here
@@ -303,7 +333,7 @@ EXPECT_PIPE  = ^1 line, 3 words, 14 bytes;^301 lines, 1203 words;^given: argumen
 EXPECT_JOBS  = ^\[1\] cat ls ls . cat > big4;^\[2\] forever sleep > flog;^\[3\] forever yield;^forever: yield until stopped;^\[2\] running  forever sleep > flog;^\[3\] running  forever yield;^\[3\] stopped  forever yield;^\[2\] stopped  forever sleep > flog;^kill: no job 9;^\[1\] done  cat ls ls . cat > big4;^no jobs;^echo is one of the shell.s own commands: it cannot run in the background;^a & can only end the line;^x & y\s*$$
 EXPECT_NAMES = \[registry\] ready;\[registry\] fs may ask for: disk\s*$$;\[registry\] shell may ask for: keys display init system files files.look disk.look;^keys display init system files files.look disk.look\s*$$;^files: there for the shell;^disk: no such service - for the shell;\[registry\] shell asked for .disk.: it is not in its namespace;^nosuch: no such service - for the shell;\[registry\] asked to crash;\[init\] registry ended with code 1 - restarting it;^files.look: there for the shell
 EXPECT_GIVE  = \[registry\] shell gave ls: files=files.look;\[registry\] shell gave write: files\s*$$;\[registry\] shell gave given: files\s*$$;\[registry\] shell gave given: files=files.look;^given: it may ask for: files\s*$$
-TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EXPECT_DIRS);$(EXPECT_CD);$(EXPECT_MOVE);$(EXPECT_QUOTE);$(EXPECT_REDIR);$(EXPECT_PIPE);$(EXPECT_JOBS);$(EXPECT_NAMES);$(EXPECT_GIVE)
+TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EXPECT_DIRS);$(EXPECT_CD);$(EXPECT_MOVE);$(EXPECT_QUOTE);$(EXPECT_REDIR);$(EXPECT_PIPE);$(EXPECT_JOBS);$(EXPECT_NAMES);$(EXPECT_GIVE)$(EXPECT_C)
 # The disk the boot tests attach: a 4 MiB TaajFS volume made on the host
 # by tfstool, with one file in it for the OS to read. After the boot,
 # check-boot.sh reads back - with tfstool again - the file the OS wrote.
@@ -339,6 +369,10 @@ TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EX
 # then the registry is made to crash, and after init has started
 # another and told it everything again, a name is still found and a
 # file still read.
+# And it runs a program written in C: its arguments as argc and argv,
+# what it returns from main and what it passes to exit as its exit
+# code, and its output - through write - on the screen, into a file,
+# and down a pipe.
 # And it redirects: the shell's own output and a program's into files,
 # replacing and adding; a file as a program's input; both at once, for a
 # text and for a file of 50 messages - more than a channel holds, so
@@ -351,6 +385,7 @@ define make-test-disk
 	@rm -f $(1) && $(TFSTOOL_RS) mkfs $(1) 1024 > /dev/null && truncate -s 4M $(1)
 	@printf 'Hello from the host\n' > $(1).welcome && $(TFSTOOL_RS) put $(1) welcome $(1).welcome > /dev/null
 	@for program in $(DISK_PROGRAMS); do $(TFSTOOL_RS) put $(1) $$program $(USER_BIN)/$$program > /dev/null || exit 1; done
+	@for program in $(C_PROGRAMS); do $(TFSTOOL_RS) put $(1) $$program $(C_BIN)/$$program > /dev/null || exit 1; done
 	@head -c 300 $(USER_BIN)/primes > $(1).broken && $(TFSTOOL_RS) put $(1) broken $(1).broken > /dev/null
 	@seq 300 | sed 's/.*/line & of 300/' > $(1).long && $(TFSTOOL_RS) put $(1) long $(1).long > /dev/null
 	@$(TFSTOOL_RS) mkdir $(1) docs > /dev/null && printf 'Read me, from the host\n' > $(1).readme \
@@ -364,12 +399,16 @@ endef
 # built every time.
 RUN_DISK     = $(BUILD_DIR)/taaj-disk.img
 RUN_DISK_ARGS = -drive file=$(RUN_DISK),format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0
-run-disk: user64 tfstool-rs
+run-disk: user64 cprogs64 tfstool-rs
 	@[ -f $(RUN_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_DISK) 4096 > /dev/null && truncate -s 16M $(RUN_DISK) \
 	    && echo "Made a new disk: $(RUN_DISK)"; }
 	@for program in $(DISK_PROGRAMS); do \
 	    $(TFSTOOL_RS) rm $(RUN_DISK) $$program > /dev/null 2>&1; \
 	    $(TFSTOOL_RS) put $(RUN_DISK) $$program $(USER_BIN)/$$program > /dev/null || exit 1; \
+	done
+	@for program in $(C_PROGRAMS); do \
+	    $(TFSTOOL_RS) rm $(RUN_DISK) $$program > /dev/null 2>&1; \
+	    $(TFSTOOL_RS) put $(RUN_DISK) $$program $(C_BIN)/$$program > /dev/null || exit 1; \
 	done
 
 # The UEFI loader needs Clang and lld (`sudo apt install clang lld`).
@@ -386,6 +425,26 @@ OVMF         = /usr/share/ovmf/OVMF.fd
 user64:
 	@echo "Building the user programs..."
 	cd user && cargo build --release
+
+# The C library, and the C programs in libc/programs: each one file,
+# compiled and linked with libc.a. To build one of your own:
+#   make cprogs64 C_PROGRAMS=name      (with libc/programs/name.c)
+# and copy build/c/name to the disk with tfstool put.
+libc64:
+	@echo "Building the C library..."
+	cd $(LIBC_DIR) && cargo build --release
+
+cprogs64: libc64
+ifeq ($(HAVE_CC),yes)
+	@mkdir -p $(C_BIN)
+	@for program in $(C_PROGRAMS); do \
+	    echo "  CC      $$program.c"; \
+	    clang $(TAAJ_CFLAGS) -c $(LIBC_DIR)/programs/$$program.c -o $(C_BIN)/$$program.o || exit 1; \
+	    ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/$$program.o $(LIBC_A) -o $(C_BIN)/$$program || exit 1; \
+	done
+else
+	@echo "Clang or lld not found: no C programs (sudo apt install clang lld)"
+endif
 
 kernel64: user64
 	@echo "Building the 64-bit kernel..."
@@ -438,7 +497,7 @@ endif
 
 # Boots the 64-bit kernel headless and checks what it printed. A start on
 # the "boot every architecture on every commit" rule from the roadmap.
-boot64-test: iso64 tfstool-rs
+boot64-test: iso64 cprogs64 tfstool-rs
 	@echo "Booting the 64-bit kernel headless via BIOS (serial log: $(SERIAL64_LOG))..."
 	$(call make-test-disk,$(SERIAL64_LOG).disk)
 	@DISK=$(SERIAL64_LOG).disk KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(SERIAL64_LOG)
@@ -447,7 +506,7 @@ boot64-test: iso64 tfstool-rs
 	@echo "boot64-test passed"
 
 # The same ISO, the same kernel, booted by UEFI firmware instead.
-boot64-uefi-test: iso64 tfstool-rs
+boot64-uefi-test: iso64 cprogs64 tfstool-rs
 ifneq ($(HAVE_CLANG),yes)
 	@echo "FAIL: the UEFI loader needs clang and lld (sudo apt install clang lld)"; exit 1
 endif

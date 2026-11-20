@@ -1,0 +1,24 @@
+[package]
+name = "taaj-libc"
+version = "0.1.0"
+edition = "2021"
+description = "The C library for TheTaaJ: the taaj runtime, under the names a C program expects"
+publish = false
+
+[lib]
+# The file this makes is libc.a: what a C program is linked with.
+name = "c"
+path = "src/lib.rs"
+crate-type = ["staticlib"]
+test = false
+
+[dependencies]
+taaj = { package = "user", path = "../user" }
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+codegen-units = 1
