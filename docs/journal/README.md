@@ -39,7 +39,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 029 | [Moving and copying: one is a single commit, the other cannot be](029-moving-and-copying.md) | written | `bdb77dc` (TheKernel `4a18915`) |
 | 030 | [Quoting: who decides where one argument ends](030-quoting.md) | written | `6a1d21d` (TheKernel `9ec61a9`) |
 | 031 | [Standard output, standard input, and redirection: a program that does not know where its words go](031-standard-output-input-and-redirection.md) | written | `7bb1162` (TheKernel `4330b55`) |
-| 032 | [Pipes: two programs, one channel, and a shell that lets go](032-pipes.md) | written | this step (TheKernel `36b4ffd`) |
+| 032 | [Pipes: two programs, one channel, and a shell that lets go](032-pipes.md) | written | `7a2e05d` (TheKernel `36b4ffd`) |
+| 033 | [Background jobs: everything the shell runs is a job, and one loop looks after them all](033-background-jobs.md) | written | this step (TheKernel `41dd0ba`) |
 
 ## How to run what the entries describe
 

@@ -247,6 +247,19 @@ TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
                l s spc shift-backslash spc c d ret \
                l s spc shift-backslash spc n o s u c h 2 ret \
                l s spc shift-dot spc x spc shift-backslash spc w c ret \
+               c a t spc l s spc l s spc shift-backslash spc c a t spc shift-dot spc b i g 4 spc shift-7 ret \
+               f o r e v e r spc s l e e p spc shift-dot spc f l o g spc shift-7 ret \
+               f o r e v e r spc y i e l d spc shift-7 ret \
+               j o b s ret \
+               k i l l spc 3 ret \
+               k i l l spc 2 ret \
+               k i l l spc 9 ret \
+               e c h o spc b g spc shift-backslash spc w c spc shift-dot spc b g c o u n t spc shift-7 ret \
+               w a i t ret \
+               j o b s ret \
+               e c h o spc h i spc shift-7 ret \
+               l s spc shift-7 spc w c ret \
+               e c h o spc shift-apostrophe x spc shift-7 spc y shift-apostrophe ret \
                w i t h spc r e a d o n l y spc m k d i r spc x ret \
                g i v e n spc a spc b ret w i t h spc f i l e s spc g i v e n ret w i t h ret \
                w i t h spc r e a d o n l y spc g i v e n ret \
@@ -280,7 +293,8 @@ EXPECT_GIVEN = ^given: the screen, no files;^given: arguments .a. .b.\s*$$;^give
 EXPECT_WATCH = \[blk\] asked to stall;\[init\] blk has not answered for 2 s - stopping it;\[init\] blk ended with code -1001 - restarting it;^during: 2 bytes;\[display\] asked to stall;\[init\] display has not answered for 2 s - stopping it;\[init\] display ended with code -1001 - restarting it;\[display\] the text on the screen was kept: [0-9]+ lines shown again;\[kbd\] F11: simulating a driver bug;\[init\] kbd has not answered for 2 s - stopping it;\[init\] kbd ended with code -1001 - restarting it;\[shell\] line: .echo keys.
 EXPECT_KILL  = ^forever: spin until stopped;^forever: wait until stopped;^forever: sleep until stopped;\[process\] [0-9]+ .forever. stopped: killed by request;^\^C;^forever was stopped
 EXPECT_PIPE  = ^1 line, 3 words, 14 bytes;^301 lines, 1203 words;^given: arguments .xpipe.;^p . q\s*$$;^there is a . with no command on one side of it;^cd is one of the shell.s own commands;^unknown command: nosuch2;^only the last command of a pipeline
-TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EXPECT_DIRS);$(EXPECT_CD);$(EXPECT_MOVE);$(EXPECT_QUOTE);$(EXPECT_REDIR);$(EXPECT_PIPE)
+EXPECT_JOBS  = ^\[1\] cat ls ls . cat > big4;^\[2\] forever sleep > flog;^\[3\] forever yield;^forever: yield until stopped;^\[2\] running  forever sleep > flog;^\[3\] running  forever yield;^\[3\] stopped  forever yield;^\[2\] stopped  forever sleep > flog;^kill: no job 9;^\[1\] done  cat ls ls . cat > big4;^no jobs;^echo is one of the shell.s own commands: it cannot run in the background;^a & can only end the line;^x & y\s*$$
+TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EXPECT_DIRS);$(EXPECT_CD);$(EXPECT_MOVE);$(EXPECT_QUOTE);$(EXPECT_REDIR);$(EXPECT_PIPE);$(EXPECT_JOBS)
 # The disk the boot tests attach: a 4 MiB TaajFS volume made on the host
 # by tfstool, with one file in it for the OS to read. After the boot,
 # check-boot.sh reads back - with tfstool again - the file the OS wrote.
@@ -306,6 +320,11 @@ TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EX
 # an output file at the end; one of the shell's own commands first; a
 # writer that never stops, ended by its reader leaving; and the lines
 # that must not run.
+# And it runs lines that end in & in the background: a pipeline that
+# writes 50 KB to a file while the next lines are typed, which must
+# arrive exact; two programs that never end, listed by jobs and ended by
+# kill; one of the shell's own commands before a program; wait; and the
+# lines that must not run.
 # And it redirects: the shell's own output and a program's into files,
 # replacing and adding; a file as a program's input; both at once, for a
 # text and for a file of 50 messages - more than a channel holds, so

@@ -42,6 +42,12 @@
 //! neighbour. (A Unix shell lets the file win; that is nearly always a
 //! mistake when typed, so here it is refused.) A quoted `|` is text.
 //!
+//! And one that says how to run them: a `&` at the very end of the line
+//! means "in the background" - start it, and do not wait for it.
+//! Anywhere else an unquoted `&` is refused: `a & b` and `a && b` mean
+//! things in a Unix shell that this one does not do, and guessing would
+//! run something the user did not ask for.
+//!
 //! Nothing else is special yet: no variables, no wildcards. A quote
 //! that is never closed is an error, not a guess - the line is not run.
 //!
@@ -68,6 +74,10 @@ pub enum LineError {
     /// In a pipeline: an input file for a command that is not the
     /// first, or an output file for one that is not the last.
     Misplaced(Redirect),
+    /// A `&` that is not the last thing on the line.
+    NotLast,
+    /// A `&` with no command before it to run.
+    NothingToRun,
 }
 
 /// Which way a redirection points.
@@ -93,6 +103,16 @@ pub struct Command {
     pub input: Option<String>,
 }
 
+/// A whole line, understood.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct Line {
+    /// Its commands, in order: one, or several joined by `|`. There is
+    /// always at least one - for a blank line, one with no words.
+    pub commands: Vec<Command>,
+    /// Whether the line ended in `&`: run it, and do not wait for it.
+    pub background: bool,
+}
+
 /// A piece of a line: a word, or an instruction about the words.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Token {
@@ -100,6 +120,8 @@ enum Token {
     To(Redirect),
     /// `|`
     Pipe,
+    /// `&`
+    Background,
 }
 
 impl LineError {
@@ -116,6 +138,8 @@ impl LineError {
             LineError::NoCommand => "there is a | with no command on one side of it",
             LineError::Misplaced(Redirect::In) => "only the first command of a pipeline can take its input from a file",
             LineError::Misplaced(_) => "only the last command of a pipeline can send its output to a file",
+            LineError::NotLast => "a & can only end the line",
+            LineError::NothingToRun => "there is a & with no command before it",
         }
     }
 }
@@ -128,15 +152,19 @@ enum Within {
     Double,
 }
 
-/// The line as its commands, in order: one, or several joined by `|`.
-/// There is always at least one - for a blank line, one with no words.
-pub fn parse(line: &str) -> Result<Vec<Command>, LineError> {
+/// The line, understood: its commands, and whether to wait for them.
+pub fn parse(line: &str) -> Result<Line, LineError> {
     let mut commands = Vec::new();
+    let mut background = false;
     // The command being collected; a `|` finishes it and begins the
     // next.
     let mut command = Command::default();
     let mut tokens = tokens(line)?.into_iter();
     while let Some(token) = tokens.next() {
+        // Whatever this token is, it stands after the `&`.
+        if background {
+            return Err(LineError::NotLast);
+        }
         let redirect = match token {
             Token::Word(word) => {
                 command.words.push(word);
@@ -146,6 +174,10 @@ pub fn parse(line: &str) -> Result<Vec<Command>, LineError> {
                 // `take` hands over the finished command and leaves an
                 // empty one in its place.
                 commands.push(core::mem::take(&mut command));
+                continue;
+            }
+            Token::Background => {
+                background = true;
                 continue;
             }
             Token::To(redirect) => redirect,
@@ -166,6 +198,9 @@ pub fn parse(line: &str) -> Result<Vec<Command>, LineError> {
         }
     }
     commands.push(command);
+    if background && commands.iter().any(|command| command.words.is_empty()) {
+        return Err(LineError::NothingToRun);
+    }
     if commands.len() > 1 {
         // `a |`, `| b`, `a | | b`: a side with nothing to run.
         if commands.iter().any(|command| command.words.is_empty()) {
@@ -181,7 +216,7 @@ pub fn parse(line: &str) -> Result<Vec<Command>, LineError> {
             }
         }
     }
-    Ok(commands)
+    Ok(Line { commands, background })
 }
 
 /// The pieces of `line`, in order.
@@ -216,10 +251,10 @@ fn tokens(line: &str) -> Result<Vec<Token>, LineError> {
                 };
                 tokens.push(Token::To(redirect));
             }
-            // And so does a pipe.
-            (Within::Nothing, '|') => {
+            // And so do a pipe, and the sign for the background.
+            (Within::Nothing, '|' | '&') => {
                 tokens.extend(word.take().map(Token::Word));
-                tokens.push(Token::Pipe);
+                tokens.push(if c == '|' { Token::Pipe } else { Token::Background });
             }
             (Within::Nothing, '\'') => {
                 within = Within::Single;
@@ -254,6 +289,12 @@ fn tokens(line: &str) -> Result<Vec<Token>, LineError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The line's commands - for the tests that are not about `&`.
+    /// (It hides the `parse` of the module for the rest of the tests.)
+    fn parse(line: &str) -> Result<Vec<Command>, LineError> {
+        super::parse(line).map(|line| line.commands)
+    }
 
     /// The line as one command - which the lines of most tests are.
     fn one(line: &str) -> Result<Command, LineError> {
@@ -433,6 +474,42 @@ mod tests {
     fn a_quoted_pipe_is_text() {
         assert_eq!(one("echo \"p | q\""), Ok(command(&["echo", "p | q"], None, None)));
         assert_eq!(one("echo a\\|b '|'"), Ok(command(&["echo", "a|b", "|"], None, None)));
+    }
+
+    #[test]
+    fn a_last_ampersand_means_the_background() {
+        let line = super::parse("forever sleep &").unwrap();
+        assert!(line.background);
+        assert_eq!(line.commands, [command(&["forever", "sleep"], None, None)]);
+        // No space needed; and it is not an argument.
+        assert_eq!(super::parse("yes&").unwrap().commands, [command(&["yes"], None, None)]);
+        // The whole pipeline, with its files.
+        let line = super::parse("cat < in | wc > out &").unwrap();
+        assert!(line.background);
+        assert_eq!(line.commands.len(), 2);
+        assert_eq!(line.commands[1].output, Some(("out".to_string(), false)));
+        // And without one, not.
+        assert!(!super::parse("yes").unwrap().background);
+    }
+
+    #[test]
+    fn an_ampersand_anywhere_else_is_refused() {
+        assert_eq!(parse("a & b"), Err(LineError::NotLast));
+        assert_eq!(parse("a && b"), Err(LineError::NotLast));
+        assert_eq!(parse("a & &"), Err(LineError::NotLast));
+        assert_eq!(parse("a & > f"), Err(LineError::NotLast));
+        assert_eq!(parse("a & | b"), Err(LineError::NotLast));
+        assert_eq!(parse("&"), Err(LineError::NothingToRun));
+        assert_eq!(parse("  & "), Err(LineError::NothingToRun));
+        assert_eq!(parse("> f &"), Err(LineError::NothingToRun));
+        // The file a redirection names cannot be one.
+        assert_eq!(parse("ls > &"), Err(LineError::NoFile(Redirect::Out)));
+    }
+
+    #[test]
+    fn a_quoted_ampersand_is_text() {
+        assert_eq!(one("echo \"a & b\" '&' \\&"), Ok(command(&["echo", "a & b", "&", "&"], None, None)));
+        assert!(!super::parse("echo 'x &'").unwrap().background);
     }
 
     #[test]

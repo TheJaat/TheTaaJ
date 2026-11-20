@@ -36,6 +36,21 @@
 //! shell's own commands may begin a pipeline (`ps | wc`); it runs
 //! first, to its end, and what it printed is then sent to the next.
 //!
+//! A line that ends in `&` is run in the background: the shell starts
+//! it, says its number, and takes the next line at once. `jobs` lists
+//! what is running so; `kill N` ends job N; `wait` waits until all of
+//! them are over. The shell can end exactly
+//! the programs it started, because those are the ones it holds a
+//! handle to - there is no "kill any process by its number".
+//!
+//! Everything the shell has running is a job, in one list: the
+//! background ones, and - while the shell waits for it - the one in
+//! the foreground. One loop (`attend`) watches them all, with the
+//! keyboard; "waiting for a command" is that loop until the foreground
+//! job is over, and "waiting for a key" is the same loop until a key
+//! comes. So a background job whose output goes to a file is served
+//! whatever else the shell is doing.
+//!
 //! The shell is also where the current directory lives: `cd` changes
 //! it, `pwd` shows it, the prompt shows it. It is a path the shell
 //! remembers and nothing else - the file service is never told. A
@@ -80,11 +95,16 @@ const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp"]
 /// kept the same as. They read no input, so in a pipeline one may only
 /// stand first.
 const OWN_COMMANDS: &[&str] =
-    &["help", "echo", "cd", "pwd", "clear", "uptime", "mem", "ps", "time", "run", "with", "fs", "display", "disk"];
+    &["help", "echo", "cd", "pwd", "clear", "uptime", "mem", "ps", "time", "run", "with", "fs", "display", "disk", "jobs", "kill", "wait"];
 /// Most commands in one pipeline. The wait watches them all at once,
 /// with the keyboard and an output, and the kernel waits on 32 things
 /// at most - but nobody types eight.
 const PIPELINE_MAX: usize = 8;
+/// Most things the shell may be watching when a background job is
+/// started: the kernel waits on WAIT_HANDLES_MAX at once, and there
+/// must always be room left for a whole pipeline in the foreground -
+/// its programs, and its output.
+const WATCHED_MAX: usize = abi::WAIT_HANDLES_MAX as usize - (PIPELINE_MAX + 1);
 /// Most output kept from one of the shell's own commands for the next
 /// command of a pipeline to read.
 const KEPT_MAX: usize = 1 << 20;
@@ -126,6 +146,85 @@ struct Shell {
     /// comes from, if the line said so. Set by `run` for the length of
     /// one line.
     redirection: RefCell<Redirection>,
+    /// Everything the shell has running: see `Job`.
+    jobs: RefCell<Vec<Job>>,
+}
+
+/// Programs the shell started and has not finished with: one program,
+/// or the several of a pipeline, with what the shell does for them
+/// while they run.
+struct Job {
+    /// What the user calls it: 1, 2, ... for a background job. 0 is
+    /// the job in the foreground, which needs no name - there is at
+    /// most one, and the shell is waiting for it.
+    number: usize,
+    /// The line that started it, to show in `jobs`.
+    text: String,
+    /// Its programs: names, process handles, and exit codes - None
+    /// while a program is running. All three in the pipeline's order.
+    names: Vec<String>,
+    processes: Vec<Handle>,
+    codes: Vec<Option<i64>>,
+    /// The shell's end of the channel the last program writes to, if
+    /// its output does not go to the screen.
+    output: Option<Handle>,
+    /// The file that output is added to. None for the foreground job:
+    /// its output goes where the line being run says (`Shell::write`).
+    /// A background job outlives its line, so it carries the path.
+    sink: Option<String>,
+    /// The input the shell is sending the first program, if any.
+    feed: Option<Feed>,
+    /// The first thing that went wrong writing `sink`.
+    failed: Option<FileError>,
+}
+
+impl Job {
+    /// Whether every program has ended.
+    fn ended(&self) -> bool {
+        self.codes.iter().all(Option::is_some)
+    }
+
+    /// Whether there is nothing left to do for it: the programs have
+    /// ended and their last output has been taken.
+    fn over(&self) -> bool {
+        self.ended() && self.output.is_none() && self.feed.is_none()
+    }
+
+    /// How it ended, in a word or a few - the first program that did
+    /// not simply finish decides.
+    fn ending(&self) -> String {
+        for (name, code) in self.names.iter().zip(&self.codes) {
+            match code {
+                Some(abi::STOPPED) => return String::from("stopped"),
+                Some(abi::KILLED) => return alloc::format!("{name} was killed by the kernel"),
+                // A writer whose reader left has finished, as far as
+                // anyone cares.
+                Some(0) | Some(abi::NO_READER) | None => {}
+                Some(code) => return alloc::format!("{name} exited with code {code}"),
+            }
+        }
+        String::from("done")
+    }
+}
+
+/// What `attend` is to wait for.
+#[derive(Clone, Copy, PartialEq)]
+enum Until {
+    /// The foreground job being over.
+    Foreground,
+    /// A key.
+    Key,
+    /// Every background job being over: the command `wait`.
+    Jobs,
+}
+
+/// What `attend` came back with.
+enum Attended {
+    /// A key, of this many bytes, in the buffer it was given.
+    Key(usize),
+    /// The foreground job is over: its programs' exit codes. (For
+    /// `Until::Jobs`: the background jobs are over; no codes.)
+    Ended(Vec<i64>),
 }
 
 /// Where the output of what the shell runs goes, when not to the user.
@@ -159,6 +258,10 @@ struct Redirection {
     kept: Vec<u8>,
     /// Whether more than KEPT_MAX arrived, and was dropped.
     overflowed: bool,
+    /// Whether the line ended in `&`: what it starts is not waited for.
+    background: bool,
+    /// The line as typed, without the `&`: a background job's name.
+    text: String,
 }
 
 /// An input being sent to a program as its standard input, a piece at
@@ -307,6 +410,9 @@ impl Shell {
     /// The prompt says where the shell is: "taaj:/docs> ". On the
     /// screen only - the log has the line that follows it.
     fn prompt(&self) {
+        // Before the prompt is the moment to say which background jobs
+        // have ended: never in the middle of another command's output.
+        self.report_jobs();
         let mut text = Buffer::<{ LINE_MAX + 16 }>::new();
         let _ = write!(text, "taaj:{}> ", path::display(&self.directory.borrow()));
         self.screen_only(text.as_bytes());
@@ -338,16 +444,39 @@ impl Shell {
     /// puts the listing and the time in `list` - and is forgotten when
     /// the line is done. And it may be several commands joined by `|`:
     /// then the input is the first one's and the output the last one's.
-    fn run(&self, line: &str) {
-        let commands = match input::line::parse(line) {
-            Ok(commands) => commands,
+    fn run(&self, text: &str) {
+        let line = match input::line::parse(text) {
+            Ok(line) => line,
             Err(error) => return tell!(self, "{}\n", error.describe()),
         };
+        let commands = &line.commands;
         // `parse` gives at least one command, so there is a first and
         // a last - the same one, on most lines.
         let (Some(first), Some(last)) = (commands.first(), commands.last()) else { return };
+        if line.background {
+            // The shell's own commands are this code, running now:
+            // they are over before "do not wait" could mean anything.
+            // `run` and `with` start a program, which is what the &
+            // is then for. (First in a pipeline one runs to its end,
+            // and the & is for the programs after it.)
+            if let ([only], false) = (commands.as_slice(), matches!(name(first), "run" | "with")) {
+                if OWN_COMMANDS.contains(&name(only)) {
+                    return tell!(self, "{} is one of the shell's own commands: it cannot run in the background\n", name(only));
+                }
+            }
+            let watched: usize = 1 + self.jobs.borrow().iter().map(|job| job.processes.len() + 1).sum::<usize>();
+            if watched + commands.len() + 1 > WATCHED_MAX {
+                return self.tell(b"too many jobs are running: end one first (jobs, kill N)\n");
+            }
+        }
         if !self.redirect(first.input.as_ref(), last.output.as_ref()) {
             return;
+        }
+        {
+            let mut redirection = self.redirection.borrow_mut();
+            redirection.background = line.background;
+            // The line without its &, and the spaces before it.
+            redirection.text = String::from(text.trim().trim_end_matches('&').trim_end());
         }
         match commands.as_slice() {
             [only] => self.run_words(&only.words),
@@ -413,10 +542,16 @@ impl Shell {
         if own_first {
             // Its output goes into memory for the length of the
             // command, and then becomes the input of what follows.
-            let output = self.redirection.borrow_mut().output.replace(Sink::Memory);
+            // And it is waited for, whatever the line ends in: the &
+            // is put aside until the programs after it are started.
+            let (output, background) = {
+                let mut redirection = self.redirection.borrow_mut();
+                (redirection.output.replace(Sink::Memory), core::mem::take(&mut redirection.background))
+            };
             self.run_words(&commands[0].words);
             let mut redirection = self.redirection.borrow_mut();
             redirection.output = output;
+            redirection.background = background;
             let kept = core::mem::take(&mut redirection.kept);
             redirection.input = Some(Supply::Memory(kept));
             if core::mem::take(&mut redirection.overflowed) {
@@ -487,6 +622,10 @@ impl Shell {
             }
         }
         let (output, feed) = ours;
+        if !failed && self.redirection.borrow().background {
+            let names = programs.iter().map(|command| String::from(name(command))).collect();
+            return self.background(names, started, output, feed);
+        }
         let codes = self.wait_for(&started, output, feed);
         for (n, &process) in started.iter().enumerate() {
             if !failed {
@@ -513,14 +652,15 @@ impl Shell {
                 b"commands:\n\
                   \x20 help, echo TEXT   this list; print TEXT\n\
                   \x20   (a word with spaces: \"two words\", 'two words', two\\ words)\n\
-                  \x20 clear, uptime, mem   clear the screen; time since boot; memory\n\
+                  \x20 clear, uptime, mem, ps   clear the screen; time since boot; memory;\n\
+                  \x20              processes\n\
                   \x20 COMMAND > FILE, >> FILE, < FILE   output into, added to; input from\n\
                   \x20 A | B        what A prints is what B reads\n\
-                  \x20 ps           processes\n\
+                  \x20 COMMAND &    run in the background: jobs lists those, kill N ends\n\
+                  \x20              job N, wait waits for them all\n\
                   \x20 cd [DIR], pwd    go to DIR (to the root); say where this is\n\
                   \x20 time COMMAND     run COMMAND, and say how long it took\n\
-                  \x20 run NAME ARGS    run a program: a file, or hello, peek\n\
-                  \x20              (Ctrl+C stops it)\n\
+                  \x20 run NAME ARGS    run a program: a file, or hello, peek (Ctrl+C stops it)\n\
                   \x20 NAME ARGS    the same, for a file in the root (./NAME, or a\n\
                   \x20              path with a /, for one elsewhere). On the disk:\n\
                   \x20   ls [DIR...]        list a directory (this one)\n\
@@ -533,8 +673,7 @@ impl Shell {
                   \x20   (a name is a path from here, ../plan - or /from/the/root)\n\
                   \x20   given              say what it was given\n\
                   \x20 with files COMMAND      run COMMAND with the files too\n\
-                  \x20 with readonly COMMAND   the same, but only to read them\n\
-                  \x20              (ls to rm above get the files anyway)\n\
+                  \x20 with readonly COMMAND   the same, but only to read (ls to rm have them)\n\
                   \x20 fs stall SECONDS   a test: the file service goes silent\n\
                   \x20 disk stall SECONDS, display stall SECONDS   the same,\n\
                   \x20              for the disk driver and the display\n\
@@ -555,6 +694,20 @@ impl Shell {
             "uptime" => self.uptime(),
             "mem" => self.mem(),
             "ps" => self.ps(),
+            "jobs" => self.list_jobs(),
+            // Until every background job is over, or Ctrl+C. The next
+            // prompt says how each ended.
+            "wait" => {
+                let _ = self.attend(Until::Jobs, &mut [0u8; 16]);
+            }
+            "kill" => match arguments {
+                // `%1` is how a Unix shell writes job 1; allowed.
+                [job] => match job.strip_prefix('%').unwrap_or(job).parse::<usize>() {
+                    Ok(number @ 1..) => self.kill_job(number),
+                    _ => self.write(b"usage: kill N (a job's number: see jobs)\n"),
+                },
+                _ => self.write(b"usage: kill N (a job's number: see jobs)\n"),
+            },
             "time" if !arguments.is_empty() => {
                 // Ticks are 10 ms apart: good for "is it slow", no finer.
                 let start = taaj::ticks();
@@ -926,6 +1079,9 @@ impl Shell {
         let Some(process) = self.start(name, arguments, image, grant, stdout, stdin) else {
             return close_all(output.into_iter().chain(feed.map(|feed| feed.to)));
         };
+        if self.redirection.borrow().background {
+            return self.background(alloc::vec![String::from(name)], alloc::vec![process], output, feed);
+        }
         let code = self.wait_for(&[process], output, feed).map(|codes| codes[0]);
         self.report(name, code, explicit);
         let _ = taaj::close(process);
@@ -1052,104 +1208,176 @@ impl Shell {
 impl Shell {
     /// Waits for the foreground programs to end - one, or the several
     /// of a pipeline - and returns their exit codes, in their order.
-    /// The keyboard is watched meanwhile: Ctrl+C asks the kernel to end
-    /// every one still running - and the wait goes on, until they have.
-    /// Any other key is kept for later.
-    ///
-    /// And, if the line redirected them, moves the output and input:
-    /// what arrives on `output` is added to the line's file (or kept,
-    /// for a pipeline); `feed` is sent down its channel a piece at a
-    /// time. The shell is the far end of both, so it must keep doing
-    /// this for as long as the programs run - a program whose output
-    /// nobody takes would wait for ever with a full channel.
+    /// They become the foreground job, and `attend` does the rest:
+    /// Ctrl+C stops them, other keys are kept, and their output and
+    /// input - if the line redirected them - are moved while they run.
+    /// The process handles stay the caller's.
     fn wait_for(&self, processes: &[Handle], output: Option<Handle>, feed: Option<Feed>) -> Result<Vec<i64>, Error> {
+        self.jobs.borrow_mut().push(Job {
+            number: 0,
+            text: String::new(),
+            names: Vec::new(),
+            processes: processes.to_vec(),
+            codes: alloc::vec![None; processes.len()],
+            output,
+            sink: None,
+            feed,
+            failed: None,
+        });
+        match self.attend(Until::Foreground, &mut [0u8; 16]) {
+            Ok(Attended::Ended(codes)) => Ok(codes),
+            result => {
+                // The wait itself failed: the job is given up.
+                let mut jobs = self.jobs.borrow_mut();
+                if let Some(at) = jobs.iter().position(|job| job.number == 0) {
+                    let job = jobs.remove(at);
+                    close_all(job.output.into_iter().chain(job.feed.map(|feed| feed.to)));
+                }
+                Err(result.err().unwrap_or(Error::InvalidArgument))
+            }
+        }
+    }
+
+    /// Makes what was just started a background job: says its number,
+    /// and does not wait. From here on `attend` looks after it, and
+    /// the job owns the process handles.
+    fn background(&self, names: Vec<String>, processes: Vec<Handle>, output: Option<Handle>, feed: Option<Feed>) {
+        let (text, sink) = {
+            let redirection = self.redirection.borrow();
+            let sink = match &redirection.output {
+                Some(Sink::File(path)) => Some(path.clone()),
+                _ => None,
+            };
+            (redirection.text.clone(), sink)
+        };
+        let mut jobs = self.jobs.borrow_mut();
+        // One more than the highest in use: a number is not given to
+        // another job while the user may still be thinking of the old.
+        let number = jobs.iter().map(|job| job.number).max().unwrap_or(0) + 1;
+        tell!(self, "[{number}] {text}\n");
+        let codes = alloc::vec![None; processes.len()];
+        jobs.push(Job { number, text, names, processes, codes, output, sink, feed, failed: None });
+    }
+
+    /// The shell's one place of waiting. It looks after every job -
+    /// noting programs that end, adding output to files, sending input
+    /// - until what the caller is waiting for happens:
+    ///
+    ///   - `Foreground`: the foreground job being over. Ctrl+C asks
+    ///     the kernel to end its programs, and the wait goes on until
+    ///     they have ended; any other key is kept for later.
+    ///   - `Key`: a key being typed, which is put in `input`.
+    ///   - `Jobs`: every background job being over. Ctrl+C ends the
+    ///     wait - not the jobs; any other key is kept for later.
+    ///
+    /// The shell is the far end of every redirected output and input,
+    /// so this must keep running for as long as programs do - a
+    /// program whose output nobody takes waits for ever with a full
+    /// channel. That is why there is one loop and not two: a
+    /// background job must be served while a foreground one runs, and
+    /// while the shell is idle at its prompt.
+    fn attend(&self, until: Until, input: &mut [u8; 16]) -> Result<Attended, Error> {
         #[derive(Clone, Copy)]
         enum Source {
-            /// The process at this place in `processes`.
-            Process(usize),
             Keys,
-            Output,
+            /// This job (by its place in the list), this program of it.
+            Process(usize, usize),
+            /// This job's output channel.
+            Output(usize),
         }
-        let (mut output, mut feed) = (output, feed);
         let mut keys = Some(self.keys);
-        let mut input = [0u8; 16];
-        // None while the process is running.
-        let mut codes: Vec<Option<i64>> = alloc::vec![None; processes.len()];
-        let finish = |output: Option<Handle>, feed: Option<Feed>| close_all(output.into_iter().chain(feed.map(|feed| feed.to)));
         loop {
-            // `collect` on Options: Some(all of them) if every one is
-            // Some - every program has ended - and None otherwise.
-            if let Some(codes) = codes.iter().copied().collect::<Option<Vec<i64>>>() {
-                // What was printed last may still be in the channel.
-                // Only what is there already is taken: nothing more
-                // can come.
-                if let Some(channel) = output {
-                    while let Ok(Some(_)) = taaj::poll(&[channel]) {
-                        if !self.take_output(channel) {
-                            break;
-                        }
-                    }
-                }
-                finish(output, feed);
-                return Ok(codes);
+            // The list is borrowed for one turn of the loop. Nothing
+            // called below looks at it: they are given the job.
+            let mut jobs = self.jobs.borrow_mut();
+            for job in jobs.iter_mut() {
+                self.settle(job);
             }
-            // Send as much of the input as the channel will take now.
+            if until == Until::Jobs && jobs.iter().all(|job| job.over()) {
+                return Ok(Attended::Ended(Vec::new()));
+            }
+            if until == Until::Foreground {
+                if let Some(at) = jobs.iter().position(|job| job.number == 0 && job.over()) {
+                    // `flatten` drops the Nones - there are none: it
+                    // is over.
+                    return Ok(Attended::Ended(jobs.remove(at).codes.into_iter().flatten().collect()));
+                }
+            }
+            // Send as much of each input as its channel will take now.
             // False: all of it has gone, or it cannot go on - closing
             // our end is what tells the program its input has ended.
-            if let Some(sending) = &mut feed {
-                if !self.feed(sending) {
-                    let _ = taaj::close(sending.to);
-                    feed = None;
+            let mut feeding = false;
+            for job in jobs.iter_mut() {
+                if let Some(sending) = &mut job.feed {
+                    if self.feed(sending) {
+                        feeding = true;
+                    } else {
+                        let _ = taaj::close(sending.to);
+                        job.feed = None;
+                    }
                 }
             }
-            // What to wait on: the programs still running; the keyboard
-            // while there is one; the output channel while it is open.
-            let running = processes.iter().enumerate().filter(|(n, _)| codes[*n].is_none());
-            let (handles, sources): (Vec<Handle>, Vec<Source>) = running
-                .map(|(n, &process)| (process, Source::Process(n)))
-                .chain(keys.map(|keys| (keys, Source::Keys)))
-                .chain(output.map(|output| (output, Source::Output)))
-                .unzip();
+            // What to wait on: the keyboard while there is one; every
+            // program still running; every output channel still open.
+            let mut handles = Vec::new();
+            let mut sources = Vec::new();
+            let mut watch = |handle: Handle, source: Source| {
+                handles.push(handle);
+                sources.push(source);
+            };
+            if let Some(keys) = keys {
+                watch(keys, Source::Keys);
+            }
+            for (at, job) in jobs.iter().enumerate() {
+                for (n, &process) in job.processes.iter().enumerate() {
+                    if job.codes[n].is_none() {
+                        watch(process, Source::Process(at, n));
+                    }
+                }
+                if let Some(output) = job.output {
+                    watch(output, Source::Output(at));
+                }
+            }
             // With input still to send, the wait is short: there is no
             // way to wait for room in a channel, so the shell looks
             // again a tick later.
-            let ready = match &feed {
-                Some(_) => taaj::object_wait_until(&handles, taaj::ticks() + 1),
-                None => taaj::object_wait(&handles).map(Some),
-            };
-            let ready = match ready {
-                Ok(ready) => ready,
-                Err(error) => {
-                    finish(output, feed);
-                    return Err(error);
-                }
+            let ready = if feeding {
+                taaj::object_wait_until(&handles, taaj::ticks() + 1)?
+            } else {
+                Some(taaj::object_wait(&handles)?)
             };
             match ready.map(|index| sources[index]) {
                 None => {} // time to try the input again
-                Some(Source::Process(n)) => match taaj::wait_any(&[processes[n]]) {
-                    Ok((_, code)) => codes[n] = Some(code),
-                    Err(error) => {
-                        finish(output, feed);
-                        return Err(error);
-                    }
-                },
-                Some(Source::Output) => {
-                    if let Some(channel) = output {
-                        if !self.take_output(channel) {
+                Some(Source::Process(at, n)) => {
+                    let job = &mut jobs[at];
+                    job.codes[n] = Some(taaj::wait_any(&[job.processes[n]])?.1);
+                }
+                Some(Source::Output(at)) => {
+                    let job = &mut jobs[at];
+                    if let Some(channel) = job.output {
+                        if !self.take_output(channel, &job.sink, &mut job.failed) {
                             let _ = taaj::close(channel);
-                            output = None;
+                            job.output = None;
                         }
                     }
                 }
-                Some(Source::Keys) => match taaj::receive(self.keys, &mut input, &mut []) {
+                Some(Source::Keys) => match taaj::receive(self.keys, input, &mut []) {
+                    Ok((n, _)) if until == Until::Key => return Ok(Attended::Key(n)),
                     Ok((n, _)) if &input[..n] == CTRL_C => {
                         self.tell(b"^C\n");
-                        for (n, &process) in processes.iter().enumerate() {
-                            // One that ended a moment ago, and has not
-                            // been noticed here yet, cannot be stopped:
-                            // nothing to say about that.
-                            if codes[n].is_none() {
-                                let _ = taaj::kill(process);
+                        if until == Until::Jobs {
+                            return Ok(Attended::Ended(Vec::new()));
+                        }
+                        // The foreground job only: a background job is
+                        // ended by name, with `kill`.
+                        for job in jobs.iter().filter(|job| job.number == 0) {
+                            for (n, &process) in job.processes.iter().enumerate() {
+                                // One that ended a moment ago, and has
+                                // not been noticed here yet, cannot be
+                                // stopped: nothing to say about that.
+                                if job.codes[n].is_none() {
+                                    let _ = taaj::kill(process);
+                                }
                             }
                         }
                     }
@@ -1159,6 +1387,7 @@ impl Shell {
                             typed.push_back(input[..n].to_vec());
                         }
                     }
+                    Err(error) if until == Until::Key => return Err(error),
                     // No keyboard: nothing to watch there any more.
                     Err(_) => keys = None,
                 },
@@ -1166,14 +1395,109 @@ impl Shell {
         }
     }
 
-    /// Takes one message of a program's output and puts it where the
-    /// line's output goes. False when there will be no more: the
-    /// program closed its end, and everything it sent has been taken.
-    fn take_output(&self, channel: Handle) -> bool {
+    /// If every program of the job has ended, finishes with it: what
+    /// was printed last may still be in the channel, so that is taken
+    /// first - only what is there already, since nothing more can come
+    /// - and then the shell's ends are closed.
+    fn settle(&self, job: &mut Job) {
+        if !job.ended() {
+            return;
+        }
+        if let Some(channel) = job.output.take() {
+            while let Ok(Some(_)) = taaj::poll(&[channel]) {
+                if !self.take_output(channel, &job.sink, &mut job.failed) {
+                    break;
+                }
+            }
+            let _ = taaj::close(channel);
+        }
+        if let Some(feed) = job.feed.take() {
+            let _ = taaj::close(feed.to);
+        }
+    }
+
+    /// Says which background jobs are over, and forgets them.
+    fn report_jobs(&self) {
+        let over: Vec<Job> = {
+            let mut jobs = self.jobs.borrow_mut();
+            for job in jobs.iter_mut() {
+                self.settle(job);
+            }
+            // `partition` divides one list into two by a test; the
+            // ones still going are put back.
+            let (over, going): (Vec<Job>, Vec<Job>) = jobs.drain(..).partition(|job| job.number != 0 && job.over());
+            *jobs = going;
+            over
+        };
+        for job in over {
+            tell!(self, "[{}] {}  {}\n", job.number, job.ending(), job.text);
+            if let (Some(path), Some(error)) = (&job.sink, job.failed) {
+                tell!(self, "[{}] /{path}: {}\n", job.number, error.describe());
+            }
+            close_all(job.processes);
+        }
+    }
+
+    /// `jobs`: the background jobs, by number.
+    fn list_jobs(&self) {
+        // The lines are made first and written after: `write` must not
+        // run while the list is borrowed, if only by habit.
+        let lines: Vec<String> = self
+            .jobs
+            .borrow()
+            .iter()
+            .filter(|job| job.number != 0)
+            .map(|job| alloc::format!("[{}] {}  {}\n", job.number, if job.ended() { "ended" } else { "running" }, job.text))
+            .collect();
+        if lines.is_empty() {
+            return self.write(b"no jobs\n");
+        }
+        for line in lines {
+            self.write(line.as_bytes());
+        }
+    }
+
+    /// `kill N`: ends every program of background job N still running,
+    /// and waits until each has ended - which is at once: the kernel
+    /// ends a program wherever it is. The next prompt says the job
+    /// was stopped.
+    fn kill_job(&self, number: usize) {
+        let mut jobs = self.jobs.borrow_mut();
+        let Some(job) = jobs.iter_mut().find(|job| job.number == number) else {
+            drop(jobs);
+            return say!(self, "kill: no job {number} (see jobs)\n");
+        };
+        for (n, &process) in job.processes.iter().enumerate() {
+            if job.codes[n].is_some() {
+                continue;
+            }
+            // A kill that fails found the program already ended; the
+            // wait then returns at once, with how it did end.
+            let _ = taaj::kill(process);
+            if let Ok((_, code)) = taaj::wait_any(&[process]) {
+                job.codes[n] = Some(code);
+            }
+        }
+    }
+
+    /// Takes one message of a program's output and puts it where it
+    /// goes: added to the file `sink`, or - with none, for the
+    /// foreground job - wherever the line being run says. False when
+    /// there will be no more: the program closed its end, and
+    /// everything it sent has been taken.
+    fn take_output(&self, channel: Handle, sink: &Option<String>, failed: &mut Option<FileError>) -> bool {
         let mut message = [0u8; abi::MESSAGE_MAX as usize];
         match taaj::receive(channel, &mut message, &mut []) {
             Ok((length, _)) if length > 1 && message[0] == abi::stream::DATA => {
-                self.write(&message[1..length]);
+                let bytes = &message[1..length];
+                match (sink, &self.files) {
+                    (None, _) => self.write(bytes),
+                    // After the first failure nothing more is written:
+                    // a file with a hole in the middle would look whole.
+                    (Some(_), _) if failed.is_some() => {}
+                    (Some(path), Some(files)) => *failed = files.append(path, bytes).err(),
+                    (Some(_), None) => *failed = Some(FileError::Unreachable(Error::PeerClosed)),
+                }
                 true
             }
             Ok(_) => true, // empty, or not part of the stream
@@ -1231,13 +1555,17 @@ impl Shell {
     }
 
     /// The next key: one typed while a program ran, if any are left,
-    /// else one from the keyboard driver - waiting for it.
+    /// else one from the keyboard driver - waiting for it, and looking
+    /// after the background jobs meanwhile.
     fn next_key(&self, input: &mut [u8; 16]) -> Result<usize, Error> {
         if let Some(key) = self.typed_ahead.borrow_mut().pop_front() {
             input[..key.len()].copy_from_slice(&key);
             return Ok(key.len());
         }
-        taaj::receive(self.keys, input, &mut []).map(|(n, _)| n)
+        match self.attend(Until::Key, input)? {
+            Attended::Key(n) => Ok(n),
+            Attended::Ended(_) => Err(Error::InvalidArgument), // not asked for
+        }
     }
 }
 
@@ -1266,6 +1594,7 @@ fn main() -> i64 {
         look: taaj::startup_handle(6).map(Files::new),
         directory: RefCell::new(String::new()),
         redirection: RefCell::new(Redirection::default()),
+        jobs: RefCell::new(Vec::new()),
     };
     println!("[shell] ready - type a command (try help)");
     shell.screen_only(b"Welcome to TheTaaJ. Type help for the commands.\n\n");
