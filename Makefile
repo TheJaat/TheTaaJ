@@ -3,7 +3,7 @@ BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
-        kernel64 iso64 run64 run-disk boot64-test kernel64-test fault64-test test64 \
+        kernel64 iso64 run64 run-disk boot64-test smp64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test user64 libc64 cprogs64 cput libc-test
 
 # Default target
@@ -529,14 +529,17 @@ else
 		-boot-load-size 4 -o $(ISO64_IMG) $(ISO64_DIR) 2>/dev/null
 endif
 
+# How many CPUs `make run64` gives the machine: `make run64 RUN_CPUS=1`.
+RUN_CPUS ?= 4
+
 run64: iso64 run-disk
-	qemu-system-x86_64 -m 512M -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS)
+	qemu-system-x86_64 -m 512M -smp $(RUN_CPUS) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS)
 
 run64-uefi: iso64 run-disk
 ifneq ($(HAVE_CLANG),yes)
 	@echo "ERROR: no UEFI loader in the ISO - it needs clang and lld (sudo apt install clang lld)"; exit 1
 endif
-	qemu-system-x86_64 -m 512M -bios $(OVMF) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS)
+	qemu-system-x86_64 -m 512M -smp $(RUN_CPUS) -bios $(OVMF) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS)
 
 # Boots the 64-bit kernel headless and checks what it printed. A start on
 # the "boot every architecture on every commit" rule from the roadmap.
@@ -559,6 +562,22 @@ endif
 	@DISK=$(UEFI64_LOG).disk TFSTOOL=$(TFSTOOL_RS) CWORDS_HOST=$(CWORDS_HOST) CWORDS_TAAJ=$(C_BIN)/cwords TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" SCREEN_MAX_INK=700 \
 	    $(KERNEL64_DIR)/scripts/check-boot.sh $(UEFI64_LOG) UEFI
 	@echo "boot64-uefi-test passed"
+
+# The other numbers of CPUs. The two boots above have 4, and do
+# everything; these only boot, with one CPU (nothing to start), with
+# two, and with more than the kernel uses (the rest are left asleep).
+SMP64_LOG = $(BUILD_DIR)/smp64
+smp64-test: iso64
+	@for cpus in 1 2 20; do \
+	    echo "Booting the 64-bit kernel with $$cpus CPU(s) (serial log: $(SMP64_LOG)-$$cpus.log)..."; \
+	    SMP=$$cpus $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(SMP64_LOG)-$$cpus.log 40; \
+	    used=$$cpus; [ $$cpus -le 16 ] || used=16; \
+	    SMP=$$used SCREEN_MAX_INK=700 $(KERNEL64_DIR)/scripts/check-boot.sh $(SMP64_LOG)-$$cpus.log BIOS > $(SMP64_LOG)-$$cpus.out \
+	        || { tail -5 $(SMP64_LOG)-$$cpus.out; echo "FAIL: with $$cpus CPU(s) (all of it in $(SMP64_LOG)-$$cpus.out)"; exit 1; }; \
+	done
+	@grep -q "\[smp\] 4 more CPU(s) than the 16 this kernel uses: left asleep" $(SMP64_LOG)-20.log \
+	    || { echo "FAIL: 20 CPUs: the kernel did not say it left 4 asleep"; exit 1; }
+	@echo "smp64-test passed"
 
 # Unit tests of the kernel's pure logic (frames, page tables, heap,
 # locks), compiled for and run on this machine rather than in a VM.
@@ -640,7 +659,7 @@ fault64-test: build-bootloader user64
 
 # Every layer: host unit tests, a normal boot (BIOS and UEFI) with its
 # self-tests, and the fault boots.
-test64: kernel64-test boot64-test boot64-uefi-test fault64-test
+test64: kernel64-test boot64-test boot64-uefi-test smp64-test fault64-test
 	@echo "test64: all passed"
 
 # Clean everything
