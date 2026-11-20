@@ -23,6 +23,10 @@
 //!            calls main, exits with what main returned
 //!   write    to descriptor 1, standard output, or 2, standard error
 //!   exit, _exit
+//!   malloc, free, calloc, realloc, strdup          (memory.rs)
+//!   strcmp, strcpy, strchr, strstr and the others  (string.rs)
+//!   memcpy, memmove, memset, memcmp, strlen: these five come with
+//!            Rust's own support library, which is inside libc.a
 //!
 //! The headers a C program includes for these are in `include/`.
 //!
@@ -33,6 +37,9 @@
 #![no_std]
 
 extern crate alloc;
+
+pub mod memory;
+pub mod string;
 
 use alloc::vec::Vec;
 use core::ffi::{c_char, c_int, c_void};

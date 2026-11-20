@@ -4,7 +4,7 @@ KERNEL_DIR = kernel
 
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
         kernel64 iso64 run64 run-disk boot64-test kernel64-test fault64-test test64 \
-        uefi-loader run64-uefi boot64-uefi-test user64 libc64 cprogs64
+        uefi-loader run64-uefi boot64-uefi-test user64 libc64 cprogs64 libc-test
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
@@ -199,10 +199,10 @@ TAAJ_CFLAGS  = --target=x86_64-unknown-none-elf -std=c11 -O2 -Wall -Wextra -Werr
                -nostdlibinc -isystem $(LIBC_DIR)/include
 TAAJ_LDFLAGS = -static -nostdlib --gc-sections -s -T user/user.ld
 ifeq ($(HAVE_CC),yes)
-C_PROGRAMS   = chello
-ROOT_FILES   = 18
-C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret
-EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^3 lines, 7 words, 30 bytes
+C_PROGRAMS   = chello cmem
+ROOT_FILES   = 19
+C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret c m e m ret c m e m spc s o r t spc p e a r spc a p p l e spc f i g spc a p p l e ret c m e m spc h u g e ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret
+EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes
 else
 C_PROGRAMS   =
 ROOT_FILES   = 17
@@ -536,6 +536,16 @@ kernel64-test:
 	cd registry && cargo test
 	cd taajfs && cargo test
 	cd virtio && cargo test
+	$(MAKE) libc-test
+
+# The C library's string functions, compiled for this machine and
+# tested here. They are one file that asks the system for nothing, so
+# it is given to rustc on its own: libc as a whole is built only for
+# TheTaaJ.
+libc-test:
+	@mkdir -p $(LIBC_DIR)/target
+	rustc --edition 2021 --test $(LIBC_DIR)/src/string.rs -o $(LIBC_DIR)/target/string-test
+	$(LIBC_DIR)/target/string-test
 
 # One boot per deliberate fault: unmapped read, double fault, write to
 # rodata, executing data, stack overflow. Each must be caught and named.
