@@ -51,7 +51,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 041 | [Streams: a buffer in front of a descriptor](041-stdio-on-files.md) | written | `69d763e` (TheKernel `8145921`) |
 | 042 | [A real C program, and the recipe](042-a-real-c-program.md) | written | `ef1220a` (TheKernel `b1ac017`) |
 | 043 | [The keyboard as standard input: whose key is it?](043-the-keyboard-as-standard-input.md) | written | `a848c27` (TheKernel `47b346d`) |
-| 044 | [Waking the other CPUs](044-waking-the-other-cpus.md) | written | this step (TheKernel `a0f67aa`) |
+| 044 | [Waking the other CPUs](044-waking-the-other-cpus.md) | written | `7a9b600` (TheKernel `a0f67aa`) |
+| 045 | [Each CPU finds itself: GS and `swapgs`](045-each-cpu-finds-itself.md) | written | this step (TheKernel `c11bcb3`) |
 
 ## How to run what the entries describe
 
