@@ -28,6 +28,11 @@
 //!   memcpy, memmove, memset, memcmp, strlen: these five come with
 //!            Rust's own support library, which is inside libc.a
 //!
+//! One part of the library is written in C, in `c/`: printf and its
+//! relations, which are built around the one thing C does that stable
+//! Rust will not define - a function taking any number of arguments.
+//! The Makefile compiles those files and adds them to this archive.
+//!
 //! The headers a C program includes for these are in `include/`.
 //!
 //! Built as a static library (libc.a). The C program's object file and

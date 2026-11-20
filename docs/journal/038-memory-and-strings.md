@@ -321,7 +321,7 @@ make run64
 | `cmem sort b a C` | `C a b` — capitals sort before small letters, as bytes do *(not in the automated test)* |
 | `cmem sort` | An empty line *(not in the automated test)* |
 | `cmem sort "two words" one` | `one two words` *(not in the automated test)* |
-| `cmem sort pear fig \| wc` | `1 lines, 2 words, 9 bytes` *(not in the automated test)* |
+| `cmem sort pear fig \| wc` | `1 line, 2 words, 9 bytes` *(not in the automated test)* |
 
 **No memory**
 

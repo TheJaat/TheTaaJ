@@ -187,8 +187,12 @@ UEFI64_LOG   = $(BUILD_DIR)/serial64-uefi.log
 # Clang and lld there are none, and the tests do not ask for them.
 HAVE_CC     := $(shell command -v clang >/dev/null && command -v ld.lld >/dev/null && echo yes)
 LIBC_DIR     = libc
-LIBC_A       = $(LIBC_DIR)/target/x86_64-unknown-none/release/libc.a
+# The library is made in two halves: the Rust half by cargo, and the
+# half written in C (libc/c: printf) by Clang, added to a copy of it.
+LIBC_RUST_A  = $(LIBC_DIR)/target/x86_64-unknown-none/release/libc.a
 C_BIN        = $(BUILD_DIR)/c
+LIBC_A       = $(C_BIN)/libc.a
+LIBC_C       = format stdio
 # Freestanding: no host headers or libraries, only libc/include and the
 # compiler's own (stddef.h, stdarg.h). General registers only: the
 # kernel does not save FPU or SSE state on a switch yet, so a C program
@@ -199,10 +203,10 @@ TAAJ_CFLAGS  = --target=x86_64-unknown-none-elf -std=c11 -O2 -Wall -Wextra -Werr
                -nostdlibinc -isystem $(LIBC_DIR)/include
 TAAJ_LDFLAGS = -static -nostdlib --gc-sections -s -T user/user.ld
 ifeq ($(HAVE_CC),yes)
-C_PROGRAMS   = chello cmem
-ROOT_FILES   = 19
-C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret c m e m ret c m e m spc s o r t spc p e a r spc a p p l e spc f i g spc a p p l e ret c m e m spc h u g e ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret
-EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes
+C_PROGRAMS   = chello cmem cprint
+ROOT_FILES   = 20
+C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret c p r i n t spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c p r i n t spc l o n g spc shift-backslash spc w c ret c p r i n t spc shift-dot spc p o u t ret c m e m ret c m e m spc s o r t spc p e a r spc a p p l e spc f i g spc a p p l e ret c m e m spc h u g e ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret
+EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^printf: 42 -7 ff 0X2A \[   hi\] \[hi   \] \[00042\] x 100.\s*$$;^sizes: 18446744073709551615 -9223372036854775808\s*$$;^printf returned 6\s*$$;^snprintf: wanted 12, kept <hello, >;^argument 2 of 2: two words\s*$$;^puts: a line of its own\s*$$;^fputs and putchar\s*$$;^cprint: 9 lines went to standard output;^cprint: 7 lines went to standard output;^1 line, 1 word, 601 bytes;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes
 else
 C_PROGRAMS   =
 ROOT_FILES   = 17
@@ -438,6 +442,15 @@ user64:
 libc64:
 	@echo "Building the C library..."
 	cd $(LIBC_DIR) && cargo build --release
+ifeq ($(HAVE_CC),yes)
+	@mkdir -p $(C_BIN)/lib
+	@for part in $(LIBC_C); do \
+	    echo "  CC      libc/c/$$part.c"; \
+	    clang $(TAAJ_CFLAGS) -c $(LIBC_DIR)/c/$$part.c -o $(C_BIN)/lib/$$part.o || exit 1; \
+	done
+	@cp $(LIBC_RUST_A) $(LIBC_A)
+	@ar rs $(LIBC_A) $(addprefix $(C_BIN)/lib/,$(addsuffix .o,$(LIBC_C)))
+endif
 
 cprogs64: libc64
 ifeq ($(HAVE_CC),yes)
@@ -542,10 +555,28 @@ kernel64-test:
 # tested here. They are one file that asks the system for nothing, so
 # it is given to rustc on its own: libc as a whole is built only for
 # TheTaaJ.
+#
+# And its printf: format.c compiled for this machine with its functions
+# renamed, and compared format by format with this machine's own
+# snprintf - with the sanitizers watching for a byte written outside a
+# buffer or arithmetic that C does not define.
+HOST_CFLAGS    = -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=undefined
+FORMAT_RENAMED = -Dvsnprintf=taaj_vsnprintf -Dsnprintf=taaj_snprintf -Dvsprintf=taaj_vsprintf -Dsprintf=taaj_sprintf
 libc-test:
 	@mkdir -p $(LIBC_DIR)/target
 	rustc --edition 2021 --test $(LIBC_DIR)/src/string.rs -o $(LIBC_DIR)/target/string-test
 	$(LIBC_DIR)/target/string-test
+ifeq ($(HAVE_CC),yes)
+	@mkdir -p $(LIBC_DIR)/target/host
+	clang $(HOST_CFLAGS) -ffreestanding -nostdlibinc -isystem $(LIBC_DIR)/include $(FORMAT_RENAMED) \
+	    -c $(LIBC_DIR)/c/format.c -o $(LIBC_DIR)/target/host/format.o
+	clang $(HOST_CFLAGS) -Wno-format -c $(LIBC_DIR)/c/format_test.c -o $(LIBC_DIR)/target/host/format_test.o
+	clang -fsanitize=address,undefined $(LIBC_DIR)/target/host/format.o $(LIBC_DIR)/target/host/format_test.o \
+	    -o $(LIBC_DIR)/target/host/format-test
+	$(LIBC_DIR)/target/host/format-test
+else
+	@echo "Clang not found: the printf comparison is not run (sudo apt install clang lld)"
+endif
 
 # One boot per deliberate fault: unmapped read, double fault, write to
 # rodata, executing data, stack overflow. Each must be caught and named.
