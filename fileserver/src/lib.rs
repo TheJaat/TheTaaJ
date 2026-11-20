@@ -75,6 +75,12 @@ pub mod protocol {
     /// Makes an empty directory. The directory it goes in must exist.
     pub const MKDIR: u8 = 9;
 
+    /// Gives what the path names a new path instead: the data is the
+    /// new path. A new name, a new directory, or both; a file, or a
+    /// directory with everything in it. Nothing is copied, and nothing
+    /// is replaced: a new path that already names something is refused.
+    pub const RENAME: u8 = 10;
+
     /// The longest STALL: 30 seconds of 100 Hz ticks.
     pub const STALL_MAX: u64 = 3000;
 
@@ -138,6 +144,8 @@ pub mod protocol {
         NotEmpty = 10,
         /// A directory cannot be made where something already is.
         Exists = 11,
+        /// A directory cannot be moved to a place inside itself.
+        IntoItself = 12,
     }
 
     impl Status {
@@ -154,6 +162,7 @@ pub mod protocol {
                 9 => Status::IsDirectory,
                 10 => Status::NotEmpty,
                 11 => Status::Exists,
+                12 => Status::IntoItself,
                 _ => Status::BadRequest,
             }
         }
@@ -172,6 +181,7 @@ pub mod protocol {
                 Status::IsDirectory => "is a directory",
                 Status::NotEmpty => "the directory is not empty",
                 Status::Exists => "there is already something with that name",
+                Status::IntoItself => "a directory cannot be moved into itself",
             }
         }
     }
@@ -309,6 +319,11 @@ pub trait Store {
     fn truncate(&mut self, name: &str, length: u64) -> Result<(), Status>;
     /// Removes a file, or a directory with nothing in it.
     fn remove(&mut self, name: &str) -> Result<(), Status>;
+    /// Gives what `from` names the path `to` instead - a file, or a
+    /// directory and all that is in it. `to` must name nothing yet, in
+    /// a directory that exists, and not be inside `from`. All of it
+    /// happens or none of it.
+    fn rename(&mut self, from: &str, to: &str) -> Result<(), Status>;
 }
 
 /// Answers one request message: writes the reply into `reply` and
@@ -338,7 +353,7 @@ fn answer(store: &mut impl Store, access: Access, message: &[u8], out: &mut [u8]
     // operation, where a new one could forget.
     let changes = matches!(
         request.op,
-        protocol::WRITE | protocol::TRUNCATE | protocol::REMOVE | protocol::STALL | protocol::MKDIR
+        protocol::WRITE | protocol::TRUNCATE | protocol::REMOVE | protocol::STALL | protocol::MKDIR | protocol::RENAME
     );
     if changes && access == Access::ReadOnly {
         return Err(Status::ReadOnly);
@@ -376,6 +391,11 @@ fn answer(store: &mut impl Store, access: Access, message: &[u8], out: &mut [u8]
             Ok(put_number(out, size) + 1)
         }
         protocol::MKDIR => store.make_directory(name).map(|()| 0),
+        protocol::RENAME => {
+            // The second path travels where a WRITE's data does.
+            let to = core::str::from_utf8(request.data).map_err(|_| Status::BadRequest)?;
+            store.rename(name, to).map(|()| 0)
+        }
         protocol::STALL if request.number <= protocol::STALL_MAX => Ok(0),
         protocol::ACCESS => {
             out[0] = u8::from(access == Access::ReadOnly);

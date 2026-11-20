@@ -17,8 +17,8 @@
 //! Keys typed meanwhile are kept, and read as the next line.
 //!
 //! A word that is not one of the shell's own commands is looked for as
-//! a file: `ls`, `cat`, `write`, `append` and `rm` are programs on the
-//! disk, like any other. The shell itself never changes a file - it
+//! a file: `ls`, `cat`, `write`, `append`, `rm`, `mv` and `cp` are
+//! programs on the disk, like any other. The shell itself never changes a file - it
 //! only reads the ones it runs.
 //!
 //! The shell is also where the current directory lives: `cd` changes
@@ -59,7 +59,7 @@ const TYPED_AHEAD_MAX: usize = 256;
 /// anything.
 const LOOK_PROGRAMS: &[&str] = &["ls", "cat"];
 /// And these change files.
-const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir"];
+const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp"];
 
 /// What a program is to be given of the files. Everything not on the
 /// lists above gets the screen and its arguments; `with files COMMAND`
@@ -163,8 +163,8 @@ impl Shell {
                   \x20              path with a /, for one elsewhere). On the disk:\n\
                   \x20   ls [DIR...]        list a directory (this one)\n\
                   \x20   cat FILE...        show files\n\
-                  \x20   write FILE TEXT    make FILE hold TEXT\n\
-                  \x20   append FILE TEXT   add TEXT to the end of FILE\n\
+                  \x20   write FILE TEXT, append FILE TEXT   set, or add to, FILE\n\
+                  \x20   mv FROM TO, cp FROM TO   move or rename; copy a file\n\
                   \x20   mkdir DIR...       make directories\n\
                   \x20   rm NAME...         remove files, empty directories\n\
                   \x20   (a name is a path from here, ../plan - or /from/the/root)\n\

@@ -299,7 +299,7 @@ This is the `RefCell` price mentioned above: the compiler no longer checks it fo
 - `fileserver`: 10 new tests of `resolve` — plain names, a leading `/`, `.`, `..`, the root as its own parent, names that only *look* like dots (`...`, `.hidden`, `a..b`), an untidy directory, that resolving twice changes nothing, and that nothing `resolve` returns contains a `.` or `..` for the service to refuse. 27 tests in the crate in all.
 - `abi`: the run request with a directory round-trips; a directory and empty arguments are not confused; a request from before this change (no directory length) decodes to nothing rather than to something wrong; a directory length that claims more bytes than there are is refused.
 
-**In the OS, at every boot:** `fscheck` — the self-test the kernel runs against a fresh file service, twice — gained a section of 14 checks that opens a second client *in* `d/inner` and names the same files as someone standing there would: `deep`, `./deep`, `../log`, `/d/log`, `../..`, four levels above the root; writes, appends, makes and removes by relative names, and lists `.` and `""`.
+**In the OS, at every boot:** `fscheck` — the self-test the kernel runs against a fresh file service, twice — gained a section of 15 checks that opens a second client *in* `d/inner` and names the same files as someone standing there would: `deep`, `./deep`, `../log`, `/d/log`, `../..`, four levels above the root; writes, appends, makes and removes by relative names, and lists `.` and `""`.
 
 **In the boot test** (BIOS and UEFI), 24 new lines are typed; the testing note below is that sequence. After QEMU exits, the host tool reads the disk image and must find:
 

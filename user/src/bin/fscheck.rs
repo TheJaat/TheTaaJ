@@ -248,7 +248,29 @@ fn main() -> i64 {
     check!(files.remove("d") == Ok(()), "and it goes too");
     check!(files.stat("d") == refused(Status::NotFound), "gone");
 
-    // 12. Clean up: an empty file system.
+    // 12. Renaming: a new name, another directory, a directory with
+    //     what is in it - and what a move may not do.
+    check!(files.make_directory("m") == Ok(()) && files.make_directory("m/sub") == Ok(()), "directories to move things in");
+    check!(files.write("m/sub/f", &data[..3000]) == Ok(3000), "a file to move");
+    check!(files.rename("m/sub/f", "m/sub/g") == Ok(()), "a new name");
+    check!(matches(&files, "m/sub/g", 3000) && files.size("m/sub/f") == refused(Status::NotFound), "the same bytes, under it alone");
+    check!(files.rename("m/sub/g", "g") == Ok(()) && matches(&files, "g", 3000), "up to the root");
+    check!(files.rename("g", "m/sub/g") == Ok(()) && matches(&files, "m/sub/g", 3000), "and back down");
+    check!(files.rename("m/sub", "sub") == Ok(()), "a directory moves");
+    check!(matches(&files, "sub/g", 3000) && files.list("m", |_, _, _| {}) == Ok(0), "with what is in it");
+    check!(files.rename("sub", "m") == refused(Status::Exists), "nothing is replaced: not a directory");
+    check!(files.rename("sub/g", "big") == refused(Status::Exists), "nor a file");
+    check!(files.rename("sub", "sub/in") == refused(Status::IntoItself), "not into itself");
+    check!(files.rename("nothing", "x") == refused(Status::NotFound), "what is not there cannot move");
+    check!(files.rename("sub", "nowhere/x") == refused(Status::NotFound), "nor to a directory that is not there");
+    check!(files.rename("sub", "big/x") == refused(Status::NotDirectory), "nor through a file");
+    check!(look.rename("sub", "x") == refused(Status::ReadOnly), "not through the read-only channel");
+    check!(files.rename("sub", "sub") == Ok(()), "to where it is: nothing to do");
+    let there = Files::in_directory(requests, "sub");
+    check!(there.rename("g", "../m/h") == Ok(()) && matches(&files, "m/h", 3000), "by names from a directory");
+    check!(files.remove("m/h") == Ok(()) && files.remove("m") == Ok(()) && files.remove("sub") == Ok(()), "and all of it removed");
+
+    // 13. Clean up: an empty file system.
     let mut names = [[0u8; NAME_MAX]; 4];
     let mut lengths = [0usize; 4];
     loop {
@@ -270,6 +292,6 @@ fn main() -> i64 {
     }
     check!(files.list("", |_, _, _| {}) == Ok(0), "nothing left");
 
-    println!("[fscheck] long files, boundaries, appends, 104-file listing, refusals, careless requests, a silent service, read-only, a stall, directories, paths from a directory: all passed");
+    println!("[fscheck] long files, boundaries, appends, 104-file listing, refusals, careless requests, a silent service, read-only, a stall, directories, paths from a directory, renaming: all passed");
     0
 }

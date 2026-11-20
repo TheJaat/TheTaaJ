@@ -237,6 +237,76 @@ impl Store for RamStore {
         }
         Ok(())
     }
+
+    fn rename(&mut self, from: &str, to: &str) -> Result<(), Status> {
+        let old = self.place(from)?;
+        if !valid_path(to) {
+            return Err(Status::BadName);
+        }
+        let new = key(to);
+        let directory = match self.nodes.get(&old) {
+            None => return Err(Status::NotFound),
+            Some(Node::Directory) => true,
+            Some(Node::File(_)) => false,
+        };
+        if new == old {
+            return Ok(()); // it is there already
+        }
+        // Everything in a directory has a key that starts with the
+        // directory's and a slash. The slash matters: "docs2" starts
+        // with "docs" and is not in it.
+        let mut inside = old.clone();
+        inside.push('/');
+        if directory {
+            if new.starts_with(&inside) {
+                return Err(Status::IntoItself);
+            }
+            // The directories in it must stay within reach of a path.
+            let height = self
+                .nodes
+                .range::<String, _>(&inside..)
+                .take_while(|(path, _)| path.starts_with(&inside))
+                .filter(|(_, node)| matches!(node, Node::Directory))
+                .map(|(path, _)| names(&path[inside.len()..]).count())
+                .max()
+                .unwrap_or(0);
+            if names(&new).count() + height > DEPTH_MAX {
+                return Err(Status::BadName);
+            }
+        }
+        // Now that it is known not to lead through `from`: the
+        // directories on the way to the new place must be there.
+        self.place(to)?;
+        if self.nodes.contains_key(&new) {
+            return Err(Status::Exists);
+        }
+        // There is no tree to re-hang: every key under the old path is
+        // taken out and put back under the new one. Nothing can fail
+        // from here on, so it is all or nothing.
+        //
+        // The search for what is under it starts at "old/", not at
+        // "old": between the two, in sorted order, come keys like
+        // "old.txt" ('.' sorts before '/'), and a walk from "old" that
+        // stops at the first key outside would stop there - having
+        // moved the directory and left its contents behind.
+        let mut moving = alloc::vec![old.clone()];
+        if directory {
+            moving.extend(
+                self.nodes
+                    .range::<String, _>(&inside..)
+                    .take_while(|(path, _)| path.starts_with(&inside))
+                    .map(|(path, _)| path.clone()),
+            );
+        }
+        for path in moving {
+            if let Some(node) = self.nodes.remove(&path) {
+                let mut moved = new.clone();
+                moved.push_str(&path[old.len()..]);
+                self.nodes.insert(moved, node);
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -404,6 +474,68 @@ mod tests {
         let invalid_utf8 = [READ, 1, 0xFF, 0, 0, 0, 0, 0, 0, 0, 0];
         serve(&mut files, Access::ReadWrite, &invalid_utf8, &mut reply);
         assert_eq!(Status::from_u8(reply[0]), Status::BadRequest);
+    }
+
+    #[test]
+    fn renaming() {
+        let mut files = RamStore::new();
+        let rename = |files: &mut RamStore, from: &str, to: &str| {
+            call(files, Request { op: RENAME, name: from, number: 0, data: to.as_bytes() }).0
+        };
+        for directory in ["docs", "docs/notes", "docs2"] {
+            assert_eq!(call(&mut files, Request::new(MKDIR, directory, 0)).0, Status::Ok);
+        }
+        files.write("docs/notes/today", 0, b"deep").unwrap();
+        files.write("docs.txt", 0, b"beside").unwrap();
+        files.write("top", 0, b"t").unwrap();
+        let before = (files.count(), files.bytes());
+
+        // A new name; another directory; a directory and what is in it.
+        assert_eq!(rename(&mut files, "top", "bottom"), Status::Ok);
+        assert_eq!(rename(&mut files, "bottom", "/docs/notes//bottom"), Status::Ok);
+        assert_eq!(rename(&mut files, "docs", "papers"), Status::Ok);
+        assert_eq!(listing(&mut files, ""), (Status::Ok, vec!["docs.txt".into(), "docs2/".into(), "papers/".into()]));
+        assert_eq!(listing(&mut files, "papers/notes"), (Status::Ok, vec!["bottom".into(), "today".into()]));
+        assert_eq!(listing(&mut files, "docs2"), (Status::Ok, vec![]), "a neighbour with a longer name stayed");
+        assert_eq!(files.read("docs.txt", 0, &mut [0; 8]), Ok(6), "and so did the file beside it");
+        assert_eq!(listing(&mut files, "docs").0, Status::NotFound);
+
+        // What is refused, and changes nothing.
+        assert_eq!(rename(&mut files, "nothing", "x"), Status::NotFound);
+        assert_eq!(rename(&mut files, "papers", "nowhere/x"), Status::NotFound);
+        assert_eq!(rename(&mut files, "papers", "docs.txt/x"), Status::NotDirectory);
+        assert_eq!(rename(&mut files, "papers", "docs2"), Status::Exists);
+        assert_eq!(rename(&mut files, "docs.txt", "papers"), Status::Exists);
+        assert_eq!(rename(&mut files, "papers", "papers/in"), Status::IntoItself);
+        assert_eq!(rename(&mut files, "papers", "papers/notes/in"), Status::IntoItself);
+        assert_eq!(rename(&mut files, "papers", "papers/nowhere/in"), Status::IntoItself);
+        assert_eq!(rename(&mut files, "papers", ""), Status::BadName);
+        assert_eq!(rename(&mut files, "papers", "a/../b"), Status::BadName);
+        assert_eq!(rename(&mut files, "", "x"), Status::BadName);
+        assert_eq!(call(&mut files, Request { op: RENAME, name: "papers", number: 0, data: &[0xFF, 0xFE] }).0, Status::BadRequest);
+        assert_eq!(look(&mut files, Request { op: RENAME, name: "papers", number: 0, data: b"x" }).0, Status::ReadOnly);
+        // To where it is: nothing to do.
+        assert_eq!(rename(&mut files, "papers", "/papers/"), Status::Ok);
+        // "papers2" is not inside "papers".
+        assert_eq!(rename(&mut files, "papers", "docs2/papers"), Status::Ok);
+        assert_eq!(listing(&mut files, "docs2/papers/notes"), (Status::Ok, vec!["bottom".into(), "today".into()]));
+        assert_eq!((files.count(), files.bytes()), before, "nothing was made or lost");
+    }
+
+    #[test]
+    fn a_move_cannot_put_directories_out_of_reach() {
+        let mut files = RamStore::new();
+        let mut path = String::new();
+        for level in 0..DEPTH_MAX - 1 {
+            path.push_str(&format!("/d{level}"));
+            files.make_directory(&path).unwrap();
+        }
+        files.make_directory("flat").unwrap();
+        files.make_directory("tall").unwrap();
+        files.make_directory("tall/inner").unwrap();
+        assert_eq!(files.rename("tall", &format!("{path}/tall")), Err(Status::BadName));
+        assert_eq!(files.rename("flat", &format!("{path}/flat")), Ok(()));
+        assert_eq!(files.rename("tall/inner", &format!("{path}/flat/inner")), Err(Status::BadName));
     }
 
     /// What is in a directory, as "name" or "name/".

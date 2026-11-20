@@ -16,7 +16,7 @@ The system is split across four repositories. This one ties them together; the o
 - Drivers and services are ordinary processes: `init`, `shell`, `fs` (files), `blk` (disk), `display`, `kbd`. A crashed or hung one is restarted.
 - Capabilities: a program can reach only what it was handed.
 - TaajFS: a copy-on-write file system with directories, which survives power loss mid-write.
-- Programs are ELF files loaded from the disk: `ls`, `cat`, `write`, `append`, `rm`, `mkdir`, and your own.
+- Programs are ELF files loaded from the disk: `ls`, `cat`, `write`, `append`, `rm`, `mkdir`, `mv`, `cp`, and your own.
 - The original 32-bit system (C kernel) still builds and runs.
 
 How each piece works, and why, is written up step by step in the [journal](docs/journal/README.md).
@@ -93,7 +93,7 @@ This builds the user programs, the kernel, the bootloader and a bootable ISO, an
 | `make iso64` | Build only: the ISO is `build/image64.iso` |
 | `make clean` | Remove what was built |
 
-Things to try at the prompt: `help`, `ls`, `ps`, `mem`, `mkdir docs`, `write docs/note hello`, `cat docs/note`. Ctrl+C **in the QEMU window** stops a running program; Ctrl+C in the terminal ends QEMU.
+Things to try at the prompt: `help`, `ls`, `ps`, `mem`, `mkdir docs`, `write docs/note hello`, `cat docs/note`, `cd docs`, `mv note plan`, `cp plan /copy`, `pwd`. Ctrl+C **in the QEMU window** stops a running program; Ctrl+C in the terminal ends QEMU.
 
 **The disk.** `make run64` attaches `build/taaj-disk.img`, a 16 MiB TaajFS volume. It is created the first time and kept afterwards, so files you write in the OS are still there on the next run. (`make clean` removes it.)
 

@@ -42,6 +42,7 @@ fn status(error: Error) -> Status {
         Error::NotDirectory => Status::NotDirectory,
         Error::IsDirectory => Status::IsDirectory,
         Error::NotEmpty => Status::NotEmpty,
+        Error::IntoItself => Status::IntoItself,
         Error::BadSize => Status::BadRequest,
         Error::Device(_) | Error::Magic | Error::NoSuper | Error::Corrupt(_) => Status::DiskError,
     }
@@ -170,6 +171,11 @@ impl<D: BlockDevice> Store for DiskStore<D> {
     fn remove(&mut self, name: &str) -> Result<(), Status> {
         self.volume.delete(check(name)?).map_err(status)
     }
+
+    fn rename(&mut self, from: &str, to: &str) -> Result<(), Status> {
+        // TaajFS does it in one commit: see Volume::rename.
+        self.volume.rename(check(from)?, check(to)?).map_err(status)
+    }
 }
 
 #[cfg(test)]
@@ -270,6 +276,45 @@ mod tests {
         s.remove(&"n".repeat(27)).unwrap();
         assert_eq!(s.free_blocks(), free, "every block of the refused writes came back");
         assert_eq!(contents(&mut remount(s), "keep"), b"safe");
+    }
+
+    #[test]
+    fn renaming_on_a_disk() {
+        let mut s = fresh();
+        s.make_directory("docs").unwrap();
+        s.make_directory("docs/notes").unwrap();
+        s.write("docs/notes/today", 0, b"deep").unwrap();
+        s.write("top", 0, b"t").unwrap();
+        let free = s.free_blocks();
+        let call = |s: &mut DiskStore<MemDevice>, access: Access, from: &str, to: &str| {
+            let mut message = [0u8; MESSAGE_MAX];
+            let mut reply = [0u8; MESSAGE_MAX];
+            let request = Request { op: protocol::RENAME, name: from, number: 0, data: to.as_bytes() };
+            let n = request.encode(&mut message).unwrap();
+            assert_eq!(serve(s, access, &message[..n], &mut reply), 1, "a status and nothing more");
+            Status::from_u8(reply[0])
+        };
+        let rw = Access::ReadWrite;
+        assert_eq!(call(&mut s, Access::ReadOnly, "top", "bottom"), Status::ReadOnly);
+        assert_eq!(call(&mut s, rw, "top", "bottom"), Status::Ok);
+        assert_eq!(call(&mut s, rw, "bottom", "docs/notes/bottom"), Status::Ok);
+        assert_eq!(call(&mut s, rw, "docs/notes", "notes"), Status::Ok);
+        assert_eq!(call(&mut s, rw, "notes", "docs"), Status::Exists);
+        assert_eq!(call(&mut s, rw, "notes", "notes/inside"), Status::IntoItself);
+        assert_eq!(call(&mut s, rw, "nothing", "x"), Status::NotFound);
+        assert_eq!(call(&mut s, rw, "notes", "nowhere/x"), Status::NotFound);
+        assert_eq!(call(&mut s, rw, "docs", "notes/today/x"), Status::NotDirectory);
+        assert_eq!(call(&mut s, rw, "notes", "a/../b"), Status::BadName);
+        assert_eq!(call(&mut s, rw, "notes", &"n".repeat(28)), Status::BadName, "too long for TaajFS");
+        assert_eq!(call(&mut s, rw, "notes", ""), Status::BadName);
+        assert_eq!(s.free_blocks(), free, "a move keeps no blocks, and a refused one takes none");
+
+        let mut s = remount(s);
+        assert_eq!(contents(&mut s, "notes/today"), b"deep");
+        assert_eq!(contents(&mut s, "notes/bottom"), b"t");
+        assert_eq!(s.stat("top"), Err(Status::NotFound));
+        assert_eq!(s.stat("docs/notes"), Err(Status::NotFound));
+        assert_eq!(s.stat("docs"), Ok((Kind::Directory, 0)));
     }
 
     #[test]

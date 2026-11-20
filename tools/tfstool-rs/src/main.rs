@@ -36,6 +36,7 @@ usage: tfstool mkfs  <image> [blocks]
        tfstool put   <image> <name> <file>
        tfstool get   <image> <name>
        tfstool rm    <image> <name>
+       tfstool mv    <image> <from> <to>
        tfstool touch <image> <name>
        tfstool write <image> <name> <offset> <file>";
 
@@ -114,6 +115,14 @@ fn run(args: &[&str]) -> Result<ExitCode, String> {
                 .delete(name)
                 .map_err(|e| format!("rm: {name}: {e}"))?;
             println!("rm: ok");
+            Ok(ExitCode::SUCCESS)
+        }
+
+        ["mv", image, from, to] => {
+            open(image)?
+                .rename(from, to)
+                .map_err(|e| format!("mv: {from} to {to}: {e}"))?;
+            println!("mv: ok");
             Ok(ExitCode::SUCCESS)
         }
 

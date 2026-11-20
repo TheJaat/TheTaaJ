@@ -113,4 +113,19 @@ same "$WORK/multi" "$WORK/out10" "and the file the C tool wrote before is intact
 "$RS_TOOL" dump "$WORK/d.img" > /dev/null || { echo "FAIL: the volume with directories does not dump clean"; exit 1; }
 echo "ok    the volume with directories dumps clean"
 
+# 7. A rename is new to the Rust implementation, but not to the format:
+#    on a volume with no directories it writes only what the C tool
+#    already understands - a directory block with another name in it.
+#    So the C tool must read the result, and both dumps must agree.
+RS mkfs "$WORK/m.img" 1024
+C  put  "$WORK/m.img" first.txt "$WORK/small"
+C  put  "$WORK/m.img" multi.bin "$WORK/multi"
+RS mv   "$WORK/m.img" multi.bin moved.bin
+"$C_TOOL" get "$WORK/m.img" moved.bin > "$WORK/out11"
+same "$WORK/multi" "$WORK/out11" "the C tool reads a file the Rust tool renamed"
+! "$C_TOOL" get "$WORK/m.img" multi.bin >/dev/null 2>&1 || { echo "FAIL: the old name is still there for the C tool"; exit 1; }
+"$C_TOOL"  dump "$WORK/m.img" > "$WORK/m.cdump" || true
+"$RS_TOOL" dump "$WORK/m.img" > "$WORK/m.rdump" || true
+same "$WORK/m.cdump" "$WORK/m.rdump" "both dumps of the renamed volume agree"
+
 echo "crosscheck passed"

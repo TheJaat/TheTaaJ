@@ -220,6 +220,22 @@ impl Files {
         self.call(Request::new(protocol::STALL, "", ticks), &mut reply).map(|_| ())
     }
 
+    /// Gives what `from` names the path `to` instead: a new name, a
+    /// new directory, or both. A directory moves with all that is in
+    /// it. Refused if `to` already names something.
+    pub fn rename(&self, from: &str, to: &str) -> Result<(), FileError> {
+        let mut reply = [0u8; MESSAGE_MAX];
+        let (from, to) = (self.path(from), self.path(to));
+        let request = Request { op: protocol::RENAME, name: &from, number: 0, data: to.as_bytes() };
+        self.call(request, &mut reply).map(|_| ())
+    }
+
+    /// The whole path, from the root, that `name` means here ("" is
+    /// the root).
+    pub fn resolve(&self, name: &str) -> String {
+        self.path(name)
+    }
+
     pub fn remove(&self, name: &str) -> Result<(), FileError> {
         let mut reply = [0u8; MESSAGE_MAX];
         self.call(Request::new(protocol::REMOVE, &self.path(name), 0), &mut reply).map(|_| ())

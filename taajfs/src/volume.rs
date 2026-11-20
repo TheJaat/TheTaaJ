@@ -55,6 +55,8 @@ pub enum Error {
     IsDirectory,
     /// A directory with something in it cannot be removed.
     NotEmpty,
+    /// A directory cannot be moved to somewhere inside itself.
+    IntoItself,
     /// The tree is damaged in a way that would make blind trust
     /// dangerous: a loop, or a block number outside the volume.
     Corrupt(String),
@@ -75,6 +77,7 @@ impl fmt::Display for Error {
             Error::NotDirectory => f.write_str("not a directory"),
             Error::IsDirectory => f.write_str("is a directory"),
             Error::NotEmpty => f.write_str("directory is not empty"),
+            Error::IntoItself => f.write_str("a directory cannot be moved into itself"),
             Error::Corrupt(what) => write!(f, "volume is damaged: {what}"),
         }
     }
@@ -480,7 +483,14 @@ impl<D: BlockDevice> Volume<D> {
     /// root's, then one per name. Fails if a name is missing, or is a
     /// file.
     fn descend(&mut self, dirs: &[&str]) -> Result<Vec<u32>> {
-        let mut firsts = vec![self.sb.root_dir];
+        self.descend_from(self.sb.root_dir, dirs)
+    }
+
+    /// The same, down a tree whose root directory starts at `root` -
+    /// which need not be the committed one: a change made of two steps
+    /// walks, for its second, the tree its first step wrote.
+    fn descend_from(&mut self, root: u32, dirs: &[&str]) -> Result<Vec<u32>> {
+        let mut firsts = vec![root];
         for name in dirs {
             let here = firsts[firsts.len() - 1];
             let entry = self.entries(here)?.into_iter().find(|e| e.is_named(name)).ok_or(Error::NotFound)?;
@@ -510,7 +520,14 @@ impl<D: BlockDevice> Volume<D> {
     /// everything off that path shared, untouched, with the old tree.
     /// Committing that root publishes the whole change at once.
     fn rewrite_path(&mut self, dirs: &[&str], leaf: &str, replacement: Option<DirEntry>) -> Result<u32> {
-        let firsts = self.descend(dirs)?;
+        self.rewrite_path_from(self.sb.root_dir, dirs, leaf, replacement)
+    }
+
+    /// The same, starting from the tree whose root directory starts at
+    /// `root`. Nothing of that tree is written over either, committed
+    /// or not: the result is one more new root.
+    fn rewrite_path_from(&mut self, root: u32, dirs: &[&str], leaf: &str, replacement: Option<DirEntry>) -> Result<u32> {
+        let firsts = self.descend_from(root, dirs)?;
         let mut new = self.rewrite_directory(firsts[dirs.len()], leaf, replacement)?;
         for depth in (0..dirs.len()).rev() {
             let entry = DirEntry::new(dirs[depth], new, 0, TYPE_DIR);
@@ -802,6 +819,83 @@ impl<D: BlockDevice> Volume<D> {
         }
         self.change(|v| {
             let root = v.rewrite_path(&dirs, name, None)?;
+            v.commit(root)
+        })
+    }
+
+    /// How many directories deep the tree under the directory starting
+    /// at `first` goes: 0 if it holds no directories, 1 if it holds
+    /// some that hold none, and so on. Walked with a list, not by a
+    /// function calling itself, and with the same limit as the mount.
+    fn height(&mut self, first: u32) -> Result<usize> {
+        let mut highest = 0;
+        let mut to_visit = vec![(first, 0usize)];
+        while let Some((first, depth)) = to_visit.pop() {
+            if depth > MAX_DEPTH {
+                return Err(Error::Corrupt(format!("directories nest deeper than {MAX_DEPTH}")));
+            }
+            highest = highest.max(depth);
+            for entry in self.entries(first)? {
+                if entry.kind == TYPE_DIR {
+                    to_visit.push((entry.inode, depth + 1));
+                }
+            }
+        }
+        Ok(highest)
+    }
+
+    /// Gives what `from` names the name `to` instead: a new name in the
+    /// same directory, or a place in another one. A file or a whole
+    /// directory moves the same way, and nothing in it is read or
+    /// copied - an entry is a name and a block number, and only the
+    /// name's place changes.
+    ///
+    /// It is one commit. Taking the entry out of one directory and
+    /// putting it into another are two changes to the tree, and between
+    /// them the thing would be in neither place (or in both): so the
+    /// second change is made to the tree the first one wrote, which
+    /// nobody can see yet, and only the root that has both is
+    /// committed. A power cut leaves it wholly in the old place or
+    /// wholly in the new.
+    ///
+    /// Refused: a `to` that already names something (nothing is ever
+    /// replaced by a move - remove it first); a directory moved to
+    /// inside itself, which would cut it loose from the tree; and a
+    /// move that would put directories deeper than MAX_DEPTH, where no
+    /// path could reach them and the next mount would refuse the volume.
+    pub fn rename(&mut self, from: &str, to: &str) -> Result<()> {
+        let (from_dirs, from_name) = split_leaf(from)?;
+        let (to_dirs, to_name) = split_leaf(to)?;
+        let entry = self.find(&from_dirs, from_name)?.ok_or(Error::NotFound)?;
+        let same_directory = from_dirs == to_dirs;
+        if same_directory && from_name == to_name {
+            return Ok(()); // it is there already
+        }
+        if entry.kind == TYPE_DIR {
+            // Inside itself: the way to the new place leads through the
+            // old one. (Slices compare element by element.)
+            let through = from_dirs.len() + 1;
+            if to_dirs.len() >= through && to_dirs[..through - 1] == from_dirs[..] && to_dirs[through - 1] == from_name {
+                return Err(Error::IntoItself);
+            }
+            if to_dirs.len() + 1 + self.height(entry.inode)? > MAX_DEPTH {
+                return Err(Error::Name);
+            }
+        }
+        if self.find(&to_dirs, to_name)?.is_some() {
+            return Err(Error::Exists);
+        }
+
+        self.change(|v| {
+            let moved = DirEntry::new(to_name, entry.inode, entry.size, entry.kind);
+            let root = if same_directory {
+                // One directory changes: the entry is replaced, where
+                // it stands, by itself under the new name.
+                v.rewrite_path(&from_dirs, from_name, Some(moved))?
+            } else {
+                let without = v.rewrite_path(&from_dirs, from_name, None)?;
+                v.rewrite_path_from(without, &to_dirs, to_name, Some(moved))?
+            };
             v.commit(root)
         })
     }
@@ -1288,6 +1382,215 @@ mod tests {
     /// a change rewrites every directory above it, so there are more
     /// writes to be cut between - and still nothing may show until the
     /// one write that commits it all.
+    #[test]
+    fn a_rename_in_place_changes_only_the_name() {
+        let mut v = fresh();
+        v.put("first", b"one").unwrap();
+        v.put("draft", &pattern(3 * BLOCK_SIZE, 9)).unwrap();
+        v.put("last", b"three").unwrap();
+        let free = v.free_blocks();
+        let generation = v.superblock().generation;
+
+        v.rename("draft", "final").unwrap();
+        assert_eq!(v.superblock().generation, generation + 1, "one commit");
+        // The same blocks under another name: none taken, none lost.
+        assert_eq!(v.free_blocks(), free);
+        let mut v = remount(v);
+        assert_eq!(v.free_blocks(), free);
+        assert_eq!(names(&mut v, ""), ["final", "first", "last"]);
+        assert_eq!(contents(&mut v, "final"), pattern(3 * BLOCK_SIZE, 9));
+        assert!(matches!(v.lookup("draft"), Err(Error::NotFound)));
+        // Where it stood in the directory, it still stands.
+        let order: Vec<String> = v.list().unwrap().into_iter().map(|e| e.name).collect();
+        assert_eq!(order, ["first", "final", "last"]);
+        // A volume with no directories is still one the old tool reads.
+        assert_eq!(v.superblock().version, VERSION);
+    }
+
+    #[test]
+    fn a_rename_moves_between_directories() {
+        let mut v = fresh();
+        v.make_directory("a").unwrap();
+        v.make_directory("a/b").unwrap();
+        v.make_directory("c").unwrap();
+        v.put("a/b/file", b"deep").unwrap();
+        v.put("top", b"root").unwrap();
+        let free = v.free_blocks();
+
+        // Down, up, sideways - and with a new name on the way.
+        v.rename("top", "a/b/top").unwrap();
+        v.rename("a/b/file", "file").unwrap();
+        v.rename("a/b/top", "c/moved").unwrap();
+        assert_eq!(v.free_blocks(), free);
+        let mut v = remount(v);
+        assert_eq!(v.free_blocks(), free);
+        assert_eq!(names(&mut v, ""), ["a/", "c/", "file"]);
+        assert!(names(&mut v, "a/b").is_empty());
+        assert_eq!(names(&mut v, "c"), ["moved"]);
+        assert_eq!(contents(&mut v, "file"), b"deep");
+        assert_eq!(contents(&mut v, "c/moved"), b"root");
+    }
+
+    #[test]
+    fn a_directory_moves_with_everything_in_it() {
+        let mut v = fresh();
+        v.make_directory("docs").unwrap();
+        v.make_directory("docs/notes").unwrap();
+        v.put("docs/notes/today", b"deep").unwrap();
+        v.put("docs/plan", &pattern(2 * BLOCK_SIZE, 4)).unwrap();
+        v.make_directory("archive").unwrap();
+        let free = v.free_blocks();
+
+        v.rename("docs", "archive/old").unwrap();
+        assert_eq!(v.free_blocks(), free);
+        let mut v = remount(v);
+        assert_eq!(v.free_blocks(), free);
+        assert_eq!(names(&mut v, ""), ["archive/"]);
+        assert_eq!(names(&mut v, "archive/old"), ["notes/", "plan"]);
+        assert_eq!(contents(&mut v, "archive/old/notes/today"), b"deep");
+        assert_eq!(contents(&mut v, "archive/old/plan"), pattern(2 * BLOCK_SIZE, 4));
+
+        // And out again, from inside what its parent was.
+        v.rename("archive/old/notes", "notes").unwrap();
+        v.rename("archive", "notes/archive").unwrap();
+        let mut v = remount(v);
+        assert_eq!(names(&mut v, ""), ["notes/"]);
+        assert_eq!(names(&mut v, "notes"), ["archive/", "today"]);
+        assert_eq!(names(&mut v, "notes/archive/old"), ["plan"]);
+    }
+
+    #[test]
+    fn a_rename_that_cannot_be_changes_nothing() {
+        let mut v = fresh();
+        v.make_directory("d").unwrap();
+        v.make_directory("d/inner").unwrap();
+        v.make_directory("dd").unwrap();
+        v.put("d/f", b"file").unwrap();
+        v.put("g", b"other").unwrap();
+        let free = v.free_blocks();
+        let generation = v.superblock().generation;
+
+        assert!(matches!(v.rename("nothing", "x"), Err(Error::NotFound)));
+        assert!(matches!(v.rename("g", "nowhere/x"), Err(Error::NotFound)));
+        assert!(matches!(v.rename("g", "d/f/x"), Err(Error::NotDirectory)));
+        assert!(matches!(v.rename("g/x", "y"), Err(Error::NotDirectory)));
+        // Nothing is replaced: not a file, not a directory, not by either.
+        assert!(matches!(v.rename("g", "d/f"), Err(Error::Exists)));
+        assert!(matches!(v.rename("g", "d"), Err(Error::Exists)));
+        assert!(matches!(v.rename("d", "g"), Err(Error::Exists)));
+        assert!(matches!(v.rename("d", "dd"), Err(Error::Exists)));
+        // Into itself, at any depth - but not into a neighbour whose
+        // name merely starts the same way.
+        assert!(matches!(v.rename("d", "d/x"), Err(Error::IntoItself)));
+        assert!(matches!(v.rename("d", "d/inner/x"), Err(Error::IntoItself)));
+        assert!(matches!(v.rename("d/inner", "d/inner/inner"), Err(Error::IntoItself)));
+        for bad in ["", "/", ".", "d/..", "a/./b", &"n".repeat(NAME_MAX)[..]] {
+            assert!(matches!(v.rename("g", bad), Err(Error::Name)), "{bad:?}");
+            assert!(matches!(v.rename(bad, "x"), Err(Error::Name)), "{bad:?}");
+        }
+        // To where it already is: nothing to do, and nothing done.
+        v.rename("g", "/g").unwrap();
+        v.rename("d/inner", "d//inner/").unwrap();
+
+        assert_eq!(v.superblock().generation, generation, "nothing was committed");
+        assert_eq!(v.free_blocks(), free);
+        let mut v = remount(v);
+        assert_eq!(names(&mut v, ""), ["d/", "dd/", "g"]);
+        assert_eq!(names(&mut v, "d"), ["f", "inner/"]);
+
+        // The neighbour: "dd" is not inside "d".
+        v.rename("d", "dd/d").unwrap();
+        assert_eq!(names(&mut v, "dd/d"), ["f", "inner/"]);
+    }
+
+    #[test]
+    fn a_move_cannot_put_directories_out_of_reach() {
+        let mut v = fresh();
+        let mut path = String::new();
+        for level in 0..MAX_DEPTH - 1 {
+            path.push_str(&format!("/d{level}"));
+            v.make_directory(&path).unwrap();
+        }
+        // `path` is one short of the limit: a directory with nothing in
+        // it fits there, one holding a directory does not - a file can
+        // go anywhere a directory is.
+        v.make_directory("flat").unwrap();
+        v.make_directory("tall").unwrap();
+        v.make_directory("tall/inner").unwrap();
+        v.put("tall/inner/file", b"x").unwrap();
+        assert!(matches!(v.rename("tall", &format!("{path}/tall")), Err(Error::Name)));
+        v.rename("flat", &format!("{path}/flat")).unwrap();
+        v.rename("tall/inner/file", &format!("{path}/flat/file")).unwrap();
+        assert!(matches!(v.rename("tall/inner", &format!("{path}/flat/inner")), Err(Error::Name)));
+        // Whatever was allowed, the volume still mounts.
+        let mut v = remount(v);
+        assert_eq!(contents(&mut v, &format!("{path}/flat/file")), b"x");
+        assert_eq!(names(&mut v, "tall"), ["inner/"]);
+    }
+
+    #[test]
+    fn a_rename_with_no_room_changes_nothing() {
+        // A move needs free blocks for the directories it rewrites,
+        // though it keeps none of them.
+        let mut device = MemDevice::new(16);
+        format(&mut device, 16).unwrap();
+        let mut v = Volume::mount(device).unwrap();
+        v.make_directory("a").unwrap();
+        v.put("f", b"x").unwrap();
+        while v.free_blocks() > 2 {
+            let n = v.free_blocks();
+            v.put(&format!("fill{n}"), b"").unwrap();
+        }
+        let free = v.free_blocks();
+        assert!(matches!(v.rename("f", "a/f"), Err(Error::Full)));
+        assert_eq!(v.free_blocks(), free, "what the failed move took is back");
+        let mut v = remount(v);
+        assert_eq!(contents(&mut v, "f"), b"x");
+        assert!(names(&mut v, "a").is_empty());
+    }
+
+    /// A move is two changes to the tree and one commit: at no cut is
+    /// the thing in both places, or in neither.
+    #[test]
+    fn a_power_cut_during_a_move_leaves_it_in_one_place() {
+        let mut v = fresh();
+        v.make_directory("from").unwrap();
+        v.make_directory("from/sub").unwrap();
+        v.make_directory("to").unwrap();
+        v.make_directory("to/deep").unwrap();
+        v.put("from/sub/file", b"contents").unwrap();
+        v.put("from/sub/other", b"stays").unwrap();
+        let base = v.into_device();
+        let mut cuts = 0;
+
+        for writes_allowed in 0.. {
+            let device = MemDevice { blocks: base.blocks.clone(), writes_left: Some(writes_allowed) };
+            let mut v = Volume::mount(device).unwrap();
+            // A file across the tree, then the directory it came from.
+            let first = v.rename("from/sub/file", "to/deep/file");
+            let second = first.is_ok().then(|| v.rename("from/sub", "to/sub"));
+            let done = usize::from(first.is_ok()) + usize::from(matches!(second, Some(Ok(()))));
+
+            let mut device = v.into_device();
+            device.writes_left = None; // power is back
+            let mut v = Volume::mount(device).expect("volume must always mount");
+            let at = format!("after {writes_allowed} writes, {done} moves done");
+
+            assert_eq!(v.lookup("to/deep/file").is_ok(), done >= 1, "{at}");
+            assert_eq!(v.lookup("from/sub/file").is_ok(), done == 0, "{at}");
+            assert_eq!(contents(&mut v, if done >= 1 { "to/deep/file" } else { "from/sub/file" }), b"contents", "{at}");
+            assert_eq!(v.lookup("to/sub").is_ok(), done == 2, "{at}");
+            assert_eq!(v.lookup("from/sub").is_ok(), done < 2, "{at}");
+            assert_eq!(contents(&mut v, if done == 2 { "to/sub/other" } else { "from/sub/other" }), b"stays", "{at}");
+
+            if done == 2 {
+                break;
+            }
+            cuts += 1;
+        }
+        assert!(cuts > 6, "only {cuts} cut points were tried");
+    }
+
     #[test]
     fn a_power_cut_during_a_nested_change_leaves_old_or_new_state() {
         let mut v = fresh();
