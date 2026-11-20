@@ -41,7 +41,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 031 | [Standard output, standard input, and redirection: a program that does not know where its words go](031-standard-output-input-and-redirection.md) | written | `7bb1162` (TheKernel `4330b55`) |
 | 032 | [Pipes: two programs, one channel, and a shell that lets go](032-pipes.md) | written | `7a2e05d` (TheKernel `36b4ffd`) |
 | 033 | [Background jobs: everything the shell runs is a job, and one loop looks after them all](033-background-jobs.md) | written | `f79925e` (TheKernel `41dd0ba`) |
-| 034 | [The service registry: asking for a service by name, on a channel that decides what names exist](034-the-service-registry.md) | written | this step (TheKernel `8e3ff1c`) |
+| 034 | [The service registry: asking for a service by name, on a channel that decides what names exist](034-the-service-registry.md) | written | `2206f6b` (TheKernel `8e3ff1c`) |
+| 035 | [Namespaces for programs: `ls` asks for "files", and the shell decides what that means](035-namespaces-for-programs.md) | written | this step (TheKernel `fab4327`) |
 
 ## How to run what the entries describe
 

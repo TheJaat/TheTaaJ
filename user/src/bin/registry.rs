@@ -10,14 +10,23 @@
 //! gets a fresh copy of the handle, with the rights init said a client
 //! is to have; a lookup of anything else gets "not found".
 //!
+//! A client may also ask for a narrower namespace, to give to a
+//! program it starts: some of its own names, perhaps called something
+//! else. The registry makes the channel, answers it like any other,
+//! and forgets it when the last holder of its other end has gone.
+//!
 //! So the registry holds a handle to every service, which makes it as
 //! trusted as init. It is kept small for that reason: the deciding is
 //! in the `registry` crate, tested on the host, and what is here is
 //! receiving, copying a handle, and sending.
 //!
-//! It keeps nothing that cannot be told again. When it ends, init
-//! starts another and repeats every registration; clients keep their
-//! channels, and a lookup that was waiting is answered by the new one.
+//! It keeps nothing of init's that cannot be told again. When it
+//! ends, init starts another and repeats every registration; clients
+//! keep their channels, and a lookup that was waiting is answered by
+//! the new one. The narrowed namespaces are the exception: nobody can
+//! repeat those, so a program that was running across the crash finds
+//! its channel to the registry closed. What it had already asked for,
+//! it keeps.
 
 #![no_std]
 #![no_main]
@@ -77,7 +86,7 @@ fn admin(table: &mut Table<Handle>, message: &[u8], handles: &[Handle]) {
 
 /// Answers one request from the client whose namespace is at `index`.
 /// `reply` is where the answer goes; it is closed by the caller.
-fn serve(table: &Table<Handle>, index: usize, message: &[u8], reply: Handle) {
+fn serve(table: &mut Table<Handle>, index: usize, message: &[u8], reply: Handle) {
     match Request::decode(message) {
         Some(Request::Lookup(name)) => {
             let found = table.lookup(index, name).map_err(|miss| match miss {
@@ -105,6 +114,37 @@ fn serve(table: &Table<Handle>, index: usize, message: &[u8], reply: Handle) {
             // The names always fit: 16 of 33 bytes at most.
             let length = abi::arguments::encode(table.list(index).into_iter(), &mut answer[1..]).unwrap_or(0);
             let _ = taaj::send(reply, &answer[..=length], &[]);
+        }
+        Some(Request::Narrow { label, names }) => {
+            // A new channel: one end kept here and answered like any
+            // client's, the other sent to the asker - to pass on.
+            let made = taaj::channel_create().ok().and_then(|(ours, theirs)| match table.narrow(index, label, &names, ours) {
+                Ok(()) => Some(theirs),
+                Err(ours) => {
+                    close_all(&[ours, theirs]);
+                    None
+                }
+            });
+            let mut line = Buffer::<400>::new();
+            for (new, old) in &names {
+                let _ = if new == old { write!(line, " {new}") } else { write!(line, " {new}={old}") };
+            }
+            let line = core::str::from_utf8(line.as_bytes()).unwrap_or(" ?");
+            match made {
+                Some(theirs) => {
+                    println!("[registry] {} gave {label}:{line}", table.label(index));
+                    if taaj::send(reply, &[OK], &[theirs]).is_err() {
+                        // Not sent: closing it leaves the new
+                        // namespace with no client, and it is
+                        // forgotten like any other whose client left.
+                        let _ = taaj::close(theirs);
+                    }
+                }
+                None => {
+                    println!("[registry] {} could not give {label}:{line}", table.label(index));
+                    let _ = taaj::send(reply, &[NOT_FOUND], &[]);
+                }
+            }
         }
         Some(Request::Crash) => {
             println!("[registry] asked to crash (a test)");
@@ -152,7 +192,7 @@ fn main() -> i64 {
         match taaj::receive(watched[ready], &mut message, &mut handles) {
             // A request brings exactly one handle: where to answer.
             Ok((length, 1)) => {
-                serve(&table, index, &message[..length], handles[0]);
+                serve(&mut table, index, &message[..length], handles[0]);
                 let _ = taaj::close(handles[0]);
             }
             Ok((length, count)) => {

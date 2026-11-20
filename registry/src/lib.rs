@@ -22,7 +22,18 @@
 //!     name" (REGISTER) and "here is a new client channel, and the
 //!     names it may ask for" (NAMESPACE);
 //!   - any number of client channels, one per namespace: "give me the
-//!     service called this" (LOOKUP), "what can I ask for?" (LIST).
+//!     service called this" (LOOKUP), "what can I ask for?" (LIST),
+//!     "make me a namespace with these of my names in it" (NARROW).
+//!
+//! A client can also ask for a channel of its own making: a *narrower*
+//! namespace (NARROW), to hand to a program it starts. Every name in
+//! it must be one the client can find itself - so nothing is gained by
+//! asking - but it may be fewer, and they may be called something
+//! else: the shell gives `ls` a namespace with the one name "files",
+//! which means what the shell knows as "files.look". `ls` asks for
+//! "files", like every program that reads files, and gets the channel
+//! that cannot change anything. What a program is allowed is decided by
+//! what its names mean, not by which names it knows to ask for.
 //!
 //! The registry holds a copy of every service's handle, and answers a
 //! lookup with a fresh copy. It keeps nothing that cannot be given

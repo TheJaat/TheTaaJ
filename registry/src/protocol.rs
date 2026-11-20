@@ -16,6 +16,17 @@
 //!
 //!   [LOOKUP] [name]    reply: [OK] + a handle, or [NOT_FOUND]
 //!   [LIST]             reply: [OK] [name] 0 [name] 0 ...
+//!   [NARROW] [label] 0 [new] 0 [old] 0 [new] 0 [old] 0 ...
+//!                      reply: [OK] + the sending end of a channel to
+//!                      a new namespace, or [NOT_FOUND]
+//!
+//! In NARROW each pair is a name the new namespace is to have, and the
+//! name in the asker's own namespace that it is to mean. NOT_FOUND if
+//! one of the old names is not in the asker's namespace: nobody can
+//! give what they cannot reach. `label` is for the log, as init's is.
+//!
+//! And a test:
+//!
 //!   [CRASH]            a test: the registry ends, as if it had failed
 //!
 //! Lists of names travel as arguments do (abi::arguments): each
@@ -28,6 +39,7 @@ pub const NAMESPACE: u8 = 2;
 pub const LOOKUP: u8 = 3;
 pub const LIST: u8 = 4;
 pub const CRASH: u8 = 5;
+pub const NARROW: u8 = 6;
 
 /// A reply's first byte.
 pub const OK: u8 = 0;
@@ -110,6 +122,9 @@ pub enum Request<'a> {
     Lookup(&'a str),
     List,
     Crash,
+    /// A new namespace: its label, and its names - each with the name
+    /// in the asker's namespace that it is to mean.
+    Narrow { label: &'a str, names: Vec<(&'a str, &'a str)> },
 }
 
 impl<'a> Request<'a> {
@@ -118,6 +133,17 @@ impl<'a> Request<'a> {
             Request::Lookup(name) => (LOOKUP, *name),
             Request::List => (LIST, ""),
             Request::Crash => (CRASH, ""),
+            Request::Narrow { label, names } => {
+                let valid = valid_name(label) && names.iter().all(|(new, old)| valid_name(new) && valid_name(old));
+                if !valid || out.is_empty() {
+                    return None;
+                }
+                out[0] = NARROW;
+                // `flat_map` turns each pair into its two names, one
+                // after the other: the label, new, old, new, old, ...
+                let words = core::iter::once(*label).chain(names.iter().flat_map(|&(new, old)| [new, old]));
+                return abi::arguments::encode(words, &mut out[1..]).map(|length| length + 1);
+            }
         };
         // Any text of a name's length may be asked for: asking for a
         // name that could never exist gets "not found", like any other.
@@ -136,6 +162,15 @@ impl<'a> Request<'a> {
             (LOOKUP, rest) if rest.len() <= NAME_MAX => core::str::from_utf8(rest).ok().map(Request::Lookup),
             (LIST, []) => Some(Request::List),
             (CRASH, []) => Some(Request::Crash),
+            (NARROW, rest) => {
+                let words = abi::arguments::decode(rest).map(name).collect::<Option<Vec<&str>>>()?;
+                let (label, names) = words.split_first()?;
+                // `as_chunks::<2>` gives the names two at a time, as
+                // arrays of two, and whatever is left over at the end:
+                // a name with no partner.
+                let (pairs, []) = names.as_chunks::<2>() else { return None };
+                Some(Request::Narrow { label, names: pairs.iter().map(|&[new, old]| (new, old)).collect() })
+            }
             _ => None,
         }
     }
@@ -208,6 +243,29 @@ mod tests {
         // A name that could never be registered may still be asked for.
         let length = Request::Lookup("No Such").encode(&mut out).unwrap();
         assert_eq!(Request::decode(&out[..length]), Some(Request::Lookup("No Such")));
+    }
+
+    #[test]
+    fn a_narrowing_comes_back_as_it_went() {
+        let mut out = [0u8; 128];
+        let request = Request::Narrow { label: "ls", names: vec![("files", "files.look"), ("display", "display")] };
+        let length = request.encode(&mut out).unwrap();
+        assert_eq!(Request::decode(&out[..length]), Some(request));
+        // No names: a namespace with nothing in it.
+        let none = Request::Narrow { label: "given", names: vec![] };
+        let length = none.encode(&mut out).unwrap();
+        assert_eq!(Request::decode(&out[..length]), Some(none));
+    }
+
+    #[test]
+    fn a_bad_narrowing_is_not_a_request() {
+        let mut out = [0u8; 128];
+        assert_eq!(Request::Narrow { label: "Bad", names: vec![] }.encode(&mut out), None);
+        assert_eq!(Request::Narrow { label: "ls", names: vec![("files", "NOT")] }.encode(&mut out), None);
+        assert_eq!(Request::Narrow { label: "ls", names: vec![("", "files")] }.encode(&mut out), None);
+        assert_eq!(Request::decode(&[NARROW]), None); // no label
+        assert_eq!(Request::decode(&[NARROW, b'l', 0, b'a', 0]), None); // a name with no partner
+        assert_eq!(Request::decode(&[NARROW, b'l', 0, b'a', 0, b'B', 0]), None);
     }
 
     #[test]

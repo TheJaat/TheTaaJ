@@ -6,6 +6,10 @@
 //! service as well - and `with readonly given`, the file service by the
 //! channel that cannot change anything. With the files comes the
 //! directory it was started in, if that is not the root.
+//!
+//! The files are not handed over as a channel: the program is given a
+//! channel to the registry on which the name "files" exists, and asks.
+//! So it also says which names it found there.
 
 #![no_std]
 #![no_main]
@@ -18,6 +22,11 @@ taaj::program!(main);
 
 fn main() -> i64 {
     let arguments = taaj::arguments();
+    // The names that exist for this program at the registry - all of
+    // them: there is no asking for one that is not here.
+    if let Some(Ok(names)) = taaj::services().map(|services| services.list()) {
+        println!("given: it may ask for: {}", names.join(" "));
+    }
     match taaj::file_service() {
         Some(files) => match files.list("/", |_, _, _| {}) {
             Ok(count) => {

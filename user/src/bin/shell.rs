@@ -1168,15 +1168,34 @@ impl Shell {
             return None;
         };
         let arguments = &encoded[..length];
-        // The files go only to a program from a file: "ls" built into
-        // the kernel image would be another program of the same name.
+        // The program's services: the names that will exist for it,
+        // and what each means here. Every program that uses files asks
+        // for "files"; what it gets by that name is decided on this
+        // line - the channel that can change them, or the one that can
+        // only read. (The files go only to a program from a file: "ls"
+        // built into the kernel image would be another program of the
+        // same name.)
         let on_disk = |list: &[&str]| image.is_some() && list.contains(&name);
-        let files = match grant {
-            Grant::Files => self.files.as_ref(),
-            Grant::ReadOnly => self.look.as_ref(),
-            Grant::Usual if on_disk(CHANGE_PROGRAMS) => self.files.as_ref(),
-            Grant::Usual if on_disk(LOOK_PROGRAMS) => self.look.as_ref(),
-            Grant::Usual => None,
+        let names: &[(&str, &str)] = match grant {
+            Grant::Files => &[("files", "files")],
+            Grant::ReadOnly => &[("files", "files.look")],
+            Grant::Usual if on_disk(CHANGE_PROGRAMS) => &[("files", "files")],
+            Grant::Usual if on_disk(LOOK_PROGRAMS) => &[("files", "files.look")],
+            Grant::Usual => &[],
+        };
+        // The registry makes a channel on which only those names exist,
+        // and the program gets it. With no names there is nothing to
+        // ask for, and no channel.
+        let services = match names {
+            [] => None,
+            names => match self.services.narrow(&label(name), names) {
+                Ok(channel) => Some(channel),
+                Err(error) => {
+                    close_all([image, stdout, stdin].into_iter().flatten());
+                    tell!(self, "run: {name}: it cannot be given its services: {}\n", error.describe());
+                    return None;
+                }
+            },
         };
         let mut handles = [0u64; 4];
         let mut count = 0;
@@ -1187,7 +1206,7 @@ impl Shell {
         let offered = [
             (0, image),
             (abi::startup::STDOUT, stdout),
-            (abi::startup::FILES, Self::delegate(files.map(Files::channel))),
+            (abi::startup::SERVICES, services),
             (abi::startup::STDIN, stdin),
         ];
         for (flag, handle) in offered {
@@ -1200,7 +1219,7 @@ impl Shell {
         let handles = &handles[..count];
         // A copy: the borrow of the directory must not last while the
         // program runs.
-        let directory = if files.is_some() { self.directory.borrow().clone() } else { String::new() };
+        let directory = if names.is_empty() { String::new() } else { self.directory.borrow().clone() };
         let request = abi::init::Run {
             kind: if image.is_some() { abi::init::IMAGE } else { abi::init::BUILT_IN },
             flags,
@@ -1603,6 +1622,18 @@ impl Shell {
 /// refuses a pipeline with an empty side.
 fn name(command: &Command) -> &str {
     command.words.first().map_or("", String::as_str)
+}
+
+/// A program's name as a label for the registry's log: the last part
+/// of a path, with whatever a label may not hold made a '-'.
+fn label(name: &str) -> String {
+    let last = name.rsplit('/').next().unwrap_or(name);
+    let label: String = last
+        .chars()
+        .take(registry::protocol::NAME_MAX)
+        .map(|c| if c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '-' { c } else { '-' })
+        .collect();
+    if label.is_empty() { String::from("program") } else { label }
 }
 
 /// Closes handles the shell has no more use for.

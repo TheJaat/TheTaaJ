@@ -51,7 +51,7 @@ impl Services {
     /// One exchange: the reply's length (status byte included), and
     /// the handle that came with it, if one did.
     fn call(&self, request: Request, reply: &mut [u8]) -> Result<(usize, Option<Handle>), ServiceError> {
-        let mut message = [0u8; 1 + registry::protocol::NAME_MAX];
+        let mut message = [0u8; abi::MESSAGE_MAX as usize];
         // A name too long to ask for is a name nothing has.
         let length = request.encode(&mut message).ok_or(ServiceError::NotFound)?;
         let (answer, theirs) = crate::channel_create().map_err(ServiceError::Unreachable)?;
@@ -78,6 +78,31 @@ impl Services {
             (1.., Some(handle)) if reply[0] == OK => Ok(handle),
             (length, handle) => {
                 // Anything else that brought a handle: not wanted.
+                if let Some(handle) = handle {
+                    let _ = crate::close(handle);
+                }
+                match (length, reply[0]) {
+                    (1.., NOT_FOUND) => Err(ServiceError::NotFound),
+                    _ => Err(ServiceError::Unreachable(Error::InvalidArgument)),
+                }
+            }
+        }
+    }
+
+    /// A new, narrower namespace, to hand to a program: a channel to
+    /// the registry on which only `names` exist. Each is a name the
+    /// program will ask for, and the name here that it is to mean -
+    /// `("files", "files.look")` gives a program "files" that can only
+    /// read. NotFound if one of them cannot be found here: nothing can
+    /// be handed on that the giver does not have. `label` says whose
+    /// it is, for the registry's log.
+    ///
+    /// The namespace lasts as long as someone holds the channel.
+    pub fn narrow(&self, label: &str, names: &[(&str, &str)]) -> Result<Handle, ServiceError> {
+        let mut reply = [0u8; 8];
+        match self.call(Request::Narrow { label, names: names.to_vec() }, &mut reply)? {
+            (1.., Some(handle)) if reply[0] == OK => Ok(handle),
+            (length, handle) => {
                 if let Some(handle) = handle {
                     let _ = crate::close(handle);
                 }

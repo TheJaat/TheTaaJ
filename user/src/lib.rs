@@ -574,12 +574,21 @@ pub fn arguments() -> alloc::vec::Vec<alloc::string::String> {
         .collect()
 }
 
-/// The file service, if the parent passed its channel on - with the
-/// directory this program was started in, so that the names it is
+/// Where this program asks for services by name: its channel to the
+/// registry, if whoever started it gave it one.
+pub fn services() -> Option<services::Services> {
+    flagged_handle(abi::startup::SERVICES).map(services::Services::new)
+}
+
+/// The file service, if this program was given it - asked for by its
+/// name, "files", which is all a program knows of it: whether that
+/// means the channel that can change files or the one that can only
+/// read them was decided by whoever started the program. It comes with
+/// the directory this program was started in, so that the names it is
 /// given mean what they meant to whoever typed them. The directory
 /// arrives as one message, like the arguments: call this once.
 pub fn file_service() -> Option<files::Files> {
-    let channel = flagged_handle(abi::startup::FILES)?;
+    let channel = services()?.lookup("files").ok()?;
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
     let length = match flagged_handle(abi::startup::DIRECTORY).map(|from| receive(from, &mut message, &mut [])) {
         Some(Ok((length, _))) => length,
