@@ -12,8 +12,31 @@
 #define STDOUT_FILENO 1
 #define STDERR_FILENO 2
 
-/* Writes count bytes to descriptor fd. Returns how many, or -1. */
+/* A descriptor is a small number standing for something open: one of
+ * the three above, or a file that open (fcntl.h) returned. Each of
+ * these returns -1 when it fails, with the reason in errno (errno.h). */
+
+/* Writes count bytes to descriptor fd, where it has got to. Returns
+ * how many. */
 ssize_t write(int fd, const void *buffer, size_t count);
+
+/* Reads up to count bytes. Returns how many: fewer than asked is not
+ * the end; 0 is. */
+ssize_t read(int fd, void *buffer, size_t count);
+
+/* Done with the descriptor: its number may be given out again. */
+int close(int fd);
+
+/* Moves where the next read or write of a file starts: offset bytes
+ * from the start, from where it is now, or from the end. Returns the
+ * new place, counted from the start. */
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+off_t lseek(int fd, off_t offset, int whence);
+
+/* Removes a file. */
+int unlink(const char *path);
 
 /* Ends the program at once. */
 _Noreturn void _exit(int code);

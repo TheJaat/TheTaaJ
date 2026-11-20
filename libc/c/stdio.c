@@ -9,6 +9,7 @@
 
 #include <stdio.h>
 
+#include <errno.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -87,6 +88,17 @@ int printf(const char *format, ...)
     int total = vfprintf(stdout, format, arguments);
     va_end(arguments);
     return total;
+}
+
+/* What the last failure was, in words, on standard error - after the
+ * caller's own words for what it was doing, if it has any. */
+void perror(const char *doing)
+{
+    int reason = errno; /* before anything below can change it */
+    if (doing != NULL && doing[0] != '\0')
+        fprintf(stderr, "%s: %s\n", doing, strerror(reason));
+    else
+        fprintf(stderr, "%s\n", strerror(reason));
 }
 
 int fputs(const char *string, FILE *stream)

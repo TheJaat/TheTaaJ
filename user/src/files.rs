@@ -25,8 +25,8 @@
 use alloc::string::String;
 
 pub use fileserver::path;
-pub use fileserver::protocol::Kind;
-use fileserver::protocol::{self, Request, Status, MESSAGE_MAX};
+pub use fileserver::protocol::{Kind, Status};
+use fileserver::protocol::{self, Request, MESSAGE_MAX};
 
 use crate::{Error, Handle};
 
@@ -172,6 +172,13 @@ impl Files {
     /// Adds `data` at the end of the file, creating it if needed.
     pub fn append(&self, name: &str, data: &[u8]) -> Result<u64, FileError> {
         self.write_at(&self.path(name), protocol::APPEND, data)
+    }
+
+    /// Writes `data` into the file from `offset` on, over what is
+    /// there and past its end, creating it if needed. Returns the
+    /// file's size afterwards.
+    pub fn write_from(&self, name: &str, offset: u64, data: &[u8]) -> Result<u64, FileError> {
+        self.write_at(&self.path(name), offset, data)
     }
 
     /// `name` is a whole path here: already resolved.

@@ -57,6 +57,9 @@ int vsnprintf(char *to, size_t size, const char *format, va_list arguments) __at
 int sprintf(char *to, const char *format, ...) __attribute__((format(printf, 2, 3)));
 int vsprintf(char *to, const char *format, va_list arguments) __attribute__((format(printf, 2, 0)));
 
+/* Says on standard error why the last call failed: "doing: reason". */
+void perror(const char *doing);
+
 /* A string; puts adds a new line. Not negative, or EOF. */
 int fputs(const char *string, FILE *stream);
 int puts(const char *string);

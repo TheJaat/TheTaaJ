@@ -7,4 +7,7 @@
 /* A size that can also say "it failed": -1. */
 typedef long ssize_t;
 
+/* A place in a file, or a distance between two: bytes, with a sign. */
+typedef long off_t;
+
 #endif

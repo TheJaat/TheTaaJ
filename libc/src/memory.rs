@@ -56,6 +56,12 @@ unsafe fn size_of_block(pointer: *mut c_void) -> usize {
     unsafe { pointer.cast::<u8>().sub(HEADER).cast::<usize>().read() }
 }
 
+/// The answer when there is no memory: null, and the reason in errno.
+fn no_memory() -> *mut c_void {
+    crate::errno::errno.store(crate::errno::ENOMEM, core::sync::atomic::Ordering::Relaxed);
+    ptr::null_mut()
+}
+
 /// `malloc(size)`: `size` bytes to use until they are freed, or null
 /// if there is no memory. What is in them is not defined.
 ///
@@ -64,12 +70,12 @@ unsafe fn size_of_block(pointer: *mut c_void) -> usize {
 #[no_mangle]
 pub extern "C" fn malloc(size: usize) -> *mut c_void {
     let Some(layout) = layout(size) else {
-        return ptr::null_mut();
+        return no_memory();
     };
     // SAFETY: the layout is never of size zero: it includes the header.
     let block = unsafe { alloc(layout) };
     if block.is_null() {
-        return ptr::null_mut();
+        return no_memory();
     }
     // SAFETY: the block is at least HEADER bytes, aligned to 16: a
     // usize fits at its start, and the address HEADER bytes on is still
@@ -112,7 +118,7 @@ pub extern "C" fn calloc(count: usize, size: usize) -> *mut c_void {
     // done by hand, `malloc(count * size)` can wrap round to a small
     // number, and the program then writes far past a small block.
     let Some(total) = count.checked_mul(size) else {
-        return ptr::null_mut();
+        return no_memory();
     };
     let block = malloc(total);
     if !block.is_null() {

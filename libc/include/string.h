@@ -42,6 +42,9 @@ char *strchr(const char *s, int byte);    /* the first byte */
 char *strrchr(const char *s, int byte);   /* the last */
 char *strstr(const char *in, const char *find);
 
+/* What an errno value means, in words. The string is the library's. */
+char *strerror(int code);
+
 /* A copy of s in memory from malloc, to be freed; NULL if none. */
 char *strdup(const char *s);
 

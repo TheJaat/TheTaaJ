@@ -21,8 +21,9 @@
 //! So far:
 //!   _start   where the kernel starts the program: gets the arguments,
 //!            calls main, exits with what main returned
-//!   write    to descriptor 1, standard output, or 2, standard error
 //!   exit, _exit
+//!   open, close, read, write, lseek, unlink        (descriptors.rs)
+//!   errno, strerror                                (errno.rs)
 //!   malloc, free, calloc, realloc, strdup          (memory.rs)
 //!   strcmp, strcpy, strchr, strstr and the others  (string.rs)
 //!   memcpy, memmove, memset, memcmp, strlen: these five come with
@@ -43,11 +44,13 @@
 
 extern crate alloc;
 
+pub mod descriptors;
+pub mod errno;
 pub mod memory;
 pub mod string;
 
 use alloc::vec::Vec;
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_int};
 
 extern "C" {
     /// The C program's own `main`. Declared here, defined there: the
@@ -101,30 +104,4 @@ pub extern "C" fn exit(code: c_int) -> ! {
 #[no_mangle]
 pub extern "C" fn _exit(code: c_int) -> ! {
     taaj::exit(i64::from(code))
-}
-
-/// `write(fd, buffer, count)`: writes `count` bytes to a descriptor.
-/// Returns how many were written, or -1.
-///
-/// Descriptor 1 is standard output and 2 is standard error. Nothing
-/// else is open yet.
-///
-/// # Safety
-/// `buffer` must point to `count` readable bytes, as C's `write` asks.
-#[no_mangle]
-pub unsafe extern "C" fn write(fd: c_int, buffer: *const c_void, count: usize) -> isize {
-    if !matches!(fd, 1 | 2) || (buffer.is_null() && count != 0) {
-        return -1;
-    }
-    if count == 0 {
-        return 0;
-    }
-    // SAFETY: the caller's promise: `count` readable bytes at `buffer`,
-    // which is not null.
-    let bytes = unsafe { core::slice::from_raw_parts(buffer.cast::<u8>(), count) };
-    let written = if fd == 2 { taaj::write_error(bytes) } else { taaj::write(bytes) };
-    match written {
-        Ok(_) => count as isize,
-        Err(_) => -1,
-    }
 }
