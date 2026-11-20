@@ -169,12 +169,32 @@ pub struct Input {
     /// The message being handed out, and how much of it already was.
     held: alloc::vec::Vec<u8>,
     taken: usize,
+    /// Whether the input is the keyboard: then nothing comes until it
+    /// is asked for (abi::stream::WANT).
+    keyboard: bool,
+    /// Whether it has been asked for, and has not come yet. One
+    /// asking, one line: a second would have the shell hold the next
+    /// line typed for a program that is not waiting for it.
+    asked: bool,
 }
 
 /// This program's standard input. Make one, and keep it: a second one
 /// would not have what the first had read but not yet handed out.
 pub fn input() -> Input {
-    Input { channel: flagged_handle(abi::startup::STDIN), held: alloc::vec::Vec::new(), taken: 0 }
+    Input {
+        channel: flagged_handle(abi::startup::STDIN),
+        held: alloc::vec::Vec::new(),
+        taken: 0,
+        keyboard: input_is_keyboard(),
+        asked: false,
+    }
+}
+
+/// Whether standard input is the keyboard: someone typing, a line at a
+/// time, and not a file or another program. (Unix: isatty(0).)
+pub fn input_is_keyboard() -> bool {
+    let flags = STARTUP_ARGUMENT.load(Ordering::Relaxed);
+    flags & abi::startup::STDIN != 0 && flags & abi::startup::KEYBOARD != 0
 }
 
 impl Input {
@@ -195,11 +215,21 @@ impl Input {
                 return n;
             }
             let Some(channel) = self.channel else { return 0 };
+            // A keyboard is asked before it is waited for. If the
+            // asking cannot be sent, nobody is there to answer.
+            if self.keyboard && !self.asked {
+                if send(channel, &[abi::stream::WANT], &[]).is_err() {
+                    self.channel = None;
+                    return 0;
+                }
+                self.asked = true;
+            }
             let mut message = [0u8; abi::MESSAGE_MAX as usize];
             match receive(channel, &mut message, &mut []) {
                 // A message with no bytes in it is not the end: only a
                 // closed channel is. Go round again.
                 Ok((length, _)) if length >= 1 && message[0] == abi::stream::DATA => {
+                    self.asked = false;
                     self.held.clear();
                     self.held.extend_from_slice(&message[1..length]);
                     self.taken = 0;

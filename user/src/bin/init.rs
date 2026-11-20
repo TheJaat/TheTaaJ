@@ -596,7 +596,7 @@ fn main() -> i64 {
 /// one would stop the only process able to fix it.
 fn serve_request(launcher: Handle, requests: Handle) {
     use abi::init::{Run, BUILT_IN, IMAGE};
-    use abi::startup::{ARGUMENTS, DIRECTORY, HANDLES, SCREEN, SERVICES, STDERR, STDIN, STDOUT};
+    use abi::startup::{ARGUMENTS, DIRECTORY, HANDLES, KEYBOARD, SCREEN, SERVICES, STDERR, STDIN, STDOUT};
 
     // Room for any message and any number of handles: a request that
     // did not fit would stay at the head of the queue forever.
@@ -615,7 +615,7 @@ fn serve_request(launcher: Handle, requests: Handle) {
     // One handle for the image, one for each flag - no more, no fewer.
     let run = Run::decode(&message[..n]).filter(|run| {
         let flags = u64::from(run.flags);
-        flags & !(STDOUT | SERVICES | STDIN | STDERR | SCREEN) == 0
+        flags & !(STDOUT | SERVICES | STDIN | STDERR | KEYBOARD | SCREEN) == 0
             && count == usize::from(run.kind == IMAGE) + (flags & HANDLES).count_ones() as usize
     });
     let Some(run) = run else {
@@ -674,6 +674,9 @@ fn serve_request(launcher: Handle, requests: Handle) {
         let entry = match flag {
             ARGUMENTS => arguments.map(|rx| (rx, RECEIVE)),
             DIRECTORY => directory.map(|rx| (rx, RECEIVE)),
+            // An input that is the keyboard is also sent on: the
+            // program asks for each line (abi::stream::WANT).
+            STDIN if flags & flag != 0 && flags & KEYBOARD != 0 => passed.next().map(|handle| (handle, RECEIVE | SEND)),
             STDIN if flags & flag != 0 => passed.next().map(|handle| (handle, RECEIVE)),
             _ if flags & flag != 0 => passed.next().map(|handle| (handle, SEND)),
             _ => None,

@@ -9,7 +9,8 @@
  * Every program starts with three:
  *
  *   stdin    standard input: what the program was given to read (a
- *            file with <, another program with |), or nothing
+ *            file with <, another program with |), or else what is
+ *            typed - a line at a time, as each is finished with Enter
  *   stdout   standard output. On the screen, text is sent at the end
  *            of each line; into a file or a pipe, when the buffer is
  *            full

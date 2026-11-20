@@ -236,6 +236,32 @@ pub unsafe extern "C" fn strstr(within: *const c_char, find: *const c_char) -> *
     }
 }
 
+/// `strspn(s, set)`: how many bytes at the start of `s` are all among
+/// the bytes of `set`.
+///
+/// # Safety
+/// Both must point to strings that end in a zero byte.
+#[cfg_attr(not(test), no_mangle)]
+pub unsafe extern "C" fn strspn(s: *const c_char, set: *const c_char) -> usize {
+    // SAFETY: the caller's promise.
+    let (s, set) = unsafe { (bytes(s), bytes(set)) };
+    s.iter().take_while(|byte| set.contains(byte)).count()
+}
+
+/// `strcspn(s, set)`: how many bytes at the start of `s` are *not*
+/// among the bytes of `set` - where the first one that is stands, or
+/// the length of `s` if none is. `line[strcspn(line, "\n")] = 0` cuts
+/// a line at its new line, and does nothing wrong if it has none.
+///
+/// # Safety
+/// Both must point to strings that end in a zero byte.
+#[cfg_attr(not(test), no_mangle)]
+pub unsafe extern "C" fn strcspn(s: *const c_char, set: *const c_char) -> usize {
+    // SAFETY: the caller's promise.
+    let (s, set) = unsafe { (bytes(s), bytes(set)) };
+    s.iter().take_while(|byte| !set.contains(byte)).count()
+}
+
 /// `memchr(s, c, n)`: where the byte `c` first is in the `n` bytes at
 /// `s`, or null. Memory, not a string: a zero does not stop it.
 ///
@@ -366,6 +392,23 @@ mod tests {
             // The zero is part of the string.
             assert_eq!(strchr(s, 0), at(s, 5));
             assert_eq!(strrchr(s, 0), at(s, 5));
+        }
+    }
+
+    #[test]
+    fn strspn_and_strcspn_count_a_run_at_the_start() {
+        unsafe {
+            assert_eq!(strspn(c(b"  \t word\0"), c(b" \t\0")), 4);
+            assert_eq!(strspn(c(b"word\0"), c(b" \t\0")), 0);
+            assert_eq!(strspn(c(b"aaa\0"), c(b"a\0")), 3);
+            assert_eq!(strspn(c(b"abc\0"), c(b"\0")), 0);
+            assert_eq!(strspn(c(b"\0"), c(b"abc\0")), 0);
+            assert_eq!(strcspn(c(b"a line\n\0"), c(b"\n\0")), 6);
+            assert_eq!(strcspn(c(b"no end\0"), c(b"\n\0")), 6);
+            assert_eq!(strcspn(c(b"key=value\0"), c(b":=\0")), 3);
+            assert_eq!(strcspn(c(b"\n\0"), c(b"\n\0")), 0);
+            assert_eq!(strcspn(c(b"abc\0"), c(b"\0")), 3);
+            assert_eq!(strcspn(c(b"\0"), c(b"abc\0")), 0);
         }
     }
 

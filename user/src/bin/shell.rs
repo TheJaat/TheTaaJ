@@ -19,7 +19,14 @@
 //! the screen, a copy of its channel to the file service. init replies
 //! with a handle to the new process, which lets the shell wait for it
 //! to end - and end it: Ctrl+C stops the program in the foreground.
-//! Keys typed meanwhile are kept, and read as the next line.
+//!
+//! Keys typed while a program runs belong to whoever reads next. A
+//! program in the foreground that was given no other input has the
+//! keyboard as its standard input - but only when it asks: it says it
+//! is about to wait for input (abi::stream::WANT), and the shell then
+//! lets a line be typed for it, shown and corrected as the shell's own
+//! lines are, and sends it at Enter. Ctrl+D ends that input. Keys a
+//! program never asks for are kept, and read as the shell's next line.
 //!
 //! A word that is not one of the shell's own commands is looked for as
 //! a file: `ls`, `cat`, `write`, `append`, `rm`, `mv` and `cp` are
@@ -87,6 +94,8 @@ taaj::program!(main);
 
 const LINE_MAX: usize = 256;
 const CTRL_C: &[u8] = b"\x03";
+/// "No more input": the end of what is being typed to a program.
+const CTRL_D: &[u8] = b"\x04";
 /// Keys kept while a program runs; more than this are dropped.
 const TYPED_AHEAD_MAX: usize = 256;
 
@@ -135,8 +144,12 @@ struct Shell {
     /// Where the shell asks for services by name.
     services: Services,
     keys: Handle,
-    /// Keys that arrived while a program was running, oldest first.
+    /// Keys that arrived while a program was running and not asking
+    /// for input, oldest first. They go to whoever reads next: the
+    /// program, if it asks after all, or else the shell's next line.
     typed_ahead: RefCell<VecDeque<Vec<u8>>>,
+    /// The line being typed to the program in the foreground.
+    typing: RefCell<Typing>,
     screen: Option<Handle>,
     init: Option<Handle>,
     system: Option<Handle>,
@@ -251,6 +264,57 @@ enum Supply {
     File(String),
     /// These bytes: what one of the shell's own commands printed.
     Memory(Vec<u8>),
+    /// The keyboard: what is typed while the program is asking for
+    /// input, a line at a time.
+    Keyboard,
+}
+
+/// A line as it is typed: the bytes so far. Used for the shell's own
+/// command line, and for a line typed to a program - the same keys do
+/// the same things in both.
+struct Typing {
+    line: [u8; LINE_MAX],
+    length: usize,
+}
+
+impl Typing {
+    const fn new() -> Typing {
+        Typing { line: [0; LINE_MAX], length: 0 }
+    }
+
+    fn bytes(&self) -> &[u8] {
+        &self.line[..self.length]
+    }
+
+    fn clear(&mut self) {
+        self.length = 0;
+    }
+
+    /// A key that changes the line: a character is added, Backspace
+    /// takes the last one away. `show` is given what to put on the
+    /// screen for it. (Enter, Ctrl+C and Ctrl+D are the caller's: what
+    /// they mean depends on whose line this is.)
+    fn key(&mut self, key: &[u8], show: impl FnOnce(&[u8])) {
+        match key {
+            b"\x08" => {
+                if self.length > 0 {
+                    // Drop the whole last character, however many bytes.
+                    self.length -= 1;
+                    while self.length > 0 && self.line[self.length] & 0xC0 == 0x80 {
+                        self.length -= 1;
+                    }
+                    show(b"\x08 \x08"); // back, blank, back
+                }
+            }
+            [first, ..] if *first < 0x20 => {} // other control keys, escapes: not yet
+            text if self.length + text.len() <= LINE_MAX => {
+                self.line[self.length..self.length + text.len()].copy_from_slice(text);
+                self.length += text.len();
+                show(text);
+            }
+            _ => {} // line full
+        }
+    }
 }
 
 /// A line's redirections.
@@ -285,6 +349,17 @@ struct Feed {
     length: usize,
     /// Whether the waiting piece is the last.
     last: bool,
+    /// For the keyboard: whether the program has asked for input and
+    /// not been given a line yet.
+    wanted: bool,
+}
+
+/// What a program is to have as its standard input: its end of a
+/// channel, if there is an input, and whether the far end is the
+/// keyboard - an input that sends nothing until it is asked.
+struct Stdin {
+    channel: Option<Handle>,
+    keyboard: bool,
 }
 
 /// What a program is to have as its standard output.
@@ -588,6 +663,9 @@ impl Shell {
                     theirs
                 }),
             };
+            // Only the first program can have the keyboard as its
+            // input: the others read the program before them.
+            let keyboard = n == 0 && matches!(&ours.1, Some(Feed { from: Supply::Keyboard, .. }));
             // Its output: the next program, or - for the last - the
             // file or the screen.
             let stdout = if n + 1 < programs.len() {
@@ -602,7 +680,7 @@ impl Shell {
                 })
             };
             let process = match (stdin, stdout) {
-                (Ok(stdin), Ok(stdout)) => self.start(name, arguments, image, Grant::Usual, stdout, stdin),
+                (Ok(stdin), Ok(stdout)) => self.start(name, arguments, image, Grant::Usual, stdout, Stdin { channel: stdin, keyboard }),
                 (stdin, stdout) => {
                     tell!(self, "run: {name}: no channel for its output or input\n");
                     let stdout = stdout.ok().and_then(|output| match output {
@@ -663,6 +741,8 @@ impl Shell {
                   \x20 clear, uptime, mem, ps   clear the screen; time since boot; memory;\n\
                   \x20              processes\n\
                   \x20 COMMAND > FILE, >> FILE, < FILE   output into, added to; input from\n\
+                  \x20                  (with no input given, a program reads what is typed;\n\
+                  \x20                  Ctrl+D ends it)\n\
                   \x20 A | B        what A prints is what B reads\n\
                   \x20 COMMAND &    run in the background: jobs lists those, kill N ends\n\
                   \x20              job N, wait waits for them all\n\
@@ -1067,12 +1147,23 @@ impl Shell {
     }
 
     /// The program's end of a channel for its input, and what is to be
-    /// sent down ours - if the line has an input to give. It is given
-    /// once: to the first program the line starts.
+    /// sent down ours. It is given once: to the first program the line
+    /// starts. If the line said where the input comes from, it is
+    /// that; if not, it is the keyboard - except in the background,
+    /// where there is no input at all: what is typed is for the shell
+    /// and for the program in front.
     fn input_end(&self) -> Result<(Option<Handle>, Option<Feed>), Error> {
-        let Some(from) = self.redirection.borrow_mut().input.take() else { return Ok((None, None)) };
+        let from = {
+            let mut redirection = self.redirection.borrow_mut();
+            match redirection.input.take() {
+                Some(from) => from,
+                None if redirection.background => return Ok((None, None)),
+                None => Supply::Keyboard,
+            }
+        };
         let (ours, theirs) = taaj::channel_create()?;
-        let feed = Feed { to: ours, from, offset: 0, message: [0; abi::MESSAGE_MAX as usize], length: 0, last: false };
+        let feed =
+            Feed { to: ours, from, offset: 0, message: [0; abi::MESSAGE_MAX as usize], length: 0, last: false, wanted: false };
         Ok((Some(theirs), Some(feed)))
     }
 
@@ -1106,7 +1197,8 @@ impl Shell {
                 return close_all(output.chain(input).flatten().chain(image));
             }
         };
-        let Some(process) = self.start(name, arguments, image, grant, stdout, stdin) else {
+        let keyboard = matches!(&feed, Some(Feed { from: Supply::Keyboard, .. }));
+        let Some(process) = self.start(name, arguments, image, grant, stdout, Stdin { channel: stdin, keyboard }) else {
             return close_all(output.into_iter().chain(feed.map(|feed| feed.to)));
         };
         if self.redirection.borrow().background {
@@ -1152,8 +1244,9 @@ impl Shell {
         image: Option<Handle>,
         grant: Grant,
         stdout: Output,
-        stdin: Option<Handle>,
+        stdin: Stdin,
     ) -> Option<Handle> {
+        let Stdin { channel: stdin, keyboard } = stdin;
         let on_screen = matches!(stdout, Output::Screen);
         let stdout = match stdout {
             Output::Screen => Self::delegate(self.screen),
@@ -1201,6 +1294,11 @@ impl Shell {
         let mut count = 0;
         // SCREEN brings no handle: it says what the output is.
         let mut flags = if on_screen && stdout.is_some() { abi::startup::SCREEN as u8 } else { 0 };
+        // Nor does KEYBOARD: it says what the input is - one that
+        // sends nothing until the program asks.
+        if keyboard && stdin.is_some() {
+            flags |= abi::startup::KEYBOARD as u8;
+        }
         // In the order of the flags' bits, which is the order init
         // expects the handles in.
         let offered = [
@@ -1337,6 +1435,9 @@ impl Shell {
             Process(usize, usize),
             /// This job's output channel.
             Output(usize),
+            /// This job's input channel, when its input is the
+            /// keyboard: where the program says it wants a line.
+            Asking(usize),
         }
         let mut keys = Some(self.keys);
         loop {
@@ -1362,7 +1463,14 @@ impl Shell {
             let mut feeding = false;
             for job in jobs.iter_mut() {
                 if let Some(sending) = &mut job.feed {
-                    if self.feed(sending) {
+                    if matches!(sending.from, Supply::Keyboard) {
+                        // Nothing to hurry for: a line goes when it has
+                        // been typed, and keys wake this loop.
+                        if !self.type_to(sending) {
+                            let _ = taaj::close(sending.to);
+                            job.feed = None;
+                        }
+                    } else if self.feed(sending) {
                         feeding = true;
                     } else {
                         let _ = taaj::close(sending.to);
@@ -1390,6 +1498,9 @@ impl Shell {
                 if let Some(output) = job.output {
                     watch(output, Source::Output(at));
                 }
+                if let Some(Feed { to, from: Supply::Keyboard, .. }) = &job.feed {
+                    watch(*to, Source::Asking(at));
+                }
             }
             // With input still to send, the wait is short: there is no
             // way to wait for room in a channel, so the shell looks
@@ -1414,6 +1525,26 @@ impl Shell {
                         }
                     }
                 }
+                Some(Source::Asking(at)) => {
+                    let job = &mut jobs[at];
+                    if let Some(asking) = &mut job.feed {
+                        let mut message = [0u8; 16];
+                        match taaj::receive(asking.to, &mut message, &mut []) {
+                            // From here on, what is typed is the
+                            // program's - starting with whatever was
+                            // typed before it asked (`type_to`, at the
+                            // top of the loop).
+                            Ok((1, _)) if message[0] == abi::stream::WANT => asking.wanted = true,
+                            Ok(_) => {}
+                            // The program has let go of its input.
+                            Err(_) => {
+                                let _ = taaj::close(asking.to);
+                                job.feed = None;
+                                self.typing.borrow_mut().clear();
+                            }
+                        }
+                    }
+                }
                 Some(Source::Keys) => match taaj::receive(self.keys, input, &mut []) {
                     Ok((n, _)) if until == Until::Key => return Ok(Attended::Key(n)),
                     Ok((n, _)) if &input[..n] == CTRL_C => {
@@ -1421,6 +1552,11 @@ impl Shell {
                         if until == Until::Jobs {
                             return Ok(Attended::Ended(Vec::new()));
                         }
+                        // What was typed before it and not yet read
+                        // was meant for the program being stopped,
+                        // not for the shell's next line.
+                        self.typed_ahead.borrow_mut().clear();
+                        self.typing.borrow_mut().clear();
                         // The foreground job only: a background job is
                         // ended by name, with `kill`.
                         for job in jobs.iter().filter(|job| job.number == 0) {
@@ -1466,7 +1602,57 @@ impl Shell {
         }
         if let Some(feed) = job.feed.take() {
             let _ = taaj::close(feed.to);
+            // Half a line typed to a program that has ended is nobody's.
+            if matches!(feed.from, Supply::Keyboard) {
+                self.typing.borrow_mut().clear();
+            }
         }
+    }
+
+    /// Gives the keyboard to a program that has asked for input: the
+    /// keys typed - before it asked, and since - go into a line, shown
+    /// as they are typed, and Enter sends the line. Then the program
+    /// has what it asked for, and what is typed next waits again, for
+    /// whoever reads next.
+    ///
+    /// This is the shell doing for a program what it does for itself
+    /// at its prompt: the program never sees a key, a Backspace or a
+    /// half-typed line - only whole lines. (Unix has the same division,
+    /// with the kernel's terminal driver in the shell's place.)
+    ///
+    /// Ctrl+D ends the input: at the start of a line the channel is
+    /// closed, which is how any input ends - false is returned for
+    /// that, and when the program is no longer there to be sent to. In
+    /// the middle of a line it sends what has been typed, with no new
+    /// line after it.
+    fn type_to(&self, feed: &mut Feed) -> bool {
+        while feed.wanted {
+            let Some(key) = self.typed_ahead.borrow_mut().pop_front() else { break };
+            let mut typing = self.typing.borrow_mut();
+            let end: &[u8] = match key.as_slice() {
+                b"\n" => {
+                    self.tell(b"\n");
+                    b"\n"
+                }
+                CTRL_D if typing.bytes().is_empty() => return false,
+                CTRL_D => b"",
+                key => {
+                    typing.key(key, |shown| self.tell(shown));
+                    continue;
+                }
+            };
+            let line = typing.bytes();
+            let length = 1 + line.len() + end.len();
+            feed.message[0] = abi::stream::DATA;
+            feed.message[1..=line.len()].copy_from_slice(line);
+            feed.message[1 + line.len()..length].copy_from_slice(end);
+            typing.clear();
+            feed.wanted = false;
+            if taaj::send(feed.to, &feed.message[..length], &[]).is_err() {
+                return false;
+            }
+        }
+        true
     }
 
     /// Says which background jobs are over, and forgets them.
@@ -1582,6 +1768,8 @@ impl Shell {
                             }
                         }
                     }
+                    // Typed, not read from anywhere: `type_to`.
+                    Supply::Keyboard => return true,
                     Supply::Memory(bytes) => {
                         let at = feed.offset as usize;
                         let piece = &bytes[at..bytes.len().min(at + abi::stream::DATA_MAX)];
@@ -1663,6 +1851,7 @@ fn main() -> i64 {
     let shell = Shell {
         keys,
         typed_ahead: RefCell::new(VecDeque::new()),
+        typing: RefCell::new(Typing::new()),
         screen: service("display"),
         init: service("init"),
         system: service("system"),
@@ -1679,8 +1868,7 @@ fn main() -> i64 {
     shell.screen_only(b"Welcome to TheTaaJ. Type help for the commands.\n\n");
     shell.prompt();
 
-    let mut line = [0u8; LINE_MAX];
-    let mut length = 0;
+    let mut line = Typing::new();
     let mut input = [0u8; 16];
     loop {
         let n = match shell.next_key(&mut input) {
@@ -1695,37 +1883,21 @@ fn main() -> i64 {
         // a control code, or an escape sequence.
         match &input[..n] {
             b"\n" => {
-                shell.write(b"\n");
-                let text = core::str::from_utf8(&line[..length]).unwrap_or("(not UTF-8)");
+                shell.tell(b"\n");
+                let text = core::str::from_utf8(line.bytes()).unwrap_or("(not UTF-8)");
                 println!("[shell] line: {text:?} (process {})", taaj::process_id());
                 shell.run(text);
                 println!("[shell] ran {text:?}");
                 shell.prompt();
-                length = 0;
-            }
-            b"\x08" => {
-                if length > 0 {
-                    // Drop the whole last character, however many bytes.
-                    length -= 1;
-                    while length > 0 && line[length] & 0xC0 == 0x80 {
-                        length -= 1;
-                    }
-                    shell.write(b"\x08 \x08"); // back, blank, back
-                }
+                line.clear();
             }
             CTRL_C => {
                 // Abandon the line.
-                shell.write(b"^C\n");
+                shell.tell(b"^C\n");
                 shell.prompt();
-                length = 0;
+                line.clear();
             }
-            [first, ..] if *first < 0x20 => {} // other control keys, escapes: not yet
-            text if length + text.len() <= LINE_MAX => {
-                line[length..length + text.len()].copy_from_slice(text);
-                length += text.len();
-                shell.write(text);
-            }
-            _ => {} // line full
+            key => line.key(key, |shown| shell.tell(shown)),
         }
     }
 }

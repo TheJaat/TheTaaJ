@@ -231,7 +231,9 @@ static int check_streams(void)
     /* What the three are. */
     errno = 0;
     check(isatty(STDERR_FILENO) == 1, "standard error is the screen");
-    check(isatty(STDIN_FILENO) == 0 && errno == ENOTTY, "standard input is not");
+    /* Standard input is the keyboard if the program was started with
+     * nothing else to read; a file or a pipe is "no", with a reason. */
+    check(isatty(STDIN_FILENO) == 1 || errno == ENOTTY, "standard input is the keyboard, or says why not");
     check(isatty(99) == 0 && errno == EBADF, "and 99 is nothing");
     check(fseek(stdout, 0, SEEK_SET) == -1 && errno == ESPIPE, "standard output has no place to move to");
     /* This is the first thing the program prints: the moment the

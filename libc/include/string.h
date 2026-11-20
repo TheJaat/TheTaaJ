@@ -42,6 +42,12 @@ char *strchr(const char *s, int byte);    /* the first byte */
 char *strrchr(const char *s, int byte);   /* the last */
 char *strstr(const char *in, const char *find);
 
+/* How many bytes at the start of s are all in set (strspn), or none of
+ * them in set (strcspn). line[strcspn(line, "\n")] = 0 cuts a line at
+ * its new line. */
+size_t strspn(const char *s, const char *set);
+size_t strcspn(const char *s, const char *set);
+
 /* What an errno value means, in words. The string is the library's. */
 char *strerror(int code);
 

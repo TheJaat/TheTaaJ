@@ -418,13 +418,15 @@ pub unsafe extern "C" fn rename(from: *const c_char, to: *const c_char) -> c_int
 ///
 /// The library asks this once, about standard output, to decide how
 /// long text may wait in a buffer (libc/c/stdio.c). Standard error is
-/// always the screen here. Standard input never is: a program is given
-/// a file or a pipe to read, or nothing.
+/// always the screen here. Standard input is the keyboard when the
+/// program was started with neither a file nor another program to
+/// read from.
 #[no_mangle]
 pub extern "C" fn isatty(fd: c_int) -> c_int {
     // 0 for "it is", or why it is not.
     let no = with(|state| match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
         Some(Open::Output) if taaj::output_is_screen() => 0,
+        Some(Open::Input) if taaj::input_is_keyboard() => 0,
         Some(Open::Error) => 0,
         Some(_) => ENOTTY,
         None => EBADF,

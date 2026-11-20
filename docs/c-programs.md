@@ -1,6 +1,6 @@
 # Writing a C program for TheTaaJ
 
-How to write a program in C, build it on Linux, put it on TheTaaJ's disk and run it. The story of how the library came to be is in journal entries 036 to 042; this page is only the recipe.
+How to write a program in C, build it on Linux, put it on TheTaaJ's disk and run it. The story of how the library came to be is in journal entries 036 to 043; this page is only the recipe.
 
 ## What you need
 
@@ -83,7 +83,7 @@ The object files come before `libc.a` on the linker's command line: a library is
 - **Its arguments**, as `argc` and `argv`, divided as the shell divided them (`mine "two words" three` is two arguments). **`argv[0]` is always `program`**: the shell does not yet tell a program its name.
 - **Standard output** (`stdout`, descriptor 1): the screen, or a file (`mine > out`), or the next program (`mine | wc`).
 - **Standard error** (`stderr`, descriptor 2): always the screen. Complaints go here, so that they are seen even when the output is going into a file.
-- **Standard input** (`stdin`, descriptor 0): a file (`mine < notes`) or the program before it (`cat notes | mine`). **With neither, it is at its end at once: a C program cannot read the keyboard yet.**
+- **Standard input** (`stdin`, descriptor 0): a file (`mine < notes`), the program before it (`cat notes | mine`), or — with neither — **the keyboard**. From the keyboard a program gets whole lines: the shell shows what is typed and lets Backspace correct it, and Enter sends the line. Ctrl+D at the start of a line ends the input (`fgets` returns `NULL`); Ctrl+C stops the program. A program started in the background (`mine &`) has no input at all. `isatty(0)` says whether the input is being typed.
 - **Its exit code**: what `main` returns, or what `exit` is given. The shell says so when it is not 0.
 
 ### Files are not given unless asked for
@@ -104,7 +104,7 @@ A program that only reads standard input and writes standard output needs neithe
 |---|---|
 | `stdio.h` | `printf` `fprintf` `snprintf` `sprintf` and their `v` forms; `puts` `fputs` `putchar` `putc` `fputc`; `fopen` `fclose` `fflush` `setvbuf`; `fgetc` `getc` `getchar` `ungetc` `fgets`; `fread` `fwrite`; `fseek` `ftell` `rewind`; `feof` `ferror` `clearerr` `fileno`; `perror`; `remove` `rename`; `stdin` `stdout` `stderr` |
 | `stdlib.h` | `malloc` `calloc` `realloc` `free`; `exit`; `strtol` `strtoul` `atoi` `atol`; `abs` `labs`; `qsort` `bsearch` |
-| `string.h` | `strlen` `strnlen` `strcmp` `strncmp` `strcpy` `strncpy` `strcat` `strncat` `strchr` `strrchr` `strstr` `strdup` `strerror`; `memcpy` `memmove` `memset` `memcmp` `memchr` |
+| `string.h` | `strlen` `strnlen` `strcmp` `strncmp` `strcpy` `strncpy` `strcat` `strncat` `strchr` `strrchr` `strstr` `strspn` `strcspn` `strdup` `strerror`; `memcpy` `memmove` `memset` `memcmp` `memchr` |
 | `ctype.h` | `isalpha` `isdigit` `isalnum` `isupper` `islower` `isxdigit` `isspace` `isblank` `isprint` `isgraph` `ispunct` `iscntrl`; `toupper` `tolower` |
 | `errno.h` | `errno`, and the numbers Linux uses for the errors that can happen here |
 | `unistd.h` | `read` `write` `close` `lseek` `unlink` `isatty` `_exit` |
@@ -117,7 +117,8 @@ Each header says in its comments what its functions do and where they differ fro
 
 Code that needs any of these will not compile or link:
 
-- **Reading the keyboard**, and `scanf` and its family. Read lines with `fgets` and take them apart with `strtol`.
+- **`scanf`** and its family. Read lines with `fgets` and take them apart with `strtol`.
+- **Single keys.** The keyboard arrives a line at a time; a program cannot see a key as it is pressed, the arrow keys, or turn the showing of typed text off (no `termios`). An editor or a game cannot be written yet.
 - **Floating point in `printf`** (`%f` `%e` `%g`). The arithmetic works; printing it does not. There is no `math.h`.
 - **Processes**: no `fork`, `exec`, `system`, `wait`, `pipe`, signals, or `getpid`.
 - **Directories**: no `mkdir`, `opendir`, `stat`, `getcwd`, `chdir`.
@@ -142,6 +143,7 @@ And things that are there but are not what a Unix program expects:
 | `unknown command: mine (try help)` in the OS | It is not on the disk: `tfstool ls build/taaj-disk.img`. |
 | `tfstool put` fails or the file does not appear | QEMU was running. Close it, put the file again. |
 | `this program was not given the files` | Start it `with readonly mine …` or `with files mine …`. |
+| The program seems to hang, doing nothing | It is reading standard input, and that is the keyboard: type a line, or Ctrl+D for "no more". |
 | Output is missing at the end | The program ended by `_exit` or was stopped; or it printed without a new line and is still running. |
 | `mine exited with code N` | `main` returned N. |
 | A line like `[process] page fault at 0x… in user mode` in the terminal `make run64` was started from | The program crashed (a bad pointer, most often) and the kernel ended it. The address is the instruction that did it. |
