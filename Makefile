@@ -4,7 +4,7 @@ KERNEL_DIR = kernel
 
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
         kernel64 iso64 run64 run-disk boot64-test kernel64-test fault64-test test64 \
-        uefi-loader run64-uefi boot64-uefi-test user64 libc64 cprogs64 libc-test
+        uefi-loader run64-uefi boot64-uefi-test user64 libc64 cprogs64 cput libc-test
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
@@ -191,8 +191,13 @@ LIBC_DIR     = libc
 # half written in C (libc/c: printf) by Clang, added to a copy of it.
 LIBC_RUST_A  = $(LIBC_DIR)/target/x86_64-unknown-none/release/libc.a
 C_BIN        = $(BUILD_DIR)/c
+# cwords is standard C and nothing else, so the same file is also
+# compiled for this machine, with this machine's compiler and library.
+# The boot tests run both on the same input and compare what they print.
+HOST_CC      = cc
+CWORDS_HOST  = $(C_BIN)/host-cwords
 LIBC_A       = $(C_BIN)/libc.a
-LIBC_C       = format stdio fcntl
+LIBC_C       = format stdio fcntl ctype stdlib
 # Freestanding: no host headers or libraries, only libc/include and the
 # compiler's own (stddef.h, stdarg.h). General registers only: the
 # kernel does not save FPU or SSE state on a switch yet, so a C program
@@ -203,10 +208,10 @@ TAAJ_CFLAGS  = --target=x86_64-unknown-none-elf -std=c11 -O2 -Wall -Wextra -Werr
                -nostdlibinc -isystem $(LIBC_DIR)/include
 TAAJ_LDFLAGS = -static -nostdlib --gc-sections -s -T user/user.ld
 ifeq ($(HAVE_CC),yes)
-C_PROGRAMS   = chello cmem cprint cfile cstdio
-ROOT_FILES   = 22
-C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret w i t h spc f i l e s spc c f i l e spc c h e c k ret c f i l e spc c a t spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc n o f i l e spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc w r i t e spc c n o spc x ret w i t h spc f i l e s spc c f i l e spc w r i t e spc c n o t e spc m a d e spc b y spc c ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc l o n g spc shift-dot spc c l o n g ret c f i l e spc c a t spc shift-comma spc l o n g spc shift-dot spc c l o n g 2 ret c f i l e ret w i t h spc f i l e s spc c s t d i o spc c h e c k ret c s t d i o spc l i n e s spc w e l c o m e ret c s t d i o spc l i n e s spc shift-comma spc w e l c o m e ret w i t h spc r e a d o n l y spc c s t d i o spc l i n e s spc l o n g spc shift-dot spc c n u m ret w i t h spc f i l e s spc c s t d i o spc c o p y spc l o n g spc c c o p y ret c s t d i o spc o r d e r ret c s t d i o spc e n d spc shift-dot spc c e n d ret c s t d i o spc l o s t spc shift-dot spc c l o s t ret c s t d i o spc e n d ret c s t d i o ret c p r i n t spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c p r i n t spc l o n g spc shift-backslash spc w c ret c p r i n t spc shift-dot spc p o u t ret c m e m ret c m e m spc s o r t spc p e a r spc a p p l e spc f i g spc a p p l e ret c m e m spc h u g e ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret
-EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^files: 48 checks, all passed;^cfile: welcome: this program was not given the files;^cfile: nofile: no such file or directory;^cno: the files are read-only here;^cnote: 10 bytes;^usage: cfile cat;^streams: 52 checks, all passed;^cstdio: welcome: this program was not given the files;^   1  Hello from the host;^ccopy: 4692 bytes;^write was called second - printf was called first\s*$$;^no new line, and still here;^usage: cstdio lines;^printf: 42 -7 ff 0X2A \[   hi\] \[hi   \] \[00042\] x 100.\s*$$;^sizes: 18446744073709551615 -9223372036854775808\s*$$;^printf returned 6\s*$$;^snprintf: wanted 12, kept <hello, >;^argument 2 of 2: two words\s*$$;^puts: a line of its own\s*$$;^fputs and putchar\s*$$;^cprint: 9 lines went to standard output;^cprint: 7 lines went to standard output;^1 line, 1 word, 601 bytes;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes
+C_PROGRAMS   = chello cmem cprint cfile cstdio cwords
+ROOT_FILES   = 23
+C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret w i t h spc f i l e s spc c f i l e spc c h e c k ret c f i l e spc c a t spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc n o f i l e spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc w r i t e spc c n o spc x ret w i t h spc f i l e s spc c f i l e spc w r i t e spc c n o t e spc m a d e spc b y spc c ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc l o n g spc shift-dot spc c l o n g ret c f i l e spc c a t spc shift-comma spc l o n g spc shift-dot spc c l o n g 2 ret c f i l e ret c a t spc l o n g spc shift-backslash spc c w o r d s spc minus n spc 3 ret w i t h spc r e a d o n l y spc c w o r d s spc minus n spc 2 5 spc c w o r d s spc l o n g spc shift-dot spc c w 1 ret c w o r d s spc minus n spc 5 spc shift-comma spc l o n g spc shift-dot spc c w 2 ret c w o r d s spc l o n g ret c w o r d s spc minus n spc n o n e ret c w o r d s spc minus x ret w i t h spc f i l e s spc c s t d i o spc c h e c k ret c s t d i o spc l i n e s spc w e l c o m e ret c s t d i o spc l i n e s spc shift-comma spc w e l c o m e ret w i t h spc r e a d o n l y spc c s t d i o spc l i n e s spc l o n g spc shift-dot spc c n u m ret w i t h spc f i l e s spc c s t d i o spc c o p y spc l o n g spc c c o p y ret c s t d i o spc o r d e r ret c s t d i o spc e n d spc shift-dot spc c e n d ret c s t d i o spc l o s t spc shift-dot spc c l o s t ret c s t d i o spc e n d ret c s t d i o ret c p r i n t spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c p r i n t spc l o n g spc shift-backslash spc w c ret c p r i n t spc shift-dot spc p o u t ret c m e m ret c m e m spc s o r t spc p e a r spc a p p l e spc f i g spc a p p l e ret c m e m spc h u g e ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret
+EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^files: 48 checks, all passed;^cfile: welcome: this program was not given the files;^cfile: nofile: no such file or directory;^cno: the files are read-only here;^cnote: 10 bytes;^usage: cfile cat;^ +301  300\s*$$;^ +300  line\s*$$;^1200 words, 302 different;^cwords: long: this program was not given the files;^0 words, 0 different;^cwords: -n needs a number from 1 up, not .none.;^usage: cwords \[-n COUNT\];^streams: 52 checks, all passed;^cstdio: welcome: this program was not given the files;^   1  Hello from the host;^ccopy: 4692 bytes;^write was called second - printf was called first\s*$$;^no new line, and still here;^usage: cstdio lines;^printf: 42 -7 ff 0X2A \[   hi\] \[hi   \] \[00042\] x 100.\s*$$;^sizes: 18446744073709551615 -9223372036854775808\s*$$;^printf returned 6\s*$$;^snprintf: wanted 12, kept <hello, >;^argument 2 of 2: two words\s*$$;^puts: a line of its own\s*$$;^fputs and putchar\s*$$;^cprint: 9 lines went to standard output;^cprint: 7 lines went to standard output;^1 line, 1 word, 601 bytes;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes
 else
 C_PROGRAMS   =
 ROOT_FILES   = 17
@@ -420,6 +425,18 @@ run-disk: user64 cprogs64 tfstool-rs
 	    $(TFSTOOL_RS) put $(RUN_DISK) $$program $(C_BIN)/$$program > /dev/null || exit 1; \
 	done
 
+# One C program of your own, built and put on that disk (close QEMU
+# first: the disk is its while it runs):
+#   make cput C=name          (the program is libc/programs/name.c)
+# The whole recipe, and how to build one that is not in libc/programs
+# at all, is in docs/c-programs.md.
+cput: run-disk
+	@[ -n "$(C)" ] || { echo "usage: make cput C=name   (builds libc/programs/name.c and puts it on $(RUN_DISK))"; exit 1; }
+	@[ -f $(LIBC_DIR)/programs/$(C).c ] || { echo "cput: there is no $(LIBC_DIR)/programs/$(C).c"; exit 1; }
+	@$(MAKE) --no-print-directory cprogs64 C_PROGRAMS=$(C)
+	@$(TFSTOOL_RS) rm $(RUN_DISK) $(C) > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) $(C) $(C_BIN)/$(C) > /dev/null
+	@echo "$(C) is on $(RUN_DISK): make run64, and type $(C)"
+
 # The UEFI loader needs Clang and lld (`sudo apt install clang lld`).
 # Without them the ISO is built BIOS-only, and says so.
 UEFI_DIR     = bootloader/src/boot/uefi
@@ -460,6 +477,7 @@ ifeq ($(HAVE_CC),yes)
 	    clang $(TAAJ_CFLAGS) -c $(LIBC_DIR)/programs/$$program.c -o $(C_BIN)/$$program.o || exit 1; \
 	    ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/$$program.o $(LIBC_A) -o $(C_BIN)/$$program || exit 1; \
 	done
+	@$(HOST_CC) -std=c11 -O2 -Wall -Wextra -Werror $(LIBC_DIR)/programs/cwords.c -o $(CWORDS_HOST)
 else
 	@echo "Clang or lld not found: no C programs (sudo apt install clang lld)"
 endif
@@ -519,7 +537,7 @@ boot64-test: iso64 cprogs64 tfstool-rs
 	@echo "Booting the 64-bit kernel headless via BIOS (serial log: $(SERIAL64_LOG))..."
 	$(call make-test-disk,$(SERIAL64_LOG).disk)
 	@DISK=$(SERIAL64_LOG).disk KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(SERIAL64_LOG)
-	@DISK=$(SERIAL64_LOG).disk TFSTOOL=$(TFSTOOL_RS) TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" SCREEN_MAX_INK=700 \
+	@DISK=$(SERIAL64_LOG).disk TFSTOOL=$(TFSTOOL_RS) CWORDS_HOST=$(CWORDS_HOST) CWORDS_TAAJ=$(C_BIN)/cwords TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" SCREEN_MAX_INK=700 \
 	    $(KERNEL64_DIR)/scripts/check-boot.sh $(SERIAL64_LOG) BIOS
 	@echo "boot64-test passed"
 
@@ -531,7 +549,7 @@ endif
 	@echo "Booting the 64-bit kernel headless via UEFI (serial log: $(UEFI64_LOG))..."
 	$(call make-test-disk,$(UEFI64_LOG).disk)
 	@DISK=$(UEFI64_LOG).disk QEMU_ARGS="-bios $(OVMF)" KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(UEFI64_LOG) 30
-	@DISK=$(UEFI64_LOG).disk TFSTOOL=$(TFSTOOL_RS) TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" SCREEN_MAX_INK=700 \
+	@DISK=$(UEFI64_LOG).disk TFSTOOL=$(TFSTOOL_RS) CWORDS_HOST=$(CWORDS_HOST) CWORDS_TAAJ=$(C_BIN)/cwords TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" SCREEN_MAX_INK=700 \
 	    $(KERNEL64_DIR)/scripts/check-boot.sh $(UEFI64_LOG) UEFI
 	@echo "boot64-uefi-test passed"
 
@@ -566,6 +584,9 @@ kernel64-test:
 # fopen to taaj_fopen, read to taaj_read), so that it sits in one
 # program with this machine's stdio and its system calls are the
 # test's own, which count and can be made to fail.
+#
+# And ctype.c and stdlib.c the same way: every answer compared with
+# this machine's own.
 HOST_CFLAGS    = -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=undefined
 FORMAT_RENAMED = -Dvsnprintf=taaj_vsnprintf -Dsnprintf=taaj_snprintf -Dvsprintf=taaj_vsprintf -Dsprintf=taaj_sprintf
 libc-test:
@@ -592,6 +613,15 @@ ifeq ($(HAVE_CC),yes)
 	clang -fsanitize=address,undefined $(LIBC_DIR)/target/host/stdio.o $(LIBC_DIR)/target/host/stdio_format.o \
 	    $(LIBC_DIR)/target/host/stdio_test.o -o $(LIBC_DIR)/target/host/stdio-test
 	$(LIBC_DIR)/target/host/stdio-test
+	@for part in ctype stdlib; do \
+	    clang $(HOST_CFLAGS) -ffreestanding -nostdlibinc -isystem $(LIBC_DIR)/include \
+	        -c $(LIBC_DIR)/c/$$part.c -o $(LIBC_DIR)/target/host/$$part.o || exit 1; \
+	    objcopy --redefine-syms=$(LIBC_DIR)/c/host_names $(LIBC_DIR)/target/host/$$part.o || exit 1; \
+	done
+	clang $(HOST_CFLAGS) -c $(LIBC_DIR)/c/stdlib_test.c -o $(LIBC_DIR)/target/host/stdlib_test.o
+	clang -fsanitize=address,undefined $(LIBC_DIR)/target/host/ctype.o $(LIBC_DIR)/target/host/stdlib.o \
+	    $(LIBC_DIR)/target/host/stdlib_test.o -o $(LIBC_DIR)/target/host/stdlib-test
+	$(LIBC_DIR)/target/host/stdlib-test
 else
 	@echo "Clang not found: the printf comparison and the stream tests are not run (sudo apt install clang lld)"
 endif

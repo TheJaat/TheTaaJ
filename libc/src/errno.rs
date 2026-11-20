@@ -42,6 +42,7 @@ pub const EFBIG: c_int = 27;
 pub const ENOSPC: c_int = 28;
 pub const ESPIPE: c_int = 29;
 pub const EROFS: c_int = 30;
+pub const ERANGE: c_int = 34;
 pub const ENOTEMPTY: c_int = 39;
 pub const ETIMEDOUT: c_int = 110;
 
@@ -67,6 +68,7 @@ pub const MESSAGES: &[(c_int, &str)] = &[
     (ENOSPC, "the file system is full\0"),
     (ESPIPE, "a stream has no position to move\0"),
     (EROFS, "the files are read-only here\0"),
+    (ERANGE, "a number too big to fit\0"),
     (ENOTEMPTY, "the directory is not empty\0"),
     (ETIMEDOUT, "the file service is not answering\0"),
 ];

@@ -23,4 +23,37 @@ void *calloc(size_t count, size_t size);
 void *realloc(void *block, size_t size);
 void free(void *block);
 
+/* Text into a number: spaces, an optional sign, then digits in the
+ * given base (2 to 36; letters are the digits past 9). Base 0 reads
+ * the text as C would: 0x in front means sixteen, 0 means eight,
+ * otherwise ten.
+ *
+ * If end is not NULL, *end is left pointing just after the last digit
+ * used - at the start of the text if there was no number there at
+ * all, which is how to tell "0" from "not a number". A number too big
+ * to fit gives the biggest (or, for strtol, the most negative) there
+ * is, and sets errno to ERANGE. */
+long strtol(const char *text, char **end, int base);
+unsigned long strtoul(const char *text, char **end, int base);
+
+/* The same in base ten, with no way of saying it failed. */
+int atoi(const char *text);
+long atol(const char *text);
+
+/* The number without its sign. */
+int abs(int number);
+long labs(long number);
+
+/* Sorts count items of size bytes each, starting at base. compare is
+ * given the addresses of two items and returns less than 0, 0, or
+ * more than 0 as the first belongs before, with, or after the second.
+ * Items that compare equal end up in no particular order. */
+void qsort(void *base, size_t count, size_t size, int (*compare)(const void *, const void *));
+
+/* Finds an item equal to key among items that are sorted by the same
+ * compare, which is given key first and an item second. NULL if there
+ * is none. */
+void *bsearch(const void *key, const void *base, size_t count, size_t size,
+              int (*compare)(const void *, const void *));
+
 #endif

@@ -29,6 +29,7 @@ extern int errno;
 #define ENOSPC     28   /* the file system is full */
 #define ESPIPE     29   /* a stream has no position to move */
 #define EROFS      30   /* the files are read-only here */
+#define ERANGE     34   /* a number too big to fit */
 #define ENOTEMPTY  39   /* the directory is not empty */
 #define ETIMEDOUT 110   /* the file service is not answering */
 
