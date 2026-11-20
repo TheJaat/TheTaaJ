@@ -199,6 +199,17 @@ TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
                r m spc d o c s ret m k d i r spc d o c s ret c a t spc d o c s ret \
                w r i t e spc w e l c o m e slash x spc y ret \
                r m spc w o r k ret l s spc w o r k ret t o o l s slash g i v e n ret \
+               p w d ret c d spc d o c s ret p w d ret \
+               w r i t e spc h e r e spc i n s i d e ret l s ret \
+               c d spc d e e p ret p w d ret c a t spc dot dot slash h e r e ret \
+               a p p e n d spc slash d o c s slash h e r e spc m o r e ret \
+               c d spc dot dot slash dot dot slash t o o l s ret dot slash g i v e n ret \
+               w i t h spc f i l e s spc g i v e n ret \
+               c d spc slash w e l c o m e ret c d spc n o w h e r e ret c d spc a spc b ret \
+               m k d i r spc g o n e ret c d spc g o n e ret r m spc dot dot slash g o n e ret l s ret \
+               c d spc dot dot slash dot dot slash dot dot ret p w d ret \
+               w r i t e spc r o o t e d spc y e s ret \
+               c d spc t o o l s ret c d ret w r i t e spc h o m e spc y e s ret \
                w i t h spc r e a d o n l y spc m k d i r spc x ret \
                g i v e n spc a spc b ret w i t h spc f i l e s spc g i v e n ret w i t h ret \
                w i t h spc r e a d o n l y spc g i v e n ret \
@@ -224,10 +235,11 @@ EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes
 EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(4096 KiB\);^0000  4a 41 46 53 .*JAFS;^disk: sector 5: the disk is read-only;^disk: sector 99999: no such sector;^disk check: all 9 checks passed;^took [0-9]+\.[0-9][0-9] s;^line 300 of 300
 EXPECT_RUN   = \[init\] started primes for the shell, from a file;^primes below 50: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47;^primes exited with code 0;^error: welcome is not a program;^error: broken is not a program;^error: no such program;\[init\] started ls for the shell, from a file;^usage: cat FILE;^cat exited with code 2;^rm: notes: no such file;^rm: saved2: no such file;^rm exited with code 1;^usage: write FILE TEXT;^write exited with code 2;$(EXPECT_GIVEN);$(EXPECT_WATCH);$(EXPECT_KILL)
 EXPECT_DIRS  = ^ +23  readme;^1 file, 23 bytes;^Read me, from the host;^docs/deep/note: 7 bytes;^docs:;^ +dir  deep/;^1 directory, 1 file, 23 bytes;^docs/deep:;^ +7  note;^rm: docs: the directory is not empty;^mkdir: docs: there is already something with that name;^cat: docs: is a directory;^write: welcome/x: not a directory;^ls: work: no such file or directory;\[init\] started tools/given for the shell, from a file;^mkdir: x: the files are read-only here
+EXPECT_CD    = ^/\s*$$;^/docs\s*$$;^here: 7 bytes;^1 directory, 2 files, 30 bytes;^/docs/deep\s*$$;^inside\s*$$;^/docs/here: 12 bytes;\[init\] started \./given for the shell, from a file;^given: started in /tools;^cd: /welcome: not a directory;^cd: nowhere: no such file or directory;^usage: cd \[DIR\];^ls: \.: no such file or directory;^rooted: 4 bytes;^home: 4 bytes
 EXPECT_GIVEN = ^given: the screen, no files;^given: arguments .a b.;^given: the screen, and the files \(1[0-9] of them\), to read and to change;^given: the screen, and the files \(1[0-9] of them\), to read only;^usage: with files COMMAND, with readonly COMMAND;^write: saved: the files are read-only here;^rm: saved: the files are read-only here;\[fs\] asked to stall;^fs: the file service will answer nothing for 6 s;\[init\] fs has not answered for 4 s - stopping it;\[process\] [0-9]+ .fs. stopped: killed by request;\[init\] fs ended with code -1001 - restarting it
 EXPECT_WATCH = \[blk\] asked to stall;\[init\] blk has not answered for 2 s - stopping it;\[init\] blk ended with code -1001 - restarting it;^during: 2 bytes;\[display\] asked to stall;\[init\] display has not answered for 2 s - stopping it;\[init\] display ended with code -1001 - restarting it;\[display\] the text on the screen was kept: [0-9]+ lines shown again;\[kbd\] F11: simulating a driver bug;\[init\] kbd has not answered for 2 s - stopping it;\[init\] kbd ended with code -1001 - restarting it;\[shell\] line: .echo keys.
 EXPECT_KILL  = ^forever: spin until stopped;^forever: wait until stopped;^forever: sleep until stopped;\[process\] [0-9]+ .forever. stopped: killed by request;^\^C;^forever was stopped
-TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EXPECT_DIRS)
+TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EXPECT_DIRS);$(EXPECT_CD)
 # The disk the boot tests attach: a 4 MiB TaajFS volume made on the host
 # by tfstool, with one file in it for the OS to read. After the boot,
 # check-boot.sh reads back - with tfstool again - the file the OS wrote.
@@ -237,7 +249,10 @@ TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EX
 # like a program and is not. And `long`, 300 lines: more than a screen,
 # printed faster than the display draws. And two directories made on the
 # host: docs, with a file in it, and tools, with a program in it - run by
-# its path.
+# its path. The test then moves about in them with cd: writes a file by
+# a bare name in docs, reads it from docs/deep as ../here, runs ./given
+# in tools, stands in a directory while it is removed, and climbs back
+# to the root - twice, by ".." and by a bare `cd` - to write there.
 USER_BIN     = user/target/x86_64-unknown-none/release
 TFSTOOL_RS   = tools/tfstool-rs/target/release/tfstool
 DISK_PROGRAMS = ls cat write append rm mkdir primes forever given

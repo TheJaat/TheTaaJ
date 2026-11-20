@@ -4,7 +4,8 @@
 //! that is - so the shell's choices can be seen: run by its name it has
 //! the screen and its arguments; run as `with files given`, the file
 //! service as well - and `with readonly given`, the file service by the
-//! channel that cannot change anything.
+//! channel that cannot change anything. With the files comes the
+//! directory it was started in, if that is not the root.
 
 #![no_std]
 #![no_main]
@@ -16,7 +17,7 @@ taaj::program!(main);
 fn main() -> i64 {
     let arguments = taaj::arguments();
     match taaj::file_service() {
-        Some(files) => match files.list("", |_, _, _| {}) {
+        Some(files) => match files.list("/", |_, _, _| {}) {
             Ok(count) => {
                 let how = match files.read_only() {
                     Ok(true) => "to read only",
@@ -24,6 +25,9 @@ fn main() -> i64 {
                     Err(_) => "for what, it would not say",
                 };
                 println!("given: the screen, and the files ({count} of them), {how}");
+                if !files.directory().is_empty() {
+                    println!("given: started in /{}", files.directory());
+                }
             }
             Err(error) => println!("given: the screen, and the files - but {}", error.describe()),
         },

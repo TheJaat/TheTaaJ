@@ -106,7 +106,10 @@ fn main() -> i64 {
     check!(files.remove("nothing") == refused(Status::NotFound), "remove a missing file");
     check!(files.write("a/b", b"x") == refused(Status::NotFound), "a path through nothing");
     check!(files.write("big/b", b"x") == refused(Status::NotDirectory), "a path through a file");
-    check!(files.write("a/../b", b"x") == refused(Status::BadName), "a path that climbs");
+    // ".." never reaches the service from here: the client works it
+    // out first (section 11). That the service itself refuses one is
+    // checked on the host, where a raw request can be made.
+    check!(files.size("a/../nothing") == refused(Status::NotFound), "a path that climbs is resolved, then looked up");
     check!(files.write("", b"x") == refused(Status::BadName), "an empty name");
     let long = [b'n'; NAME_MAX + 1];
     let long = core::str::from_utf8(&long).unwrap_or("");
@@ -215,6 +218,28 @@ fn main() -> i64 {
     check!(files.list("d/inner", |name, _, size| deep = name == "deep" && size == 3000) == Ok(1) && deep, "and of the one inside");
     check!(files.list("big", |_, _, _| {}) == refused(Status::NotDirectory), "a file cannot be listed");
     check!(files.list("nowhere", |_, _, _| {}) == refused(Status::NotFound), "nor what is not there");
+
+    // 11. The same files, named as someone in d/inner would name them.
+    //     The client resolves the name; the service still sees only
+    //     whole paths.
+    let inside = Files::in_directory(requests, "d/inner");
+    check!(matches(&inside, "deep", 3000), "a bare name, from a directory");
+    check!(matches(&inside, "./deep", 3000), "with a dot in front");
+    check!(inside.size("../log") == Ok(10), "one up");
+    check!(inside.size("/d/log") == Ok(10), "from the root, wherever one is");
+    check!(inside.size("nowhere/../deep") == Ok(3000), "up from a name is the text's business");
+    check!(inside.stat("../..") == Ok((Kind::Directory, 0)), "two up is the root");
+    check!(inside.size("../../../../big") == files.size("big"), "and above the root is the root");
+    check!(inside.write("../made", b"x") == Ok(1) && files.size("d/made") == Ok(1), "written where the path says");
+    check!(inside.append("../made", b"y") == Ok(2), "appended there too");
+    check!(inside.make_directory("sub") == Ok(()) && files.stat("d/inner/sub") == Ok((Kind::Directory, 0)), "a directory made from here");
+    let mut seen = 0;
+    check!(inside.list(".", |name, _, _| seen += usize::from(name == "deep" || name == "sub")) == Ok(2) && seen == 2, "here, listed as a dot");
+    check!(inside.list("", |_, _, _| {}) == Ok(2), "and as nothing at all");
+    check!(inside.remove("sub") == Ok(()) && inside.remove("../made") == Ok(()), "removed by the same names");
+    check!(inside.size("deep/../deep/x") == refused(Status::NotDirectory), "a file is still not a directory");
+    check!(files.size("d/inner/deep") == Ok(3000), "nothing was disturbed");
+
     check!(files.remove("d") == refused(Status::NotEmpty), "a directory with something in it stays");
     check!(files.remove("d/inner") == refused(Status::NotEmpty), "at any depth");
     check!(files.remove("d/inner/deep") == Ok(()), "empty it");
@@ -223,7 +248,7 @@ fn main() -> i64 {
     check!(files.remove("d") == Ok(()), "and it goes too");
     check!(files.stat("d") == refused(Status::NotFound), "gone");
 
-    // 11. Clean up: an empty file system.
+    // 12. Clean up: an empty file system.
     let mut names = [[0u8; NAME_MAX]; 4];
     let mut lengths = [0usize; 4];
     loop {
@@ -245,6 +270,6 @@ fn main() -> i64 {
     }
     check!(files.list("", |_, _, _| {}) == Ok(0), "nothing left");
 
-    println!("[fscheck] long files, boundaries, appends, 104-file listing, refusals, careless requests, a silent service, read-only, a stall, directories: all passed");
+    println!("[fscheck] long files, boundaries, appends, 104-file listing, refusals, careless requests, a silent service, read-only, a stall, directories, paths from a directory: all passed");
     0
 }

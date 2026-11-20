@@ -507,14 +507,16 @@ fn main() -> i64 {
 /// it holds a handle to.
 ///
 /// The arguments are the one thing init makes: a channel with a single
-/// message in it, whose receiving end the program gets.
+/// message in it, whose receiving end the program gets. The directory
+/// the program starts in travels the same way: it is text the shell
+/// chose, like the arguments, and init does not look at it.
 ///
 /// The shell reads the file, not init. init restarts the file service
 /// when it crashes; if init itself waited on the file service, a hung
 /// one would stop the only process able to fix it.
 fn serve_request(launcher: Handle, requests: Handle) {
     use abi::init::{Run, BUILT_IN, IMAGE};
-    use abi::startup::{ARGUMENTS, FILES, STDOUT};
+    use abi::startup::{ARGUMENTS, DIRECTORY, FILES, STDOUT};
 
     // Room for any message and any number of handles: a request that
     // did not fit would stay at the head of the queue forever.
@@ -548,35 +550,47 @@ fn serve_request(launcher: Handle, requests: Handle) {
         return reply(b"error: no such program, on the disk or built in", &[]);
     }
 
-    // The arguments, waiting in a channel of their own.
-    let arguments = if run.arguments.is_empty() {
-        None
-    } else {
-        let made = taaj::channel_create().and_then(|(tx, rx)| {
-            let sent = taaj::send(tx, run.arguments, &[]);
-            let _ = taaj::close(tx);
-            sent.map(|()| rx).inspect_err(|_| close(&[rx]))
-        });
-        match made {
-            Ok(rx) => Some(rx),
-            Err(error) => {
-                close(&handles[..count]);
-                let mut text = Buffer::<64>::new();
-                let _ = write!(text, "error: {error:?}");
-                return reply(text.as_bytes(), &[]);
+    // The arguments, waiting in a channel of their own - and the
+    // directory the program starts in, in another. Nothing to say
+    // (no arguments; the root) means no channel.
+    let waiting = |text: &[u8]| -> Result<Option<Handle>, Error> {
+        if text.is_empty() {
+            return Ok(None);
+        }
+        let (tx, rx) = taaj::channel_create()?;
+        let sent = taaj::send(tx, text, &[]);
+        let _ = taaj::close(tx);
+        sent.map(|()| Some(rx)).inspect_err(|_| close(&[rx]))
+    };
+    let arguments = waiting(run.arguments);
+    let directory = waiting(run.directory.as_bytes());
+    let (arguments, directory) = match (arguments, directory) {
+        (Ok(arguments), Ok(directory)) => (arguments, directory),
+        (arguments, directory) => {
+            // One could not be made: the other, if it was, is not needed.
+            for made in [&arguments, &directory] {
+                if let Ok(Some(rx)) = made {
+                    close(&[*rx]);
+                }
             }
+            close(&handles[..count]);
+            let error = arguments.err().or(directory.err()).unwrap_or(Error::InvalidArgument);
+            let mut text = Buffer::<64>::new();
+            let _ = write!(text, "error: {error:?}");
+            return reply(text.as_bytes(), &[]);
         }
     };
 
     // The startup handles, in the order of the flags' bits: stdout,
-    // arguments, files.
-    let mut given = [(0u64, 0u32); 3];
+    // arguments, files, directory.
+    let mut given = [(0u64, 0u32); 4];
     let mut length = 0;
     let mut flags = u64::from(run.flags);
     let mut passed = passed.iter().copied();
-    for flag in [STDOUT, ARGUMENTS, FILES] {
+    for flag in [STDOUT, ARGUMENTS, FILES, DIRECTORY] {
         let entry = match flag {
             ARGUMENTS => arguments.map(|rx| (rx, RECEIVE)),
+            DIRECTORY => directory.map(|rx| (rx, RECEIVE)),
             _ if flags & flag != 0 => passed.next().map(|handle| (handle, SEND)),
             _ => None,
         };

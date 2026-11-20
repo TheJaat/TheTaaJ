@@ -34,7 +34,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 024 | [Every service watched: pings for the display and the keyboard driver, and four hangs on purpose](024-every-service-watched.md) | written | `6dc5831` |
 | 025 | [Last words: the kernel says why it stopped, and a screen that survives its display](025-last-words.md) | written | `5d8c055` |
 | 026 | [Directories: a tree of names, changed without ever writing over anything](026-directories.md) | written | `34c5aca` |
-| 027 | [The kernel goes home: three repositories, each with its own work](027-the-kernel-goes-home.md) | written | the move |
+| 027 | [The kernel goes home: three repositories, each with its own work](027-the-kernel-goes-home.md) | written | `9a9a52c` |
+| 028 | [The current directory: a place to stand that the file service never hears about](028-the-current-directory.md) | written | this step (TheKernel `73b2ab2`) |
 
 ## How to run what the entries describe
 

@@ -1,6 +1,6 @@
 //! ls: lists what is in a directory - a program on the disk, not part
-//! of the shell. `ls` lists the root; `ls PATH...` lists each directory
-//! named (and, for a file, shows its line).
+//! of the shell. `ls` lists the directory it was started in; `ls PATH...`
+//! lists each directory named (and, for a file, shows its line).
 //!
 //! It can, because whoever starts it hands it a channel to the file
 //! service (taaj::file_service). Without one it has no files to list:
@@ -23,7 +23,9 @@ fn main() -> i64 {
     let several = arguments.split_whitespace().count() > 1;
     let mut failed = false;
     if arguments.trim().is_empty() {
-        failed = !show(&files, "", false);
+        // "." and not "": if the directory is gone, the message has
+        // something to name.
+        failed = !show(&files, ".", false);
     }
     for path in arguments.split_whitespace() {
         failed |= !show(&files, path, several);

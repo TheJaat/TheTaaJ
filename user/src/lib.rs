@@ -433,9 +433,21 @@ pub fn arguments() -> alloc::string::String {
     alloc::string::String::from_utf8_lossy(&message[..length]).into_owned()
 }
 
-/// The file service, if the parent passed its channel on.
+/// The file service, if the parent passed its channel on - with the
+/// directory this program was started in, so that the names it is
+/// given mean what they meant to whoever typed them. The directory
+/// arrives as one message, like the arguments: call this once.
 pub fn file_service() -> Option<files::Files> {
-    flagged_handle(abi::startup::FILES).map(files::Files::new)
+    let channel = flagged_handle(abi::startup::FILES)?;
+    let mut message = [0u8; abi::MESSAGE_MAX as usize];
+    let length = match flagged_handle(abi::startup::DIRECTORY).map(|from| receive(from, &mut message, &mut [])) {
+        Some(Ok((length, _))) => length,
+        _ => 0, // none given: the root
+    };
+    // Not text? Then the root: a wrong directory would send every name
+    // somewhere the user did not mean.
+    let directory = core::str::from_utf8(&message[..length]).unwrap_or("");
+    Some(files::Files::in_directory(channel, directory))
 }
 
 /// Startup handle `n` (counting from 0), if the parent gave that many.

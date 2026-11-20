@@ -14,10 +14,17 @@
 //! Files bigger than one message are read and written a message's worth
 //! at a time.
 //!
-//! A name here is a path from the root: "docs/notes/today". The service
-//! knows no other kind - it remembers nothing about its clients, so
-//! "the directory I am in" is not something it could hold.
+//! The service takes one kind of name: a path from the root,
+//! "docs/notes/today". It remembers nothing about its clients, so "the
+//! directory I am in" is not something it could hold. A `Files` holds
+//! it instead: the directory the program was started in. Every name
+//! given to the calls below is resolved against it here, on the
+//! client's side (fileserver::path) - "today", "../plan", "/welcome" -
+//! and what goes out in the request is always the whole path.
 
+use alloc::string::String;
+
+pub use fileserver::path;
 pub use fileserver::protocol::Kind;
 use fileserver::protocol::{self, Request, Status, MESSAGE_MAX};
 
@@ -47,16 +54,34 @@ pub struct Files {
     requests: Handle,
     /// Ticks to wait for each answer.
     patience: u64,
+    /// Where names that do not start with '/' start from: a resolved
+    /// path from the root, "" for the root itself.
+    directory: String,
 }
 
 impl Files {
     pub fn new(requests: Handle) -> Files {
-        Files { requests, patience: crate::ANSWER_WAIT }
+        Files { requests, patience: crate::ANSWER_WAIT, directory: String::new() }
+    }
+
+    /// The same, for someone in `directory`: names are taken from there.
+    pub fn in_directory(requests: Handle, directory: &str) -> Files {
+        Files { directory: path::resolve("", directory), ..Files::new(requests) }
     }
 
     /// The same, giving up on an answer after `ticks`.
     pub fn with_patience(requests: Handle, ticks: u64) -> Files {
-        Files { requests, patience: ticks }
+        Files { patience: ticks, ..Files::new(requests) }
+    }
+
+    /// The directory names are taken from, as a path from the root.
+    pub fn directory(&self) -> &str {
+        &self.directory
+    }
+
+    /// The whole path, from the root, that `name` means here.
+    fn path(&self, name: &str) -> String {
+        path::resolve(&self.directory, name)
     }
 
     /// The request channel - to pass a copy of it on.
@@ -88,9 +113,11 @@ impl Files {
         }
     }
 
-    /// The name, kind and size of everything in `directory` ("" is the
-    /// root), in name order. Returns how many there were.
+    /// The name, kind and size of everything in `directory` ("" or "."
+    /// is the one names are taken from), in name order. Returns how
+    /// many there were.
     pub fn list(&self, directory: &str, mut each: impl FnMut(&str, Kind, u64)) -> Result<usize, FileError> {
+        let directory = &self.path(directory);
         let mut reply = [0u8; MESSAGE_MAX];
         let mut count = 0;
         loop {
@@ -108,6 +135,7 @@ impl Files {
 
     /// The whole file, a piece at a time. Returns its size.
     pub fn read(&self, name: &str, mut each: impl FnMut(&[u8])) -> Result<u64, FileError> {
+        let name = &self.path(name);
         let mut reply = [0u8; MESSAGE_MAX];
         let mut offset = 0u64;
         loop {
@@ -124,6 +152,7 @@ impl Files {
 
     /// Replaces the file's contents with `data`, creating it if needed.
     pub fn write(&self, name: &str, data: &[u8]) -> Result<u64, FileError> {
+        let name = &self.path(name);
         let mut reply = [0u8; MESSAGE_MAX];
         self.call(Request::new(protocol::TRUNCATE, name, 0), &mut reply)?;
         self.write_at(name, 0, data)
@@ -131,9 +160,10 @@ impl Files {
 
     /// Adds `data` at the end of the file, creating it if needed.
     pub fn append(&self, name: &str, data: &[u8]) -> Result<u64, FileError> {
-        self.write_at(name, protocol::APPEND, data)
+        self.write_at(&self.path(name), protocol::APPEND, data)
     }
 
+    /// `name` is a whole path here: already resolved.
     fn write_at(&self, name: &str, offset: u64, data: &[u8]) -> Result<u64, FileError> {
         if name.len() > protocol::NAME_MAX {
             return Err(FileError::Refused(Status::BadName));
@@ -158,7 +188,7 @@ impl Files {
     /// What `path` names - a file or a directory - and its size.
     pub fn stat(&self, path: &str) -> Result<(Kind, u64), FileError> {
         let mut reply = [0u8; MESSAGE_MAX];
-        let n = self.call(Request::new(protocol::STAT, path, 0), &mut reply)?;
+        let n = self.call(Request::new(protocol::STAT, &self.path(path), 0), &mut reply)?;
         protocol::stat(&reply[1..=n]).ok_or(FileError::Refused(Status::BadRequest))
     }
 
@@ -173,7 +203,7 @@ impl Files {
     /// Makes an empty directory, in a directory that is already there.
     pub fn make_directory(&self, path: &str) -> Result<(), FileError> {
         let mut reply = [0u8; MESSAGE_MAX];
-        self.call(Request::new(protocol::MKDIR, path, 0), &mut reply).map(|_| ())
+        self.call(Request::new(protocol::MKDIR, &self.path(path), 0), &mut reply).map(|_| ())
     }
 
     /// Whether this channel is for reading only.
@@ -192,6 +222,6 @@ impl Files {
 
     pub fn remove(&self, name: &str) -> Result<(), FileError> {
         let mut reply = [0u8; MESSAGE_MAX];
-        self.call(Request::new(protocol::REMOVE, name, 0), &mut reply).map(|_| ())
+        self.call(Request::new(protocol::REMOVE, &self.path(name), 0), &mut reply).map(|_| ())
     }
 }

@@ -26,6 +26,7 @@
 extern crate alloc;
 
 pub mod disk;
+pub mod path;
 pub mod ram;
 
 pub use disk::DiskStore;

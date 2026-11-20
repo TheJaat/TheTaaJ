@@ -21,6 +21,12 @@
 //! disk, like any other. The shell itself never changes a file - it
 //! only reads the ones it runs.
 //!
+//! The shell is also where the current directory lives: `cd` changes
+//! it, `pwd` shows it, the prompt shows it. It is a path the shell
+//! remembers and nothing else - the file service is never told. A
+//! program that is given the files is told the directory it was started
+//! in, and resolves the names it is given against that (taaj::files).
+//!
 //! Output goes to the screen and to the kernel's debug log (the serial
 //! line), which is what the boot tests read.
 
@@ -30,19 +36,19 @@
 extern crate alloc;
 
 use alloc::collections::VecDeque;
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 use core::fmt::Write;
 
 use abi::ProcessEntry;
 use taaj::disk::Disk;
-use taaj::files::{FileError, Files};
+use taaj::files::{path, FileError, Files, Kind};
 use taaj::{println, Buffer, Error, Handle};
 
 taaj::program!(main);
 
 const LINE_MAX: usize = 256;
-const PROMPT: &[u8] = b"taaj> ";
 const CTRL_C: &[u8] = b"\x03";
 /// Keys kept while a program runs; more than this are dropped.
 const TYPED_AHEAD_MAX: usize = 256;
@@ -83,6 +89,11 @@ struct Shell {
     /// itself uses - it only ever reads the programs it runs.
     look: Option<Files>,
     disk: Option<Disk>,
+    /// The current directory: a resolved path from the root, "" for the
+    /// root. Only a name - whether it is still there is found out when
+    /// it is used. (A RefCell because `run` takes `&self`: the borrow
+    /// is checked when the program runs instead of when it is built.)
+    directory: RefCell<String>,
 }
 
 /// Formats into a buffer, then writes it at once to screen and log.
@@ -106,6 +117,30 @@ impl Shell {
         }
     }
 
+    /// The prompt says where the shell is: "taaj:/docs> ". On the
+    /// screen only - the log has the line that follows it.
+    fn prompt(&self) {
+        let mut text = Buffer::<{ LINE_MAX + 16 }>::new();
+        let _ = write!(text, "taaj:{}> ", path::display(&self.directory.borrow()));
+        self.screen_only(text.as_bytes());
+    }
+
+    /// `cd DIR`: makes DIR the current directory, if it is one. `cd`
+    /// alone goes to the root. The new directory is worked out from the
+    /// text ("..", ".", a leading '/'), and then the file service is
+    /// asked one thing: is that a directory?
+    fn cd(&self, argument: &str) {
+        let wanted = path::resolve(&self.directory.borrow(), argument);
+        let Some(files) = self.look.as_ref().or(self.files.as_ref()) else {
+            return self.write(b"cd: no file service\n");
+        };
+        match files.stat(&wanted) {
+            Ok((Kind::Directory, _)) => *self.directory.borrow_mut() = wanted,
+            Ok((Kind::File, _)) => say!(self, "cd: {argument}: not a directory\n"),
+            Err(error) => say!(self, "cd: {argument}: {}\n", error.describe()),
+        }
+    }
+
     fn run(&self, line: &str) {
         let line = line.trim();
         let (command, rest) = line.split_once(' ').unwrap_or((line, ""));
@@ -120,17 +155,19 @@ impl Shell {
                   \x20 uptime       time since boot\n\
                   \x20 mem          memory in use\n\
                   \x20 ps           processes\n\
+                  \x20 cd [DIR], pwd    go to DIR (to the root); say where this is\n\
                   \x20 time COMMAND     run COMMAND, and say how long it took\n\
                   \x20 run NAME ARGS    run a program: a file, or hello, peek\n\
                   \x20              (Ctrl+C stops it)\n\
-                  \x20 NAME ARGS    the same, for a file. On the disk:\n\
-                  \x20   ls [DIR...]        list a directory (the root)\n\
+                  \x20 NAME ARGS    the same, for a file in the root (./NAME, or a\n\
+                  \x20              path with a /, for one elsewhere). On the disk:\n\
+                  \x20   ls [DIR...]        list a directory (this one)\n\
                   \x20   cat FILE...        show files\n\
                   \x20   write FILE TEXT    make FILE hold TEXT\n\
                   \x20   append FILE TEXT   add TEXT to the end of FILE\n\
                   \x20   mkdir DIR...       make directories\n\
                   \x20   rm NAME...         remove files, empty directories\n\
-                  \x20   (a name is a path from the root: docs/notes)\n\
+                  \x20   (a name is a path from here, ../plan - or /from/the/root)\n\
                   \x20   given              say what it was given\n\
                   \x20 with files COMMAND      run COMMAND with the files too\n\
                   \x20 with readonly COMMAND   the same, but only to read them\n\
@@ -141,11 +178,13 @@ impl Shell {
                   \x20              for the disk driver and the display\n\
                   \x20 (F11 hangs the keyboard driver, F12 crashes it)\n\
                   \x20 disk         the disk's size\n\
-                  \x20 disk read N        show sector N\n\
-                  \x20 disk write N TEXT  put TEXT in sector N\n\
+                  \x20 disk read N, disk write N TEXT   show sector N, put TEXT in it\n\
                   \x20 disk check        test the disk driver\n",
             ),
             "echo" => say!(self, "{rest}\n"),
+            "cd" if rest.contains(' ') => self.write(b"usage: cd [DIR]\n"),
+            "cd" => self.cd(if rest.is_empty() { "/" } else { rest }),
+            "pwd" => say!(self, "{}\n", path::display(&self.directory.borrow())),
             "clear" => self.screen_only(b"\x0c"),
             "uptime" => self.uptime(),
             "mem" => self.mem(),
@@ -415,7 +454,22 @@ impl Shell {
     /// The program file `name` from the disk, in a new memory object -
     /// how a program gets from the file service to the kernel, which
     /// knows nothing of files. Ok(None) if there is no such file.
+    ///
+    /// Where the file is looked for depends on how it was named. A bare
+    /// name - `ls` - is a command, and commands are the files in the
+    /// root, wherever the shell happens to be: `ls` must not stop
+    /// working after `cd docs`, and must not become another program
+    /// because the directory has a file called `ls` in it. A name with
+    /// a '/' in it - `tools/given`, `./given`, `/tools/given` - is a
+    /// path, and is resolved like any other path, from here.
     fn program_image(&self, name: &str) -> Result<Option<Handle>, &'static str> {
+        let resolved;
+        let name = if name.contains('/') {
+            resolved = path::resolve(&self.directory.borrow(), name);
+            resolved.as_str()
+        } else {
+            name
+        };
         let Some(files) = self.look.as_ref().or(self.files.as_ref()) else { return Ok(None) };
         let size = match files.size(name) {
             Ok(size) => size,
@@ -460,7 +514,9 @@ impl Shell {
     /// image. The program gets `arguments` and the screen, as the shell
     /// has it - and the files only if it is one of FILE_PROGRAMS, or
     /// the user said so (`grant`): a program gets what it needs,
-    /// not what the shell happens to hold.
+    /// not what the shell happens to hold. A program that gets the
+    /// files is also told the current directory; one that does not has
+    /// no use for it.
     ///
     /// `run NAME` says how the program ended; a program run by its name
     /// alone is a command, and says nothing unless it failed.
@@ -496,13 +552,17 @@ impl Shell {
             }
         }
         let handles = &handles[..count];
+        // A copy: the borrow of the directory must not last while the
+        // program runs.
+        let directory = if files.is_some() { self.directory.borrow().clone() } else { String::new() };
         let request = abi::init::Run {
             kind: if image.is_some() { abi::init::IMAGE } else { abi::init::BUILT_IN },
             flags,
             name,
+            directory: &directory,
             arguments: arguments.as_bytes(),
         };
-        let mut message = [0u8; 3 + 2 * LINE_MAX];
+        let mut message = [0u8; abi::MESSAGE_MAX as usize];
         let sent = match (self.init, request.encode(&mut message)) {
             (Some(init), Some(length)) => taaj::send(init, &message[..length], handles).map(|()| init),
             _ => Err(Error::InvalidArgument),
@@ -586,10 +646,11 @@ fn main() -> i64 {
         files: taaj::startup_handle(4).map(Files::new),
         disk: taaj::startup_handle(5).map(Disk::new),
         look: taaj::startup_handle(6).map(Files::new),
+        directory: RefCell::new(String::new()),
     };
     println!("[shell] ready - type a command (try help)");
     shell.screen_only(b"Welcome to TheTaaJ. Type help for the commands.\n\n");
-    shell.screen_only(PROMPT);
+    shell.prompt();
 
     let mut line = [0u8; LINE_MAX];
     let mut length = 0;
@@ -612,7 +673,7 @@ fn main() -> i64 {
                 println!("[shell] line: {text:?} (process {})", taaj::process_id());
                 shell.run(text);
                 println!("[shell] ran {text:?}");
-                shell.screen_only(PROMPT);
+                shell.prompt();
                 length = 0;
             }
             b"\x08" => {
@@ -628,7 +689,7 @@ fn main() -> i64 {
             CTRL_C => {
                 // Abandon the line.
                 shell.write(b"^C\n");
-                shell.screen_only(PROMPT);
+                shell.prompt();
                 length = 0;
             }
             [first, ..] if *first < 0x20 => {} // other control keys, escapes: not yet
