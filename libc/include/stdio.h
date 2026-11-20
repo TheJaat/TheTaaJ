@@ -1,8 +1,28 @@
-/* stdio.h - text out, formatted.
+/* stdio.h - streams: reading and writing through a buffer.
  *
- * So far: the printf family, and the plain putting of strings and
- * bytes, to the two streams every program starts with. Reading, and
- * streams that are files, are not here yet.
+ * A stream (a FILE *) is a descriptor with memory in front of it.
+ * What a program writes waits in that memory until there is enough of
+ * it to be worth sending; what it reads is fetched a buffer at a time
+ * and handed out from there. So putc a thousand times is one write,
+ * and fgetc a thousand times is one read.
+ *
+ * Every program starts with three:
+ *
+ *   stdin    standard input: what the program was given to read (a
+ *            file with <, another program with |), or nothing
+ *   stdout   standard output. On the screen, text is sent at the end
+ *            of each line; into a file or a pipe, when the buffer is
+ *            full
+ *   stderr   standard error: nothing waits, every call is sent at once
+ *
+ * fopen makes more. Whatever still waits is sent when the stream is
+ * closed, when fflush is called, and when the program ends by exit or
+ * by returning from main - but not if it ends by _exit, or is stopped.
+ *
+ * Not here: scanf and its family, tmpfile, and wide characters.
+ *
+ * printf
+ * ------
  *
  * A format is text with conversions in it, each of the shape
  *
@@ -28,16 +48,101 @@
 #include <stdarg.h>
 #include <stddef.h>
 
-/* What a function returns when it could not write. */
+/* What a function returns when it could not write, or when there is
+ * nothing more to read. */
 #define EOF (-1)
+
+/* How big a stream's buffer is. */
+#define BUFSIZ 4096
 
 /* A stream. What is inside is the library's business. */
 typedef struct _FILE FILE;
 
+extern FILE *stdin;
 extern FILE *stdout;
 extern FILE *stderr;
+#define stdin stdin
 #define stdout stdout
 #define stderr stderr
+
+/* Opens the file at path as a stream. Returns NULL if it cannot, with
+ * the reason in errno. The mode is one of
+ *
+ *   "r"   to read; the file must be there
+ *   "w"   to write: the file is made, or emptied
+ *   "a"   to write at its end: the file is made, or kept
+ *
+ * and after it any of: + (to read and to write), x (with w: fail if
+ * the file is already there), b (allowed, and means nothing here).
+ *
+ * Like open, this fails unless the program was started with the files
+ * (`with files`, or `with readonly` to read). */
+FILE *fopen(const char *path, const char *mode);
+
+/* Sends what waits, and gives the stream up. 0, or EOF if what waited
+ * could not be written: for a file being written, this is the call
+ * whose answer says whether the file is whole. */
+int fclose(FILE *stream);
+
+/* Sends what waits in the stream now - or in every stream, for NULL. */
+int fflush(FILE *stream);
+
+/* How long text may wait. To be called before the stream is used.
+ *   _IOFBF   until the buffer is full
+ *   _IOLBF   until the end of a line
+ *   _IONBF   not at all
+ * buffer is size bytes for the stream to use, or NULL to leave it with
+ * its own. Returns 0, or -1. */
+#define _IOFBF 0
+#define _IOLBF 1
+#define _IONBF 2
+int setvbuf(FILE *stream, char *buffer, int mode, size_t size);
+
+/* One byte, as a number from 0 to 255 - or EOF, at the end and on
+ * failure (feof and ferror say which). */
+int fgetc(FILE *stream);
+int getc(FILE *stream);
+int getchar(void);
+
+/* Puts a byte back to be read again next. One byte is always taken;
+ * a second, before the first is read, may not be. */
+int ungetc(int byte, FILE *stream);
+
+/* A line, new line included, into size bytes with a zero after it. A
+ * line too long for that is returned in pieces. NULL at the end, when
+ * nothing was read. */
+char *fgets(char *to, int size, FILE *stream);
+
+/* count items of size bytes each. Returns how many whole items were
+ * read or written: fewer than count means the end, or a failure. */
+size_t fread(void *to, size_t size, size_t count, FILE *stream);
+size_t fwrite(const void *from, size_t size, size_t count, FILE *stream);
+
+/* Moves where the next read or write happens, as lseek does, and asks
+ * where that is. Not for stdin, stdout or stderr when they are not
+ * files. */
+#define SEEK_SET 0
+#define SEEK_CUR 1
+#define SEEK_END 2
+int fseek(FILE *stream, long offset, int whence);
+long ftell(FILE *stream);
+void rewind(FILE *stream);
+
+/* Whether a read has met the end; whether anything has failed. Both
+ * stay true until clearerr (or, for the end, a move). */
+int feof(FILE *stream);
+int ferror(FILE *stream);
+void clearerr(FILE *stream);
+
+/* The descriptor underneath. */
+int fileno(FILE *stream);
+
+/* Removes a file. 0, or -1. */
+int remove(const char *path);
+
+/* Gives a file or a directory a new name or place. Nothing is
+ * replaced: if `to` is there already, this fails with EEXIST. */
+int rename(const char *from, const char *to);
 
 /* Each returns how many bytes the text came to, or EOF. The compiler
  * is told which argument is the format, and checks the others against

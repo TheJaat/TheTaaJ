@@ -1,4 +1,5 @@
-//! File descriptors: open, read, write, lseek, close, unlink.
+//! File descriptors: open, read, write, lseek, close, unlink - and
+//! rename and isatty, which take a path or a descriptor too.
 //!
 //! A descriptor is a small number a C program holds in place of "the
 //! thing I am reading or writing". 0, 1 and 2 are there from the
@@ -384,4 +385,55 @@ pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
             Err(error) => fail(reason(error)),
         }
     })
+}
+
+/// `rename(from, to)`: gives a file or a directory a new name, a new
+/// directory, or both. Unlike Unix, it replaces nothing: if `to` is
+/// already there, that is the failure (EEXIST) - the file service will
+/// not make a file vanish as a side effect of moving another.
+///
+/// # Safety
+/// Both must be null or point to strings that end in a zero byte.
+#[no_mangle]
+pub unsafe extern "C" fn rename(from: *const c_char, to: *const c_char) -> c_int {
+    // SAFETY: the caller's promise, for each.
+    let (from, to) = match unsafe { (text(from), text(to)) } {
+        (Ok(from), Ok(to)) => (from, to),
+        (Err(code), _) | (_, Err(code)) => return fail(code),
+    };
+    with(|state| {
+        let Some(files) = state.files.get_or_insert_with(taaj::file_service).as_ref() else {
+            return fail(EACCES);
+        };
+        match files.rename(from, to) {
+            Ok(()) => 0,
+            Err(error) => fail(reason(error)),
+        }
+    })
+}
+
+/// `isatty(fd)`: 1 if the descriptor is the screen - somebody is
+/// reading it as it comes - and 0, with ENOTTY, if it is a file or
+/// another program. (The name is Unix's: a "tty" was a teletype.)
+///
+/// The library asks this once, about standard output, to decide how
+/// long text may wait in a buffer (libc/c/stdio.c). Standard error is
+/// always the screen here. Standard input never is: a program is given
+/// a file or a pipe to read, or nothing.
+#[no_mangle]
+pub extern "C" fn isatty(fd: c_int) -> c_int {
+    // 0 for "it is", or why it is not.
+    let no = with(|state| match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
+        Some(Open::Output) if taaj::output_is_screen() => 0,
+        Some(Open::Error) => 0,
+        Some(_) => ENOTTY,
+        None => EBADF,
+    });
+    if no == 0 {
+        return 1;
+    }
+    // "No" is 0 here, not -1: the question has an answer either way,
+    // and errno says which kind of no it was.
+    errno.store(no, Ordering::Relaxed);
+    0
 }

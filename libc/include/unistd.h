@@ -38,6 +38,10 @@ off_t lseek(int fd, off_t offset, int whence);
 /* Removes a file. */
 int unlink(const char *path);
 
+/* 1 if the descriptor is the screen; 0 if it is a file or another
+ * program (errno ENOTTY), or not open at all (EBADF). */
+int isatty(int fd);
+
 /* Ends the program at once. */
 _Noreturn void _exit(int code);
 

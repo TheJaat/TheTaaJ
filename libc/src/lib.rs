@@ -22,7 +22,8 @@
 //!   _start   where the kernel starts the program: gets the arguments,
 //!            calls main, exits with what main returned
 //!   exit, _exit
-//!   open, close, read, write, lseek, unlink        (descriptors.rs)
+//!   open, close, read, write, lseek, unlink,
+//!   rename, isatty                                 (descriptors.rs)
 //!   errno, strerror                                (errno.rs)
 //!   malloc, free, calloc, realloc, strdup          (memory.rs)
 //!   strcmp, strcpy, strchr, strstr and the others  (string.rs)
@@ -31,8 +32,12 @@
 //!
 //! One part of the library is written in C, in `c/`: printf and its
 //! relations, which are built around the one thing C does that stable
-//! Rust will not define - a function taking any number of arguments.
-//! The Makefile compiles those files and adds them to this archive.
+//! Rust will not define - a function taking any number of arguments -
+//! and with them the rest of stdio: streams, their buffers, fopen and
+//! fgets. The Makefile compiles those files and adds them to this
+//! archive. The two halves call each other: C's fopen calls `open`
+//! here, and `exit` here calls C to write out what is still waiting in
+//! the streams' buffers.
 //!
 //! The headers a C program includes for these are in `include/`.
 //!
@@ -56,6 +61,9 @@ extern "C" {
     /// The C program's own `main`. Declared here, defined there: the
     /// linker joins the two.
     fn main(argc: c_int, argv: *mut *mut c_char) -> c_int;
+
+    /// Writes out what every stream still holds (libc/c/stdio.c).
+    fn __taaj_flush_streams();
 }
 
 /// What a C program is told its own name is - `argv[0]`. The shell
@@ -94,13 +102,21 @@ pub extern "C" fn _start(startup_handles: u64, argument: u64) -> ! {
 }
 
 /// `exit(code)`: ends the program. Returning from `main` does the same.
+///
+/// First it writes out what the streams still hold: text a program
+/// printed may be waiting in a buffer (libc/c/stdio.c), and a program
+/// that ends by returning from `main` has no other moment to send it.
 #[no_mangle]
 pub extern "C" fn exit(code: c_int) -> ! {
+    // SAFETY: a C function taking and returning nothing, which touches
+    // only the library's own streams.
+    unsafe { __taaj_flush_streams() };
     taaj::exit(i64::from(code))
 }
 
-/// `_exit(code)`: ends the program at once. The same as `exit` for now;
-/// they part when there are buffers for `exit` to flush first.
+/// `_exit(code)`: ends the program at once - nothing is flushed, so
+/// text still in a buffer is lost. For when the program's own state
+/// can no longer be trusted.
 #[no_mangle]
 pub extern "C" fn _exit(code: c_int) -> ! {
     taaj::exit(i64::from(code))

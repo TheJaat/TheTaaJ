@@ -47,7 +47,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 037 | [Standard error: a second way out](037-standard-error.md) | written | `e85dc51` (TheKernel `2142a4a`) |
 | 038 | [Memory and strings: `malloc`, `free`, and the sixteen bytes in front](038-memory-and-strings.md) | written | `a78fa19` |
 | 039 | [`printf`: the first C in the C library](039-printf.md) | written | `78c7404` (TheKernel `ca699d7`) |
-| 040 | [File descriptors: where an open file lives when nobody keeps it](040-file-descriptors.md) | written | this step (TheKernel `895dc42`) |
+| 040 | [File descriptors: where an open file lives when nobody keeps it](040-file-descriptors.md) | written | `5c5c43c` (TheKernel `895dc42`) |
+| 041 | [Streams: a buffer in front of a descriptor](041-stdio-on-files.md) | written | this step (TheKernel `8145921`) |
 
 ## How to run what the entries describe
 

@@ -37,6 +37,7 @@ pub const ENOTDIR: c_int = 20;
 pub const EISDIR: c_int = 21;
 pub const EINVAL: c_int = 22;
 pub const EMFILE: c_int = 24;
+pub const ENOTTY: c_int = 25;
 pub const EFBIG: c_int = 27;
 pub const ENOSPC: c_int = 28;
 pub const ESPIPE: c_int = 29;
@@ -61,6 +62,7 @@ pub const MESSAGES: &[(c_int, &str)] = &[
     (EISDIR, "is a directory\0"),
     (EINVAL, "not a valid argument\0"),
     (EMFILE, "too many open descriptors\0"),
+    (ENOTTY, "not the screen\0"),
     (EFBIG, "too big for a file\0"),
     (ENOSPC, "the file system is full\0"),
     (ESPIPE, "a stream has no position to move\0"),

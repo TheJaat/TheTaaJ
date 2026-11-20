@@ -24,6 +24,7 @@ extern int errno;
 #define EISDIR     21   /* is a directory */
 #define EINVAL     22   /* not a valid argument */
 #define EMFILE     24   /* too many open descriptors */
+#define ENOTTY     25   /* not the screen */
 #define EFBIG      27   /* too big for a file */
 #define ENOSPC     28   /* the file system is full */
 #define ESPIPE     29   /* a stream has no position to move */
