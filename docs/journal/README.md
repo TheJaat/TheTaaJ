@@ -59,7 +59,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 049 | [The milestone: a C program on four CPUs](049-the-milestone.md) | written | `718088e` (TheKernel `e9db648`) |
 | 050 | [First words on AArch64: the start of Era 3](050-first-words-on-aarch64.md) | written | `f573e40` (TheKernel `aba03fc`) |
 | 051 | [The device tree: a machine describes itself](051-the-device-tree.md) | written | `d2dc665` (TheKernel `90aac86`) |
-| 052 | [Page tables in two dialects: one implementation for x86_64 and AArch64](052-page-tables-in-two-dialects.md) | written | this step (TheKernel `0f16d00`) |
+| 052 | [Page tables in two dialects: one implementation for x86_64 and AArch64](052-page-tables-in-two-dialects.md) | written | `1165c82` (TheKernel `0f16d00`) |
+| 053 | [One memory manager, two CPUs: frames, tables and a heap on AArch64](053-one-memory-manager-two-cpus.md) | written | this step (TheKernel `c642b04`) |
 
 ## How to run what the entries describe
 

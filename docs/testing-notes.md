@@ -480,3 +480,107 @@ cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu paging
 should end `test result: ok. 20 passed`.
 
 Automated: `make test64`
+
+---
+
+## 053 · One Memory Manager, Two CPUs
+
+[The entry](journal/053-one-memory-manager-two-cpus.md)
+
+**1. The AArch64 kernel starts its memory manager**
+
+```
+make run-aarch64
+```
+
+Nothing to type. To leave QEMU: **Ctrl+A, then X**.
+
+| Look for | Meaning |
+|---|---|
+| `[memory] 130737 frames free of 393216 (510 MiB), bitmap 48 KiB at 0x40000000` | all of the 512 MiB found, less the kernel, the tree and the tables |
+| `[memory] own page tables at 0x4000c000: direct map 0xffff800000000000, NX on, write protection on` | the switch happened - and the console survived it |
+| `[memory] heap at 0xffffc00000000000, 1024 KiB to start` | `Box`, `Vec` and `String` now work |
+| `[tree] read again through the direct map: the same 56 nodes, in memory kept out of the allocator` | the device tree is still readable, where it now is |
+| `[selftest] top of memory: the highest free frame, at 0x5ffff000, written and read back` | the last page of memory is really there |
+| `[selftest] protections: code RX, rodata R, data RW+NX, null and stack guard unmapped` | each part of the kernel has only the permissions it needs |
+| `[selftest] memory: all passed` | the same line the PC prints |
+| `[paging] the low half is off: address 0 and 0x40080d9c, where this code really is, translate to nothing` | a null pointer now faults |
+| `[kernel] this is as far as the AArch64 port goes - halting` | no panic on the way |
+
+(Frame counts and the small addresses may differ by a little if the kernel's size changes.)
+
+**2. More memory than the kernel can reach at first**
+
+```
+make run-aarch64 RUN_A64="-m 6G"
+```
+
+| Look for | Meaning |
+|---|---|
+| `[tree] memory      0x40000000 - 0x1c0000000 (6144 MiB)` | six GiB described |
+| `[memory] 1572480 frames free of 1835008 (6142 MiB), bitmap 224 KiB at 0x40000000` | all six in the allocator - five arrived in the second go |
+| `[selftest] top of memory: the highest free frame, at 0x1bffff000, written and read back` | a page above 4 GiB, reached through the direct map |
+
+**3. Four rules broken on purpose**
+
+```
+make aarch64-test
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic -kernel build/aarch64/Image-fault-null
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic -kernel build/aarch64/Image-fault-rodata
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic -kernel build/aarch64/Image-fault-nx
+```
+
+The first command should end `aarch64-test: all passed`, and leaves the kernels in `build/aarch64/`. Leave each QEMU with **Ctrl+A, then X**.
+
+| Kernel | Look for |
+|---|---|
+| `Image-fault-null` | `[test] reading through a null pointer...` then `*** CPU EXCEPTION 0x25: data abort` and `kernel read at 0x0: not mapped (the level 0 table has no entry)` |
+| `Image-fault-rodata` | `[test] writing to read-only data...` then `kernel write at 0xffffffff800911a8: protection violation (at level 3)` |
+| `Image-fault-nx` | `[test] executing data...` then `*** CPU EXCEPTION 0x21: instruction abort` and `kernel instruction fetch at 0xffffffff80094000: protection violation (at level 3)` |
+
+The two addresses are now inside the kernel itself (`0xffffffff800…`), not a test page; their last digits may differ.
+
+**4. A machine that keeps memory back**
+
+`make aarch64-test` leaves `build/aarch64/reserved.dtb`, a device tree that reserves the first 64 KiB and the top 16 MiB:
+
+```
+make run-aarch64 RUN_A64="-dtb build/aarch64/reserved.dtb"
+```
+
+| Look for | Meaning |
+|---|---|
+| `[tree] reserved    0x40000000 - 0x40010000` and `[tree] reserved    0x5f000000 - 0x60000000` | both reservations read |
+| `bitmap 48 KiB at 0x40010000` | the bitmap moved off the reserved 64 KiB |
+| `(493 MiB)` in the `frames free` line | sixteen fewer than before |
+| `the highest free frame, at 0x5efff000` | just below the reserved top |
+
+**5. The PC, on the same memory manager**
+
+```
+make run64
+```
+
+In the terminal it was started from, before the prompt:
+
+| Look for | Meaning |
+|---|---|
+| `[selftest] frames: allocate, free, reuse; the kernel's own are not free` | the new check, on the PC |
+| `[selftest] top of memory: the highest free frame, at 0x…, written and read back` | the new check, on the PC |
+| `[selftest] memory: all passed` | as before |
+
+| Type | You should see |
+|---|---|
+| `mem` | the memory summary, as before |
+| `ps` | the list of processes |
+| `cprimes 100` | `cprimes: 25 primes below 100` |
+
+**6. Host checks**
+
+```
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu
+```
+
+should end `test result: ok. 157 passed`.
+
+Automated: `make test64`
