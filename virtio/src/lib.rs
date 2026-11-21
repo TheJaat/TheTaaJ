@@ -27,6 +27,8 @@ use core::sync::atomic::{fence, Ordering};
 /// ids, 0x1000 + the device type.
 pub const PCI_VENDOR: u16 = 0x1AF4;
 pub const PCI_DEVICE_BLOCK: u16 = 0x1001;
+/// And a network card that speaks the legacy interface.
+pub const PCI_DEVICE_NETWORK: u16 = 0x1000;
 
 /// The legacy registers, as offsets into the I/O BAR.
 pub mod legacy {
@@ -220,6 +222,47 @@ pub mod block {
     }
 }
 
+/// The network card: its queues, what goes before each frame, and its
+/// configuration.
+pub mod net {
+    /// Frames the card received come back through queue 0; frames to
+    /// send go into queue 1.
+    pub const QUEUE_RECEIVE: u16 = 0;
+    pub const QUEUE_TRANSMIT: u16 = 1;
+
+    /// Feature bit: the card has an address of its own, in its
+    /// configuration.
+    pub const FEATURE_MAC: u32 = 1 << 5;
+    /// Feature bit: the configuration says whether the link is up.
+    pub const FEATURE_STATUS: u32 = 1 << 16;
+    /// What this driver asks for, of what a card offers. Nothing else:
+    /// no checksums left to the card, no frames merged or split - each
+    /// buffer is one whole frame, exactly as it is on the wire.
+    pub const fn accepted(offered: u32) -> u32 {
+        offered & (FEATURE_MAC | FEATURE_STATUS)
+    }
+
+    /// In the configuration: the address, six bytes from here...
+    pub const CONFIG_MAC: u32 = 0;
+    /// ...and the status, 16 bits, whose lowest bit is "the link is up".
+    pub const CONFIG_STATUS: u32 = 6;
+    pub const STATUS_LINK_UP: u16 = 1;
+
+    /// Every frame, in both directions, has this many bytes in front
+    /// of it that are not on the wire: a note between driver and card
+    /// about checksums and oversized frames. With none of those
+    /// features accepted it is all zeroes going out, and ignored
+    /// coming in.
+    pub const HEADER_SIZE: usize = 10;
+
+    /// Whether the link is up, from what was accepted and the status
+    /// in the configuration. A card that does not say is taken to be
+    /// connected.
+    pub const fn link_up(accepted: u32, status: u16) -> bool {
+        accepted & FEATURE_STATUS == 0 || status & STATUS_LINK_UP != 0
+    }
+}
+
 /// Descriptor flags.
 pub const DESC_NEXT: u16 = 1;
 pub const DESC_WRITE: u16 = 2; // the device writes this buffer
@@ -297,6 +340,15 @@ impl Queue {
 
     pub fn size(&self) -> u16 {
         self.layout.size
+    }
+
+    /// Asks the device not to interrupt when it has finished with a
+    /// buffer of this queue (or, with false, to do so again). A hint,
+    /// which a device may ignore: for a queue the driver looks at when
+    /// it wants to anyway. (The first 16 bits of the available ring;
+    /// bit 0 is "no interrupt, please".)
+    pub fn quiet(&mut self, quiet: bool) {
+        self.write16(self.layout.available, u16::from(quiet));
     }
 
     pub fn free(&self) -> u16 {
@@ -646,5 +698,75 @@ mod tests {
             assert_eq!(disk.sectors[(n % 64) as usize][0], n as u8);
         }
         assert_eq!(queue.free(), 4);
+    }
+    /// A card that hands buffers back in an order of its own: what a
+    /// receive queue sees, where every buffer is offered ahead of time
+    /// and comes back when a frame happens to arrive.
+    #[test]
+    fn single_buffers_come_back_in_any_order_and_are_reusable() {
+        let layout = Layout::legacy(8);
+        let memory = Memory::new(layout.total);
+        // SAFETY: `memory` is page-aligned, zeroed, and big enough.
+        let mut queue = unsafe { Queue::new(memory.0, layout) };
+        let ids: Vec<u16> = (0..8u64)
+            .map(|n| queue.submit(&[Buffer { physical: 0x1000 * (n + 1), length: 2048, device_writes: true }]).unwrap())
+            .collect();
+        assert_eq!(queue.free(), 0);
+        assert!(queue.submit(&[Buffer { physical: 0x9000, length: 2048, device_writes: true }]).is_none());
+        // Every buffer got a descriptor of its own.
+        let mut seen = ids.clone();
+        seen.sort_unstable();
+        seen.dedup();
+        assert_eq!(seen.len(), 8);
+
+        // The device uses them last first, writing a different length
+        // into each.
+        // SAFETY: the test's queue memory.
+        unsafe {
+            for (n, &id) in ids.iter().rev().enumerate() {
+                let entry = memory.0.add(layout.used + 4 + 8 * n);
+                (entry as *mut u32).write(u32::from(id));
+                (entry.add(4) as *mut u32).write(100 + n as u32);
+            }
+            (memory.0.add(layout.used + 2) as *mut u16).write(8);
+        }
+        for (n, &id) in ids.iter().rev().enumerate() {
+            assert_eq!(queue.take_used(), Some((id, 100 + n as u32)));
+        }
+        assert_eq!(queue.take_used(), None);
+        assert_eq!(queue.free(), 8);
+        // And all eight can be offered again.
+        for n in 0..8u64 {
+            assert!(queue.submit(&[Buffer { physical: 0x1000 * (n + 1), length: 2048, device_writes: true }]).is_some());
+        }
+    }
+
+    #[test]
+    fn a_queue_can_ask_for_quiet() {
+        let layout = Layout::legacy(8);
+        let memory = Memory::new(layout.total);
+        // SAFETY: as above.
+        let mut queue = unsafe { Queue::new(memory.0, layout) };
+        // SAFETY: the available ring's first 16 bits.
+        let flags = || unsafe { (memory.0.add(layout.available) as *const u16).read() };
+        assert_eq!(flags(), 0);
+        queue.quiet(true);
+        assert_eq!(flags(), 1);
+        queue.quiet(false);
+        assert_eq!(flags(), 0);
+    }
+
+    #[test]
+    fn a_network_card_is_asked_for_its_address_and_its_link_and_nothing_more() {
+        // QEMU offers a long list (checksums, merged buffers, a control
+        // queue...): only two of them are taken.
+        let offered = 0x79bf_ffe7;
+        assert_eq!(net::accepted(offered), net::FEATURE_MAC | net::FEATURE_STATUS);
+        assert_eq!(net::accepted(net::FEATURE_MAC), net::FEATURE_MAC);
+        assert_eq!(net::accepted(0), 0);
+        // The link: what the status says, if the card says at all.
+        assert!(net::link_up(net::FEATURE_STATUS, 1));
+        assert!(!net::link_up(net::FEATURE_STATUS, 0));
+        assert!(net::link_up(0, 0));
     }
 }

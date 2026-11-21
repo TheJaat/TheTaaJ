@@ -94,10 +94,11 @@ const RUNNABLE: &[&str] = &["hello", "peek"];
 /// the CPU, and should come from the kernel when one CPU has both.)
 const SERIAL_TERMINAL: bool = cfg!(not(target_arch = "x86_64"));
 
-/// A disk the kernel found, as it described it: on a PCI bus, or at a
-/// place in memory. The driver is the same program for both.
+/// A device the kernel found (a disk, a network card), as it described
+/// it: on a PCI bus, or at a place in memory. Each kind's driver is the
+/// same program for both.
 #[derive(Clone, Copy)]
-enum Disk {
+enum Device {
     Pci(PciDeviceInfo),
     Mmio(MmioDeviceInfo),
 }
@@ -281,7 +282,8 @@ fn main() -> i64 {
     // description and its ports, DMA memory and interrupt.
     let mut framebuffer = None;
     let mut fb_memory = 0;
-    let mut disk: Option<(Disk, [Handle; 3], usize)> = None;
+    let mut disk: Option<(Device, [Handle; 3], usize)> = None;
+    let mut card: Option<(Device, [Handle; 3], usize)> = None;
     loop {
         let mut message = [0u8; 64];
         let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
@@ -294,14 +296,20 @@ fn main() -> i64 {
             used = true;
         } else if let Some(info) = message.strip_prefix(b"pci").and_then(PciDeviceInfo::from_bytes) {
             if info.device_id == virtio::PCI_DEVICE_BLOCK && disk.is_none() && (2..=3).contains(&count) {
-                disk = Some((Disk::Pci(info), [handles[0], handles[1], handles[2]], count));
+                disk = Some((Device::Pci(info), [handles[0], handles[1], handles[2]], count));
+                used = true;
+            } else if info.device_id == virtio::PCI_DEVICE_NETWORK && card.is_none() && (2..=3).contains(&count) {
+                card = Some((Device::Pci(info), [handles[0], handles[1], handles[2]], count));
                 used = true;
             } else {
                 println!("[init] no driver for PCI device {:04x}:{:04x}", info.vendor_id, info.device_id);
             }
         } else if let Some(info) = message.strip_prefix(b"mmio").and_then(MmioDeviceInfo::from_bytes) {
             if info.device == virtio::mmio::DEVICE_BLOCK && info.version == 1 && disk.is_none() && (2..=3).contains(&count) {
-                disk = Some((Disk::Mmio(info), [handles[0], handles[1], handles[2]], count));
+                disk = Some((Device::Mmio(info), [handles[0], handles[1], handles[2]], count));
+                used = true;
+            } else if info.device == virtio::mmio::DEVICE_NETWORK && info.version == 1 && card.is_none() && (2..=3).contains(&count) {
+                card = Some((Device::Mmio(info), [handles[0], handles[1], handles[2]], count));
                 used = true;
             } else {
                 println!("[init] no driver for the device at {:#x} (virtio kind {})", info.registers, info.device);
@@ -343,6 +351,15 @@ fn main() -> i64 {
         let _ = (taaj::close(disk_in), taaj::close(disk_look_in));
     }
     let [disk_ports, disk_dma, disk_interrupt] = disk.map_or([0; 3], |(_, handles, _)| handles);
+    // The network card's, likewise: its description for each new
+    // driver, and one channel of requests - whole frames, for whoever
+    // is given it.
+    let Ok((card_info_tx, card_info_rx)) = taaj::channel_create() else { return 2 };
+    let Ok((card_in, card_out)) = taaj::channel_create() else { return 2 };
+    if card.is_none() {
+        let _ = taaj::close(card_in);
+    }
+    let [card_registers, card_dma, card_interrupt] = card.map_or([0; 3], |(_, handles, _)| handles);
     // The registry's: one channel for what init tells it, and one per
     // client for what that client asks. init keeps both ends of each,
     // as it does of every channel: a registry that is replaced takes
@@ -366,7 +383,7 @@ fn main() -> i64 {
         Grant { handle: files_in, rights: RECEIVE },     // 10: requests, for fs
         Grant { handle: files_out, rights: SEND | DELEGABLE }, // 11: requests, to fs
         // 12: the disk's registers - ports, or memory to be mapped
-        Grant { handle: disk_ports, rights: if matches!(disk, Some((Disk::Mmio(_), ..))) { READ | WRITE } else { 0 } },
+        Grant { handle: disk_ports, rights: if matches!(disk, Some((Device::Mmio(_), ..))) { READ | WRITE } else { 0 } },
         Grant { handle: disk_dma, rights: READ | WRITE }, // 13: its DMA memory
         Grant { handle: disk_info_rx, rights: RECEIVE },  // 14: its description
         Grant { handle: disk_in, rights: RECEIVE },       // 15: requests, for blk
@@ -382,6 +399,13 @@ fn main() -> i64 {
         Grant { handle: admin_rx, rights: RECEIVE },          // 25: registrations, for registry
         Grant { handle: shell_names_tx, rights: SEND },       // 26: lookups, from the shell
         Grant { handle: fs_names_tx, rights: SEND },          // 27: lookups, from fs
+        // 28: the network card's registers - ports, or memory to be mapped
+        Grant { handle: card_registers, rights: if matches!(card, Some((Device::Mmio(_), ..))) { READ | WRITE } else { 0 } },
+        Grant { handle: card_dma, rights: READ | WRITE },     // 29: its DMA memory
+        Grant { handle: card_info_rx, rights: RECEIVE },      // 30: its description
+        Grant { handle: card_in, rights: RECEIVE },           // 31: requests, for nic
+        Grant { handle: card_out, rights: SEND },             // 32: requests, to nic
+        Grant { handle: card_interrupt, rights: RECEIVE },    // 33: its interrupt
     ];
     // Only the shell's screen and files can be copied and passed on.
     debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21)));
@@ -393,6 +417,8 @@ fn main() -> i64 {
     let fs_ping = [fileserver::protocol::ACCESS, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let fs_watch = Watch::new(files_look_out, &fs_ping, 400);
     let blk_watch = disk.and_then(|_| Watch::new(disk_look_out, &[abi::block::INFO], 200));
+    // The network card's driver: "what card is this?".
+    let nic_watch = card.and_then(|_| Watch::new(card_out, &[abi::nic::INFO], 200));
     // The display and the keyboard driver: a ping on a channel of its own.
     let display_watch = framebuffer.and_then(|_| Watch::new(display_ping_tx, &[abi::PING], 200));
     let kbd_watch = Watch::new(kbd_ping_tx, &[abi::PING], 200);
@@ -401,7 +427,7 @@ fn main() -> i64 {
     // services: a name, and which grant it means - the handle, and the
     // rights a client's copy gets. (The shell's old startup handles,
     // now asked for by name; and the disk, for fs.)
-    let registered: [(&str, usize); 8] = [
+    let registered: [(&str, usize); 9] = [
         ("keys", 4),
         ("display", 7),
         ("init", 8),
@@ -410,12 +436,15 @@ fn main() -> i64 {
         ("files.look", 21),
         ("disk", 16),
         ("disk.look", 19),
+        ("nic", 32),
     ];
     // And the namespaces: whose, the receiving end of its channel, and
     // the names that exist on it. This table is the system's policy,
     // in one place: who may reach what.
     let namespaces: [(&str, Handle, &[&str]); 2] = [
-        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "disk.look"]),
+        // (The shell gets the network card only until there is a
+        // service to own it: for the program that tests its driver.)
+        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "disk.look", "nic"]),
         ("fs", fs_names_rx, &["disk"]),
     ];
     // Sends one message to the registry, with a copy of `handle` that
@@ -463,6 +492,18 @@ fn main() -> i64 {
             restart_count: 0,
             given_up: disk.is_none(),
             watch: blk_watch,
+        },
+        Service {
+            name: "nic",
+            grants: match card {
+                Some((_, _, 3)) => &[28, 29, 30, 31, 33],
+                _ => &[28, 29, 30, 31], // no interrupt: the driver polls
+            },
+            process: 0,
+            restarts: [0; MAX_RESTARTS],
+            restart_count: 0,
+            given_up: card.is_none(),
+            watch: nic_watch,
         },
         Service { name: "shell", grants: &[26], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
         // The keys: a keyboard's driver, or the serial port's - which
@@ -518,8 +559,15 @@ fn main() -> i64 {
         // And each new disk driver, what its device is.
         if let (Some((info, _, _)), "blk") = (disk, service.name) {
             match info {
-                Disk::Pci(info) => taaj::send(disk_info_tx, &info.to_bytes(), &[])?,
-                Disk::Mmio(info) => taaj::send(disk_info_tx, &info.to_bytes(), &[])?,
+                Device::Pci(info) => taaj::send(disk_info_tx, &info.to_bytes(), &[])?,
+                Device::Mmio(info) => taaj::send(disk_info_tx, &info.to_bytes(), &[])?,
+            }
+        }
+        // And each new network card's driver.
+        if let (Some((info, _, _)), "nic") = (card, service.name) {
+            match info {
+                Device::Pci(info) => taaj::send(card_info_tx, &info.to_bytes(), &[])?,
+                Device::Mmio(info) => taaj::send(card_info_tx, &info.to_bytes(), &[])?,
             }
         }
         Ok::<Handle, Error>(process)

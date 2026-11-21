@@ -1233,3 +1233,122 @@ make aarch64-uefi-test
 should end `aarch64-test: all passed`, `aarch64-keys-test passed` and `aarch64-uefi-test passed`. The UEFI test needs QEMU's firmware (`sudo apt install qemu-efi-aarch64`); without it the test says it was skipped.
 
 Automated: `make test64`
+
+---
+
+## 062 · A network card
+
+[The entry](journal/062-a-network-card.md)
+
+**1. The card, on the PC**
+
+```
+make run64
+```
+
+`make run64` opens a QEMU window to type in; the kernel's log appears in the terminal it was started from. The machine now has a network card, on QEMU's own small network.
+
+In the terminal's log:
+
+| Look for | Meaning |
+|---|---|
+| `[pci] 00:04.0 virtio network card: ports 0x…, 160 KiB DMA at 0x…, MSI-X - handed to init` | the kernel found the card and gave it to init |
+| `[init] started: registry display fs blk nic shell kbd; supervising` | `nic` is one of the services |
+| `[nic] virtio network card at 00:04.0: address 52:54:00:12:34:56, link up, queues of 256 and 256, MSI-X interrupts` | the driver is running |
+
+In the QEMU window:
+
+| Type | You should see |
+|---|---|
+| `services` | `keys display init system files files.look disk.look nic` |
+| `niccheck` | `[niccheck] nobody answers on this network: the card was asked to send one frame, and nothing more`, then `niccheck exited with code 77` - right: on this network nobody speaks the test's language |
+| `niccheck now` | `usage: niccheck, niccheck restart` |
+
+**2. A machine without a card**
+
+```
+make run64 RUN_NET=
+```
+
+| Look for / Type | You should see |
+|---|---|
+| in the log | no `[nic]` line; `[init] started: registry display fs blk shell kbd; supervising` |
+| `niccheck` | `[niccheck] FAILED: no network card (or its driver stopped)` |
+
+**3. With someone on the other end of the wire**
+
+In one terminal, start the peer; it writes its two port numbers to a file:
+
+```
+kernel/kernel64/scripts/wire.py /tmp/wire.ports /tmp/wire.verdict &
+cat /tmp/wire.ports
+```
+
+That prints two numbers, for example `46011 53872`. Put the first after `udp=127.0.0.1:` and the second after `localaddr=127.0.0.1:`:
+
+```
+make run64 RUN_NET="-netdev socket,id=n0,udp=127.0.0.1:46011,localaddr=127.0.0.1:53872 -device virtio-net-pci,netdev=n0"
+```
+
+| Type | You should see |
+|---|---|
+| `niccheck` | `[niccheck] 233 checks, all passed: card 52:54:00:12:34:56, 37 frames out, 176 in (101 passed on, 2 for others, 73 dropped)` (a few seconds; the log also shows `[nic] asked to stall: doing nothing for 50 ticks` and `[nic] working again` - that is check 9 keeping the driver busy) |
+| `niccheck restart` | in the log: `[nic] asked to stall: doing nothing for 2000 ticks`, then after two seconds `[init] nic has not answered for 2 s - stopping it`, `[init] nic ended with code -1001 - restarting it`, a second `[nic] virtio network card at …` line, and `[niccheck] restart: 9 checks, all passed: the driver was stopped, another started, and the card works again` |
+
+Close QEMU, then ask the peer what it saw:
+
+```
+kill %1; sleep 1; cat /tmp/wire.verdict
+```
+
+| Look for | Meaning |
+|---|---|
+| `wire: ok: 39 frames from 52:54:00:12:34:56: 34 to echo, 4 asking for a burst, 1 for frames to others` | every frame was at least 60 bytes, all from one address, none that should have been refused |
+
+**4. The same on AArch64**
+
+```
+make run-aarch64
+```
+
+The terminal is the machine's keyboard and screen. To leave QEMU: **Ctrl+A, then X**.
+
+| Look for | Meaning |
+|---|---|
+| `[virtio] 0xa003c00: network card (legacy interface), interrupt 78 (edge)` | found in the device tree's list of places |
+| `[virtio] 0xa003c00 network card: handed to init` | given to init |
+| `[nic] virtio network card at 0xa003c00: address 52:54:00:12:34:56, link up, queues of 1024 and 1024, interrupts` | the same driver, its registers in memory this time |
+
+| Type | You should see |
+|---|---|
+| `niccheck` | `[niccheck] nobody answers on this network: …` and `niccheck exited with code 77` |
+
+With the peer: start `wire.py` again as in step 3 (it was stopped there), and use the two numbers it writes this time:
+
+```
+make run-aarch64 RUN_A64="-netdev socket,id=n1,udp=127.0.0.1:46011,localaddr=127.0.0.1:53872 -device virtio-net-device,netdev=n1" RUN_A64_DEVICES="-drive file=build/aarch64/taaj-disk.img,if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0"
+```
+
+| Type | You should see |
+|---|---|
+| `niccheck` | `[niccheck] 233 checks, all passed: card 52:54:00:12:34:56, 37 frames out, 176 in (101 passed on, 2 for others, 73 dropped)` |
+
+**5. The tests by themselves**
+
+```
+make net64-test
+make aarch64-net-test
+```
+
+Each ends with a `wire: ok: 39 frames from …` line and `net64-test passed` / `aarch64-net-test passed`. The logs are `build/net64.log` and `build/aarch64/net.log`; the peer's verdicts are beside them (`.wire`).
+
+**6. Host checks**
+
+```
+cd kernel/abi && cargo test nic
+cd virtio && cargo test
+```
+
+`8 passed` and `11 passed`.
+
+Automated: `make test64`

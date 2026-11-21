@@ -106,6 +106,8 @@ const TYPED_AHEAD_MAX: usize = 256;
 const LOOK_PROGRAMS: &[&str] = &["ls", "cat", "wc"];
 /// And these change files.
 const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp"];
+/// The one program given the network card: the check of its driver.
+const CARD_PROGRAMS: &[&str] = &["niccheck"];
 /// The shell's own commands - the words `run_words` knows, and must be
 /// kept the same as. They read no input, so in a pipeline one may only
 /// stand first.
@@ -1309,6 +1311,7 @@ impl Shell {
             Grant::ReadOnly => &[("files", "files.look")],
             Grant::Usual if on_disk(CHANGE_PROGRAMS) => &[("files", "files")],
             Grant::Usual if on_disk(LOOK_PROGRAMS) => &[("files", "files.look")],
+            Grant::Usual if on_disk(CARD_PROGRAMS) => &[("nic", "nic")],
             Grant::Usual => &[],
         };
         // The registry makes a channel on which only those names exist,

@@ -12,6 +12,7 @@ extern crate alloc;
 mod allocator;
 pub mod disk;
 pub mod files;
+pub mod nic;
 pub mod services;
 
 use core::arch::asm;

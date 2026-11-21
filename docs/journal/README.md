@@ -69,6 +69,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 059 | [One driver, two machines: a disk handed to a program on AArch64, and an interrupt that is a wire](059-one-driver-two-machines.md) | written | `f0b13cd` (TheKernel `a8ea35b`) |
 | 060 | [The same system on the other CPU: a serial port for a keyboard and a screen, the PC's session typed at it, and a terminal that froze when a program computed](060-the-same-system-on-the-other-cpu.md) | written | `fb5255d` (TheKernel `81529a7`) |
 | 061 | [Every CPU, and a loader of my own: the other CPUs started through the firmware (PSCI) and running threads, a log merged by line because four CPUs tore the terminal's lines apart, and a UEFI loader for AArch64](061-every-cpu-and-a-loader-of-my-own.md) | written | `610765b` (TheKernel `a978488`, TheBootloader `bf7e473`) |
+| 062 | [A network card: a driver for the virtio card on both machines, Ethernet frames between programs in one or two messages, who waits for whom, and a test with a second computer - a program on the host - on the other end of the cable](062-a-network-card.md) | written | this step |
 
 ## How to run what the entries describe
 
