@@ -418,3 +418,65 @@ cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu devicet
 should end `test result: ok. 22 passed`. It takes a few seconds: one test reads eleven thousand damaged trees.
 
 Automated: `make test64`
+
+---
+
+## 052 · Page Tables in Two Dialects
+
+[The entry](journal/052-page-tables-in-two-dialects.md)
+
+**1. The AArch64 kernel checks its page tables against the CPU**
+
+```
+make run-aarch64
+```
+
+Nothing to type. To leave QEMU: **Ctrl+A, then X**.
+
+| Look for | Meaning |
+|---|---|
+| `[paging] the tables the CPU is using, read by the kernel: 5 lookups, all as the CPU does them` | the shared code reads AArch64 tables as the CPU does |
+| `[paging] a page at 0x400b4000 mapped twice: written at 0xffffffffffe00000, read at 0xffffffffffe01000, where the CPU refuses a write` | what it writes means what was asked: one page, two addresses, two permissions |
+| `[paging] a third address unmapped, then mapped to the page at 0x400b6000: the CPU reads the new page there` | unmapping, and making the CPU forget, work |
+| `[kernel] this is as far as the AArch64 port goes - halting` | no panic on the way |
+
+(The two page addresses may differ if the kernel's size changes.)
+
+**2. Two rules broken on purpose**
+
+```
+make aarch64-test
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic -kernel build/aarch64/Image-fault-rodata
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic -kernel build/aarch64/Image-fault-nx
+```
+
+The first command should end `aarch64-test: all passed`, and leaves the two kernels in `build/aarch64/`.
+
+| Kernel | Look for |
+|---|---|
+| `Image-fault-rodata` | `[test] writing to read-only data...` then `*** CPU EXCEPTION 0x25: data abort` and `kernel write at 0xffffffffffe01000: protection violation (at level 3)` |
+| `Image-fault-nx` | `[test] executing data...` then `*** CPU EXCEPTION 0x21: instruction abort` and `kernel instruction fetch at 0xffffffffffe00000: protection violation (at level 3)` |
+
+Each ends with a register dump and nothing after it.
+
+**3. The PC, whose page tables the same code now writes**
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `mem` | the memory summary, as before |
+| `ps` | the list of processes - each one an address space made by the changed code |
+| `cprimes 100` | `cprimes: 25 primes below 100` |
+
+**4. Host checks**
+
+```
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu paging
+```
+
+should end `test result: ok. 20 passed`.
+
+Automated: `make test64`

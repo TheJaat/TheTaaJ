@@ -58,7 +58,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 048 | [The kernel outgrows its megabyte: moving the loader's wall, and a kernel too big on purpose](048-the-kernel-outgrows-its-megabyte.md) | written | `aa75f2e` (TheKernel `a337b13`, TheBootloader `22eb961`) |
 | 049 | [The milestone: a C program on four CPUs](049-the-milestone.md) | written | `718088e` (TheKernel `e9db648`) |
 | 050 | [First words on AArch64: the start of Era 3](050-first-words-on-aarch64.md) | written | `f573e40` (TheKernel `aba03fc`) |
-| 051 | [The device tree: a machine describes itself](051-the-device-tree.md) | written | this step (TheKernel `90aac86`) |
+| 051 | [The device tree: a machine describes itself](051-the-device-tree.md) | written | `d2dc665` (TheKernel `90aac86`) |
+| 052 | [Page tables in two dialects: one implementation for x86_64 and AArch64](052-page-tables-in-two-dialects.md) | written | this step (TheKernel `0f16d00`) |
 
 ## How to run what the entries describe
 
