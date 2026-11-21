@@ -24,39 +24,62 @@ pub use allocator::heap_usage;
 /// A handle: a number naming an entry in this process's handle table.
 pub type Handle = u64;
 
-/// The raw system call: number in RAX, arguments in RDI, RSI, RDX. The
-/// `syscall` instruction overwrites RCX and R11, so they are clobbers.
+/// The raw system call, with up to three arguments.
+///
+/// This is the one place where a program speaks to the kernel, and it
+/// is different on each CPU - the instruction, and which registers
+/// carry what:
+///
+/// ```text
+///              instruction   number   arguments                  result
+///   x86_64     syscall       RAX      RDI RSI RDX R10 R8 R9      RAX
+///   AArch64    svc #0        x8       x0  x1  x2  x3  x4 x5      x0
+/// ```
+///
+/// Everything above this function is the same on both.
 #[inline(always)]
 pub fn syscall(number: u64, a: u64, b: u64, c: u64) -> u64 {
+    syscall6(number, a, b, c, 0, 0, 0)
+}
+
+/// The raw system call with five arguments.
+#[inline(always)]
+pub fn syscall5(number: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> u64 {
+    syscall6(number, a, b, c, d, e, 0)
+}
+
+/// The raw system call with six arguments. On x86 the `syscall`
+/// instruction itself overwrites RCX and R11, so they are clobbers.
+#[cfg(target_arch = "x86_64")]
+#[inline(always)]
+pub fn syscall6(number: u64, a: u64, b: u64, c: u64, d: u64, e: u64, f: u64) -> u64 {
     let result: u64;
     // SAFETY: the kernel validates every argument; the worst a bad one
     // does is return an error.
     unsafe {
         asm!("syscall",
              inlateout("rax") number => result,
-             in("rdi") a, in("rsi") b, in("rdx") c,
+             in("rdi") a, in("rsi") b, in("rdx") c, in("r10") d, in("r8") e, in("r9") f,
              out("rcx") _, out("r11") _,
              options(nostack));
     }
     result
 }
 
-/// The raw system call with five arguments (RDI, RSI, RDX, R10, R8).
-#[inline(always)]
-pub fn syscall5(number: u64, a: u64, b: u64, c: u64, d: u64, e: u64) -> u64 {
-    syscall6(number, a, b, c, d, e, 0)
-}
-
-/// The raw system call with six arguments (RDI, RSI, RDX, R10, R8, R9).
+/// The raw system call with six arguments. `svc` ("supervisor call")
+/// changes no register by itself, and the kernel returns every one
+/// but x0 as it found it.
+#[cfg(target_arch = "aarch64")]
 #[inline(always)]
 pub fn syscall6(number: u64, a: u64, b: u64, c: u64, d: u64, e: u64, f: u64) -> u64 {
     let result: u64;
-    // SAFETY: as for `syscall`.
+    // SAFETY: the kernel validates every argument; the worst a bad one
+    // does is return an error.
     unsafe {
-        asm!("syscall",
-             inlateout("rax") number => result,
-             in("rdi") a, in("rsi") b, in("rdx") c, in("r10") d, in("r8") e, in("r9") f,
-             out("rcx") _, out("r11") _,
+        asm!("svc #0",
+             in("x8") number,
+             inlateout("x0") a => result,
+             in("x1") b, in("x2") c, in("x3") d, in("x4") e, in("x5") f,
              options(nostack));
     }
     result
@@ -417,6 +440,7 @@ pub fn ioports_enable(ports: Handle) -> Result<(), Error> {
 /// ring 3. Allowed only for ports enabled with `ioports_enable`; any
 /// other port is a general protection fault, and the kernel kills the
 /// process.
+#[cfg(target_arch = "x86_64")]
 pub mod port {
     use core::arch::asm;
 
@@ -774,9 +798,11 @@ macro_rules! println {
 /// `fn main() -> i64`, whose return value becomes the exit code.
 ///
 /// It defines `_start`, where the kernel starts the program. The kernel
-/// enters it with RSP set as if `_start` had just been called, the
-/// number of startup handles in RDI and the parent's argument in RSI -
-/// its two arguments - so it is an ordinary function.
+/// enters it with the stack pointer set as if `_start` had just been
+/// called, and the number of startup handles and the parent's argument
+/// where the calling convention puts a function's first two arguments
+/// (RDI and RSI on x86_64, x0 and x1 on AArch64) - so it is an
+/// ordinary function.
 #[macro_export]
 macro_rules! program {
     ($main:path) => {

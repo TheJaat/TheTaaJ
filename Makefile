@@ -727,7 +727,15 @@ KERNEL_A64_IMAGE  = $(BUILD_DIR)/aarch64/Image
 LLVM_OBJCOPY := $(shell command -v llvm-objcopy || ls /usr/bin/llvm-objcopy-* 2>/dev/null | sort -V | tail -1)
 HAVE_A64     := $(shell command -v qemu-system-aarch64 >/dev/null && [ -n "$(LLVM_OBJCOPY)" ] && echo yes)
 
-kernel-aarch64:
+# The programs the AArch64 kernel embeds: the user/ crate again, for
+# the other CPU. Named one by one, because a few programs are for the PC
+# only (they use I/O ports) and would not compile.
+USER_A64_BINS := hello peek cli spin echod echoc fs fscheck memro heapcheck forever regs
+
+user-aarch64:
+	cd user && cargo build --release --target $(KERNEL_A64_TARGET) $(addprefix --bin ,$(USER_A64_BINS))
+
+kernel-aarch64: user-aarch64
 	cd $(KERNEL64_DIR) && cargo build --release --target $(KERNEL_A64_TARGET)
 	@mkdir -p $(BUILD_DIR)/aarch64
 	$(LLVM_OBJCOPY) -O binary $(KERNEL_A64_ELF) $(KERNEL_A64_IMAGE)
@@ -739,7 +747,7 @@ run-aarch64: kernel-aarch64
 	qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic -kernel $(KERNEL_A64_IMAGE) $(RUN_A64)
 
 # Boots on several machines, and one deliberate fault.
-aarch64-test:
+aarch64-test: user-aarch64
 ifeq ($(HAVE_A64),yes)
 	$(KERNEL64_DIR)/scripts/aarch64-test.sh $(BUILD_DIR) $(LLVM_OBJCOPY)
 else

@@ -11,7 +11,9 @@ taaj::program!(main);
 
 fn main() -> i64 {
     let pid = taaj::process_id();
-    println!("[hello] hello from user mode! I am process {pid}, running in ring 3");
+    // The CPU's name for "least privileged".
+    let level = if cfg!(target_arch = "aarch64") { "at exception level 0" } else { "in ring 3" };
+    println!("[hello] hello from user mode! I am process {pid}, running {level}");
 
     taaj::yield_now();
     let before = taaj::ticks();

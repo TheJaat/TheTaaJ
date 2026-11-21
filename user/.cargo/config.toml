@@ -7,3 +7,11 @@ target = "x86_64-unknown-none"
 
 [target.x86_64-unknown-none]
 rustflags = ["-C", "relocation-model=static"]
+
+# The AArch64 build is asked for by name (the Makefile's user-aarch64):
+#   cargo build --release --target aarch64-unknown-none-softfloat --bin hello ...
+# "softfloat" for the reason above: the kernel leaves the floating
+# point registers switched off, and a program that touched one would
+# be ended for it.
+[target.aarch64-unknown-none-softfloat]
+rustflags = ["-C", "relocation-model=static"]

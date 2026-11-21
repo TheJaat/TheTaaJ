@@ -726,3 +726,74 @@ cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu sched
 should end `test result: ok.` with no failures - the scheduler's policy, the same code both CPUs now run.
 
 Automated: `make test64`
+
+---
+
+## 056 · Programs on AArch64
+
+[The entry](journal/056-programs-on-aarch64.md)
+
+**1. Programs on AArch64**
+
+```
+make run-aarch64
+```
+
+Nothing to type. To leave QEMU: **Ctrl+A, then X**.
+
+| Look for | Meaning |
+|---|---|
+| `[hello] hello from user mode! I am process 1, running at exception level 0` | a program runs, and its system calls work |
+| `[hello] the kernel refused all 5 bad pointers` | bad pointers are refused, not followed |
+| `[process]   user read at 0xffffffff80100000: protection violation (at level 3)` then `"peek" killed: data abort in a program` | a program cannot read the kernel |
+| `[process] … "cli" killed: trapped system register access` | a program cannot mask interrupts |
+| `[process]   user write at 0x100000000000: protection violation (at level 3)` then `"memro" killed` | read-only means read-only |
+| `[regs] at the start: 29 registers zero, the stack pointer a multiple of 16` | nothing of the kernel's leaks into a new program |
+| `[regs] 26 registers and the stack pointer, through system calls and timer interrupts for 5 ticks: none changed` | a program gets its registers back |
+| `[selftest] user: hello exited 42, spin, heapcheck and regs exited 0, peek, cli and memro were killed; 14 processes, nothing leaked` | all seven, twice, every frame returned |
+| `[selftest] ipc: echo service and client - rights, transfer, backpressure, crash isolation; 0 channels left` | channels and handles between programs |
+| `[selftest] files: fs and fscheck, twice - every check passed, 0 channels and no frames left` | the file service and its heap |
+| `[selftest] kill: spinning, yielding, sleeping, waiting and not yet started - each stopped within 3 ticks; nothing leaked` | ending a program from outside |
+| `[kernel] this is as far as the AArch64 port goes - halting` | no panic on the way |
+
+The lines of different programs are interleaved - they run at once - and process numbers above 1 can differ.
+
+**2. The same on other machines**
+
+```
+make run-aarch64 RUN_A64="-M virt,virtualization=on,gic-version=3"
+make run-aarch64 RUN_A64="-cpu cortex-a53 -m 6G"
+```
+
+The same lines as in 1.
+
+**3. The PC, with the tests from their new file**
+
+```
+make run64
+```
+
+In the terminal it was started from, before the prompt:
+
+| Look for | Meaning |
+|---|---|
+| `[hello] hello from user mode! I am process 1, running in ring 3` | the same program, the other CPU's word for it |
+| `[selftest] user: hello exited 42, spin and heapcheck exited 0, peek, cli, port, memro and gs were killed; 16 processes, nothing leaked` | unchanged |
+| `[selftest] ipc: …`, `[selftest] files: …`, `[selftest] kill: …` | unchanged |
+
+| Type | You should see |
+|---|---|
+| `run hello` | `[hello] hello from user mode! …` and `the kernel refused all 5 bad pointers` |
+| `ps` | the list of processes |
+
+**4. Host checks**
+
+```
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu elf
+readelf -h user/target/aarch64-unknown-none-softfloat/release/hello | grep Machine
+readelf -h user/target/x86_64-unknown-none/release/hello | grep Machine
+```
+
+The first should end `test result: ok.`; the other two (from the top directory, after `make user-aarch64 user64`) should say `AArch64` and `Advanced Micro Devices X86-64`.
+
+Automated: `make test64`
