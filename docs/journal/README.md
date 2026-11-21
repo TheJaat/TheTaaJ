@@ -52,7 +52,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 042 | [A real C program, and the recipe](042-a-real-c-program.md) | written | `ef1220a` (TheKernel `b1ac017`) |
 | 043 | [The keyboard as standard input: whose key is it?](043-the-keyboard-as-standard-input.md) | written | `a848c27` (TheKernel `47b346d`) |
 | 044 | [Waking the other CPUs](044-waking-the-other-cpus.md) | written | `7a9b600` (TheKernel `a0f67aa`) |
-| 045 | [Each CPU finds itself: GS and `swapgs`](045-each-cpu-finds-itself.md) | written | this step (TheKernel `c11bcb3`) |
+| 045 | [Each CPU finds itself: GS and `swapgs`](045-each-cpu-finds-itself.md) | written | `17ea055` (TheKernel `c11bcb3`) |
+| 046 | [Threads on every CPU: one queue, four rules, and stopping together](046-threads-on-every-cpu.md) | written | this step (TheKernel `b75611a`) |
 
 ## How to run what the entries describe
 

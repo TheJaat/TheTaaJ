@@ -88,3 +88,52 @@ Nothing new to type. In the kernel's log (the terminal `make run64` was started 
 | `make run64 RUN_CPUS=1` | The same `[gs]` lines and a working system: GS is used with one CPU too |
 
 Automated: `make test64`
+
+---
+
+## 046 · Threads on Every CPU
+
+[The entry](journal/046-threads-on-every-cpu.md)
+
+```
+make run64
+```
+
+**In the log** (the terminal `make run64` was started from)
+
+| Look for | You should see |
+|---|---|
+| `[selftest] threads: two yielding` | `ran as "ababab"` — still, because this runs before the other CPUs join |
+| `[smp] 4 CPUs run threads` | `[smp] 4 CPUs run threads: each has its own timer and idle thread, and all take from one queue` |
+| `[selftest] smp:` | `threads ran on all 4 CPUs at once; 40000 hand-offs between two threads, none lost; nothing leaked` |
+| `FAILED` | Nothing |
+
+Start it five or six times. Every start should get to the prompt: the bug of this entry showed as one start in three stopping after the `[smp] 4 CPUs run threads` line.
+
+**In the window** — the system is now on four CPUs; it should behave exactly as before
+
+| Type | You should see |
+|---|---|
+| `primes` | The primes, as before |
+| `ps` | The process list. Run it a few times |
+| `forever &` four times, then `jobs` | Four jobs running. With one CPU the shell would now feel slow; with four it should not: type `echo still quick` and see it at once |
+| `kill 1`, `kill 2`, `kill 3`, `kill 4` | Each `forever` stopped *(spinning programs being killed from another CPU; the automated test kills one at a time)* |
+| `cat welcome \| wc` if you have a file, or `ls \| wc` | A count: a pipeline's two programs may now run on two CPUs |
+| `cask`, a name, numbers, Ctrl+D | As in entry 43 |
+
+**Other numbers of CPUs**
+
+| Run | You should see |
+|---|---|
+| `make run64 RUN_CPUS=1` | `[selftest] smp: 1 CPU; 40000 hand-offs between two threads, none lost; nothing leaked`, and a working system |
+| `make run64 RUN_CPUS=2` | `[smp] 2 CPUs run threads…` and `threads ran on all 2 CPUs at once` |
+
+**On the host**
+
+```
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu sched
+```
+
+should end `20 passed`.
+
+Automated: `make test64`
