@@ -797,3 +797,66 @@ readelf -h user/target/x86_64-unknown-none/release/hello | grep Machine
 The first should end `test result: ok.`; the other two (from the top directory, after `make user-aarch64 user64`) should say `AArch64` and `Advanced Micro Devices X86-64`.
 
 Automated: `make test64`
+
+---
+
+## 057 · C on AArch64
+
+[The entry](journal/057-c-on-aarch64.md)
+
+**1. C programs on AArch64**
+
+```
+make run-aarch64
+```
+
+Nothing to type. To leave QEMU: **Ctrl+A, then X**. After the `[selftest] kill:` line:
+
+| Look for | Meaning |
+|---|---|
+| `Hello from C`, `argc 3`, `argv[1] one`, `argv[2] two words` | a C program started, with its arguments |
+| `7.0 / 2 * 4 = 14` | arithmetic with fractions, done without floating-point registers |
+| `[process] … "chello" exited with code 3` | what `main` returned |
+| `[process] … "chello" exited with code 4` | what was given to `exit()` |
+| `strings: 28 checks, all passed` and `memory: 15 checks, all passed` | the library's string functions and `malloc` |
+| `apple fig pear` | `cmem sort pear apple fig` |
+| `printf: 42 -7 ff 0X2A [   hi] [hi   ] [00042] x 100%` | `printf` |
+| `cprimes: 25 primes below 100` | a loop that only computes |
+| `[selftest] c: 8 runs of 4 C programs, twice - each ended with the code its main returned; nothing leaked` | every exit code as expected, twice, nothing left behind |
+| `[kernel] this is as far as the AArch64 port goes - halting` | no panic on the way |
+
+Each program's lines appear twice (the test runs two rounds).
+
+**2. The files themselves**
+
+```
+make cprogs-aarch64
+readelf -h build/c-aarch64/chello | grep Machine
+readelf -lW build/c-aarch64/chello | grep LOAD
+ls -l build/c-aarch64/chello build/c/chello
+```
+
+`Machine` should be `AArch64`; the three `LOAD` lines should end in `0x1000` (4 KiB alignment); the two files should be of similar size (about 50 KB and 54 KB), not 111 KB.
+
+**3. The PC, unchanged**
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `chello one "two words"` | `Hello from C`, `argc 3`, `argv[1] one`, `argv[2] two words` |
+| `chello float` | `7.0 / 2 * 4 = 14` |
+| `cmem` | `strings: 28 checks, all passed` and `memory: 15 checks, all passed` |
+
+**4. Host checks**
+
+```
+cd libc && cargo clippy --release --target aarch64-unknown-none-softfloat
+cd libc && cargo clippy --release
+```
+
+Both should print no warnings.
+
+Automated: `make test64`

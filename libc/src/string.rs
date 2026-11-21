@@ -98,9 +98,11 @@ pub unsafe extern "C" fn strcmp(a: *const c_char, b: *const c_char) -> c_int {
 #[cfg_attr(not(test), no_mangle)]
 pub unsafe extern "C" fn strncmp(a: *const c_char, b: *const c_char, n: usize) -> c_int {
     for at in 0..n {
+        // As bytes whatever `char` is: it is signed on x86_64 and
+        // unsigned on AArch64, and C compares strings as unsigned.
         // SAFETY: neither string has ended before `at` (the loop would
         // have returned), and `at` is less than `n`.
-        let (x, y) = unsafe { (*a.add(at) as u8, *b.add(at) as u8) };
+        let (x, y) = unsafe { (*a.add(at).cast::<u8>(), *b.add(at).cast::<u8>()) };
         if x != y {
             return if x < y { -1 } else { 1 };
         }
@@ -189,7 +191,7 @@ pub unsafe extern "C" fn strchr(s: *const c_char, c: c_int) -> *mut c_char {
     let mut at = s;
     loop {
         // SAFETY: `at` has not passed the zero: the loop returns there.
-        let byte = unsafe { *at } as u8;
+        let byte = unsafe { *at.cast::<u8>() };
         if byte == wanted {
             return at.cast_mut();
         }

@@ -63,7 +63,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 053 | [One memory manager, two CPUs: frames, tables and a heap on AArch64](053-one-memory-manager-two-cpus.md) | written | `33ee694` (TheKernel `c642b04`) |
 | 054 | [Interrupts and a tick on AArch64: the GIC and the CPU's timer](054-interrupts-and-a-tick-on-aarch64.md) | written | `4702c2b` (TheKernel `21fbb23`) |
 | 055 | [Threads on AArch64: a context switch, and a stack that has run out](055-threads-on-aarch64.md) | written | `973e354` (TheKernel `b754d65`) |
-| 056 | [Programs on AArch64: `eret`, `svc`, and a second root register](056-programs-on-aarch64.md) | written | this step (TheKernel `3fd6ee7`) |
+| 056 | [Programs on AArch64: `eret`, `svc`, and a second root register](056-programs-on-aarch64.md) | written | `ddb9940` (TheKernel `3fd6ee7`) |
+| 057 | [C on AArch64: a library with nothing to port, and what `char` means](057-c-on-aarch64.md) | written | this step (TheKernel `897b1ac`) |
 
 ## How to run what the entries describe
 

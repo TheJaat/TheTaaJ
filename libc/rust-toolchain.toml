@@ -3,5 +3,5 @@
 # fresh checkout needs no manual `rustup target add`.
 [toolchain]
 channel = "stable"
-targets = ["x86_64-unknown-none"]
+targets = ["x86_64-unknown-none", "aarch64-unknown-none-softfloat"]
 profile = "minimal"

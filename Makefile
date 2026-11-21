@@ -735,8 +735,50 @@ USER_A64_BINS := hello peek cli spin echod echoc fs fscheck memro heapcheck fore
 user-aarch64:
 	cd user && cargo build --release --target $(KERNEL_A64_TARGET) $(addprefix --bin ,$(USER_A64_BINS))
 
-kernel-aarch64: user-aarch64
-	cd $(KERNEL64_DIR) && cargo build --release --target $(KERNEL_A64_TARGET)
+# The C library and four C programs, for AArch64: the same sources and
+# the same two halves as libc64 and cprogs64, with the other CPU's
+# compiler flags. Nothing in the library is written for one CPU - the
+# only code that is, the system call itself, is in the user library
+# underneath it. Until AArch64 has a disk the programs are built into
+# its kernel (the c-programs feature) and run by a self-test.
+C_A64_BIN      = $(BUILD_DIR)/c-aarch64
+LIBC_A64_RUST  = $(LIBC_DIR)/target/$(KERNEL_A64_TARGET)/release/libc.a
+C_A64_PROGRAMS = chello cmem cprint cprimes
+# As TAAJ_CFLAGS. There is no red zone to switch off on this CPU, and
+# "general registers only" here means no floating point or vector
+# registers - which the kernel leaves switched off for programs.
+TAAJ_A64_CFLAGS  = --target=aarch64-unknown-none-elf -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding \
+                   -fno-stack-protector -fno-pic -mgeneral-regs-only \
+                   -nostdlibinc -isystem $(LIBC_DIR)/include
+# The linker would otherwise line segments up for 64 KiB pages, which
+# some AArch64 systems use: 60 KiB of padding in every file.
+TAAJ_A64_LDFLAGS = $(TAAJ_LDFLAGS) -z max-page-size=4096
+ifeq ($(HAVE_CC),yes)
+KERNEL_A64_FEATURES = c-programs
+else
+KERNEL_A64_FEATURES =
+endif
+
+cprogs-aarch64:
+ifeq ($(HAVE_CC),yes)
+	cd $(LIBC_DIR) && cargo build --release --target $(KERNEL_A64_TARGET)
+	@mkdir -p $(C_A64_BIN)/lib
+	@for part in $(LIBC_C); do \
+	    clang $(TAAJ_A64_CFLAGS) -c $(LIBC_DIR)/c/$$part.c -o $(C_A64_BIN)/lib/$$part.o || exit 1; \
+	done
+	@cp $(LIBC_A64_RUST) $(C_A64_BIN)/libc.a
+	@ar rs $(C_A64_BIN)/libc.a $(addprefix $(C_A64_BIN)/lib/,$(addsuffix .o,$(LIBC_C)))
+	@for program in $(C_A64_PROGRAMS); do \
+	    echo "  CC      $$program.c (AArch64)"; \
+	    clang $(TAAJ_A64_CFLAGS) -c $(LIBC_DIR)/programs/$$program.c -o $(C_A64_BIN)/$$program.o || exit 1; \
+	    ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/$$program.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/$$program || exit 1; \
+	done
+else
+	@echo "Clang or lld not found: no C programs for AArch64 (sudo apt install clang lld)"
+endif
+
+kernel-aarch64: user-aarch64 cprogs-aarch64
+	cd $(KERNEL64_DIR) && cargo build --release --target $(KERNEL_A64_TARGET) $(addprefix --features ,$(KERNEL_A64_FEATURES))
 	@mkdir -p $(BUILD_DIR)/aarch64
 	$(LLVM_OBJCOPY) -O binary $(KERNEL_A64_ELF) $(KERNEL_A64_IMAGE)
 
@@ -747,9 +789,9 @@ run-aarch64: kernel-aarch64
 	qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic -kernel $(KERNEL_A64_IMAGE) $(RUN_A64)
 
 # Boots on several machines, and one deliberate fault.
-aarch64-test: user-aarch64
+aarch64-test: user-aarch64 cprogs-aarch64
 ifeq ($(HAVE_A64),yes)
-	$(KERNEL64_DIR)/scripts/aarch64-test.sh $(BUILD_DIR) $(LLVM_OBJCOPY)
+	$(KERNEL64_DIR)/scripts/aarch64-test.sh $(BUILD_DIR) $(LLVM_OBJCOPY) $(KERNEL_A64_FEATURES)
 else
 	@echo "qemu-system-aarch64 or llvm-objcopy not found: the AArch64 boots are not run (sudo apt install qemu-system-arm llvm)"
 endif
