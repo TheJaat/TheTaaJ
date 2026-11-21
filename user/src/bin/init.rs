@@ -1,6 +1,6 @@
 //! init - the first process, and the supervisor of all the others.
 //!
-//! The kernel starts only this, with six startup handles:
+//! The kernel starts only this, with six startup handles on a PC:
 //!   1  the launcher: the right to start programs
 //!   2  the keyboard's interrupt line
 //!   3  I/O port 0x60
@@ -11,9 +11,20 @@
 //!   6  the system handle: the right to look at memory and processes
 //! (all with every right but the launcher's, so init can share them out.)
 //!
+//! and five on an AArch64 machine, where the terminal is a serial port:
+//!   1  the launcher
+//!   2  the serial port's interrupt line
+//!   3  the memory its registers are in
+//!   4  the channel of devices (a disk: its description, registers,
+//!      DMA memory and interrupt)
+//!   5  the system handle
+//!
 //! The services: registry (where the others are found), display (the
 //! screen), fs (files - on the disk, if there is one), blk (the disk
-//! driver), shell, and kbd (the keyboard driver).
+//! driver), shell, and kbd (the keyboard driver). Where the terminal
+//! is a serial port, one driver - serial - is both keyboard and
+//! screen: it is given the keys' channel to send on and the display's
+//! to read, and nothing else in the system knows the difference.
 //!
 //! What a service works *on* - an interrupt line, ports, the
 //! framebuffer's memory, the channel its requests arrive on - init
@@ -64,7 +75,7 @@
 
 extern crate alloc;
 
-use abi::{FramebufferInfo, PciDeviceInfo};
+use abi::{FramebufferInfo, MmioDeviceInfo, PciDeviceInfo};
 use registry::protocol::Admin;
 use taaj::rights::{DUPLICATE, READ, RECEIVE, SEND, TRANSFER, WRITE};
 use core::fmt::Write;
@@ -75,6 +86,21 @@ taaj::program!(main);
 
 /// What the shell may ask init to run: programs, not services.
 const RUNNABLE: &[&str] = &["hello", "peek"];
+
+/// Whether this machine's terminal is a serial port - keyboard and
+/// screen in one, driven by `serial` - and not a keyboard and a
+/// framebuffer. Decided by the CPU for now: the PC has the one, QEMU's
+/// AArch64 machine the other. (It is a property of the machine, not of
+/// the CPU, and should come from the kernel when one CPU has both.)
+const SERIAL_TERMINAL: bool = cfg!(not(target_arch = "x86_64"));
+
+/// A disk the kernel found, as it described it: on a PCI bus, or at a
+/// place in memory. The driver is the same program for both.
+#[derive(Clone, Copy)]
+enum Disk {
+    Pci(PciDeviceInfo),
+    Mmio(MmioDeviceInfo),
+}
 
 /// On a grant: the service may copy the handle and pass copies on - to
 /// the programs it has init start. Without these two rights a handle
@@ -221,17 +247,33 @@ fn start(launcher: Handle, name: &str, grants: &[&Grant], argument: u64) -> Resu
 }
 
 fn main() -> i64 {
-    let (Some(launcher), Some(interrupt), Some(data_port), Some(status_port), Some(devices), Some(system)) = (
+    // The input device's two resources after its interrupt: a PS/2
+    // keyboard's two ports, or a serial port's registers (and nothing).
+    #[cfg(target_arch = "x86_64")]
+    let given = (
         taaj::startup_handle(0),
         taaj::startup_handle(1),
         taaj::startup_handle(2),
         taaj::startup_handle(3),
         taaj::startup_handle(4),
         taaj::startup_handle(5),
-    ) else {
+    );
+    #[cfg(not(target_arch = "x86_64"))]
+    let given = (
+        taaj::startup_handle(0),
+        taaj::startup_handle(1),
+        taaj::startup_handle(2),
+        Some(0),
+        taaj::startup_handle(3),
+        taaj::startup_handle(4),
+    );
+    let (Some(launcher), Some(interrupt), Some(input_first), Some(input_second), Some(devices), Some(system)) = given else {
         println!("[init] started without the kernel's handles");
         return 1;
     };
+    // Ports are enabled by whoever holds them, whatever the rights; a
+    // memory object must be mapped, to read and to write.
+    let input_rights = if SERIAL_TERMINAL { READ | WRITE } else { 0 };
     let Ok((keys_out, keys_in)) = taaj::channel_create() else { return 2 };
 
     // What the kernel found: a message per device, then the channel
@@ -239,7 +281,7 @@ fn main() -> i64 {
     // description and its ports, DMA memory and interrupt.
     let mut framebuffer = None;
     let mut fb_memory = 0;
-    let mut disk: Option<(PciDeviceInfo, [Handle; 3], usize)> = None;
+    let mut disk: Option<(Disk, [Handle; 3], usize)> = None;
     loop {
         let mut message = [0u8; 64];
         let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
@@ -252,10 +294,17 @@ fn main() -> i64 {
             used = true;
         } else if let Some(info) = message.strip_prefix(b"pci").and_then(PciDeviceInfo::from_bytes) {
             if info.device_id == virtio::PCI_DEVICE_BLOCK && disk.is_none() && (2..=3).contains(&count) {
-                disk = Some((info, [handles[0], handles[1], handles[2]], count));
+                disk = Some((Disk::Pci(info), [handles[0], handles[1], handles[2]], count));
                 used = true;
             } else {
                 println!("[init] no driver for PCI device {:04x}:{:04x}", info.vendor_id, info.device_id);
+            }
+        } else if let Some(info) = message.strip_prefix(b"mmio").and_then(MmioDeviceInfo::from_bytes) {
+            if info.device == virtio::mmio::DEVICE_BLOCK && info.version == 1 && disk.is_none() && (2..=3).contains(&count) {
+                disk = Some((Disk::Mmio(info), [handles[0], handles[1], handles[2]], count));
+                used = true;
+            } else {
+                println!("[init] no driver for the device at {:#x} (virtio kind {})", info.registers, info.device);
             }
         }
         if !used {
@@ -305,8 +354,8 @@ fn main() -> i64 {
     // Everything a service may be given, and the rights it gets.
     let grants = [
         Grant { handle: interrupt, rights: RECEIVE },    // 0
-        Grant { handle: data_port, rights: 0 },          // 1
-        Grant { handle: status_port, rights: 0 },        // 2
+        Grant { handle: input_first, rights: input_rights },  // 1
+        Grant { handle: input_second, rights: input_rights }, // 2
         Grant { handle: keys_out, rights: SEND },        // 3
         Grant { handle: keys_in, rights: RECEIVE },      // 4
         Grant { handle: fb_memory, rights: READ | WRITE },    // 5
@@ -316,7 +365,8 @@ fn main() -> i64 {
         Grant { handle: system, rights: 0 },             // 9: looking, not touching
         Grant { handle: files_in, rights: RECEIVE },     // 10: requests, for fs
         Grant { handle: files_out, rights: SEND | DELEGABLE }, // 11: requests, to fs
-        Grant { handle: disk_ports, rights: 0 },          // 12: the disk's ports
+        // 12: the disk's registers - ports, or memory to be mapped
+        Grant { handle: disk_ports, rights: if matches!(disk, Some((Disk::Mmio(_), ..))) { READ | WRITE } else { 0 } },
         Grant { handle: disk_dma, rights: READ | WRITE }, // 13: its DMA memory
         Grant { handle: disk_info_rx, rights: RECEIVE },  // 14: its description
         Grant { handle: disk_in, rights: RECEIVE },       // 15: requests, for blk
@@ -415,7 +465,17 @@ fn main() -> i64 {
             watch: blk_watch,
         },
         Service { name: "shell", grants: &[26], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
-        Service { name: "kbd", grants: &[0, 1, 2, 3, 23], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: kbd_watch },
+        // The keys: a keyboard's driver, or the serial port's - which
+        // is also the screen, and so reads the display's channel (6).
+        Service {
+            name: if SERIAL_TERMINAL { "serial" } else { "kbd" },
+            grants: if SERIAL_TERMINAL { &[0, 1, 3, 6, 23] } else { &[0, 1, 2, 3, 23] },
+            process: 0,
+            restarts: [0; MAX_RESTARTS],
+            restart_count: 0,
+            given_up: false,
+            watch: kbd_watch,
+        },
     ];
     let launch = |service: &Service| {
         let mut list = [&grants[0]; 8];
@@ -457,7 +517,10 @@ fn main() -> i64 {
         }
         // And each new disk driver, what its device is.
         if let (Some((info, _, _)), "blk") = (disk, service.name) {
-            taaj::send(disk_info_tx, &info.to_bytes(), &[])?;
+            match info {
+                Disk::Pci(info) => taaj::send(disk_info_tx, &info.to_bytes(), &[])?,
+                Disk::Mmio(info) => taaj::send(disk_info_tx, &info.to_bytes(), &[])?,
+            }
         }
         Ok::<Handle, Error>(process)
     };

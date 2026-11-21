@@ -1023,3 +1023,92 @@ make run64
 | `disk` | `disk: … sectors of 512 bytes (… KiB)`, as before |
 
 Automated: `make test64`
+
+---
+
+## 060 · The same system on the other CPU
+
+[The entry](journal/060-the-same-system-on-the-other-cpu.md)
+
+**1. The system, on AArch64**
+
+```
+make run-aarch64
+```
+
+The terminal you started it from is the machine's keyboard and screen. To leave QEMU: **Ctrl+A, then X**. The first time, it makes a disk (`build/aarch64/taaj-disk.img`) that is kept between runs.
+
+Near the end of the boot:
+
+| Look for | Meaning |
+|---|---|
+| `[kernel] serial port at 0x9000000, interrupt 33 (level): handed to init, for a driver` | the kernel gave the port away |
+| `[virtio] 0xa003e00 block device: handed to init` | and the disk |
+| `[init] started: registry fs blk shell serial; supervising` | the same services as on the PC, with `serial` for `kbd` and `display` |
+| `[serial] serial port ready: keys in, text out (driver in user mode, process …)` | the driver is a program |
+| `Welcome to TheTaaJ. Type help for the commands.` and `taaj:/>` | the shell |
+
+Lines beginning `[shell]`, `[init]`, `[registry]` between your commands are the log; on this machine it shares the terminal.
+
+| Type | You should see |
+|---|---|
+| `cat welcome` | `Hello from the host` |
+| `ls` | the programs on the disk, among them `cat`, `cprimes`, `chello`, and last `22 files, 768884 bytes` (the number of bytes may differ) |
+| `chello` | `Hello from C` and `argc 1` - a C program, loaded from the disk |
+| `echo one two \| wc` | `1 line, 2 words, 8 bytes` |
+| `write note hello` | `note: 6 bytes` |
+| `cat note` | `hello` |
+
+Somewhere in the first few keys the log says `[serial] 8 interrupts taken: the port says when it has something`, once for each driver started.
+
+**2. A program computing, and a terminal that still answers**
+
+| Type | You should see |
+|---|---|
+| `forever &` | `forever: spin until stopped (Ctrl+C)` and `[1] forever` |
+| `echo still here` | `still here`, at once - before this entry, nothing more ever appeared |
+| `jobs` | `[1] running  forever` |
+| `kill %1` | `[process] … "forever" stopped: killed by request` and `[1] stopped  forever` |
+| `jobs` | `no jobs` |
+
+**3. A driver that dies, and one that hangs**
+
+| Type | You should see |
+|---|---|
+| **F12** | `[serial] F12: simulating a driver bug - reading address 0`, `[process] … "serial" killed: data abort in a program`, `[init] serial ended with code -1000 - restarting it`, and a new `[serial] serial port ready` |
+| `echo again` | `again` - the new driver works |
+| **F11** | `[serial] F11: simulating a driver bug - looping forever`; two seconds later `[init] serial has not answered for 2 s - stopping it`, `[init] serial ended with code -1001 - restarting it`, and a new `[serial] serial port ready` |
+| `echo once more` | `once more` |
+
+(If your terminal does not send F11/F12 as `ESC [ 2 3 ~` / `ESC [ 2 4 ~`, these do nothing.)
+
+**4. A machine without a disk, and the other interrupt controller**
+
+```
+make run-aarch64 RUN_A64_DEVICES=
+make run-aarch64 RUN_A64="-M virt,gic-version=3"
+```
+
+| Look for | Meaning |
+|---|---|
+| first: `[init] started: registry fs shell serial; supervising` and `[fs] no disk (…): files in memory only`; the shell starts, `echo hi` works, `ls` answers `unknown command: ls (try help)` | the system comes up without a disk; programs are files, and there are none |
+| second: `[irq] GIC version 3: 288 interrupt lines, all off but the timer's`, and `ls` and `echo hi` work as in 1 | the other interrupt controller |
+
+**5. Host checks**
+
+```
+cd input && cargo test serial
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu devicetree
+```
+
+**6. The two AArch64 tests alone**
+
+```
+make user-aarch64 cprogs-aarch64 kernel-aarch64
+make aarch64-test
+make aarch64-keys-test
+```
+
+should end `aarch64-test passed` and `aarch64-keys-test passed`. The second types 231 lines and takes about four minutes; its logs are `build/aarch64/keys.log` and `build/aarch64/busy.log`.
+
+Automated: `make test64`

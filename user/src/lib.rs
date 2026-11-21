@@ -90,6 +90,16 @@ pub fn exit(code: i64) -> ! {
     unreachable!("exit returned")
 }
 
+/// Whether what is shown on the screen reaches the kernel's debug log
+/// by itself - because the two are one thing: a serial port, on a
+/// machine with no other terminal (QEMU's AArch64 machine; `serial` is
+/// its driver). There a copy to the log would show every line twice.
+/// On the PC they are two things, a framebuffer and COM1, and the copy
+/// is what makes the log read as the screen does.
+///
+/// Decided by the CPU for now, as init's `SERIAL_TERMINAL` is.
+pub const LOG_IS_SCREEN: bool = cfg!(not(target_arch = "x86_64"));
+
 /// Writes raw bytes to standard output: wherever whoever started this
 /// program pointed it. A program does not know where that is, and does
 /// not need to - which is the point: the same `cat` shows a file on the
@@ -112,6 +122,9 @@ pub fn write(bytes: &[u8]) -> Result<u64, Error> {
     match stdout() {
         Some(screen) if output_is_screen() => {
             write_to_display(screen, bytes);
+            if LOG_IS_SCREEN {
+                return Ok(bytes.len() as u64);
+            }
             debug_write(bytes)
         }
         Some(output) => match write_to_stream(output, bytes) {
@@ -132,6 +145,9 @@ pub fn write(bytes: &[u8]) -> Result<u64, Error> {
 pub fn write_error(bytes: &[u8]) -> Result<u64, Error> {
     if let Some(screen) = flagged_handle(abi::startup::STDERR) {
         write_to_display(screen, bytes);
+        if LOG_IS_SCREEN {
+            return Ok(bytes.len() as u64);
+        }
     }
     debug_write(bytes)
 }

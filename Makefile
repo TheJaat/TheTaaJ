@@ -408,16 +408,21 @@ TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EX
 USER_BIN     = user/target/x86_64-unknown-none/release
 TFSTOOL_RS   = tools/tfstool-rs/target/release/tfstool
 DISK_PROGRAMS = ls cat write append rm mkdir mv cp wc yes primes forever given
-define make-test-disk
+# make-test-disk-from DISK USER_BIN C_BIN: the programs are those
+# compiled for one CPU or the other; everything else is the same.
+define make-test-disk-from
 	@rm -f $(1) && $(TFSTOOL_RS) mkfs $(1) 1024 > /dev/null && truncate -s 4M $(1)
 	@printf 'Hello from the host\n' > $(1).welcome && $(TFSTOOL_RS) put $(1) welcome $(1).welcome > /dev/null
-	@for program in $(DISK_PROGRAMS); do $(TFSTOOL_RS) put $(1) $$program $(USER_BIN)/$$program > /dev/null || exit 1; done
-	@for program in $(C_PROGRAMS); do $(TFSTOOL_RS) put $(1) $$program $(C_BIN)/$$program > /dev/null || exit 1; done
-	@head -c 300 $(USER_BIN)/primes > $(1).broken && $(TFSTOOL_RS) put $(1) broken $(1).broken > /dev/null
+	@for program in $(DISK_PROGRAMS); do $(TFSTOOL_RS) put $(1) $$program $(2)/$$program > /dev/null || exit 1; done
+	@for program in $(C_PROGRAMS); do $(TFSTOOL_RS) put $(1) $$program $(3)/$$program > /dev/null || exit 1; done
+	@head -c 300 $(2)/primes > $(1).broken && $(TFSTOOL_RS) put $(1) broken $(1).broken > /dev/null
 	@seq 300 | sed 's/.*/line & of 300/' > $(1).long && $(TFSTOOL_RS) put $(1) long $(1).long > /dev/null
 	@$(TFSTOOL_RS) mkdir $(1) docs > /dev/null && printf 'Read me, from the host\n' > $(1).readme \
 	    && $(TFSTOOL_RS) put $(1) docs/readme $(1).readme > /dev/null
-	@$(TFSTOOL_RS) mkdir $(1) tools > /dev/null && $(TFSTOOL_RS) put $(1) tools/given $(USER_BIN)/given > /dev/null
+	@$(TFSTOOL_RS) mkdir $(1) tools > /dev/null && $(TFSTOOL_RS) put $(1) tools/given $(2)/given > /dev/null
+endef
+define make-test-disk
+	$(call make-test-disk-from,$(1),$(USER_BIN),$(C_BIN))
 endef
 
 # The disk `make run64` attaches: a 16 MiB TaajFS volume that is kept
@@ -730,7 +735,7 @@ HAVE_A64     := $(shell command -v qemu-system-aarch64 >/dev/null && [ -n "$(LLV
 # The programs the AArch64 kernel embeds: the user/ crate again, for
 # the other CPU. Named one by one, because a few programs are for the PC
 # only (they use I/O ports) and would not compile.
-USER_A64_BINS := hello peek cli spin echod echoc fs fscheck memro heapcheck forever regs blk blkcheck
+USER_A64_BINS := $(filter-out kbd port gs display,$(patsubst user/src/bin/%.rs,%,$(wildcard user/src/bin/*.rs)))
 
 user-aarch64:
 	cd user && cargo build --release --target $(KERNEL_A64_TARGET) $(addprefix --bin ,$(USER_A64_BINS))
@@ -743,7 +748,7 @@ user-aarch64:
 # its kernel (the c-programs feature) and run by a self-test.
 C_A64_BIN      = $(BUILD_DIR)/c-aarch64
 LIBC_A64_RUST  = $(LIBC_DIR)/target/$(KERNEL_A64_TARGET)/release/libc.a
-C_A64_PROGRAMS = chello cmem cprint cprimes
+C_A64_PROGRAMS = $(C_PROGRAMS)
 # As TAAJ_CFLAGS. There is no red zone to switch off on this CPU, and
 # "general registers only" here means no floating point or vector
 # registers - which the kernel leaves switched off for programs.
@@ -753,12 +758,6 @@ TAAJ_A64_CFLAGS  = --target=aarch64-unknown-none-elf -std=c11 -O2 -Wall -Wextra 
 # The linker would otherwise line segments up for 64 KiB pages, which
 # some AArch64 systems use: 60 KiB of padding in every file.
 TAAJ_A64_LDFLAGS = $(TAAJ_LDFLAGS) -z max-page-size=4096
-ifeq ($(HAVE_CC),yes)
-KERNEL_A64_FEATURES = c-programs
-else
-KERNEL_A64_FEATURES =
-endif
-
 cprogs-aarch64:
 ifeq ($(HAVE_CC),yes)
 	cd $(LIBC_DIR) && cargo build --release --target $(KERNEL_A64_TARGET)
@@ -778,22 +777,84 @@ else
 endif
 
 kernel-aarch64: user-aarch64 cprogs-aarch64
-	cd $(KERNEL64_DIR) && cargo build --release --target $(KERNEL_A64_TARGET) $(addprefix --features ,$(KERNEL_A64_FEATURES))
+	cd $(KERNEL64_DIR) && cargo build --release --target $(KERNEL_A64_TARGET)
 	@mkdir -p $(BUILD_DIR)/aarch64
-	$(LLVM_OBJCOPY) -O binary $(KERNEL_A64_ELF) $(KERNEL_A64_IMAGE)
+	$(LLVM_OBJCOPY) -O binary $(KERNEL_A64_ELF) $(KERNEL_A64_IMAGE).new && mv -f $(KERNEL_A64_IMAGE).new $(KERNEL_A64_IMAGE)
 
-# The serial port is this terminal. Ctrl+A, then X, leaves QEMU.
-# RUN_A64 adds QEMU options: make run-aarch64 RUN_A64="-M virt,virtualization=on"
-run-aarch64: kernel-aarch64
+# The disk the AArch64 boot test attaches: as the PC's, with the
+# programs compiled for the other CPU.
+A64_USER_BIN  = user/target/$(KERNEL_A64_TARGET)/release
+A64_TEST_DISK = $(BUILD_DIR)/aarch64/keys.disk
+aarch64-test-disk: user-aarch64 cprogs-aarch64 tfstool-rs
+	@mkdir -p $(BUILD_DIR)/aarch64
+	$(call make-test-disk-from,$(A64_TEST_DISK),$(A64_USER_BIN),$(C_A64_BIN))
+
+# The disk `make run-aarch64` attaches: as the PC's run-disk - a 16 MiB
+# TaajFS volume kept from one run to the next, its programs replaced
+# with the ones just built.
+RUN_A64_DISK = $(BUILD_DIR)/aarch64/taaj-disk.img
+run-aarch64-disk: user-aarch64 cprogs-aarch64 tfstool-rs
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@[ -f $(RUN_A64_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_A64_DISK) 4096 > /dev/null && truncate -s 16M $(RUN_A64_DISK) \
+	    && printf 'Hello from the host\n' > $(RUN_A64_DISK).welcome && $(TFSTOOL_RS) put $(RUN_A64_DISK) welcome $(RUN_A64_DISK).welcome > /dev/null \
+	    && echo "Made a new disk: $(RUN_A64_DISK)"; }
+	@for program in $(DISK_PROGRAMS); do \
+	    $(TFSTOOL_RS) rm $(RUN_A64_DISK) $$program > /dev/null 2>&1; \
+	    $(TFSTOOL_RS) put $(RUN_A64_DISK) $$program $(A64_USER_BIN)/$$program > /dev/null || exit 1; \
+	done
+	@for program in $(C_PROGRAMS); do \
+	    $(TFSTOOL_RS) rm $(RUN_A64_DISK) $$program > /dev/null 2>&1; \
+	    $(TFSTOOL_RS) put $(RUN_A64_DISK) $$program $(C_A64_BIN)/$$program > /dev/null || exit 1; \
+	done
+
+# The serial port is this terminal: what you type goes to the shell.
+# Ctrl+A, then X, leaves QEMU. RUN_A64 adds QEMU options:
+#   make run-aarch64 RUN_A64="-M virt,gic-version=3"
+# RUN_A64_DEVICES is the disk; give it empty for a machine without one,
+# or another disk of your own:
+#   make run-aarch64 RUN_A64_DEVICES=
+RUN_A64_DEVICES = -drive file=$(RUN_A64_DISK),if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0
+run-aarch64: kernel-aarch64 run-aarch64-disk
 	@echo "(to leave QEMU: Ctrl+A, then X)"
-	qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic -kernel $(KERNEL_A64_IMAGE) $(RUN_A64)
+	qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic -kernel $(KERNEL_A64_IMAGE) $(RUN_A64_DEVICES) $(RUN_A64)
 
 # Boots on several machines, and one deliberate fault.
-aarch64-test: user-aarch64 cprogs-aarch64
+aarch64-test: user-aarch64
 ifeq ($(HAVE_A64),yes)
-	$(KERNEL64_DIR)/scripts/aarch64-test.sh $(BUILD_DIR) $(LLVM_OBJCOPY) $(KERNEL_A64_FEATURES)
+	$(KERNEL64_DIR)/scripts/aarch64-test.sh $(BUILD_DIR) $(LLVM_OBJCOPY)
 else
 	@echo "qemu-system-aarch64 or llvm-objcopy not found: the AArch64 boots are not run (sudo apt install qemu-system-arm llvm)"
+endif
+
+# The whole system on AArch64, used: the disk the PC's boot test gets
+# (with the programs compiled for this CPU), the keys the PC's test
+# types (as the bytes a terminal sends for them), and the PC's own
+# check of what came of it (which knows the few lines that name the
+# PC's own drivers).
+A64_KEYS_LOG    = $(BUILD_DIR)/aarch64/keys.log
+# The second boot of that test: one CPU, and a program that never gives
+# it up of its own accord. What the shell then says must still reach
+# the terminal - the kernel writes programs' output when the CPU is
+# idle, and here it never is (console.rs: the timer writes too).
+A64_BUSY_LOG    = $(BUILD_DIR)/aarch64/busy.log
+A64_BUSY_DISK   = $(BUILD_DIR)/aarch64/busy.disk
+A64_BUSY_KEYS   = f o r e v e r spc shift-7 ret e c h o spc s t i l l spc h e r e ret
+aarch64-keys-test: aarch64-test-disk
+ifeq ($(HAVE_A64),yes)
+	@echo "Booting the AArch64 kernel and typing at its serial port (log: $(A64_KEYS_LOG))..."
+	@KEYS="$(TEST_KEYS)" QEMU_ARGS="-drive file=$(A64_TEST_DISK),if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0" \
+	    $(KERNEL64_DIR)/scripts/aarch64-boot.sh $(KERNEL_A64_IMAGE) $(A64_KEYS_LOG) 40
+	@ARCH=aarch64 DISK=$(A64_TEST_DISK) TFSTOOL=$(TFSTOOL_RS) CWORDS_HOST=$(CWORDS_HOST) CWORDS_TAAJ=$(C_A64_BIN)/cwords CPRIMES_HOST=$(CPRIMES_HOST) CPRIMES_LIMIT=$(CPRIMES_LIMIT) TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" \
+	    $(KERNEL64_DIR)/scripts/check-boot.sh $(A64_KEYS_LOG) "" > $(A64_KEYS_LOG).out || { grep -a "^FAIL" $(A64_KEYS_LOG).out; echo "FAIL: the typed session on AArch64 (all of it in $(A64_KEYS_LOG).out)"; exit 1; }
+	@echo "Booting it again, to type while a program computes without end (log: $(A64_BUSY_LOG))..."
+	@cp $(A64_TEST_DISK) $(A64_BUSY_DISK)
+	@KEYS="$(A64_BUSY_KEYS)" QEMU_ARGS="-drive file=$(A64_BUSY_DISK),if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0" \
+	    $(KERNEL64_DIR)/scripts/aarch64-boot.sh $(KERNEL_A64_IMAGE) $(A64_BUSY_LOG) 40
+	@grep -aq '\[shell\] ran "echo still here"' $(A64_BUSY_LOG) && grep -aq '^still here' $(A64_BUSY_LOG) \
+	    || { echo "FAIL: with a program computing in the background, the terminal showed nothing more (log: $(A64_BUSY_LOG))"; exit 1; }
+	@echo "aarch64-keys-test passed"
+else
+	@echo "qemu-system-aarch64 or llvm-objcopy not found: the AArch64 boots are not run"
 endif
 
 # Every layer: host unit tests, a normal boot (BIOS and UEFI) with its
@@ -812,14 +873,14 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 7
-TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test
+TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared
 	@$(MAKE) --no-print-directory -j$(TEST_JOBS) --output-sync=target test64-parts
 	@echo "test64: all passed"
 
-test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64
+test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64
 
 test64-parts: $(TEST64_PARTS)
 

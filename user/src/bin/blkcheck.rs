@@ -74,6 +74,14 @@ fn main() -> i64 {
         println!("[blkcheck] FAILED: the driver does not answer");
         return line!() as i64;
     };
+    // Is this the disk made for the test? Its first sector says. Any
+    // other disk has someone's data on it, and this program writes:
+    // it stops here, having changed nothing.
+    let mut first = [0u8; SECTOR];
+    if disk.read(0, &mut first) == Ok(()) && !holds(&first, 0, original) {
+        println!("[blkcheck] this is not the test's disk ({sectors} sectors): read, and left alone");
+        return block::NOT_THE_TEST_DISK;
+    }
     check!(sectors >= SECTORS_NEEDED, "the disk is too small for this test");
     check!(look.info() == Ok((sectors, read_only)), "the second channel describes the same disk");
 

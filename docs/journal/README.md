@@ -67,6 +67,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 057 | [C on AArch64: a library with nothing to port, and what `char` means](057-c-on-aarch64.md) | written | `1f254e3` (TheKernel `897b1ac`) |
 | 058 | [Devices without a bus: thirty-two places, and what each says about itself](058-devices-without-a-bus.md) | written | `fd4ec19` (TheKernel `ae1d7a6`) |
 | 059 | [One driver, two machines: a disk handed to a program on AArch64, and an interrupt that is a wire](059-one-driver-two-machines.md) | written | `f0b13cd` (TheKernel `a8ea35b`) |
+| 060 | [The same system on the other CPU: a serial port for a keyboard and a screen, the PC's session typed at it, and a terminal that froze when a program computed](060-the-same-system-on-the-other-cpu.md) | written | this step |
 
 ## How to run what the entries describe
 

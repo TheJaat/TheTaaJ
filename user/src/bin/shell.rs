@@ -423,7 +423,10 @@ impl Shell {
     /// To the user, whatever the line said about its output: the
     /// screen, and the debug log.
     fn tell(&self, bytes: &[u8]) {
-        let _ = taaj::write(bytes);
+        // Where the screen is the log, once is enough.
+        if !(taaj::LOG_IS_SCREEN && self.screen.is_some()) {
+            let _ = taaj::write(bytes);
+        }
         self.screen_only(bytes);
     }
 

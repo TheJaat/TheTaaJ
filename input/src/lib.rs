@@ -22,6 +22,7 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod line;
+pub mod serial;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
