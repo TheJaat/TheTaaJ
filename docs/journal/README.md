@@ -71,7 +71,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 061 | [Every CPU, and a loader of my own: the other CPUs started through the firmware (PSCI) and running threads, a log merged by line because four CPUs tore the terminal's lines apart, and a UEFI loader for AArch64](061-every-cpu-and-a-loader-of-my-own.md) | written | `610765b` (TheKernel `a978488`, TheBootloader `bf7e473`) |
 | 062 | [A network card: a driver for the virtio card on both machines, Ethernet frames between programs in one or two messages, who waits for whom, and a test with a second computer - a program on the host - on the other end of the cable](062-a-network-card.md) | written | `6b341d7` (TheKernel `7997f4d`) |
 | 063 | [On the network: the protocols (Ethernet, ARP, IPv4, ICMP, UDP) as a crate with no machine in it, a network service that gives programs ping and UDP ports, the card shared by frame type, and tests against a router made by hand and QEMU's own network](063-on-the-network.md) | written | `62c30a2` (TheKernel `04a41ab`) |
-| 064 | [Connections: TCP as a connection with no machine in it, tested over a simulated network that loses, doubles and delays; each connection a channel to its program, with the program's speed carried back as TCP's window; and the Berkeley socket calls for C](064-connections.md) | written | this step |
+| 064 | [Connections: TCP as a connection with no machine in it, tested over a simulated network that loses, doubles and delays; each connection a channel to its program, with the program's speed carried back as TCP's window; and the Berkeley socket calls for C](064-connections.md) | written | `6c756e4` (TheKernel `b92f307`) |
 
 ## How to run what the entries describe
 
