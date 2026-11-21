@@ -111,6 +111,15 @@ const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp"]
 /// stand first.
 const OWN_COMMANDS: &[&str] =
     &["help", "echo", "cd", "pwd", "clear", "uptime", "mem", "ps", "time", "run", "with", "fs", "display", "disk", "jobs", "kill", "wait", "services", "registry"];
+/// "one CPU" or "4 CPUs": how many, in words a sentence can use.
+fn cpus_text(cpus: u64) -> String {
+    if cpus == 1 {
+        String::from("one CPU")
+    } else {
+        alloc::format!("{cpus} CPUs")
+    }
+}
+
 /// Most commands in one pipeline. The wait watches them all at once,
 /// with the keyboard and an output, and the kernel waits on 32 things
 /// at most - but nobody types eight.
@@ -799,10 +808,32 @@ impl Shell {
             "time" if !arguments.is_empty() => {
                 // Ticks are 10 ms apart: good for "is it slow", no finer.
                 let start = taaj::ticks();
+                // Two clocks: the time that passed, and the work the
+                // CPUs did in it. With one CPU the second cannot be
+                // more than the first; with four, four programs at
+                // once make it four times as much.
+                // Asked quietly: a shell without the system handle still
+                // times things, with the one clock everyone may read.
+                let look = || self.system.and_then(|system| taaj::system_info(system).ok());
+                let busy = look().map(|info| info.busy_ticks);
                 // The words that follow are a command, already divided.
                 self.run_words(arguments);
                 let hundredths = taaj::ticks() - start;
-                say!(self, "took {}.{:02} s\n", hundredths / 100, hundredths % 100);
+                match (busy, look()) {
+                    (Some(busy), Some(info)) => {
+                        let worked = info.busy_ticks - busy;
+                        say!(
+                            self,
+                            "took {}.{:02} s; the {} worked for {}.{:02} s in all\n",
+                            hundredths / 100,
+                            hundredths % 100,
+                            cpus_text(info.cpus),
+                            worked / 100,
+                            worked % 100
+                        );
+                    }
+                    _ => say!(self, "took {}.{:02} s\n", hundredths / 100, hundredths % 100),
+                }
             }
             "time" => self.write(b"usage: time COMMAND\n"),
             // `[name, arguments @ ..]`: a first element, and a name for
@@ -880,7 +911,8 @@ impl Shell {
     fn uptime(&self) {
         let Some(info) = self.system_info() else { return };
         let hundredths = info.ticks * 100 / info.ticks_per_second.max(1);
-        say!(self, "up {}.{:02} s ({} ticks)\n", hundredths / 100, hundredths % 100, info.ticks);
+        let cpus = cpus_text(info.cpus);
+        say!(self, "up {}.{:02} s ({} ticks), on {cpus}\n", hundredths / 100, hundredths % 100, info.ticks);
     }
 
     fn mem(&self) {

@@ -224,3 +224,55 @@ make run64
 **To see the wall itself** (optional): in `kernel/kernel64/linker.ld` change `KERNEL_LOAD_LIMIT = 0x300000;` to `0x100000;` and run `make kernel64`. The build should stop with `the kernel image ends above 3 MiB, where the bootloader refuses to load it`. Change it back.
 
 Automated: `make test64`
+
+---
+
+## 049 · The Milestone: A C Program on Four CPUs
+
+[The entry](journal/049-the-milestone.md)
+
+**1. Compile the C program on your machine and put it on the disk**
+
+```
+make cput C=cprimes
+```
+
+should end `cprimes is on build/taaj-disk.img: make run64, and type cprimes`.
+
+**2. Run it, on four CPUs**
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `cprimes 100` | `cprimes: 25 primes below 100` |
+| `cprimes 12x` | `cprimes: not a limit between 0 and 1000000000: 12x` |
+| `cprimes` | `usage: cprimes LIMIT` |
+| `time cprimes 4000000` | `cprimes: 283146 primes below 4000000`, then `took 1.… s; the 4 CPUs worked for 1.… s in all` (mine: 1.05 and 1.08) — the two numbers about the same: one program, one CPU's work |
+| `uptime` | `up … s (… ticks), on 4 CPUs` |
+| `cprimes 60000000 &` and Enter, four times, quickly — each takes about a minute | `[1] cprimes 60000000` … `[4] cprimes 60000000` |
+| `jobs` | Four jobs, running |
+| `time wait` | Four lines `cprimes: 3562115 primes below 60000000`, then `took T s; the 4 CPUs worked for W s in all` with **W three to four times T** |
+
+**3. The same on one CPU**
+
+```
+make run64 RUN_CPUS=1
+```
+
+| Type | You should see |
+|---|---|
+| `uptime` | `… on one CPU` |
+| `cprimes 24000000 &` four times, then `time wait` | The same four answers (`1507122 primes below 24000000`), and `took T s; the one CPU worked for W s in all` with **W equal to T**, or a hair under. Typing will feel slow while they run - each key waits its turn behind four busy programs - so `time wait` may be read late and T may be much less than the minute the four really take. `uptime` before and after shows the real time. The ratio is the result. |
+
+**4. Compare with your own machine** (optional)
+
+```
+build/c/host-cprimes 24000000
+```
+
+prints the line TheTaaJ printed. It is the same `libc/programs/cprimes.c`, compiled by `cc` against Linux's C library.
+
+Automated: `make test64`
