@@ -53,7 +53,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 043 | [The keyboard as standard input: whose key is it?](043-the-keyboard-as-standard-input.md) | written | `a848c27` (TheKernel `47b346d`) |
 | 044 | [Waking the other CPUs](044-waking-the-other-cpus.md) | written | `7a9b600` (TheKernel `a0f67aa`) |
 | 045 | [Each CPU finds itself: GS and `swapgs`](045-each-cpu-finds-itself.md) | written | `17ea055` (TheKernel `c11bcb3`) |
-| 046 | [Threads on every CPU: one queue, four rules, and stopping together](046-threads-on-every-cpu.md) | written | this step (TheKernel `b75611a`) |
+| 046 | [Threads on every CPU: one queue, four rules, and stopping together](046-threads-on-every-cpu.md) | written | `f1260f6` (TheKernel `b75611a`) |
+| 047 | [One CPU taps another on the shoulder: the reschedule interrupt](047-one-cpu-taps-another.md) | written | this step (TheKernel `5235c30`) |
 
 ## How to run what the entries describe
 

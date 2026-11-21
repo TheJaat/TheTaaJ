@@ -137,3 +137,46 @@ cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu sched
 should end `20 passed`.
 
 Automated: `make test64`
+
+---
+
+## 047 · One CPU Taps Another on the Shoulder: the Reschedule Interrupt
+
+[The entry](journal/047-one-cpu-taps-another.md)
+
+```
+make run64
+```
+
+**In the log** (the terminal `make run64` was started from)
+
+| Look for | You should see |
+|---|---|
+| `[selftest] wake-ups:` | `a thread woken by a busy CPU ran on an idle one NNN us later (median of 40; slowest NNNN us; 40 interrupts between CPUs)`. The first number should be in the hundreds, sometimes a little over a thousand; 10 000 would be a whole tick. The last should be 40 or 41 |
+| `FAILED` | Nothing |
+
+**In the window** — nothing new to type; the system should feel the same or a little quicker
+
+| Type | You should see |
+|---|---|
+| `ls \| wc` | A count, at once: the two programs of a pipeline hand every line to each other, and each hand-over used to be able to wait for a tick |
+| `forever &` then `echo still quick` | The echo at once, with one CPU spinning |
+| `kill 1` | The `forever` stopped |
+| `primes`, `ps`, `cask` | As before |
+
+**Other numbers of CPUs**
+
+| Run | You should see |
+|---|---|
+| `make run64 RUN_CPUS=1` | `[selftest] wake-ups: 1 CPU, so nobody to tell`, and a working system |
+| `make run64 RUN_CPUS=2` | The `wake-ups` line as with four |
+
+**On the host**
+
+```
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu sched
+```
+
+should end `27 passed`.
+
+Automated: `make test64`
