@@ -2,7 +2,7 @@
 name = "virtio"
 version = "0.1.0"
 edition = "2021"
-description = "virtio devices: the legacy PCI registers, virtqueues and block requests"
+description = "virtio devices: the legacy PCI and memory-mapped registers, virtqueues and block requests"
 publish = false
 
 [dependencies]

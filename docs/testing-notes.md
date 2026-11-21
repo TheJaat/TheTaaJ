@@ -860,3 +860,74 @@ cd libc && cargo clippy --release
 Both should print no warnings.
 
 Automated: `make test64`
+
+---
+
+## 058 · Devices without a bus
+
+[The entry](journal/058-devices-without-a-bus.md)
+
+**1. No devices: thirty-two empty places**
+
+```
+make run-aarch64
+```
+
+Nothing to type. To leave QEMU: **Ctrl+A, then X**.
+
+| Look for | Meaning |
+|---|---|
+| `[virtio] 32 places at 0xa000000 - 0xa004000: 0 with a device, 32 empty` | every place the tree lists was looked at; none is occupied |
+
+**2. A disk and a second device**
+
+```
+head -c 3145216 /dev/zero > /tmp/taaj-a64-disk.img
+make run-aarch64 RUN_A64="-drive file=/tmp/taaj-a64-disk.img,if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0 -device virtio-rng-device"
+```
+
+| Look for | Meaning |
+|---|---|
+| `[virtio] 0xa003e00: block device (legacy interface), 6143 sectors (3071 KiB), interrupt 79 (edge)` | the disk, in the last place, with its real size |
+| `[virtio] 0xa003c00: source of random numbers (legacy interface), interrupt 78 (edge)` | the second device, one place down |
+| `[virtio] 32 places at 0xa000000 - 0xa004000: 2 with a device, 30 empty` | the count |
+
+**3. The newer interface**
+
+```
+make run-aarch64 RUN_A64="-global virtio-mmio.force-legacy=false -drive file=/tmp/taaj-a64-disk.img,if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0"
+```
+
+| Look for | Meaning |
+|---|---|
+| `[virtio] 0xa003e00: block device (modern interface), 6143 sectors (3071 KiB), interrupt 79 (edge)` | the same disk, version 2 of the registers |
+
+**4. What the tree itself says** (needs `dtc`: `sudo apt install device-tree-compiler`)
+
+```
+qemu-system-aarch64 -M virt -cpu cortex-a72 -machine dumpdtb=/tmp/virt.dtb
+dtc -I dtb -O dts /tmp/virt.dtb | grep -c 'compatible = "virtio,mmio"'
+```
+
+should print `32`.
+
+**5. Host checks**
+
+```
+cd virtio && cargo test
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu devicetree
+```
+
+Both should end `test result: ok.` - 7 tests and 26 tests.
+
+**6. The PC is unchanged**
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `ls` | the files on the disk, as before |
+
+Automated: `make test64`

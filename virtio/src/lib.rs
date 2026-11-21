@@ -60,6 +60,113 @@ pub mod legacy {
     pub const FAILED: u8 = 128; // and gave up
 }
 
+/// virtio over memory-mapped registers ("virtio-mmio"): what machines
+/// without a PCI bus have - QEMU's `virt` board among them. A device is
+/// 512 bytes of registers at an address the machine's description
+/// gives (the device tree), and one interrupt.
+///
+/// PCI says what a device is before any driver looks at it (vendor and
+/// device ids in its configuration space). Here there is no such thing:
+/// the description names only *places*, most of them empty, and what is
+/// in a place is read from the place itself - the first four registers.
+pub mod mmio {
+    pub const MAGIC: u32 = 0x000; // "virt", so that nothing else is mistaken for one
+    pub const VERSION: u32 = 0x004; // 1: the legacy interface; 2: the modern one
+    pub const DEVICE_ID: u32 = 0x008; // what it is; 0 means the place is empty
+    pub const VENDOR_ID: u32 = 0x00C;
+    pub const HOST_FEATURES: u32 = 0x010; // what the device offers...
+    pub const HOST_FEATURES_SELECT: u32 = 0x014; // ...32 bits at a time: which 32
+    pub const GUEST_FEATURES: u32 = 0x020; // what the driver accepts
+    pub const GUEST_FEATURES_SELECT: u32 = 0x024;
+    pub const GUEST_PAGE_SIZE: u32 = 0x028; // legacy: the unit QUEUE_PFN counts in
+    pub const QUEUE_SELECT: u32 = 0x030; // which queue the next five mean
+    pub const QUEUE_SIZE_MAX: u32 = 0x034; // the most entries the device takes
+    pub const QUEUE_SIZE: u32 = 0x038; // how many the driver uses
+    pub const QUEUE_ALIGN: u32 = 0x03C; // legacy: alignment of the used ring
+    pub const QUEUE_PFN: u32 = 0x040; // legacy: queue memory, physical / page size
+    pub const QUEUE_NOTIFY: u32 = 0x050; // "queue n has new buffers"
+    pub const INTERRUPT_STATUS: u32 = 0x060; // why it interrupted
+    pub const INTERRUPT_ACK: u32 = 0x064; // "seen": the device lets go of the line
+    pub const STATUS: u32 = 0x070; // the steps of setting up (as `legacy`)
+    pub const CONFIG: u32 = 0x100; // the device's own configuration
+
+    /// What MAGIC reads on a virtio device: the letters "virt".
+    pub const MAGIC_VALUE: u32 = 0x7472_6976;
+
+    /// Device kinds (DEVICE_ID).
+    pub const DEVICE_NETWORK: u32 = 1;
+    pub const DEVICE_BLOCK: u32 = 2;
+    pub const DEVICE_CONSOLE: u32 = 3;
+    pub const DEVICE_ENTROPY: u32 = 4;
+    pub const DEVICE_GPU: u32 = 16;
+    pub const DEVICE_INPUT: u32 = 18;
+
+    /// What is in one place.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Identity {
+        /// 1 (legacy) or 2 (modern).
+        pub version: u32,
+        /// The kind of device.
+        pub device: u32,
+        pub vendor: u32,
+    }
+
+    /// Why a place holds no device a driver could be given.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub enum Nothing {
+        /// A virtio place with nothing plugged into it: the usual case.
+        Empty,
+        /// The magic number is not there: these are not virtio
+        /// registers at all, whatever the description said.
+        NotVirtio { magic: u32 },
+        /// A version of the interface this code has not heard of.
+        UnknownVersion { version: u32 },
+    }
+
+    /// Reads what is at one place, through `read` (a register offset in,
+    /// its value out). The order matters: nothing but the magic number
+    /// may be believed until the magic number is right.
+    pub fn identify(read: impl Fn(u32) -> u32) -> Result<Identity, Nothing> {
+        let magic = read(MAGIC);
+        if magic != MAGIC_VALUE {
+            return Err(Nothing::NotVirtio { magic });
+        }
+        let version = read(VERSION);
+        if version != 1 && version != 2 {
+            return Err(Nothing::UnknownVersion { version });
+        }
+        let device = read(DEVICE_ID);
+        if device == 0 {
+            return Err(Nothing::Empty);
+        }
+        Ok(Identity { version, device, vendor: read(VENDOR_ID) })
+    }
+
+    impl Identity {
+        /// The kind of device, in words.
+        pub const fn kind(&self) -> &'static str {
+            match self.device {
+                DEVICE_NETWORK => "network card",
+                DEVICE_BLOCK => "block device",
+                DEVICE_CONSOLE => "console",
+                DEVICE_ENTROPY => "source of random numbers",
+                DEVICE_GPU => "display",
+                DEVICE_INPUT => "input device",
+                _ => "device of a kind not known here",
+            }
+        }
+
+        /// Which of the two interfaces it speaks, in words.
+        pub const fn interface(&self) -> &'static str {
+            if self.version == 1 {
+                "legacy"
+            } else {
+                "modern"
+            }
+        }
+    }
+}
+
 /// The block device: requests, and its configuration.
 pub mod block {
     pub const SECTOR: usize = 512;
@@ -262,6 +369,40 @@ impl Queue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A fake set of registers: the first four, as given.
+    fn registers(values: [u32; 4]) -> impl Fn(u32) -> u32 {
+        move |offset| {
+            assert!(offset % 4 == 0 && offset < 16, "read of register {offset:#x}");
+            values[offset as usize / 4]
+        }
+    }
+
+    #[test]
+    fn a_place_says_what_is_in_it() {
+        use mmio::{identify, Identity, Nothing};
+        let disk = identify(registers([0x7472_6976, 1, 2, 0x554D_4551])).unwrap();
+        assert_eq!(disk, Identity { version: 1, device: 2, vendor: 0x554D_4551 });
+        assert_eq!((disk.kind(), disk.interface()), ("block device", "legacy"));
+        let modern = identify(registers([0x7472_6976, 2, 4, 0])).unwrap();
+        assert_eq!((modern.kind(), modern.interface()), ("source of random numbers", "modern"));
+        assert_eq!(identify(registers([0x7472_6976, 2, 99, 0])).unwrap().kind(), "device of a kind not known here");
+        // Empty: the usual case, and not an error to report.
+        assert_eq!(identify(registers([0x7472_6976, 1, 0, 0x554D_4551])), Err(Nothing::Empty));
+        assert_eq!(identify(registers([0x7472_6976, 3, 2, 0])), Err(Nothing::UnknownVersion { version: 3 }));
+    }
+
+    #[test]
+    fn nothing_is_believed_before_the_magic_number() {
+        use mmio::{identify, Nothing, MAGIC};
+        // Not virtio registers: only the first one may be read.
+        let read = |offset| {
+            assert_eq!(offset, MAGIC, "read past a wrong magic number");
+            0xFFFF_FFFF
+        };
+        assert_eq!(identify(read), Err(Nothing::NotVirtio { magic: 0xFFFF_FFFF }));
+        assert_eq!(&mmio::MAGIC_VALUE.to_le_bytes(), b"virt");
+    }
 
     /// Page-aligned memory, with "physical" addresses = host addresses.
     struct Memory(*mut u8, usize);
