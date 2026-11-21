@@ -276,3 +276,78 @@ build/c/host-cprimes 24000000
 prints the line TheTaaJ printed. It is the same `libc/programs/cprimes.c`, compiled by `cc` against Linux's C library.
 
 Automated: `make test64`
+
+---
+
+## 050 · First Words on AArch64
+
+[The entry](journal/050-first-words-on-aarch64.md)
+
+**1. Run the AArch64 kernel**
+
+```
+make run-aarch64
+```
+
+The serial port is your terminal. There is nothing to type yet. To leave QEMU: **Ctrl+A, then X**.
+
+| Look for | Meaning |
+|---|---|
+| `Hello from TheTaaJ!` | the serial port works, through its mapping as a device |
+| `kernel_main at 0xffffffff8008…` | Rust is running in the high half: the MMU is on |
+| `[cpu] breakpoint at 0xffffffff8008… - continuing`, once | an exception was taken… |
+| `[cpu] resumed after the breakpoint - exceptions round-trip` | …and returned from, with all 31 registers intact |
+| `[cpu] Arm Cortex-A72 (id 0x410fd083), at exception level 1; the loader entered at level 1` | |
+| `[cpu] 44 bits of physical address; MMU on, the kernel loaded at 0x40080000 and running at 0xffffffff80080000` | where it was put, and where it thinks it is |
+| `[boot] device tree at 0x48000000: 1048576 bytes, version 17, boot CPU 0` | the loader's `x0` pointed at a real device tree |
+| `[kernel] this is as far as the AArch64 port goes - halting` | the end, for now |
+
+**2. Entered at exception level 2**
+
+```
+make run-aarch64 RUN_A64="-M virt,virtualization=on"
+```
+
+| Look for | Meaning |
+|---|---|
+| `…at exception level 1; the loader entered at level 2` | the kernel came down a level by itself |
+| every other line as in step 1 | |
+
+**3. A fault, caught**
+
+```
+make aarch64-test
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic -kernel build/aarch64/Image-fault-page
+```
+
+The first command runs all the automated boots (it should end `aarch64-test: all passed`) and leaves the faulting kernel in `build/aarch64/`. The second runs it where you can watch.
+
+| Look for | Meaning |
+|---|---|
+| `[test] forcing a page fault...` | |
+| `*** CPU EXCEPTION 0x25: data abort` | the class, from the syndrome register |
+| `kernel read at 0xffffffff00000000: not mapped (the level 1 table has no entry)` | who, what, where, and how far the table walk got |
+| `from the kernel (vector 4), syndrome 0x96000005` | |
+| a register dump, `pc` to `x30`, and then nothing | the kernel stopped |
+
+**4. The PC is as it was**
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `uptime` | `up … s (… ticks), on 4 CPUs` |
+| `cprimes 100` | `cprimes: 25 primes below 100` |
+
+**5. Host checks**
+
+```
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu aarch64
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu devicetree
+```
+
+should end `test result: ok. 13 passed` and `test result: ok. 6 passed`.
+
+Automated: `make test64`

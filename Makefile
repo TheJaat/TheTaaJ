@@ -712,9 +712,43 @@ endif
 fault64-test: build-bootloader user64
 	$(KERNEL64_DIR)/scripts/fault-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR)
 
+# ---- AArch64 (Era 3) -------------------------------------------------
+#
+# The same kernel crate, built for a second architecture. There is no
+# loader of TheTaaJ's own for it yet: QEMU's "virt" machine is given a
+# flat image with the header AArch64 loaders look for, and loads it as a
+# board's firmware would. The image is made from the ELF file by
+# llvm-objcopy (the PC's objcopy does not know AArch64 files).
+KERNEL_A64_TARGET = aarch64-unknown-none-softfloat
+KERNEL_A64_ELF    = $(KERNEL64_DIR)/target/$(KERNEL_A64_TARGET)/release/kernel64
+KERNEL_A64_IMAGE  = $(BUILD_DIR)/aarch64/Image
+# llvm-objcopy, or the newest llvm-objcopy-NN: some systems install it
+# only under a name with its version.
+LLVM_OBJCOPY := $(shell command -v llvm-objcopy || ls /usr/bin/llvm-objcopy-* 2>/dev/null | sort -V | tail -1)
+HAVE_A64     := $(shell command -v qemu-system-aarch64 >/dev/null && [ -n "$(LLVM_OBJCOPY)" ] && echo yes)
+
+kernel-aarch64:
+	cd $(KERNEL64_DIR) && cargo build --release --target $(KERNEL_A64_TARGET)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	$(LLVM_OBJCOPY) -O binary $(KERNEL_A64_ELF) $(KERNEL_A64_IMAGE)
+
+# The serial port is this terminal. Ctrl+A, then X, leaves QEMU.
+# RUN_A64 adds QEMU options: make run-aarch64 RUN_A64="-M virt,virtualization=on"
+run-aarch64: kernel-aarch64
+	@echo "(to leave QEMU: Ctrl+A, then X)"
+	qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic -kernel $(KERNEL_A64_IMAGE) $(RUN_A64)
+
+# Boots on several machines, and one deliberate fault.
+aarch64-test:
+ifeq ($(HAVE_A64),yes)
+	$(KERNEL64_DIR)/scripts/aarch64-test.sh $(BUILD_DIR) $(LLVM_OBJCOPY)
+else
+	@echo "qemu-system-aarch64 or llvm-objcopy not found: the AArch64 boots are not run (sudo apt install qemu-system-arm llvm)"
+endif
+
 # Every layer: host unit tests, a normal boot (BIOS and UEFI) with its
-# self-tests, and the fault boots.
-test64: kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test
+# self-tests, the fault boots, and the AArch64 kernel.
+test64: kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test
 	@echo "test64: all passed"
 
 # Clean everything
