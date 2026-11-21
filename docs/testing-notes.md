@@ -1473,3 +1473,113 @@ cd kernel/abi && cargo test
 `30 passed` and `21 passed`.
 
 Automated: `make test64`
+
+---
+
+## 064 · Connections
+
+[The entry](journal/064-connections.md)
+
+**1. Connections out of the machine (PC)**
+
+On the host, in one terminal, something to connect to - a listener that prints what it gets:
+
+```
+nc -l 127.0.0.1 5009
+```
+
+In another terminal:
+
+```
+make run64
+```
+
+| Type (in QEMU) | You should see |
+|---|---|
+| `tcpsend 10.0.2.2 5009 hello from taaj` | `tcpsend: connected to 10.0.2.2:5009 from port 49152`, `tcpsend: 16 bytes sent, sum 335d05b2`; on the host, `nc` prints `hello from taaj` and ends - this `nc` ends as soon as the other side says it has no more to send - so the machine reads to the end at once: `tcpsend: 0 bytes back, sum 00000000, in … ms` |
+| `tcpsend 10.0.2.2 5009` | `tcpsend: 10.0.2.2:5009: nothing is listening on that port there` (the `nc` has ended), and `tcpsend exited with code 1` |
+| `tcpsend 10.0.2.99 80` | after three seconds: `tcpsend: 10.0.2.99:80: nobody on this network has that address` |
+| `netinfo` | a last line `tcp      … segments in, … sent again, 0 answered "no such connection"` |
+
+**2. Connections into the machine, and C**
+
+Start the machine with two of the host's ports passed on to the machine's ports 7 and 8000:
+
+```
+make run64 RUN_NET="-netdev user,id=n0,hostfwd=tcp:127.0.0.1:5007-:7,hostfwd=tcp:127.0.0.1:5080-:8000 -device virtio-net-pci,netdev=n0"
+```
+
+| Type (in QEMU) | You should see |
+|---|---|
+| `tcpecho &` | `[1] tcpecho`, and `tcpecho: listening on port 7` |
+
+On the host:
+
+```
+echo hello there | nc -N 127.0.0.1 5007
+```
+
+| Look for | Meaning |
+|---|---|
+| `hello there` printed by `nc` | the line went in and came back |
+| in QEMU: `tcpecho: 12 bytes echoed to 10.0.2.2:…` | the machine served the connection to its end |
+
+| Type (in QEMU) | You should see |
+|---|---|
+| `cnet serve 7 1` | `cnet: port 7: another program has that port` |
+| `cnet serve 8000 1` | `cnet: listening on port 8000`, and it waits |
+
+On the host:
+
+```
+echo hi from the host | nc -N 127.0.0.1 5080
+```
+
+| Look for | Meaning |
+|---|---|
+| `you sent 17 bytes: HI FROM THE HOST` printed by `nc` | a C program accepted the connection, read to the end and answered |
+| in QEMU: `cnet: 17 bytes from 10.0.2.2:…, answered` | |
+
+And C going out. On the host: `nc -l 127.0.0.1 5009`, then:
+
+| Type (in QEMU) | You should see |
+|---|---|
+| `cnet send 10.0.2.2 5009 hello from c` | `cnet: connected to 10.0.2.2:5009 from port …`; `nc` prints `hello from c` and ends; then `cnet: 0 bytes back, and the other side is done` |
+
+**3. The same on AArch64**
+
+On the host: `nc -l 127.0.0.1 5009`. Then:
+
+```
+make run-aarch64
+```
+
+The terminal is the keyboard and screen. To leave QEMU: **Ctrl+A, then X**.
+
+| Type | You should see |
+|---|---|
+| `tcpsend 10.0.2.2 5009 hello from arm` | `tcpsend: connected to 10.0.2.2:5009 from port 49152`, `tcpsend: 15 bytes sent, sum …`; `nc` prints `hello from arm` and ends; `tcpsend: 0 bytes back, sum 00000000, in … ms` |
+| `tcpsend 10.0.2.2 5009` | `tcpsend: 10.0.2.2:5009: nothing is listening on that port there` |
+
+**4. The tests by themselves**
+
+```
+make tcp64-test
+make aarch64-tcp-test
+```
+
+Each prints the host's verdict and ends `tcp64-test passed` / `aarch64-tcp-test passed`:
+
+| Look for | Meaning |
+|---|---|
+| `host: ok: 5 checks; 3 connections from the machine served, 300029 bytes` | every connection into the machine came back whole, and the three out of it arrived |
+
+Host checks:
+
+```
+cd net && cargo test           # 72 tests: the protocols, TCP and the stack
+cd kernel/abi && cargo test    # 22 tests
+make libc-test                 # errno, and inet.c against this machine's own
+```
+
+Automated: `make test64`

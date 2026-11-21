@@ -124,6 +124,7 @@ pub mod ipv4 {
     /// The header this code writes: no options.
     pub const HEADER: usize = 20;
     pub const PROTOCOL_ICMP: u8 = 1;
+    pub const PROTOCOL_TCP: u8 = 6;
     pub const PROTOCOL_UDP: u8 = 17;
     /// How many routers a packet sent from here may pass.
     pub const TTL: u8 = 64;
@@ -308,6 +309,156 @@ pub mod udp {
     }
 }
 
+/// TCP (RFC 9293): a segment of a connection - a stream of bytes in
+/// each direction between a port on one machine and a port on another,
+/// every byte numbered.
+pub mod tcp {
+    use super::*;
+
+    /// The header without options.
+    pub const HEADER: usize = 20;
+    /// The longest header: the length is counted in 4-byte words, in 4
+    /// bits.
+    pub const HEADER_MAX: usize = 60;
+
+    /// The sender has no more to send.
+    pub const FIN: u8 = 0x01;
+    /// The first segment of a connection: "my numbering starts here".
+    pub const SYN: u8 = 0x02;
+    /// There is no such connection: forget it.
+    pub const RST: u8 = 0x04;
+    /// Hand this to the program now, do not wait for more.
+    pub const PSH: u8 = 0x08;
+    /// The acknowledgment field means something.
+    pub const ACK: u8 = 0x10;
+
+    /// The one option read here: the longest segment the sender is
+    /// willing to receive. Kind 2, length 4; only in a SYN.
+    const OPTION_END: u8 = 0;
+    const OPTION_NOTHING: u8 = 1;
+    const OPTION_MSS: u8 = 2;
+
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub struct Segment<'a> {
+        pub source_port: u16,
+        pub destination_port: u16,
+        /// The number of this segment's first byte.
+        pub sequence: u32,
+        /// The number of the next byte the sender expects (if ACK).
+        pub acknowledgment: u32,
+        pub flags: u8,
+        /// How many more bytes the sender has room for.
+        pub window: u16,
+        /// From a "maximum segment size" option, if there was one.
+        pub mss: Option<u16>,
+        pub payload: &'a [u8],
+    }
+
+    impl Segment<'_> {
+        pub fn has(&self, flag: u8) -> bool {
+            self.flags & flag != 0
+        }
+
+        /// How many numbers the segment takes up: one for each byte,
+        /// and one each for SYN and FIN - which is what lets those two
+        /// be acknowledged, and sent again if they are lost.
+        pub fn length(&self) -> u32 {
+            self.payload.len() as u32 + u32::from(self.has(SYN)) + u32::from(self.has(FIN))
+        }
+    }
+
+    /// As UDP's: the two addresses, the protocol and the length.
+    fn pseudo(source: Ipv4, destination: Ipv4, length: usize) -> u32 {
+        let sum = checksum::add(0, &source.0);
+        let sum = checksum::add(sum, &destination.0);
+        sum + u32::from(ipv4::PROTOCOL_TCP) + length as u32
+    }
+
+    /// `segment` is an IPv4 packet's payload; the addresses are that
+    /// packet's. (Unlike UDP there is no length field: a segment is as
+    /// long as the packet says its payload is.)
+    pub fn parse(source: Ipv4, destination: Ipv4, segment: &[u8]) -> Result<Segment<'_>, Bad> {
+        if segment.len() < HEADER {
+            return Err(Bad::Length);
+        }
+        let header = usize::from(segment[12] >> 4) * 4;
+        if header < HEADER || header > segment.len() {
+            return Err(Bad::Length);
+        }
+        // The checksum is not optional here.
+        if checksum::finish(checksum::add(pseudo(source, destination, segment.len()), segment)) != 0 {
+            return Err(Bad::Checksum);
+        }
+        // The options: a kind, a length (which counts both), the rest.
+        // Two kinds are a single byte. One that does not fit ends the
+        // reading; the segment is still good.
+        let mut mss = None;
+        let mut options = &segment[HEADER..header];
+        while let [kind, rest @ ..] = options {
+            match *kind {
+                OPTION_END => break,
+                OPTION_NOTHING => options = rest,
+                kind => {
+                    let Some(&length) = rest.first() else { break };
+                    let length = usize::from(length);
+                    if length < 2 || length > options.len() {
+                        break;
+                    }
+                    if kind == OPTION_MSS && length == 4 {
+                        mss = Some(be16(options, 2));
+                    }
+                    options = &options[length..];
+                }
+            }
+        }
+        Ok(Segment {
+            source_port: be16(segment, 0),
+            destination_port: be16(segment, 2),
+            sequence: u32::from_be_bytes([segment[4], segment[5], segment[6], segment[7]]),
+            acknowledgment: u32::from_be_bytes([segment[8], segment[9], segment[10], segment[11]]),
+            flags: segment[13] & 0x3F,
+            window: be16(segment, 14),
+            mss,
+            payload: &segment[header..],
+        })
+    }
+
+    /// How long the header of `segment` will be: 24 bytes with the one
+    /// option, 20 without.
+    pub fn header_length(mss: Option<u16>) -> usize {
+        if mss.is_some() {
+            HEADER + 4
+        } else {
+            HEADER
+        }
+    }
+
+    /// Writes the header of `described` at the start of `segment`; its
+    /// payload - `payload` bytes after the header (see
+    /// `header_length`) - is already there. `described.payload` is not
+    /// looked at. Returns the length of the whole.
+    pub fn write(segment: &mut [u8], source: Ipv4, destination: Ipv4, described: &Segment<'_>, payload: usize) -> usize {
+        let header = header_length(described.mss);
+        let length = header + payload;
+        segment[0..2].copy_from_slice(&described.source_port.to_be_bytes());
+        segment[2..4].copy_from_slice(&described.destination_port.to_be_bytes());
+        segment[4..8].copy_from_slice(&described.sequence.to_be_bytes());
+        segment[8..12].copy_from_slice(&described.acknowledgment.to_be_bytes());
+        segment[12] = ((header / 4) as u8) << 4;
+        segment[13] = described.flags;
+        segment[14..16].copy_from_slice(&described.window.to_be_bytes());
+        segment[16..20].copy_from_slice(&[0; 4]); // the checksum, and "urgent": not used
+        if let Some(mss) = described.mss {
+            segment[20] = OPTION_MSS;
+            segment[21] = 4;
+            segment[22..24].copy_from_slice(&mss.to_be_bytes());
+        }
+        let sum = checksum::finish(checksum::add(pseudo(source, destination, length), &segment[..length]));
+        segment[16..18].copy_from_slice(&sum.to_be_bytes());
+        length
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -371,10 +522,7 @@ mod tests {
         let mut bytes = [0u8; 46]; // as in a frame: filled up
         question.write(&mut bytes);
         // "Who has 10.0.2.15? Tell 10.0.2.2", by the book.
-        assert_eq!(
-            bytes[..arp::SIZE],
-            [0, 1, 8, 0, 6, 4, 0, 1, 2, 0, 0, 0, 0, 1, 10, 0, 2, 2, 0, 0, 0, 0, 0, 0, 10, 0, 2, 15]
-        );
+        assert_eq!(bytes[..arp::SIZE], [0, 1, 8, 0, 6, 4, 0, 1, 2, 0, 0, 0, 0, 1, 10, 0, 2, 2, 0, 0, 0, 0, 0, 0, 10, 0, 2, 15]);
         assert_eq!(arp::parse(&bytes), Some(question));
         assert_eq!(arp::parse(&bytes[..27]), None);
         // Not Ethernet, not IPv4, wrong address lengths: not read.
@@ -520,5 +668,101 @@ mod tests {
             found |= segment[6..8] == [0xFF, 0xFF];
         }
         assert!(found, "no payload reached the case");
+    }
+
+    // Three TCP segments from 10.0.2.15 to 10.0.2.2, made by a few
+    // lines of Python that know nothing of this code: a SYN with the
+    // option "my longest segment is 1460", a segment carrying "hello",
+    // and a SYN+ACK whose options are padding, "536", one this code
+    // does not read (window scale), the end mark and two bytes to fill
+    // the last word.
+    const SYN_SEGMENT: [u8; 24] = [
+        0xc0, 0x00, 0x00, 0x50, 0x01, 0x02, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00, 0x60, 0x02, 0x40, 0x00, 0x7b, 0xbf, 0x00, 0x00, 0x02, 0x04, 0x05,
+        0xb4,
+    ];
+    const HELLO_SEGMENT: [u8; 25] = [
+        0xc0, 0x00, 0x00, 0x50, 0xff, 0xff, 0xff, 0xfe, 0x0a, 0x0b, 0x0c, 0x0d, 0x50, 0x18, 0x10, 0x00, 0x6d, 0x7d, 0x00, 0x00, 0x68, 0x65, 0x6c,
+        0x6c, 0x6f,
+    ];
+    const OPTIONS_SEGMENT: [u8; 32] = [
+        0x00, 0x50, 0xc0, 0x00, 0x00, 0x00, 0x00, 0x07, 0x00, 0x00, 0x00, 0x09, 0x80, 0x12, 0xff, 0xff, 0x98, 0x35, 0x00, 0x00, 0x01, 0x01, 0x02,
+        0x04, 0x02, 0x18, 0x03, 0x03, 0x07, 0x00, 0x00, 0x00,
+    ];
+    const FROM: Ipv4 = Ipv4([10, 0, 2, 15]);
+    const TO: Ipv4 = Ipv4([10, 0, 2, 2]);
+
+    #[test]
+    fn tcp_segments_are_read_as_the_standard_writes_them() {
+        let syn = tcp::parse(FROM, TO, &SYN_SEGMENT).unwrap();
+        assert_eq!(
+            syn,
+            tcp::Segment {
+                source_port: 49152,
+                destination_port: 80,
+                sequence: 0x0102_0304,
+                acknowledgment: 0,
+                flags: tcp::SYN,
+                window: 16384,
+                mss: Some(1460),
+                payload: &[]
+            }
+        );
+        assert_eq!(syn.length(), 1); // the SYN itself takes a number
+        let hello = tcp::parse(FROM, TO, &HELLO_SEGMENT).unwrap();
+        assert_eq!((hello.sequence, hello.acknowledgment), (0xFFFF_FFFE, 0x0A0B_0C0D));
+        assert_eq!((hello.flags, hello.window, hello.mss, hello.payload), (tcp::PSH | tcp::ACK, 4096, None, &b"hello"[..]));
+        assert_eq!(hello.length(), 5);
+        let options = tcp::parse(FROM, TO, &OPTIONS_SEGMENT).unwrap();
+        assert_eq!((options.flags, options.mss, options.payload.len()), (tcp::SYN | tcp::ACK, Some(536), 0));
+    }
+
+    #[test]
+    fn tcp_segments_are_written_as_the_standard_reads_them() {
+        let mut out = [0xEEu8; 64];
+        let syn = tcp::parse(FROM, TO, &SYN_SEGMENT).unwrap();
+        assert_eq!(tcp::header_length(syn.mss), 24);
+        assert_eq!(tcp::write(&mut out, FROM, TO, &syn, 0), 24);
+        assert_eq!(out[..24], SYN_SEGMENT);
+        let hello = tcp::parse(FROM, TO, &HELLO_SEGMENT).unwrap();
+        out[20..25].copy_from_slice(b"hello");
+        assert_eq!(tcp::write(&mut out, FROM, TO, &hello, 5), 25);
+        assert_eq!(out[..25], HELLO_SEGMENT);
+    }
+
+    #[test]
+    fn a_tcp_segment_must_be_what_it_says() {
+        // Any one byte changed: the checksum says so.
+        for at in 0..HELLO_SEGMENT.len() {
+            let mut damaged = HELLO_SEGMENT;
+            damaged[at] ^= 0x10;
+            assert!(tcp::parse(FROM, TO, &damaged).is_err(), "byte {at}");
+        }
+        // Delivered to another machine: the same.
+        assert_eq!(tcp::parse(FROM, Ipv4([10, 0, 2, 3]), &HELLO_SEGMENT), Err(Bad::Checksum));
+        // Too short for a header; a header longer than the segment;
+        // a header shorter than a header.
+        assert_eq!(tcp::parse(FROM, TO, &HELLO_SEGMENT[..19]), Err(Bad::Length));
+        let mut long = SYN_SEGMENT;
+        long[12] = 0x70;
+        assert_eq!(tcp::parse(FROM, TO, &long), Err(Bad::Length));
+        let mut short = SYN_SEGMENT;
+        short[12] = 0x40;
+        assert_eq!(tcp::parse(FROM, TO, &short), Err(Bad::Length));
+    }
+
+    #[test]
+    fn tcp_options_that_lie_end_the_reading_and_nothing_else() {
+        // An option that says it is longer than what is left, one of
+        // length 0 (which would never be stepped past), one cut off
+        // after its kind: the segment is read, without them.
+        for options in [[9u8, 40, 0, 0], [9, 0, 2, 4], [1, 1, 1, 2]] {
+            let mut segment = SYN_SEGMENT;
+            segment[20..24].copy_from_slice(&options);
+            segment[16..18].copy_from_slice(&[0, 0]);
+            let sum = checksum::finish(checksum::add(checksum::add(checksum::add(0, &FROM.0), &TO.0) + 6 + 24, &segment));
+            segment[16..18].copy_from_slice(&sum.to_be_bytes());
+            let read = tcp::parse(FROM, TO, &segment).unwrap();
+            assert_eq!((read.mss, read.flags, read.sequence), (None, tcp::SYN, 0x0102_0304), "{options:?}");
+        }
     }
 }

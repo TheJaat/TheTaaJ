@@ -2,9 +2,12 @@
 //! (`abi::net`).
 //!
 //! `Net::find()` asks for the service by its name, "net". From there:
-//! `ping` (is that machine there?), and `udp_bind`, which gives a
+//! `ping` (is that machine there?); `udp_bind`, which gives a
 //! `UdpSocket` - a port of this machine, on which datagrams are sent
-//! and arrive.
+//! and arrive; and TCP: `tcp_connect` gives a `TcpStream` - a
+//! connection, bytes in order in both directions - and `tcp_listen` a
+//! `TcpListener`, which hands out the connections others make to a
+//! port here.
 
 use abi::net::{self, Info, Ping};
 
@@ -103,6 +106,36 @@ impl Net {
         }
     }
 
+    /// Makes a connection to `port` on `to`, and waits until it is
+    /// made or known not to be - half a minute at the longest, if
+    /// nothing answers at all.
+    pub fn tcp_connect(&self, to: Ipv4, port: u16) -> Result<TcpStream, NetError> {
+        let (ours, theirs) = crate::channel_create().map_err(NetError::Unreachable)?;
+        let mut reply = [0u8; REPLY_MAX];
+        match self.call(&net::connect_encode(to.0, port), Some(theirs), net::CONNECT_WAIT, &mut reply) {
+            Ok(2) => Ok(TcpStream::new(ours, u16::from_le_bytes([reply[1], reply[2]]), to, port)),
+            outcome => {
+                let _ = crate::close(ours);
+                Err(outcome.err().unwrap_or(NetError::Refused(net::BAD_REQUEST)))
+            }
+        }
+    }
+
+    /// Listens on `port` of this machine - or, for port 0, on a free
+    /// one of the service's choosing (`TcpListener::port`).
+    pub fn tcp_listen(&self, port: u16) -> Result<TcpListener, NetError> {
+        let (ours, theirs) = crate::channel_create().map_err(NetError::Unreachable)?;
+        let [low, high] = port.to_le_bytes();
+        let mut reply = [0u8; REPLY_MAX];
+        match self.call(&[net::TCP_LISTEN, low, high], Some(theirs), 0, &mut reply) {
+            Ok(2) => Ok(TcpListener { channel: ours, port: u16::from_le_bytes([reply[1], reply[2]]), asked: false }),
+            outcome => {
+                let _ = crate::close(ours);
+                Err(outcome.err().unwrap_or(NetError::Refused(net::BAD_REQUEST)))
+            }
+        }
+    }
+
     /// A socket on `port` of this machine - or, for port 0, on a free
     /// one of the service's choosing (`UdpSocket::port` says which).
     pub fn udp_bind(&self, port: u16) -> Result<UdpSocket, NetError> {
@@ -167,6 +200,186 @@ impl UdpSocket {
 }
 
 impl Drop for UdpSocket {
+    fn drop(&mut self) {
+        let _ = crate::close(self.channel);
+    }
+}
+
+/// A port of this machine that others can connect to.
+pub struct TcpListener {
+    channel: Handle,
+    port: u16,
+    /// The service has been told one more connection will be taken,
+    /// and has not handed one over yet.
+    asked: bool,
+}
+
+impl TcpListener {
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// The channel connections arrive on, to wait on together with
+    /// other things - after `accept_until` has returned None once
+    /// (which is what asks for one).
+    pub fn channel(&self) -> Handle {
+        self.channel
+    }
+
+    /// The next connection made to the port. None if none has been by
+    /// tick `deadline`. (Connections made while nobody is accepting
+    /// wait - a few of them; more than that are not answered, and
+    /// their makers try again.)
+    pub fn accept_until(&mut self, deadline: u64) -> Result<Option<TcpStream>, NetError> {
+        if !self.asked {
+            crate::send(self.channel, &[net::LISTENER_ACCEPT], &[]).map_err(NetError::Unreachable)?;
+            self.asked = true;
+        }
+        let mut message = [0u8; net::DATAGRAM_HEADER];
+        let mut handles = [0u64; 1];
+        match crate::receive_until(self.channel, &mut message, &mut handles, deadline) {
+            Ok((length, 1)) => {
+                self.asked = false;
+                match net::datagram_decode(&message[..length]) {
+                    Some((from, from_port, _)) => Ok(Some(TcpStream::new(handles[0], self.port, Ipv4(from), from_port))),
+                    None => {
+                        let _ = crate::close(handles[0]);
+                        Err(NetError::Refused(net::BAD_REQUEST))
+                    }
+                }
+            }
+            Ok(_) => Err(NetError::Refused(net::BAD_REQUEST)),
+            Err(Error::TimedOut) => Ok(None),
+            Err(error) => Err(NetError::Unreachable(error)),
+        }
+    }
+}
+
+impl Drop for TcpListener {
+    fn drop(&mut self) {
+        let _ = crate::close(self.channel);
+    }
+}
+
+/// A TCP connection: what is written at one end can be read at the
+/// other, in order, all of it - or the connection fails, and says so.
+///
+/// Dropping it closes the connection: what was written is still sent.
+pub struct TcpStream {
+    channel: Handle,
+    local_port: u16,
+    peer: (Ipv4, u16),
+    /// Bytes that arrived in one message and were not all asked for
+    /// yet: `held[start..end]`.
+    held: [u8; net::STREAM_DATA_MAX],
+    start: usize,
+    end: usize,
+    /// The other side has said it has no more to send.
+    ended: bool,
+    failed: Option<u8>,
+}
+
+impl TcpStream {
+    fn new(channel: Handle, local_port: u16, to: Ipv4, port: u16) -> TcpStream {
+        TcpStream { channel, local_port, peer: (to, port), held: [0; net::STREAM_DATA_MAX], start: 0, end: 0, ended: false, failed: None }
+    }
+
+    /// The port of this machine the connection uses.
+    pub fn local_port(&self) -> u16 {
+        self.local_port
+    }
+
+    /// The other end: its address and its port.
+    pub fn peer(&self) -> (Ipv4, u16) {
+        self.peer
+    }
+
+    /// The channel what arrives comes on, to wait on together with
+    /// other things. (Bytes may also be waiting here already: read
+    /// with a deadline of 0 first.)
+    pub fn channel(&self) -> Handle {
+        self.channel
+    }
+
+    /// Reads into `out`: how many bytes - at least one, and no more
+    /// than there are, which may be fewer than `out` holds. `Some(0)`
+    /// is the end: the other side has no more to send. None if nothing
+    /// has come by tick `deadline`.
+    pub fn read_until(&mut self, out: &mut [u8], deadline: u64) -> Result<Option<usize>, NetError> {
+        let mut message = [0u8; abi::MESSAGE_MAX as usize];
+        loop {
+            if self.start < self.end {
+                let count = out.len().min(self.end - self.start);
+                out[..count].copy_from_slice(&self.held[self.start..self.start + count]);
+                self.start += count;
+                return Ok(Some(count));
+            }
+            if out.is_empty() || self.ended {
+                return Ok(Some(0));
+            }
+            if let Some(status) = self.failed {
+                return Err(NetError::Refused(status));
+            }
+            match crate::receive_until(self.channel, &mut message, &mut [], deadline) {
+                Ok((length, _)) => match &message[..length] {
+                    [net::STREAM_DATA, data @ ..] => {
+                        self.held[..data.len()].copy_from_slice(data);
+                        (self.start, self.end) = (0, data.len());
+                    }
+                    [net::STREAM_END] => self.ended = true,
+                    [net::STREAM_FAILED, status] => self.failed = Some(*status),
+                    _ => {}
+                },
+                Err(Error::TimedOut) => return Ok(None),
+                // Closed without a word: the service itself is gone.
+                Err(error) => return Err(NetError::Unreachable(error)),
+            }
+        }
+    }
+
+    /// As `read_until`, for as long as it takes. 0 is the end.
+    pub fn read(&mut self, out: &mut [u8]) -> Result<usize, NetError> {
+        Ok(self.read_until(out, u64::MAX)?.unwrap_or(0))
+    }
+
+    /// One message to the service - waiting while it has no room for
+    /// one, which is how a program is held back to the speed of the
+    /// network and of whoever is reading at the other end.
+    fn send(&mut self, message: &[u8]) -> Result<(), NetError> {
+        loop {
+            match crate::send(self.channel, message, &[]) {
+                Ok(()) => return Ok(()),
+                Err(Error::QueueFull) => crate::sleep(1),
+                // The service closed the connection's channel: the
+                // connection is over. Why is in a message this side
+                // may not have read yet; "cut off" is true in any case.
+                Err(Error::PeerClosed) => return Err(NetError::Refused(self.failed.unwrap_or(net::RESET))),
+                Err(error) => return Err(NetError::Unreachable(error)),
+            }
+        }
+    }
+
+    /// Writes all of `data`. That it returned says the bytes are on
+    /// their way - not that they arrived: a failure of the connection
+    /// shows at a later write, or at a read.
+    pub fn write(&mut self, data: &[u8]) -> Result<(), NetError> {
+        let mut message = [0u8; abi::MESSAGE_MAX as usize];
+        message[0] = net::STREAM_DATA;
+        for piece in data.chunks(net::STREAM_DATA_MAX) {
+            message[1..1 + piece.len()].copy_from_slice(piece);
+            self.send(&message[..1 + piece.len()])?;
+        }
+        Ok(())
+    }
+
+    /// No more will be written: the other side reads to the end and
+    /// is told it is the end. Reading goes on.
+    pub fn shutdown(&mut self) -> Result<(), NetError> {
+        self.send(&[net::STREAM_END])
+    }
+}
+
+impl Drop for TcpStream {
     fn drop(&mut self) {
         let _ = crate::close(self.channel);
     }

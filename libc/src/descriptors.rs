@@ -1,5 +1,7 @@
 //! File descriptors: open, read, write, lseek, close, unlink - and
-//! rename and isatty, which take a path or a descriptor too.
+//! rename and isatty, which take a path or a descriptor too. A
+//! descriptor can also be a socket (sockets.rs); read, write and close
+//! work on those here as well.
 //!
 //! A descriptor is a small number a C program holds in place of "the
 //! thing I am reading or writing". 0, 1 and 2 are there from the
@@ -59,14 +61,17 @@ const SEEK_END: c_int = 2;
 const OPEN_MAX: usize = 32;
 
 /// What a descriptor stands for.
-enum Open {
+pub(crate) enum Open {
     Input,
     Output,
     Error,
     File(File),
+    /// (Boxed: a connection holds a message's worth of bytes that
+    /// arrived and were not read yet.)
+    Socket(alloc::boxed::Box<crate::sockets::Socket>),
 }
 
-struct File {
+pub(crate) struct File {
     /// From the root, with the '/' in front: what it meant when it was
     /// opened, whatever directory that was said in.
     path: String,
@@ -84,25 +89,28 @@ impl File {
     }
 }
 
-struct State {
+pub(crate) struct State {
     /// The descriptors: the number is the index.
-    table: Vec<Option<Open>>,
+    pub(crate) table: Vec<Option<Open>>,
     input: taaj::Input,
     /// The file service: not asked for until a file is first opened,
     /// and then once (the outer Option) - a program may have been
     /// given none (the inner).
     files: Option<Option<Files>>,
+    /// The network service, the same way: asked for at the first
+    /// socket.
+    pub(crate) net: Option<Option<taaj::net::Net>>,
 }
 
 impl State {
     fn new() -> State {
         let mut table = Vec::with_capacity(OPEN_MAX);
         table.extend([Some(Open::Input), Some(Open::Output), Some(Open::Error)]);
-        State { table, input: taaj::input(), files: None }
+        State { table, input: taaj::input(), files: None, net: None }
     }
 
     /// The lowest number not in use: what C promises `open` returns.
-    fn free_slot(&mut self) -> Option<usize> {
+    pub(crate) fn free_slot(&mut self) -> Option<usize> {
         if let Some(slot) = self.table.iter().position(Option::is_none) {
             return Some(slot);
         }
@@ -127,7 +135,7 @@ unsafe impl Sync for Lock {}
 
 static STATE: Lock = Lock { locked: AtomicBool::new(false), state: UnsafeCell::new(None) };
 
-fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
+pub(crate) fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
     while STATE.locked.swap(true, Ordering::Acquire) {
         hint::spin_loop();
     }
@@ -139,7 +147,7 @@ fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
 }
 
 /// Leaves the reason in errno and gives the -1 that says "look there".
-fn fail<T: From<i8>>(code: c_int) -> T {
+pub(crate) fn fail<T: From<i8>>(code: c_int) -> T {
     errno.store(code, Ordering::Relaxed);
     T::from(-1)
 }
@@ -227,7 +235,8 @@ pub unsafe extern "C" fn __taaj_open(path: *const c_char, flags: c_int) -> c_int
     })
 }
 
-/// `close(fd)`: the number is free to be given out again.
+/// `close(fd)`: the number is free to be given out again. (A socket's
+/// connection is closed with it: what was written is still sent.)
 #[no_mangle]
 pub extern "C" fn close(fd: c_int) -> c_int {
     with(|state| match usize::try_from(fd).ok().and_then(|fd| state.table.get_mut(fd)).and_then(Option::take) {
@@ -248,7 +257,7 @@ pub unsafe extern "C" fn read(fd: c_int, buffer: *mut c_void, count: usize) -> i
         return fail(EFAULT);
     }
     with(|state| {
-        let State { table, input, files } = state;
+        let State { table, input, files, .. } = state;
         let open = usize::try_from(fd).ok().and_then(|fd| table.get_mut(fd)).and_then(Option::as_mut);
         if count == 0 {
             return if open.is_some() { 0 } else { fail(EBADF) };
@@ -257,6 +266,7 @@ pub unsafe extern "C" fn read(fd: c_int, buffer: *mut c_void, count: usize) -> i
         let out = unsafe { core::slice::from_raw_parts_mut(buffer.cast::<u8>(), count) };
         match open {
             Some(Open::Input) => input.read(out) as isize,
+            Some(Open::Socket(socket)) => socket.read(out),
             Some(Open::File(file)) if file.reads() => {
                 // A file can only be in the table if the service was
                 // there to open it.
@@ -302,6 +312,7 @@ pub unsafe extern "C" fn write(fd: c_int, buffer: *const c_void, count: usize) -
         match open {
             Some(Open::Output) => taaj::write(bytes).map_or_else(|_| fail(EIO), |_| count as isize),
             Some(Open::Error) => taaj::write_error(bytes).map_or_else(|_| fail(EIO), |_| count as isize),
+            Some(Open::Socket(socket)) => socket.write(bytes),
             Some(Open::File(file)) if file.writes() => {
                 let Some(Some(files)) = files else { return fail(EIO) };
                 let written = if file.flags & O_APPEND != 0 {

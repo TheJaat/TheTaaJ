@@ -1,7 +1,8 @@
 //! What one machine on a network does: the stack.
 //!
 //! It is handed every frame the card received (`receive`) and the time
-//! (`tick`), and is asked to send things (`send_udp`, `send_echo`).
+//! (`tick`), and is asked to send things (`send_udp`, `send_echo`) and
+//! to make connections (`tcp_connect`, `tcp_listen`).
 //! Frames to put on the wire go out through a `Wire`; what arrived for
 //! the programs above comes back as a `Received`. No card, no clock
 //! and no channel in here: a host test plays the whole network.
@@ -14,11 +15,19 @@
 //!     comes - or drops it after three questions and three seconds;
 //!   - answers pings;
 //!   - decides where a packet goes: to the machine itself if it is on
-//!     this wire, to the gateway (a router) if it is not.
+//!     this wire, to the gateway (a router) if it is not;
+//!   - keeps the TCP connections (each one is a `tcp::Connection`):
+//!     finds the one a segment belongs to, makes a new one when a SYN
+//!     arrives for a port that is listened on, says "no such
+//!     connection" (a RST) to everything else, and writes the headers
+//!     of what the connections have to send.
 //!
 //! Time is a number of milliseconds from anywhere, only ever compared.
 
-use crate::wire::{arp, ethernet, icmp, ipv4, udp, Bad};
+use alloc::vec::Vec;
+
+use crate::tcp::{Buffers, Connection, State};
+use crate::wire::{arp, ethernet, icmp, ipv4, tcp, udp, Bad};
 use crate::{Ipv4, Mac, EVERYONE};
 
 /// The longest frame: 14 bytes of Ethernet, 1500 of packet.
@@ -38,6 +47,13 @@ pub const ARP_RETRY_MS: u64 = 1000;
 /// How long an answer is believed. Cards are replaced and addresses
 /// move: after this, the question is asked again.
 pub const ARP_KEEP_MS: u64 = 60_000;
+
+/// How many TCP connections there can be at once, how many ports can
+/// be listened on, and how many connections to one such port may be
+/// waiting - half made, or made and not yet taken by its program.
+pub const TCP_CONNECTIONS: usize = 16;
+pub const TCP_LISTENERS: usize = 8;
+pub const TCP_BACKLOG: usize = 4;
 
 /// How many other machines' card addresses are remembered at once.
 const NEIGHBOURS: usize = 16;
@@ -126,6 +142,12 @@ pub struct Counters {
     /// Packets dropped because nobody had the address, or too many
     /// were waiting.
     pub undelivered: u64,
+    /// TCP segments that arrived whole.
+    pub segments_in: u64,
+    /// Segments sent a second time.
+    pub segments_again: u64,
+    /// Segments answered "no such connection here".
+    pub refused: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -160,6 +182,19 @@ enum Route {
     None,
 }
 
+/// A connection, and whose it is.
+struct Slot {
+    connection: Connection,
+    local_port: u16,
+    remote: Ipv4,
+    remote_port: u16,
+    /// It came in on a port that is listened on, and no program has
+    /// taken it yet (`tcp_accept`).
+    waiting: bool,
+    /// Its program is done with it: forgotten as soon as it is closed.
+    released: bool,
+}
+
 pub struct Stack {
     config: Config,
     neighbours: [Neighbour; NEIGHBOURS],
@@ -170,6 +205,12 @@ pub struct Stack {
     /// which matters to others even if not here).
     identification: u16,
     counters: Counters,
+    /// The connections, by their number (`TCP_CONNECTIONS` places).
+    connections: Vec<Option<Slot>>,
+    /// The ports listened on; 0 is a free place.
+    listening: [u16; TCP_LISTENERS],
+    /// What the connections' first numbers are made from (`seed`).
+    secret: u32,
 }
 
 impl Stack {
@@ -181,7 +222,16 @@ impl Stack {
             out: [0; FRAME_MAX],
             identification: 0,
             counters: Counters::default(),
+            connections: (0..TCP_CONNECTIONS).map(|_| None).collect(),
+            listening: [0; TCP_LISTENERS],
+            secret: 0,
         }
+    }
+
+    /// A number nobody outside should know: where each connection's
+    /// numbering starts is worked out from it.
+    pub fn seed(&mut self, secret: u32) {
+        self.secret = secret;
     }
 
     pub fn config(&self) -> &Config {
@@ -229,13 +279,12 @@ impl Stack {
 
     /// When `tick` next has something to do, if ever.
     pub fn next_timer(&self) -> Option<u64> {
-        self.neighbours
-            .iter()
-            .filter_map(|neighbour| match *neighbour {
-                Neighbour::Asking { next, .. } => Some(next),
-                _ => None,
-            })
-            .min()
+        let asking = self.neighbours.iter().filter_map(|neighbour| match *neighbour {
+            Neighbour::Asking { next, .. } => Some(next),
+            _ => None,
+        });
+        let connections = self.connections.iter().flatten().filter_map(|slot| slot.connection.next_timer());
+        asking.chain(connections).min()
     }
 
     fn put(&mut self, frame: &[u8], wire: &mut dyn Wire) {
@@ -386,6 +435,18 @@ impl Stack {
                     _ => Received::Dropped(Why::Unsupported),
                 }
             }
+            ipv4::PROTOCOL_TCP => match tcp::parse(header.source, header.destination, payload) {
+                // (A connection is between two machines: nothing sent
+                // to everyone can belong to one.)
+                Ok(_) if to_everyone => Received::Dropped(Why::NotForUs),
+                Ok(segment) => {
+                    self.counters.segments_in += 1;
+                    self.receive_tcp(header.source, &segment, now, wire);
+                    Received::Handled
+                }
+                Err(Bad::Checksum) => Received::Dropped(Why::BadChecksum),
+                Err(_) => Received::Dropped(Why::Malformed),
+            },
             ipv4::PROTOCOL_UDP => match udp::parse(header.source, header.destination, payload) {
                 Ok(datagram) => {
                     self.counters.datagrams_in += 1;
@@ -526,6 +587,17 @@ impl Stack {
                             held.used = false;
                             self.counters.undelivered += 1;
                         }
+                        // A connection being made to there, or by way
+                        // of there, will never be.
+                        for m in 0..TCP_CONNECTIONS {
+                            if let Some(remote) = self.connections[m].as_ref().map(|slot| slot.remote) {
+                                if self.next_hop(remote) == Some(ip) {
+                                    if let Some(slot) = self.connections[m].as_mut() {
+                                        slot.connection.unreachable();
+                                    }
+                                }
+                            }
+                        }
                         gave_up(ip);
                     } else {
                         self.neighbours[n] = Neighbour::Asking { ip, tries: tries + 1, next: now + ARP_RETRY_MS };
@@ -536,6 +608,266 @@ impl Stack {
                 _ => {}
             }
         }
+        for n in 0..TCP_CONNECTIONS {
+            if let Some(slot) = self.connections[n].as_mut() {
+                slot.connection.tick(now);
+                self.tcp_flush(n, now, wire);
+            }
+        }
+    }
+
+    // TCP.
+
+    /// Where a new connection's numbering starts: different for every
+    /// pair of ends, moving on with the clock (so that a connection
+    /// made again between the same ends does not take the old one's
+    /// late segments for its own), and not to be guessed without
+    /// `secret`. (RFC 6528 asks for a real cryptographic hash here;
+    /// this is a small mixing function, and the secret is only as
+    /// secret as whoever calls `seed` can make it.)
+    fn first_number(&self, local_port: u16, remote: Ipv4, remote_port: u16, now: u64) -> u32 {
+        let mut mixed = self.secret ^ 0x9E37_79B9;
+        for word in [remote.to_u32(), self.config.address.to_u32(), u32::from(local_port) << 16 | u32::from(remote_port)] {
+            mixed = (mixed ^ word).wrapping_mul(0x85EB_CA6B);
+            mixed ^= mixed >> 13;
+            mixed = mixed.wrapping_mul(0xC2B2_AE35);
+            mixed ^= mixed >> 16;
+        }
+        // One step every four microseconds, as the standard has it.
+        mixed.wrapping_add((now as u32).wrapping_mul(250))
+    }
+
+    fn is_listening(&self, port: u16) -> bool {
+        port != 0 && self.listening.contains(&port)
+    }
+
+    /// The connection between `local_port` here and `remote_port` on
+    /// `remote`, if there is one (and it has not ended).
+    fn tcp_find(&self, local_port: u16, remote: Ipv4, remote_port: u16) -> Option<usize> {
+        self.connections.iter().position(|slot| {
+            slot.as_ref().is_some_and(|slot| {
+                slot.local_port == local_port && slot.remote == remote && slot.remote_port == remote_port && slot.connection.state() != State::Closed
+            })
+        })
+    }
+
+    /// Nothing is using `port` on this machine: no connection, and
+    /// nobody listening.
+    pub fn tcp_port_free(&self, port: u16) -> bool {
+        !self.is_listening(port) && !self.connections.iter().flatten().any(|slot| slot.local_port == port)
+    }
+
+    /// Connections to `port` are accepted from now on (`tcp_accept`
+    /// hands them out). False if the port is in use, or too many are
+    /// listened on.
+    pub fn tcp_listen(&mut self, port: u16) -> bool {
+        if port == 0 || !self.tcp_port_free(port) {
+            return false;
+        }
+        match self.listening.iter_mut().find(|listened| **listened == 0) {
+            Some(place) => {
+                *place = port;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// No more connections to `port`; those nobody took are cut off.
+    pub fn tcp_unlisten(&mut self, port: u16, now: u64, wire: &mut dyn Wire) {
+        for listened in self.listening.iter_mut().filter(|listened| **listened == port) {
+            *listened = 0;
+        }
+        for n in 0..TCP_CONNECTIONS {
+            if let Some(slot) = self.connections[n].as_mut().filter(|slot| slot.waiting && slot.local_port == port) {
+                slot.connection.abort();
+                self.tcp_flush(n, now, wire);
+            }
+        }
+    }
+
+    /// A connection to `port` that has been made and not handed out
+    /// yet: its number, and who it is with. It is the caller's from
+    /// now on, until `tcp_close`.
+    pub fn tcp_accept(&mut self, port: u16) -> Option<(usize, Ipv4, u16)> {
+        let n = self.connections.iter().position(|slot| {
+            slot.as_ref().is_some_and(|slot| {
+                slot.waiting && slot.local_port == port && !matches!(slot.connection.state(), State::SynReceived | State::Closed)
+            })
+        })?;
+        let slot = self.connections[n].as_mut()?;
+        slot.waiting = false;
+        Some((n, slot.remote, slot.remote_port))
+    }
+
+    /// Starts a connection from `local_port` (which must be free:
+    /// `tcp_port_free`) to `remote_port` on `remote`: its number, to
+    /// ask about with `tcp`. `NoRoute` if no packet can be sent there,
+    /// `NoRoom` if there are too many connections already.
+    pub fn tcp_connect(&mut self, local_port: u16, remote: Ipv4, remote_port: u16, now: u64, wire: &mut dyn Wire) -> Result<usize, Sent> {
+        if self.next_hop(remote).is_none() || remote_port == 0 {
+            return Err(Sent::NoRoute);
+        }
+        let n = self.connections.iter().position(Option::is_none).ok_or(Sent::NoRoom)?;
+        let connection = Connection::connect(self.first_number(local_port, remote, remote_port, now), Buffers::default());
+        self.connections[n] = Some(Slot { connection, local_port, remote, remote_port, waiting: false, released: false });
+        self.tcp_flush(n, now, wire);
+        Ok(n)
+    }
+
+    /// Connection `n`, to ask how it is: its state, why it failed, how
+    /// much can be read or written.
+    pub fn tcp(&self, n: usize) -> Option<&Connection> {
+        self.connections.get(n)?.as_ref().map(|slot| &slot.connection)
+    }
+
+    /// Takes as much of `data` as connection `n` has room for, and
+    /// sends what can be sent; how much was taken.
+    pub fn tcp_write(&mut self, n: usize, data: &[u8], now: u64, wire: &mut dyn Wire) -> usize {
+        let Some(slot) = self.connections.get_mut(n).and_then(Option::as_mut) else { return 0 };
+        let taken = slot.connection.write(data);
+        self.tcp_flush(n, now, wire);
+        taken
+    }
+
+    /// Copies what has arrived on connection `n` to `out`, without
+    /// taking it; how much.
+    pub fn tcp_peek(&self, n: usize, out: &mut [u8]) -> usize {
+        self.tcp(n).map_or(0, |connection| connection.peek(out))
+    }
+
+    /// Takes `count` bytes that `tcp_peek` showed.
+    pub fn tcp_consume(&mut self, n: usize, count: usize, now: u64, wire: &mut dyn Wire) {
+        if let Some(slot) = self.connections.get_mut(n).and_then(Option::as_mut) {
+            slot.connection.consume(count);
+            self.tcp_flush(n, now, wire);
+        }
+    }
+
+    /// Connection `n` has no more to send (the other direction stays
+    /// open).
+    pub fn tcp_shutdown(&mut self, n: usize, now: u64, wire: &mut dyn Wire) {
+        if let Some(slot) = self.connections.get_mut(n).and_then(Option::as_mut) {
+            slot.connection.shutdown();
+            self.tcp_flush(n, now, wire);
+        }
+    }
+
+    /// The program is done with connection `n`: it is closed in order
+    /// (or cut off, if something was left unread), and its number is
+    /// free for another once that is over.
+    pub fn tcp_close(&mut self, n: usize, now: u64, wire: &mut dyn Wire) {
+        if let Some(slot) = self.connections.get_mut(n).and_then(Option::as_mut) {
+            slot.released = true;
+            slot.connection.close(now);
+            self.tcp_flush(n, now, wire);
+        }
+    }
+
+    /// The program is done with connection `n` and wants nothing more
+    /// of it: cut off (a RST), and forgotten.
+    pub fn tcp_abort(&mut self, n: usize, now: u64, wire: &mut dyn Wire) {
+        if let Some(slot) = self.connections.get_mut(n).and_then(Option::as_mut) {
+            slot.released = true;
+            slot.connection.abort();
+            self.tcp_flush(n, now, wire);
+        }
+    }
+
+    /// The port of this machine that connection `n` uses.
+    pub fn tcp_local_port(&self, n: usize) -> Option<u16> {
+        self.connections.get(n)?.as_ref().map(|slot| slot.local_port)
+    }
+
+    /// Sends everything connection `n` has to send now - and forgets
+    /// the connection if it has ended and nobody will ask about it.
+    fn tcp_flush(&mut self, n: usize, now: u64, wire: &mut dyn Wire) {
+        const DATA_AT: usize = INNER_AT + tcp::HEADER;
+        loop {
+            let Some(slot) = self.connections[n].as_mut() else { return };
+            let again = slot.connection.retransmitted();
+            let Some(out) = slot.connection.poll(now, &mut self.out[DATA_AT..]) else { break };
+            self.counters.segments_again += u64::from(slot.connection.retransmitted() - again);
+            let (remote, described) = (
+                slot.remote,
+                tcp::Segment {
+                    source_port: slot.local_port,
+                    destination_port: slot.remote_port,
+                    sequence: out.sequence,
+                    acknowledgment: out.acknowledgment,
+                    flags: out.flags,
+                    window: out.window,
+                    mss: out.mss,
+                    payload: &[],
+                },
+            );
+            let length = tcp::write(&mut self.out[INNER_AT..], self.config.address, remote, &described, out.payload);
+            // Not sent - held back for an address, or dropped for want
+            // of room - is the same as lost on the way: the connection
+            // sends it again.
+            self.dispatch(remote, ipv4::PROTOCOL_TCP, length, now, wire);
+        }
+        if self.connections[n].as_ref().is_some_and(|slot| slot.connection.state() == State::Closed && (slot.released || slot.waiting)) {
+            self.connections[n] = None;
+        }
+    }
+
+    fn receive_tcp(&mut self, from: Ipv4, segment: &tcp::Segment<'_>, now: u64, wire: &mut dyn Wire) {
+        if let Some(n) = self.tcp_find(segment.destination_port, from, segment.source_port) {
+            if let Some(slot) = self.connections[n].as_mut() {
+                slot.connection.segment(segment, now);
+            }
+            return self.tcp_flush(n, now, wire);
+        }
+        // No such connection. A SYN for a port that is listened on
+        // makes one - if there is a place, and not too many are
+        // waiting there already. If not, nothing is said: the other
+        // side will ask again, and there may be room then.
+        let opening = segment.flags & (tcp::SYN | tcp::ACK | tcp::RST | tcp::FIN) == tcp::SYN;
+        if opening && self.is_listening(segment.destination_port) {
+            let waiting = self.connections.iter().flatten().filter(|slot| slot.waiting && slot.local_port == segment.destination_port).count();
+            let place = self.connections.iter().position(Option::is_none);
+            if let (Some(n), true) = (place, waiting < TCP_BACKLOG) {
+                let first = self.first_number(segment.destination_port, from, segment.source_port, now);
+                self.connections[n] = Some(Slot {
+                    connection: Connection::accept(first, segment, Buffers::default()),
+                    local_port: segment.destination_port,
+                    remote: from,
+                    remote_port: segment.source_port,
+                    waiting: true,
+                    released: false,
+                });
+                self.tcp_flush(n, now, wire);
+            }
+            return;
+        }
+        // Everything else is answered "no such connection": a RST made
+        // so that the other side believes it - with the number it
+        // expects next (the one it acknowledged), or, if it
+        // acknowledged nothing, acknowledging all of its segment.
+        // Except a RST itself: two machines could say "no" to each
+        // other for ever.
+        if segment.has(tcp::RST) || from == Ipv4::NONE || self.is_broadcast(from) {
+            return;
+        }
+        let (sequence, acknowledgment, flags) = if segment.has(tcp::ACK) {
+            (segment.acknowledgment, 0, tcp::RST)
+        } else {
+            (0, segment.sequence.wrapping_add(segment.length()), tcp::RST | tcp::ACK)
+        };
+        let answer = tcp::Segment {
+            source_port: segment.destination_port,
+            destination_port: segment.source_port,
+            sequence,
+            acknowledgment,
+            flags,
+            window: 0,
+            mss: None,
+            payload: &[],
+        };
+        let length = tcp::write(&mut self.out[INNER_AT..], self.config.address, from, &answer, 0);
+        self.counters.refused += 1;
+        self.dispatch(from, ipv4::PROTOCOL_TCP, length, now, wire);
     }
 }
 
@@ -886,8 +1218,8 @@ mod tests {
         piece[24..26].copy_from_slice(&sum.to_be_bytes());
         assert_eq!(stack.receive(&piece, 0, &mut wire), Received::Dropped(Why::Fragment));
 
-        // Protocols nothing here speaks: TCP (6), and IPv6 as a frame type.
-        let frame = ip_frame(PEER_MAC, PEER, OURS, 6, &[0; 20]);
+        // Protocols nothing here speaks: GRE (47), and IPv6 as a frame type.
+        let frame = ip_frame(PEER_MAC, PEER, OURS, 47, &[0; 20]);
         assert_eq!(stack.receive(&frame, 0, &mut wire), Received::Dropped(Why::Unsupported));
         let mut frame = vec![0u8; 60];
         ethernet::write(&mut frame, OUR_MAC, PEER_MAC, 0x86DD);
@@ -1008,5 +1340,340 @@ mod tests {
                 _ => assert!(ipv4::parse(frame.payload).is_ok()),
             }
         }
+    }
+
+    // TCP. The other machine's segments are written by hand here; what
+    // the stack sends is read back with `tcp::parse`, which checks its
+    // checksum.
+
+    fn segment(from_port: u16, to_port: u16, sequence: u32, acknowledgment: u32, flags: u8, data: &[u8]) -> Vec<u8> {
+        let mut bytes = vec![0u8; 20 + data.len()];
+        bytes[20..].copy_from_slice(data);
+        let described =
+            tcp::Segment { source_port: from_port, destination_port: to_port, sequence, acknowledgment, flags, window: 8000, mss: None, payload: &[] };
+        tcp::write(&mut bytes, PEER, OURS, &described, data.len());
+        bytes
+    }
+
+    /// A stack that knows the peer's card, the peer, and a wire.
+    fn with_peer() -> (Stack, Sink) {
+        let (mut stack, mut wire) = (stack(), Sink::default());
+        stack.receive(&arp_frame(arp::REQUEST, PEER_MAC, PEER, [0; 6], OURS), 0, &mut wire);
+        wire.0.clear();
+        (stack, wire)
+    }
+
+    fn from_peer(stack: &mut Stack, wire: &mut Sink, now: u64, bytes: &[u8]) {
+        assert_eq!(stack.receive(&ip_frame(PEER_MAC, PEER, OURS, ipv4::PROTOCOL_TCP, bytes), now, wire), Received::Handled);
+    }
+
+    /// The segments in what the stack sent, and the wire emptied.
+    fn segments(wire: &mut Sink) -> Vec<(u16, u16, u32, u32, u8, Vec<u8>)> {
+        let sent: Vec<_> = wire
+            .0
+            .iter()
+            .map(|frame| {
+                let (frame, header, payload) = read(frame);
+                assert_eq!((frame.to, header.protocol, header.destination), (PEER_MAC, ipv4::PROTOCOL_TCP, PEER));
+                let segment = tcp::parse(OURS, PEER, payload).expect("a segment with a good checksum");
+                (segment.source_port, segment.destination_port, segment.sequence, segment.acknowledgment, segment.flags, segment.payload.to_vec())
+            })
+            .collect();
+        wire.0.clear();
+        sent
+    }
+
+    /// A connection from the peer's `port` to port 7 here, made: its
+    /// number, and where this side's numbering starts.
+    fn accepted(stack: &mut Stack, wire: &mut Sink, port: u16) -> (usize, u32) {
+        from_peer(stack, wire, 0, &segment(port, 7, 100, 0, tcp::SYN, &[]));
+        let answer = segments(wire);
+        assert_eq!(answer.len(), 1);
+        let first = answer[0].2;
+        assert_eq!(answer[0], (7, port, first, 101, tcp::SYN | tcp::ACK, vec![]));
+        assert_eq!(stack.tcp_accept(7), None, "not before the handshake is done");
+        from_peer(stack, wire, 0, &segment(port, 7, 101, first.wrapping_add(1), tcp::ACK, &[]));
+        let (n, from, from_port) = stack.tcp_accept(7).expect("a connection to take");
+        assert_eq!((from, from_port), (PEER, port));
+        (n, first)
+    }
+
+    #[test]
+    fn what_belongs_to_no_connection_is_told_so() {
+        let (mut stack, mut wire) = with_peer();
+        // A SYN for a port nobody listens on: "no" to all of it.
+        from_peer(&mut stack, &mut wire, 0, &segment(4000, 80, 100, 0, tcp::SYN, &[]));
+        assert_eq!(segments(&mut wire), [(80, 4000, 0, 101, tcp::RST | tcp::ACK, vec![])]);
+        // Data for a connection that is not: "no", with the number its
+        // sender expects next.
+        from_peer(&mut stack, &mut wire, 0, &segment(4000, 80, 100, 7777, tcp::ACK, b"abc"));
+        assert_eq!(segments(&mut wire), [(80, 4000, 7777, 0, tcp::RST, vec![])]);
+        assert_eq!((stack.counters().refused, stack.counters().segments_in), (2, 2));
+        // A RST is never answered.
+        from_peer(&mut stack, &mut wire, 0, &segment(4000, 80, 100, 0, tcp::RST, &[]));
+        assert!(wire.0.is_empty());
+        // Nor is anything sent to everyone.
+        let mut to_all = ip_frame(PEER_MAC, PEER, Ipv4([10, 0, 2, 255]), ipv4::PROTOCOL_TCP, &[0; 20]);
+        let mut bytes = vec![0u8; 20];
+        tcp::write(
+            &mut bytes,
+            PEER,
+            Ipv4([10, 0, 2, 255]),
+            &tcp::Segment { source_port: 1, destination_port: 7, sequence: 1, acknowledgment: 0, flags: tcp::SYN, window: 1, mss: None, payload: &[] },
+            0,
+        );
+        to_all[34..54].copy_from_slice(&bytes);
+        assert_eq!(stack.receive(&to_all, 0, &mut wire), Received::Dropped(Why::NotForUs));
+        // A segment with a wrong checksum is no segment.
+        let mut damaged = segment(4000, 80, 100, 0, tcp::SYN, &[]);
+        damaged[5] ^= 1;
+        assert_eq!(stack.receive(&ip_frame(PEER_MAC, PEER, OURS, ipv4::PROTOCOL_TCP, &damaged), 0, &mut wire), Received::Dropped(Why::BadChecksum));
+        assert!(wire.0.is_empty());
+        assert_eq!((stack.counters().refused, stack.counters().segments_in, stack.counters().bad), (2, 3, 1));
+    }
+
+    #[test]
+    fn a_port_that_is_listened_on_takes_connections() {
+        let (mut stack, mut wire) = with_peer();
+        assert!(stack.tcp_port_free(7));
+        assert!(stack.tcp_listen(7));
+        assert!(!stack.tcp_listen(7), "one listener to a port");
+        assert!(!stack.tcp_listen(0));
+        assert!(!stack.tcp_port_free(7));
+        let (n, first) = accepted(&mut stack, &mut wire, 4000);
+        assert_eq!(stack.tcp_accept(7), None, "handed out once");
+        // Data in, and out.
+        from_peer(&mut stack, &mut wire, 5, &segment(4000, 7, 101, first + 1, tcp::ACK | tcp::PSH, b"hello"));
+        assert_eq!(segments(&mut wire), [(7, 4000, first + 1, 106, tcp::ACK, vec![])]);
+        let mut data = [0u8; 16];
+        assert_eq!(stack.tcp_peek(n, &mut data), 5);
+        assert_eq!(&data[..5], b"hello");
+        assert_eq!(stack.tcp(n).map(|connection| connection.readable()), Some(5), "peeking takes nothing");
+        stack.tcp_consume(n, 5, 5, &mut wire);
+        assert_eq!(stack.tcp_write(n, b"hello yourself", 6, &mut wire), 14);
+        assert_eq!(segments(&mut wire), [(7, 4000, first + 1, 106, tcp::ACK | tcp::PSH, b"hello yourself".to_vec())]);
+        // The same ports from another machine: not this connection's.
+        // (The gateway says who it is first, so the answer to it waits
+        // for no question.)
+        stack.receive(&arp_frame(arp::REQUEST, GATEWAY_MAC, GATEWAY, [0; 6], OURS), 6, &mut wire);
+        let mut stranger = vec![0u8; 23];
+        stranger[20..].copy_from_slice(b"bad");
+        let described = tcp::Segment {
+            source_port: 4000,
+            destination_port: 7,
+            sequence: 106,
+            acknowledgment: first + 15,
+            flags: tcp::ACK,
+            window: 8000,
+            mss: None,
+            payload: &[],
+        };
+        tcp::write(&mut stranger, GATEWAY, OURS, &described, 3);
+        stack.receive(&ip_frame(GATEWAY_MAC, GATEWAY, OURS, ipv4::PROTOCOL_TCP, &stranger), 6, &mut wire);
+        assert_eq!(stack.tcp(n).map(|connection| connection.readable()), Some(0));
+        assert_eq!(stack.counters().refused, 1);
+        wire.0.clear();
+        // A SYN+ACK to a port that is listened on opens nothing: it
+        // answers a SYN never sent, and is told so.
+        from_peer(&mut stack, &mut wire, 6, &segment(4999, 7, 100, 3333, tcp::SYN | tcp::ACK, &[]));
+        assert_eq!(segments(&mut wire), [(7, 4999, 3333, 0, tcp::RST, vec![])]);
+        assert_eq!(stack.tcp_accept(7), None);
+        // A second connection to the same port, from another port of
+        // the same machine, is another connection.
+        let (m, other) = accepted(&mut stack, &mut wire, 4001);
+        assert_ne!(n, m);
+        assert_ne!(first, other, "each with a numbering of its own");
+        from_peer(&mut stack, &mut wire, 7, &segment(4001, 7, 101, other + 1, tcp::ACK, b"second"));
+        assert_eq!((stack.tcp(n).unwrap().readable(), stack.tcp(m).unwrap().readable()), (0, 6));
+        wire.0.clear();
+        // The program closes the first: FIN, FIN back, and after the
+        // wait its place is free.
+        from_peer(&mut stack, &mut wire, 8, &segment(4000, 7, 106, first + 15, tcp::ACK, &[]));
+        stack.tcp_close(n, 8, &mut wire);
+        assert_eq!(segments(&mut wire), [(7, 4000, first + 15, 106, tcp::FIN | tcp::ACK, vec![])]);
+        from_peer(&mut stack, &mut wire, 9, &segment(4000, 7, 106, first + 16, tcp::FIN | tcp::ACK, &[]));
+        assert_eq!(segments(&mut wire), [(7, 4000, first + 16, 107, tcp::ACK, vec![])]);
+        assert_eq!(stack.tcp(n).map(|connection| connection.state()), Some(State::TimeWait));
+        assert_eq!(stack.next_timer(), Some(9 + crate::tcp::TIME_WAIT_MS));
+        stack.tick(9 + crate::tcp::TIME_WAIT_MS, &mut wire, &mut |_| {});
+        assert!(stack.tcp(n).is_none());
+        assert!(stack.tcp(m).is_some());
+        // Not listened on any more: the one nobody took is cut off,
+        // and a new SYN is refused.
+        from_peer(&mut stack, &mut wire, 20_000, &segment(4002, 7, 100, 0, tcp::SYN, &[]));
+        let answer = segments(&mut wire);
+        stack.tcp_unlisten(7, 20_001, &mut wire);
+        assert_eq!(segments(&mut wire), [(7, 4002, answer[0].2 + 1, 101, tcp::RST | tcp::ACK, vec![])]);
+        from_peer(&mut stack, &mut wire, 20_002, &segment(4003, 7, 100, 0, tcp::SYN, &[]));
+        assert_eq!(segments(&mut wire)[0].4, tcp::RST | tcp::ACK);
+        assert!(stack.tcp(m).is_some(), "one that was taken is its program's, listener or no listener");
+        assert!(!stack.tcp_port_free(7), "and its port is still in use");
+        assert_eq!(stack.tcp_local_port(m), Some(7));
+        stack.tcp_close(m, 20_003, &mut wire);
+        assert_eq!(segments(&mut wire)[0].4, tcp::RST | tcp::ACK, "closed with something unread: cut off");
+        assert!(stack.tcp(m).is_none());
+        assert!(stack.tcp_port_free(7));
+        // Cut off on purpose: the same, whatever was or was not read.
+        assert!(stack.tcp_listen(7));
+        let (k, first) = accepted(&mut stack, &mut wire, 4004);
+        stack.tcp_abort(k, 20_004, &mut wire);
+        assert_eq!(segments(&mut wire), [(7, 4004, first + 1, 101, tcp::RST | tcp::ACK, vec![])]);
+        assert!(stack.tcp(k).is_none());
+    }
+
+    #[test]
+    fn only_so_many_connections_wait_for_a_program() {
+        let (mut stack, mut wire) = with_peer();
+        assert!(stack.tcp_listen(7));
+        for port in 0..TCP_BACKLOG as u16 + 2 {
+            from_peer(&mut stack, &mut wire, 0, &segment(5000 + port, 7, 100, 0, tcp::SYN, &[]));
+        }
+        let answers = segments(&mut wire);
+        assert_eq!(answers.len(), TCP_BACKLOG, "the rest get no answer, and will ask again");
+        assert!(answers.iter().all(|answer| answer.4 == tcp::SYN | tcp::ACK));
+        // Half-made connections that are never finished go away by
+        // themselves (the SYN+ACK is sent again a few times first).
+        let mut again = 0;
+        while let Some(now) = stack.next_timer() {
+            stack.tick(now, &mut wire, &mut |_| {});
+            again += segments(&mut wire).iter().filter(|answer| answer.4 == tcp::SYN | tcp::ACK).count();
+        }
+        assert_eq!(again, TCP_BACKLOG * usize::from(crate::tcp::SYN_RETRIES));
+        assert_eq!(stack.counters().segments_again, again as u64);
+        // And then there is room again - for as many connections as
+        // there are places, when a program takes them as they come.
+        // (By now the peer's card has been forgotten; it speaks up.)
+        stack.receive(&arp_frame(arp::REQUEST, PEER_MAC, PEER, [0; 6], OURS), 100_000, &mut wire);
+        wire.0.clear();
+        let mut taken = Vec::new();
+        for port in 0..TCP_CONNECTIONS as u16 + 1 {
+            from_peer(&mut stack, &mut wire, 100_000, &segment(6000 + port, 7, 100, 0, tcp::SYN, &[]));
+            let Some(answer) = segments(&mut wire).pop() else { break };
+            from_peer(&mut stack, &mut wire, 100_000, &segment(6000 + port, 7, 101, answer.2 + 1, tcp::ACK, &[]));
+            taken.push(stack.tcp_accept(7).expect("made").0);
+        }
+        assert_eq!(taken.len(), TCP_CONNECTIONS);
+        assert_eq!(stack.tcp_connect(50_000, PEER, 80, 100_000, &mut wire), Err(Sent::NoRoom));
+    }
+
+    #[test]
+    fn a_connection_out_waits_for_the_card_and_then_for_the_answer() {
+        let (mut stack, mut wire) = (stack(), Sink::default());
+        stack.seed(0x1234_5678);
+        let n = stack.tcp_connect(49152, PEER, 80, 0, &mut wire).unwrap();
+        // First, who has that address? The SYN waits.
+        assert_eq!(wire.0.len(), 1);
+        assert!(is_question(&wire.0[0], PEER));
+        wire.0.clear();
+        stack.receive(&arp_frame(arp::REPLY, PEER_MAC, PEER, OUR_MAC, OURS), 20, &mut wire);
+        let syn = segments(&mut wire);
+        assert_eq!(syn.len(), 1);
+        let first = syn[0].2;
+        assert_eq!(syn[0], (49152, 80, first, 0, tcp::SYN, vec![]));
+        assert_eq!(stack.tcp(n).map(|connection| connection.state()), Some(State::SynSent));
+        assert!(!stack.tcp_port_free(49152));
+        from_peer(&mut stack, &mut wire, 40, &segment(80, 49152, 900, first + 1, tcp::SYN | tcp::ACK, &[]));
+        assert_eq!(segments(&mut wire), [(49152, 80, first + 1, 901, tcp::ACK, vec![])]);
+        assert_eq!(stack.tcp(n).map(|connection| connection.state()), Some(State::Established));
+
+        // The same ends a little later, or other ends: another first
+        // number. And none of them without the secret.
+        let numbers = [
+            stack.first_number(49152, PEER, 80, 0),
+            stack.first_number(49152, PEER, 80, 1000),
+            stack.first_number(49153, PEER, 80, 0),
+            stack.first_number(49152, GATEWAY, 80, 0),
+            stack.first_number(49152, PEER, 81, 0),
+        ];
+        for (n, number) in numbers.iter().enumerate() {
+            assert!(!numbers[..n].contains(number), "{numbers:x?}");
+        }
+        assert_eq!(numbers[1].wrapping_sub(numbers[0]), 250_000);
+        stack.seed(1);
+        assert_ne!(stack.first_number(49152, PEER, 80, 0), numbers[0]);
+
+        // Refused: the program can ask why, until it lets go.
+        let m = stack.tcp_connect(49153, PEER, 81, 50, &mut wire).unwrap();
+        let syn = segments(&mut wire);
+        from_peer(&mut stack, &mut wire, 60, &segment(81, 49153, 0, syn[0].2 + 1, tcp::RST | tcp::ACK, &[]));
+        assert_eq!(stack.tcp(m).map(|connection| (connection.state(), connection.failure())), Some((State::Closed, Some(crate::tcp::Failure::Refused))));
+        stack.tcp_close(m, 60, &mut wire);
+        assert!(stack.tcp(m).is_none() && wire.0.is_empty());
+    }
+
+    #[test]
+    fn a_connection_to_nobody_or_nowhere_fails() {
+        let (mut stack, mut wire) = (stack(), Sink::default());
+        let nobody = Ipv4([10, 0, 2, 99]);
+        let n = stack.tcp_connect(49152, nobody, 80, 0, &mut wire).unwrap();
+        let mut told = Vec::new();
+        while stack.tcp(n).is_some_and(|connection| connection.state() != State::Closed) {
+            let now = stack.next_timer().expect("something is being waited for");
+            stack.tick(now, &mut wire, &mut |hop| told.push((hop, now)));
+        }
+        assert_eq!(stack.tcp(n).and_then(|connection| connection.failure()), Some(crate::tcp::Failure::Unreachable));
+        assert_eq!(told, [(nobody, 3000)], "as soon as the question is given up");
+        assert!(wire.0.iter().all(|frame| is_question(frame, nobody)), "no SYN ever left");
+        // To this machine itself, to port 0, or - without a gateway -
+        // to another network: not even tried.
+        assert_eq!(stack.tcp_connect(49153, OURS, 80, 0, &mut wire), Err(Sent::NoRoute));
+        assert_eq!(stack.tcp_connect(49153, PEER, 0, 0, &mut wire), Err(Sent::NoRoute));
+        let mut alone = Stack::new(Config { mac: OUR_MAC, address: OURS, prefix: 24, gateway: Ipv4::NONE });
+        assert_eq!(alone.tcp_connect(49153, FAR, 80, 0, &mut wire), Err(Sent::NoRoute));
+        // Far away goes by way of the gateway - and fails with it.
+        let mut stack = self::stack();
+        let far = stack.tcp_connect(49152, FAR, 80, 0, &mut wire).unwrap();
+        stack.tick(1000, &mut wire, &mut |_| {});
+        stack.tick(2000, &mut wire, &mut |_| {});
+        stack.tick(3000, &mut wire, &mut |_| {});
+        assert_eq!(stack.tcp(far).and_then(|connection| connection.failure()), Some(crate::tcp::Failure::Unreachable));
+    }
+
+    #[test]
+    fn a_connection_carries_a_lot_both_ways_through_the_stack() {
+        // Two stacks, wired to each other: everything one sends, the
+        // other receives.
+        let config = |mac, address| Config { mac, address, prefix: 24, gateway: Ipv4::NONE };
+        let (mut a, mut b) = (Stack::new(config(OUR_MAC, OURS)), Stack::new(config(PEER_MAC, PEER)));
+        assert!(b.tcp_listen(80));
+        let (mut to_b, mut to_a) = (Sink::default(), Sink::default());
+        let there: Vec<u8> = (0..70_000u32).map(|n| (n * 7 + n / 251) as u8).collect();
+        let back: Vec<u8> = (0..30_000u32).map(|n| (n * 13 + n / 127) as u8).collect();
+        let n = a.tcp_connect(49152, PEER, 80, 0, &mut to_b).unwrap();
+        let (mut m, mut written, mut answered) = (None, 0, 0);
+        let (mut got_there, mut got_back) = (Vec::new(), Vec::new());
+        let mut piece = [0u8; 999];
+        for now in (0..20_000).step_by(10) {
+            for frame in core::mem::take(&mut to_b.0) {
+                b.receive(&frame, now, &mut to_a);
+            }
+            for frame in core::mem::take(&mut to_a.0) {
+                a.receive(&frame, now, &mut to_b);
+            }
+            a.tick(now, &mut to_b, &mut |_| {});
+            b.tick(now, &mut to_a, &mut |_| {});
+            written += a.tcp_write(n, &there[written..], now, &mut to_b);
+            if written == there.len() {
+                a.tcp_shutdown(n, now, &mut to_b);
+            }
+            let count = a.tcp_peek(n, &mut piece);
+            got_back.extend_from_slice(&piece[..count]);
+            a.tcp_consume(n, count, now, &mut to_b);
+            m = m.or_else(|| b.tcp_accept(80).map(|(m, _, _)| m));
+            if let Some(m) = m {
+                let count = b.tcp_peek(m, &mut piece);
+                got_there.extend_from_slice(&piece[..count]);
+                b.tcp_consume(m, count, now, &mut to_a);
+                answered += b.tcp_write(m, &back[answered..], now, &mut to_a);
+                if answered == back.len() && b.tcp(m).is_some_and(|connection| connection.finished()) {
+                    b.tcp_shutdown(m, now, &mut to_a);
+                }
+            }
+        }
+        assert!(got_there == there, "{} of {}", got_there.len(), there.len());
+        assert!(got_back == back, "{} of {}", got_back.len(), back.len());
+        assert_eq!(a.tcp(n).map(|connection| connection.state()), Some(State::Closed), "after its TimeWait");
+        assert_eq!(b.tcp(m.unwrap()).map(|connection| (connection.state(), connection.failure())), Some((State::Closed, None)));
+        assert_eq!((a.counters().segments_again, b.counters().segments_again), (0, 0), "nothing was lost: nothing sent twice");
     }
 }

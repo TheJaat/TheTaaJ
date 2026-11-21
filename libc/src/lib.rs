@@ -24,6 +24,8 @@
 //!   exit, _exit
 //!   open, close, read, write, lseek, unlink,
 //!   rename, isatty                                 (descriptors.rs)
+//!   socket, connect, bind, listen, accept, send, recv,
+//!   shutdown, setsockopt, getsockname              (sockets.rs)
 //!   errno, strerror                                (errno.rs)
 //!   malloc, free, calloc, realloc, strdup          (memory.rs)
 //!   strcmp, strcpy, strchr, strstr and the others  (string.rs)
@@ -34,7 +36,7 @@
 //! relations, which are built around the one thing C does that stable
 //! Rust will not define - a function taking any number of arguments -
 //! and with them the rest of stdio: streams, their buffers, fopen and
-//! fgets. The Makefile compiles those files and adds them to this
+//! fgets. And arpa/inet.h's arithmetic on addresses (inet.c). The Makefile compiles those files and adds them to this
 //! archive. The two halves call each other: C's fopen calls `open`
 //! here, and `exit` here calls C to write out what is still waiting in
 //! the streams' buffers.
@@ -52,6 +54,7 @@ extern crate alloc;
 pub mod descriptors;
 pub mod errno;
 pub mod memory;
+pub mod sockets;
 pub mod string;
 
 use alloc::vec::Vec;

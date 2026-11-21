@@ -44,7 +44,22 @@ pub const ESPIPE: c_int = 29;
 pub const EROFS: c_int = 30;
 pub const ERANGE: c_int = 34;
 pub const ENOTEMPTY: c_int = 39;
+pub const EPIPE: c_int = 32;
+pub const ENOTSOCK: c_int = 88;
+pub const EDESTADDRREQ: c_int = 89;
+pub const ENOPROTOOPT: c_int = 92;
+pub const EPROTONOSUPPORT: c_int = 93;
+pub const EOPNOTSUPP: c_int = 95;
+pub const EAFNOSUPPORT: c_int = 97;
+pub const EADDRINUSE: c_int = 98;
+pub const ENETUNREACH: c_int = 101;
+pub const ECONNRESET: c_int = 104;
+pub const ENOBUFS: c_int = 105;
+pub const EISCONN: c_int = 106;
+pub const ENOTCONN: c_int = 107;
 pub const ETIMEDOUT: c_int = 110;
+pub const ECONNREFUSED: c_int = 111;
+pub const EHOSTUNREACH: c_int = 113;
 
 /// Every number this library sets, with what it means - each message
 /// ending in the zero byte that makes it a C string. Where the system
@@ -70,7 +85,22 @@ pub const MESSAGES: &[(c_int, &str)] = &[
     (EROFS, "the files are read-only here\0"),
     (ERANGE, "a number too big to fit\0"),
     (ENOTEMPTY, "the directory is not empty\0"),
-    (ETIMEDOUT, "the file service is not answering\0"),
+    (EPIPE, "the connection is closed: nothing more can be written\0"),
+    (ENOTSOCK, "not a socket\0"),
+    (EDESTADDRREQ, "the socket is not connected to anything\0"),
+    (ENOPROTOOPT, "no such option\0"),
+    (EPROTONOSUPPORT, "only TCP is spoken from C so far\0"),
+    (EOPNOTSUPP, "a socket cannot do that\0"),
+    (EAFNOSUPPORT, "only IPv4 addresses are known here\0"),
+    (EADDRINUSE, "another program has that port\0"),
+    (ENETUNREACH, "that address is not on this network, and there is no way out of it\0"),
+    (ECONNRESET, "the other side cut the connection off\0"),
+    (ENOBUFS, "the network service has no room for more\0"),
+    (EISCONN, "the socket is connected already\0"),
+    (ENOTCONN, "the socket is not connected\0"),
+    (ETIMEDOUT, "the service, or the other side, is not answering\0"),
+    (ECONNREFUSED, "nothing is listening on that port there\0"),
+    (EHOSTUNREACH, "nobody on this network has that address\0"),
 ];
 
 /// What `code` means, as text ending in a zero byte.
@@ -124,5 +154,6 @@ mod tests {
     fn the_numbers_are_the_ones_linux_uses() {
         // Spot checks against the values every errno.h on Linux has.
         assert_eq!((ENOENT, EBADF, EACCES, EEXIST, EINVAL, ENOSPC, EROFS), (2, 9, 13, 17, 22, 28, 30));
+        assert_eq!((EPIPE, ENOTSOCK, EADDRINUSE, ECONNRESET, ENOTCONN, ETIMEDOUT, ECONNREFUSED, EHOSTUNREACH), (32, 88, 98, 104, 107, 110, 111, 113));
     }
 }

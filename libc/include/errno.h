@@ -31,6 +31,21 @@ extern int errno;
 #define EROFS      30   /* the files are read-only here */
 #define ERANGE     34   /* a number too big to fit */
 #define ENOTEMPTY  39   /* the directory is not empty */
-#define ETIMEDOUT 110   /* the file service is not answering */
+#define EPIPE      32   /* the connection is closed: nothing more can be written */
+#define ENOTSOCK   88   /* not a socket */
+#define EDESTADDRREQ 89 /* the socket is not connected to anything */
+#define ENOPROTOOPT 92  /* no such option */
+#define EPROTONOSUPPORT 93 /* only TCP is spoken from C so far */
+#define EOPNOTSUPP 95   /* a socket cannot do that */
+#define EAFNOSUPPORT 97 /* only IPv4 addresses are known here */
+#define EADDRINUSE 98   /* another program has that port */
+#define ENETUNREACH 101 /* not on this network, and no way out of it */
+#define ECONNRESET 104  /* the other side cut the connection off */
+#define ENOBUFS   105   /* the network service has no room for more */
+#define EISCONN   106   /* the socket is connected already */
+#define ENOTCONN  107   /* the socket is not connected */
+#define ETIMEDOUT 110   /* the service, or the other side, is not answering */
+#define ECONNREFUSED 111 /* nothing is listening on that port there */
+#define EHOSTUNREACH 113 /* nobody on this network has that address */
 
 #endif

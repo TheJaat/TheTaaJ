@@ -45,5 +45,11 @@ fn main() -> i64 {
         counted[protocol::UNSUPPORTED],
         counted[protocol::UNDELIVERED]
     );
+    println!(
+        "tcp      {} segments in, {} sent again, {} answered \"no such connection\"",
+        counted[protocol::SEGMENTS_IN],
+        counted[protocol::SEGMENTS_AGAIN],
+        counted[protocol::SEGMENTS_REFUSED]
+    );
     0
 }

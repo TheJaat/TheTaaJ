@@ -64,3 +64,12 @@ abs taaj_abs
 labs taaj_labs
 qsort taaj_qsort
 bsearch taaj_bsearch
+htons taaj_htons
+htonl taaj_htonl
+ntohs taaj_ntohs
+ntohl taaj_ntohl
+inet_addr taaj_inet_addr
+inet_aton taaj_inet_aton
+inet_ntoa taaj_inet_ntoa
+inet_pton taaj_inet_pton
+inet_ntop taaj_inet_ntop

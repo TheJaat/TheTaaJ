@@ -109,7 +109,7 @@ const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp"]
 /// The one program given the network card: the check of its driver.
 const CARD_PROGRAMS: &[&str] = &["niccheck"];
 /// And these are given the network.
-const NET_PROGRAMS: &[&str] = &["ping", "netinfo", "udpecho", "udpsend"];
+const NET_PROGRAMS: &[&str] = &["ping", "netinfo", "udpecho", "udpsend", "tcpecho", "tcpsend", "cnet"];
 /// The shell's own commands - the words `run_words` knows, and must be
 /// kept the same as. They read no input, so in a pipeline one may only
 /// stand first.
