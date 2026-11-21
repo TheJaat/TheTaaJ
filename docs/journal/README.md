@@ -61,7 +61,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 051 | [The device tree: a machine describes itself](051-the-device-tree.md) | written | `d2dc665` (TheKernel `90aac86`) |
 | 052 | [Page tables in two dialects: one implementation for x86_64 and AArch64](052-page-tables-in-two-dialects.md) | written | `1165c82` (TheKernel `0f16d00`) |
 | 053 | [One memory manager, two CPUs: frames, tables and a heap on AArch64](053-one-memory-manager-two-cpus.md) | written | `33ee694` (TheKernel `c642b04`) |
-| 054 | [Interrupts and a tick on AArch64: the GIC and the CPU's timer](054-interrupts-and-a-tick-on-aarch64.md) | written | this step (TheKernel `21fbb23`) |
+| 054 | [Interrupts and a tick on AArch64: the GIC and the CPU's timer](054-interrupts-and-a-tick-on-aarch64.md) | written | `4702c2b` (TheKernel `21fbb23`) |
+| 055 | [Threads on AArch64: a context switch, and a stack that has run out](055-threads-on-aarch64.md) | written | this step (TheKernel `b754d65`) |
 
 ## How to run what the entries describe
 

@@ -658,3 +658,71 @@ cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu gic
 should end `test result: ok. 10 passed` (the nine new ones, and one device-tree test with "gic" in its name).
 
 Automated: `make test64`
+
+---
+
+## 055 · Threads on AArch64
+
+[The entry](journal/055-threads-on-aarch64.md)
+
+**1. Threads on AArch64**
+
+```
+make run-aarch64
+```
+
+Nothing to type. To leave QEMU: **Ctrl+A, then X**.
+
+| Look for | Meaning |
+|---|---|
+| `[selftest] timer: 10 ticks in 99 ms (expected 100)` | the shared timer test, now on this CPU too (98 to about 130 is normal) |
+| `[selftest] context switch: there and back with a known value in each of 11 registers, none changed` | the switch keeps every register it must |
+| `[selftest] threads: two yielding threads ran as "ababab"` | threads take turns |
+| `[selftest] threads: a thread that never yields was preempted` | the tick takes the CPU back |
+| `[selftest] threads: sleep(5) took 5 ticks; 200 threads spawned and reaped, nothing leaked` | sleeping works; stacks are recycled (5, 6 or 7 ticks) |
+| `[kernel] this is as far as the AArch64 port goes - halting` | no panic on the way |
+
+**2. Stacks that run out**
+
+```
+make aarch64-test
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic -kernel build/aarch64/Image-fault-stack
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic -kernel build/aarch64/Image-fault-thread-stack
+```
+
+The first command should end `aarch64-test: all passed` and leaves the kernels in `build/aarch64/`. Leave each QEMU with **Ctrl+A, then X**.
+
+| Kernel | Look for |
+|---|---|
+| `Image-fault-stack` | `[test] overflowing the boot stack...` then `*** KERNEL STACK OVERFLOW: the boot stack ran out` and `kernel write at 0xffffffff800c0f90: the page kept unmapped below the stack` |
+| `Image-fault-thread-stack` | `[test] overflowing a thread's stack...` then `*** KERNEL STACK OVERFLOW: a thread's stack ran out` and `kernel write at 0xffffd80000020e40: the page kept unmapped below the stack` |
+
+Each is followed by a register dump and nothing after it. The addresses may differ in their middle digits; the last four are always below `1000` - the lowest page of a slot.
+
+**3. The PC, with the shared tests**
+
+```
+make run64
+```
+
+In the terminal it was started from, before the prompt:
+
+| Look for | Meaning |
+|---|---|
+| `[selftest] timer: 10 ticks in … ms (expected 100)` | as before, now timed through `arch::clock()` |
+| `[selftest] threads: sleep(5) took … ticks; 200 threads spawned and reaped, nothing leaked` | as before |
+
+| Type | You should see |
+|---|---|
+| `ps` | the list of processes |
+| `uptime` | the time since boot |
+
+**4. Host checks**
+
+```
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu sched
+```
+
+should end `test result: ok.` with no failures - the scheduler's policy, the same code both CPUs now run.
+
+Automated: `make test64`
