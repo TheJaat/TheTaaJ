@@ -27,6 +27,11 @@
 //! nothing for a while (a driver that hangs), init must stop it and
 //! start another, and the card must work again with the new one.
 //!
+//! `niccheck stall` is the first half of that, and needs nobody on the
+//! wire: the driver is made to hang, and this program waits until
+//! another answers. For testing what everything *else* does when the
+//! driver is replaced under it.
+//!
 //! Exit code 0 if everything held, 77 if nobody answered, else the
 //! line of the failed check.
 
@@ -89,6 +94,38 @@ fn next(frames: &mut Frames, into: &mut [u8; FRAME_MAX], kind: u8, deadline: u64
     }
 }
 
+/// The driver made to hang, and nothing more: returns when another
+/// driver answers.
+fn stall(card: &Nic) -> i64 {
+    let Ok(mut frames) = card.listen(&[u16::from_be_bytes(TYPE)]) else {
+        println!("[niccheck] FAILED: cannot listen");
+        return line!() as i64;
+    };
+    let mut request = [0u8; 9];
+    request[0] = nic::STALL;
+    request[1..].copy_from_slice(&2000u64.to_le_bytes());
+    if card.raw(&request).is_err() {
+        println!("[niccheck] FAILED: the driver cannot be asked to hang");
+        return line!() as i64;
+    }
+    // As in `restart`: the channel closes when the old driver is stopped.
+    let mut back = [0u8; FRAME_MAX];
+    if frames.next_until(&mut back, taaj::ticks() + 1000) != Err(taaj::Error::PeerClosed) {
+        println!("[niccheck] FAILED: a driver that hangs was not stopped");
+        return line!() as i64;
+    }
+    let deadline = taaj::ticks() + 1000;
+    while card.info().is_err() {
+        if taaj::ticks() >= deadline {
+            println!("[niccheck] FAILED: no new driver answers");
+            return line!() as i64;
+        }
+        taaj::sleep(10);
+    }
+    println!("[niccheck] stall: the driver was stopped, and another answers");
+    0
+}
+
 /// The driver made to hang: init notices, stops it and starts another,
 /// which must find the card as the first did.
 fn restart(card: &mut Nic) -> i64 {
@@ -108,7 +145,7 @@ fn restart(card: &mut Nic) -> i64 {
     let before = card.info();
     check!(before.is_ok(), "the driver answers before it is made to hang");
     let ours = before.map_or([0; 6], |info| info.address);
-    let Ok(mut frames) = card.listen() else {
+    let Ok(mut frames) = card.listen(&[u16::from_be_bytes(TYPE)]) else {
         println!("[niccheck] FAILED: cannot listen");
         return line!() as i64;
     };
@@ -140,7 +177,7 @@ fn restart(card: &mut Nic) -> i64 {
     check!(after == before, "the new driver finds the same card");
     let sent_before = card.stats().map_or(u64::MAX, |stats| stats.sent);
     check!(sent_before == 0, "and it is a new driver: it has sent nothing yet");
-    let Ok(mut frames) = card.listen() else {
+    let Ok(mut frames) = card.listen(&[u16::from_be_bytes(TYPE)]) else {
         println!("[niccheck] FAILED: cannot listen to the new driver");
         return line!() as i64;
     };
@@ -163,8 +200,9 @@ fn main() -> i64 {
     match arguments.first().map(|argument| &argument[..]) {
         None => {}
         Some("restart") if arguments.len() == 1 => return restart(&mut card),
+        Some("stall") if arguments.len() == 1 => return stall(&card),
         Some(_) => {
-            println!("usage: niccheck, niccheck restart");
+            println!("usage: niccheck, niccheck restart, niccheck stall");
             return 2;
         }
     }
@@ -194,7 +232,7 @@ fn main() -> i64 {
         println!("[niccheck] FAILED: the driver does not count");
         return line!() as i64;
     };
-    let Ok(mut frames) = card.listen() else {
+    let Ok(mut frames) = card.listen(&[u16::from_be_bytes(TYPE)]) else {
         println!("[niccheck] FAILED: cannot listen");
         return line!() as i64;
     };
@@ -380,7 +418,7 @@ fn main() -> i64 {
     check!(back[15] == 101 && (16..300).all(|i| back[i] == out[i] ^ FLIP), "and whole");
 
     // A second listener takes over: the first hears no more.
-    let Ok(mut second) = card.listen() else {
+    let Ok(mut second) = card.listen(&[u16::from_be_bytes(TYPE)]) else {
         println!("[niccheck] FAILED: cannot listen a second time");
         return line!() as i64;
     };

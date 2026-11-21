@@ -35,10 +35,14 @@
 //! Each buffer is one frame, with virtio's ten-byte note in front of it
 //! (`virtio::net::HEADER_SIZE`).
 //!
-//! What this driver knows about a frame is its first six bytes: who it
-//! is for. A frame for another card is dropped here (an emulated card
-//! hands over everything on the wire). Everything else - what is in a
-//! frame, what to answer - is the business of whoever listens.
+//! What this driver knows about a frame is its first six bytes - who
+//! it is for - and the two that say what kind of thing is in it. A
+//! frame for another card is dropped here (an emulated card hands over
+//! everything on the wire). The kind decides who gets it: a program
+//! listens for the kinds it names (`abi::nic::Listeners`), so the
+//! network stack takes IPv4 and ARP, and the driver's test its own
+//! kind, without either disturbing the other. Everything else - what
+//! is in a frame, what to answer - is the business of whoever listens.
 //!
 //! No listener is ever waited for. A frame that arrives when no one
 //! listens, or when the listener's queue is full, is dropped and
@@ -57,7 +61,7 @@
 #![no_std]
 #![no_main]
 
-use abi::nic::{self, Assembler, Fed, Stats};
+use abi::nic::{self, Assembler, Fed, Listeners, Stats};
 use abi::{MmioDeviceInfo, PciDeviceInfo};
 #[cfg(target_arch = "x86_64")]
 use taaj::port::{in16, in32, in8, out16, out32, out8};
@@ -184,11 +188,8 @@ struct Card {
     address: [u8; nic::ADDRESS],
     link_up: bool,
     stats: Stats,
-    /// Who gets the frames that arrive.
-    listener: Option<Handle>,
-    /// The listener was sent the first piece of a frame and not the
-    /// last: it must be told to forget it before the next.
-    listener_torn: bool,
+    /// Who gets the frames that arrive: by the type of each.
+    listeners: Listeners<Handle, { nic::LISTENERS_MAX }>,
     /// The frame a client is sending, as its pieces arrive.
     outgoing: Assembler,
 }
@@ -225,8 +226,7 @@ impl Card {
             address,
             link_up: net::link_up(accepted, status),
             stats: Stats::default(),
-            listener: None,
-            listener_torn: false,
+            listeners: Listeners::new(),
             outgoing: Assembler::new(),
         };
         // Sent frames are looked for when a buffer is wanted, not when
@@ -397,30 +397,32 @@ impl Card {
         }
     }
 
-    /// Sends the frame in receive buffer `buffer` to whoever listens.
+    /// Sends the frame in receive buffer `buffer` to whoever listens
+    /// for frames of its type.
     fn pass_on(&mut self, buffer: usize, length: usize) {
-        let Some(listener) = self.listener else {
+        // SAFETY: as in `take_received`, whose buffer this is.
+        let frame = unsafe { core::slice::from_raw_parts(self.memory.add(RECEIVE_AREA + buffer * BUFFER + HEADER_SIZE), length) };
+        let Some(listener) = nic::frame_type(frame).and_then(|kind| self.listeners.find(kind)) else {
             self.stats.dropped += 1;
             return;
         };
-        // SAFETY: as in `take_received`, whose buffer this is.
-        let frame = unsafe { core::slice::from_raw_parts(self.memory.add(RECEIVE_AREA + buffer * BUFFER + HEADER_SIZE), length) };
+        let to = listener.who;
         let mut message = [0u8; abi::MESSAGE_MAX as usize];
         let mut send = |op: u8, piece: &[u8]| {
             message[0] = op;
             message[1..=piece.len()].copy_from_slice(piece);
-            taaj::send(listener, &message[..=piece.len()], &[])
+            taaj::send(to, &message[..=piece.len()], &[])
         };
         let mut outcome = Ok(());
-        if self.listener_torn {
+        if listener.torn {
             outcome = send(nic::DROP, &[]);
-            self.listener_torn = outcome.is_err();
+            listener.torn = outcome.is_err();
         }
         if outcome.is_ok() {
             for (n, (op, piece)) in nic::split(frame).enumerate() {
                 outcome = send(op, piece);
                 if outcome.is_err() {
-                    self.listener_torn = n > 0;
+                    listener.torn = n > 0;
                     break;
                 }
             }
@@ -432,9 +434,8 @@ impl Card {
             // listens any more.
             Err(_) => {
                 self.stats.dropped += 1;
-                let _ = taaj::close(listener);
-                self.listener = None;
-                self.listener_torn = false;
+                self.listeners.remove(to);
+                let _ = taaj::close(to);
             }
         }
     }
@@ -718,13 +719,19 @@ fn main() -> i64 {
         match (request.first().copied(), count) {
             // A piece of a frame to send: no handle, no answer.
             (_, 0) => card.piece(request),
-            // A new listener, in place of the old.
-            (Some(nic::LISTEN), 1) if n == 1 => {
-                if let Some(old) = card.listener.replace(handles[0]) {
-                    let _ = taaj::close(old);
+            // A new listener: for the frame types it names, in place
+            // of whoever listened for them. (Closing a channel is how a
+            // listener is told that it is one no longer.)
+            (Some(nic::LISTEN), 1) => match nic::listen_types(&request[1..]) {
+                Some((types, count)) => {
+                    card.listeners.add(handles[0], &types[..count], |ended| {
+                        let _ = taaj::close(ended);
+                    });
                 }
-                card.listener_torn = false;
-            }
+                None => {
+                    let _ = taaj::close(handles[0]);
+                }
+            },
             // A question, with the channel to answer on.
             (_, 1) => {
                 // The test of a driver that has stopped: answered first.

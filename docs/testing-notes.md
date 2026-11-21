@@ -1352,3 +1352,124 @@ cd virtio && cargo test
 `8 passed` and `11 passed`.
 
 Automated: `make test64`
+
+---
+
+## 063 · On the network
+
+[The entry](journal/063-on-the-network.md)
+
+**1. The machine on its network (PC)**
+
+```
+make run64
+```
+
+A QEMU window opens to type in; the kernel's log appears in the terminal.
+
+In the terminal's log:
+
+| Look for | Meaning |
+|---|---|
+| `[registry] net may ask for: nic` | the network service may use the card's driver, and nothing else |
+| `[init] started: registry display fs blk nic net shell kbd; supervising` | `net` is a service |
+| `[net] this machine is 10.0.2.15/24 on card 52:54:00:12:34:56, with its router at 10.0.2.2` | it is running |
+
+| Type | You should see |
+|---|---|
+| `netinfo` | `address  10.0.2.15/24`, `router   10.0.2.2`, `card     52:54:00:12:34:56`, then four lines of counters, all 0 on a fresh boot |
+| `ping 10.0.2.2` | four lines `56 bytes from 10.0.2.2: seq=1 ttl=255 time …` (seq 1 to 4, a second apart), then `4 sent to 10.0.2.2, 4 answered` |
+| `ping 10.0.2.2 1 1000` | `1000 bytes from 10.0.2.2: seq=1 ttl=255 time …` |
+| `ping 10.0.2.99 1` | after a second: `10.0.2.99 cannot be reached: seq=1, nobody on this network has that address`, `1 sent to 10.0.2.99, 0 answered`, `ping exited with code 1` |
+| `ping` | `usage: ping ADDRESS [COUNT [BYTES]] - an address like 10.0.2.2, at most 1472 bytes` |
+| `netinfo` | `frames` now counts some in and out |
+
+(10.0.2.2 is QEMU's own router, inside the emulator. Please do not ping addresses outside 10.0.2.x in a test: QEMU would pass those on to the real network.)
+
+**2. Datagrams between the machine and the host**
+
+Start the machine with one of the host's ports passed on to the machine's port 7:
+
+```
+make run64 RUN_NET="-netdev user,id=n0,hostfwd=udp:127.0.0.1:5007-:7 -device virtio-net-pci,netdev=n0"
+```
+
+| Type (in QEMU) | You should see |
+|---|---|
+| `udpecho &` | `[1] udpecho`, and `udpecho: listening on port 7` |
+
+Then in another terminal on the host:
+
+```
+echo hello | nc -u -w1 127.0.0.1 5007
+```
+
+| Look for | Meaning |
+|---|---|
+| `hello` printed by `nc` | the datagram went in, and its echo came back |
+| in QEMU: `udpecho: 6 bytes from 10.0.2.2:…` | the machine saw it (6: `hello` and the newline) |
+
+And the other way. On the host:
+
+```
+nc -u -l 127.0.0.1 5008
+```
+
+| Type (in QEMU) | You should see |
+|---|---|
+| `udpsend 10.0.2.2 5008 hello from taaj` | `udpsend: 15 bytes from port 49152 to 10.0.2.2:5008`, and on the host `nc` prints `hello from taaj`. Two seconds later the machine says `udpsend: no answer` (nobody typed one) |
+| `udpecho 7 1` | `udpecho: port 7: another program has that port` |
+
+**3. A machine without a card**
+
+```
+make run64 RUN_NET=
+```
+
+| Type | You should see |
+|---|---|
+| `ping 10.0.2.2 1` | `ping: no network (no card, or its service stopped)` |
+
+**4. The same on AArch64**
+
+```
+make run-aarch64
+```
+
+The terminal is the keyboard and screen. To leave QEMU: **Ctrl+A, then X**.
+
+| Look for | Meaning |
+|---|---|
+| `[net] this machine is 10.0.2.15/24 on card 52:54:00:12:34:56, with its router at 10.0.2.2` | the same service |
+
+| Type | You should see |
+|---|---|
+| `ping 10.0.2.2 2` | two lines `56 bytes from 10.0.2.2: seq=… ttl=255 time …`, then `2 sent to 10.0.2.2, 2 answered` |
+| `ping 10.0.2.99 1` | `10.0.2.99 cannot be reached: seq=1, nobody on this network has that address` |
+
+**5. The tests by themselves**
+
+```
+make ip64-test
+make aarch64-ip-test
+```
+
+Each prints a line from each of the two other sides, and ends `ip64-test passed` / `aarch64-ip-test passed`:
+
+| Look for | Meaning |
+|---|---|
+| `wire: ok: 15 checks; … frames from 52:54:00:12:34:56; answered 0 questions for 10.0.2.2, 3 pings and 1 datagrams; … questions about addresses nobody has` | the router made by hand found nothing wrong |
+| `host: ok: 5 checks; 1 datagrams from the machine answered` | over QEMU's network, datagrams got through both ways |
+
+The logs are `build/ip64.log` (hand-made router) and `build/ip64.log.user` (QEMU's network), and the same under `build/aarch64/ip.log`.
+
+**6. Host checks**
+
+```
+cd net && cargo test
+cd kernel/abi && cargo test
+```
+
+`30 passed` and `21 passed`.
+
+Automated: `make test64`

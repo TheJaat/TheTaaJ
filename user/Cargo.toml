@@ -19,6 +19,7 @@ fileserver = { path = "../fileserver" }
 registry = { path = "../registry" }
 taajfs = { path = "../taajfs" }
 virtio = { path = "../virtio" }
+net = { path = "../net" }
 
 [profile.dev]
 panic = "abort"

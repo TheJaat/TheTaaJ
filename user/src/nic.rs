@@ -3,11 +3,12 @@
 //!
 //! Whole Ethernet frames, out and in. Sending is a message or two and
 //! no answer. Receiving is a channel of this program's own, handed to
-//! the driver once (`listen`): every frame the card takes in for this
-//! machine arrives on it from then on.
+//! the driver once (`listen`): every frame of the types asked for that
+//! the card takes in for this machine arrives on it from then on.
 //!
-//! One program uses the card at a time: the driver puts the pieces of
-//! a frame together in the order they arrive, whoever sent them.
+//! One program *sends* on a channel to the driver at a time: the
+//! driver puts the pieces of a frame together in the order they
+//! arrive, whoever sent them.
 
 use abi::nic::{self, Assembler, Fed, Stats};
 
@@ -101,13 +102,33 @@ impl Nic {
         crate::send(self.requests, message, &[])
     }
 
-    /// From now on every frame the card receives for this machine
-    /// comes to the returned `Frames` - and no longer to whoever asked
-    /// before.
-    pub fn listen(&self) -> Result<Frames, Error> {
+    /// From now on every frame of these types (the two bytes after
+    /// the addresses; at most `nic::LISTEN_TYPES_MAX`) that the card
+    /// receives for this machine comes to the returned `Frames` - and
+    /// no longer to whoever asked for them before. With no types: every
+    /// frame of a type nobody asked for. When this returns, the driver
+    /// is listening for them.
+    pub fn listen(&self, types: &[u16]) -> Result<Frames, Error> {
+        let mut request = [0u8; 1 + 2 * nic::LISTEN_TYPES_MAX];
+        request[0] = nic::LISTEN;
+        let count = types.len().min(nic::LISTEN_TYPES_MAX);
+        for (bytes, kind) in request[1..].as_chunks_mut::<2>().0.iter_mut().zip(&types[..count]) {
+            *bytes = kind.to_be_bytes();
+        }
         let (ours, theirs) = crate::channel_create()?;
-        match crate::send(self.requests, &[nic::LISTEN], &[theirs]) {
-            Ok(()) => Ok(Frames { channel: ours, assembler: Assembler::new() }),
+        match crate::send(self.requests, &request[..1 + 2 * count], &[theirs]) {
+            Ok(()) => {
+                let frames = Frames { channel: ours, assembler: Assembler::new() };
+                // LISTEN has no answer, so by itself it says nothing of
+                // *when* the driver has taken it in. A question after
+                // it does: the driver reads its requests in order. A
+                // frame that arrives once this returns is not missed.
+                match self.info() {
+                    Ok(_) => Ok(frames),
+                    Err(NicError::Unreachable(error)) => Err(error),
+                    Err(NicError::Refused(_)) => Err(Error::InvalidArgument),
+                }
+            }
             Err(error) => {
                 let _ = (crate::close(ours), crate::close(theirs));
                 Err(error)

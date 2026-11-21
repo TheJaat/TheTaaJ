@@ -21,7 +21,9 @@
 //!
 //! The services: registry (where the others are found), display (the
 //! screen), fs (files - on the disk, if there is one), blk (the disk
-//! driver), shell, and kbd (the keyboard driver). Where the terminal
+//! driver), nic (the network card's driver) and net (the network, for
+//! programs - both only if there is a card), shell, and kbd (the
+//! keyboard driver). Where the terminal
 //! is a serial port, one driver - serial - is both keyboard and
 //! screen: it is given the keys' channel to send on and the display's
 //! to read, and nothing else in the system knows the difference.
@@ -171,7 +173,10 @@ impl Watch {
     /// Takes every answer that has come. Any answer means "alive" - also
     /// a late one to an earlier ping.
     fn answered(&mut self, now: u64) {
-        let mut reply = [0u8; 16];
+        // Room for the longest message there is: an answer that did not
+        // fit could not be taken out of the queue, would be "ready" for
+        // ever, and init would look at nothing else again.
+        let mut reply = [0u8; abi::MESSAGE_MAX as usize];
         let mut any = false;
         while let Ok(Some(_)) = taaj::poll(&[self.answers_rx]) {
             if taaj::receive(self.answers_rx, &mut reply, &mut []).is_err() {
@@ -360,6 +365,14 @@ fn main() -> i64 {
         let _ = taaj::close(card_in);
     }
     let [card_registers, card_dma, card_interrupt] = card.map_or([0; 3], |(_, handles, _)| handles);
+    // The network service: its requests, and its channel to the
+    // registry (it asks for the card's driver by name, as fs asks for
+    // the disk's). No card, no network: its clients are told at once.
+    let Ok((net_in, net_out)) = taaj::channel_create() else { return 2 };
+    let Ok((net_names_tx, net_names_rx)) = taaj::channel_create() else { return 2 };
+    if card.is_none() {
+        let _ = taaj::close(net_in);
+    }
     // The registry's: one channel for what init tells it, and one per
     // client for what that client asks. init keeps both ends of each,
     // as it does of every channel: a registry that is replaced takes
@@ -406,6 +419,9 @@ fn main() -> i64 {
         Grant { handle: card_in, rights: RECEIVE },           // 31: requests, for nic
         Grant { handle: card_out, rights: SEND },             // 32: requests, to nic
         Grant { handle: card_interrupt, rights: RECEIVE },    // 33: its interrupt
+        Grant { handle: net_in, rights: RECEIVE },            // 34: requests, for net
+        Grant { handle: net_out, rights: SEND },              // 35: requests, to net
+        Grant { handle: net_names_tx, rights: SEND },         // 36: lookups, from net
     ];
     // Only the shell's screen and files can be copied and passed on.
     debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21)));
@@ -419,6 +435,9 @@ fn main() -> i64 {
     let blk_watch = disk.and_then(|_| Watch::new(disk_look_out, &[abi::block::INFO], 200));
     // The network card's driver: "what card is this?".
     let nic_watch = card.and_then(|_| Watch::new(card_out, &[abi::nic::INFO], 200));
+    // The network service: "who is this machine?". The longer patience,
+    // as for fs: it waits on nic while that is being replaced.
+    let net_watch = card.and_then(|_| Watch::new(net_out, &[abi::net::INFO], 400));
     // The display and the keyboard driver: a ping on a channel of its own.
     let display_watch = framebuffer.and_then(|_| Watch::new(display_ping_tx, &[abi::PING], 200));
     let kbd_watch = Watch::new(kbd_ping_tx, &[abi::PING], 200);
@@ -427,7 +446,7 @@ fn main() -> i64 {
     // services: a name, and which grant it means - the handle, and the
     // rights a client's copy gets. (The shell's old startup handles,
     // now asked for by name; and the disk, for fs.)
-    let registered: [(&str, usize); 9] = [
+    let registered: [(&str, usize); 10] = [
         ("keys", 4),
         ("display", 7),
         ("init", 8),
@@ -437,15 +456,17 @@ fn main() -> i64 {
         ("disk", 16),
         ("disk.look", 19),
         ("nic", 32),
+        ("net", 35),
     ];
     // And the namespaces: whose, the receiving end of its channel, and
     // the names that exist on it. This table is the system's policy,
     // in one place: who may reach what.
-    let namespaces: [(&str, Handle, &[&str]); 2] = [
-        // (The shell gets the network card only until there is a
-        // service to own it: for the program that tests its driver.)
-        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "disk.look", "nic"]),
+    let namespaces: [(&str, Handle, &[&str]); 3] = [
+        // (The shell has the network card itself only for the program
+        // that tests its driver. Everything else uses "net".)
+        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "disk.look", "nic", "net"]),
         ("fs", fs_names_rx, &["disk"]),
+        ("net", net_names_rx, &["nic"]),
     ];
     // Sends one message to the registry, with a copy of `handle` that
     // carries `rights` and can be copied and passed on from there. The
@@ -504,6 +525,15 @@ fn main() -> i64 {
             restart_count: 0,
             given_up: card.is_none(),
             watch: nic_watch,
+        },
+        Service {
+            name: "net",
+            grants: &[34, 36],
+            process: 0,
+            restarts: [0; MAX_RESTARTS],
+            restart_count: 0,
+            given_up: card.is_none(),
+            watch: net_watch,
         },
         Service { name: "shell", grants: &[26], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
         // The keys: a keyboard's driver, or the serial port's - which

@@ -1,0 +1,8 @@
+[package]
+name = "net"
+version = "0.1.0"
+edition = "2021"
+description = "The network protocols: Ethernet, ARP, IPv4, ICMP and UDP as bytes, and a stack that needs no machine to run"
+publish = false
+
+[dependencies]
