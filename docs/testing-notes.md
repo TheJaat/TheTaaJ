@@ -351,3 +351,70 @@ cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu devicet
 should end `test result: ok. 13 passed` and `test result: ok. 6 passed`.
 
 Automated: `make test64`
+
+---
+
+## 051 · The Device Tree: A Machine Describes Itself
+
+[The entry](journal/051-the-device-tree.md)
+
+**1. The ordinary machine**
+
+```
+make run-aarch64
+```
+
+Nothing to type. To leave QEMU: **Ctrl+A, then X**.
+
+| Look for | Meaning |
+|---|---|
+| `Hello from TheTaaJ!` and the `[cpu]` lines, as in entry 50 | the serial port now comes from the tree, and still works |
+| `[tree] device tree at 0x48000000: 1048576 bytes, version 17, 56 nodes, the deepest 5 down` | the whole tree was walked |
+| `[tree] machine     "linux,dummy-virt"` | QEMU's name for its machine |
+| `[tree] memory      0x40000000 - 0x60000000 (512 MiB)` | |
+| `[tree] cpus        1, with ids [0]` | |
+| `[tree] serial      PL011 at 0x9000000, named as the console` | found through `/chosen` |
+| `[tree]             its clock runs at 24000000 Hz` | found through a phandle |
+| `[tree] interrupts  GIC version 2: shared part at 0x8000000, per-CPU part at 0x8010000` | |
+| `[tree] timer       interrupts 29 (secure), 30 (physical), 27 (virtual), 26 (hypervisor)` | |
+| `[tree] firmware    called with hvc` | |
+
+**2. A different machine, the same kernel**
+
+```
+make run-aarch64 RUN_A64="-M virt,gic-version=3,virtualization=on -smp 4 -m 6G"
+```
+
+| Look for | Meaning |
+|---|---|
+| `…the loader entered at level 2` | |
+| `[tree] memory      0x40000000 - 0x1c0000000 (6144 MiB)` | an end above 4 GiB |
+| `[tree] cpus        4, with ids [0, 1, 2, 3]` | |
+| `[tree] interrupts  GIC version 3: shared part at 0x8000000, per-CPU part at 0x80a0000` | |
+| `[tree] firmware    called with smc` | |
+
+**3. A tree with something missing**
+
+```
+make aarch64-test
+make run-aarch64 RUN_A64="-dtb build/aarch64/clockless.dtb"
+```
+
+The first command runs every automated boot (it should end `aarch64-test: all passed`) and leaves the cut-down trees in `build/aarch64/`.
+
+| Look for | Meaning |
+|---|---|
+| `[tree]             its clock is not given` | |
+| `[tree] no serial port with a clock described: using the one QEMU's virt machine has, as a guess` | the fallback, saying that it is one |
+
+and with `unnamed.dtb` in place of `clockless.dtb`: `[tree] serial      PL011 at 0x9000000, the first one found`.
+
+**4. Host checks**
+
+```
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu devicetree
+```
+
+should end `test result: ok. 22 passed`. It takes a few seconds: one test reads eleven thousand damaged trees.
+
+Automated: `make test64`

@@ -57,7 +57,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 047 | [One CPU taps another on the shoulder: the reschedule interrupt](047-one-cpu-taps-another.md) | written | `38db795` (TheKernel `5235c30`) |
 | 048 | [The kernel outgrows its megabyte: moving the loader's wall, and a kernel too big on purpose](048-the-kernel-outgrows-its-megabyte.md) | written | `aa75f2e` (TheKernel `a337b13`, TheBootloader `22eb961`) |
 | 049 | [The milestone: a C program on four CPUs](049-the-milestone.md) | written | `718088e` (TheKernel `e9db648`) |
-| 050 | [First words on AArch64: the start of Era 3](050-first-words-on-aarch64.md) | written | this step (TheKernel `aba03fc`) |
+| 050 | [First words on AArch64: the start of Era 3](050-first-words-on-aarch64.md) | written | `f573e40` (TheKernel `aba03fc`) |
+| 051 | [The device tree: a machine describes itself](051-the-device-tree.md) | written | this step (TheKernel `90aac86`) |
 
 ## How to run what the entries describe
 
