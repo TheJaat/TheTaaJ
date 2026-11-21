@@ -65,7 +65,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 055 | [Threads on AArch64: a context switch, and a stack that has run out](055-threads-on-aarch64.md) | written | `973e354` (TheKernel `b754d65`) |
 | 056 | [Programs on AArch64: `eret`, `svc`, and a second root register](056-programs-on-aarch64.md) | written | `ddb9940` (TheKernel `3fd6ee7`) |
 | 057 | [C on AArch64: a library with nothing to port, and what `char` means](057-c-on-aarch64.md) | written | `1f254e3` (TheKernel `897b1ac`) |
-| 058 | [Devices without a bus: thirty-two places, and what each says about itself](058-devices-without-a-bus.md) | written | this step (TheKernel `ae1d7a6`) |
+| 058 | [Devices without a bus: thirty-two places, and what each says about itself](058-devices-without-a-bus.md) | written | `fd4ec19` (TheKernel `ae1d7a6`) |
 
 ## How to run what the entries describe
 
