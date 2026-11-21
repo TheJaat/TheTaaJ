@@ -798,8 +798,30 @@ endif
 
 # Every layer: host unit tests, a normal boot (BIOS and UEFI) with its
 # self-tests, the fault boots, and the AArch64 kernel.
-test64: kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test
+#
+# In two steps. First everything the tests share is built, one thing
+# after another (two builds of one crate at once only wait for each
+# other, and an error is easier to read alone). Then the seven tests
+# run side by side: each writes its own logs and builds whatever only
+# it needs in a directory of its own. What keeps that honest is not
+# TEST_JOBS but the boot slots (kernel/kernel64/scripts/boot-slots.sh):
+# however many tests are running, no more emulated CPUs run at once
+# than the host has CPUs for - the boots are timed, and an emulator
+# short of CPU fails them for no fault of the kernel's.
+#
+#   make test64 TEST_JOBS=1         one test after another, as before
+#   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
+TEST_JOBS ?= 7
+TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test
+
+test64:
+	@$(MAKE) --no-print-directory test64-shared
+	@$(MAKE) --no-print-directory -j$(TEST_JOBS) --output-sync=target test64-parts
 	@echo "test64: all passed"
+
+test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64
+
+test64-parts: $(TEST64_PARTS)
 
 # Clean everything
 clean:
