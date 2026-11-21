@@ -584,3 +584,77 @@ cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu
 should end `test result: ok. 157 passed`.
 
 Automated: `make test64`
+
+---
+
+## 054 · Interrupts and a Tick on AArch64
+
+[The entry](journal/054-interrupts-and-a-tick-on-aarch64.md)
+
+**1. The AArch64 kernel is interrupted by its timer**
+
+```
+make run-aarch64
+```
+
+Nothing to type. To leave QEMU: **Ctrl+A, then X**.
+
+| Look for | Meaning |
+|---|---|
+| `[irq] GIC version 2: 288 interrupt lines, all off but the timer's` | the controller the device tree describes is set up |
+| `[timer] the CPU's own: counts at 62500000 Hz, interrupt 27, 100 ticks a second` | the timer is started |
+| `[selftest] timer: 10 ticks in 99 ms (expected 100)` | interrupts arrive, at the right rate (anything from 90 to about 130 is normal; more on a busy machine) |
+| `[selftest] interrupts: 5 taken with a known value in each of 28 registers, none changed` | being interrupted loses nothing |
+| `[selftest] interrupts masked for 35 ms: no tick arrived; unmasked: 3 counted at once` | masking works, and the time is not lost |
+| `[kernel] this is as far as the AArch64 port goes - halting` | no panic on the way |
+
+**2. The other version of the controller, and the other way in**
+
+```
+make run-aarch64 RUN_A64="-M virt,gic-version=3"
+make run-aarch64 RUN_A64="-M virt,virtualization=on,gic-version=3"
+```
+
+| Look for | Meaning |
+|---|---|
+| `[irq] GIC version 3: 288 interrupt lines, all off but the timer's` | version 3 found and set up |
+| the same three `[selftest]` lines | it interrupts just the same |
+| in the second run: `the loader entered at level 2` | the kernel came down from level 2 and may still use the controller |
+
+**3. A machine with no controller the kernel knows**
+
+`make aarch64-test` leaves `build/aarch64/nogic.dtb`:
+
+```
+make aarch64-test
+make run-aarch64 RUN_A64="-dtb build/aarch64/nogic.dtb"
+```
+
+The first command should end `aarch64-test: all passed`.
+
+| Look for | Meaning |
+|---|---|
+| `[tree] interrupts  no controller that this kernel knows` | the tree was read, and has nothing usable |
+| `[irq] the device tree describes no interrupt controller this kernel knows: no interrupts` | said plainly |
+| no `[selftest] timer` line, then `[kernel] this is as far as the AArch64 port goes - halting` | the kernel did not wait for a tick that cannot come |
+
+**4. The PC is unchanged**
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `uptime` | the time since boot, counting up |
+| `cprimes 100` | `cprimes: 25 primes below 100` |
+
+**5. Host checks**
+
+```
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu gic
+```
+
+should end `test result: ok. 10 passed` (the nine new ones, and one device-tree test with "gic" in its name).
+
+Automated: `make test64`
