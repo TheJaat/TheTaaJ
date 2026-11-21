@@ -4,7 +4,7 @@ KERNEL_DIR = kernel
 
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
-        uefi-loader run64-uefi boot64-uefi-test user64 libc64 cprogs64 cput libc-test
+        uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
@@ -816,7 +816,7 @@ run-aarch64-disk: user-aarch64 cprogs-aarch64 tfstool-rs
 RUN_A64_DEVICES = -drive file=$(RUN_A64_DISK),if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0
 run-aarch64: kernel-aarch64 run-aarch64-disk
 	@echo "(to leave QEMU: Ctrl+A, then X)"
-	qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic -kernel $(KERNEL_A64_IMAGE) $(RUN_A64_DEVICES) $(RUN_A64)
+	qemu-system-aarch64 -M virt -cpu cortex-a72 -smp 4 -m 512M -nographic -kernel $(KERNEL_A64_IMAGE) $(RUN_A64_DEVICES) $(RUN_A64)
 
 # Boots on several machines, and one deliberate fault.
 aarch64-test: user-aarch64
@@ -830,7 +830,8 @@ endif
 # (with the programs compiled for this CPU), the keys the PC's test
 # types (as the bytes a terminal sends for them), and the PC's own
 # check of what came of it (which knows the few lines that name the
-# PC's own drivers).
+# PC's own drivers). Four CPUs, as on the PC: the check wants four
+# programs to have run at once.
 A64_KEYS_LOG    = $(BUILD_DIR)/aarch64/keys.log
 # The second boot of that test: one CPU, and a program that never gives
 # it up of its own accord. What the shell then says must still reach
@@ -838,11 +839,18 @@ A64_KEYS_LOG    = $(BUILD_DIR)/aarch64/keys.log
 # idle, and here it never is (console.rs: the timer writes too).
 A64_BUSY_LOG    = $(BUILD_DIR)/aarch64/busy.log
 A64_BUSY_DISK   = $(BUILD_DIR)/aarch64/busy.disk
-A64_BUSY_KEYS   = f o r e v e r spc shift-7 ret e c h o spc s t i l l spc h e r e ret
+#
+# Then a program that says nothing itself, started in the background.
+# That it is over is said by the kernel, while the shell's prompt sits
+# there unfinished - a line the kernel's message waits behind, and must
+# not wait behind for ever (console.rs: lines are kept whole, for a few
+# ticks).
+A64_BUSY_KEYS   = f o r e v e r spc shift-7 ret e c h o spc s t i l l spc h e r e ret \
+                  c p r i m e s spc 1 0 0 spc shift-dot spc o u t spc shift-7 ret see:exited
 aarch64-keys-test: aarch64-test-disk
 ifeq ($(HAVE_A64),yes)
 	@echo "Booting the AArch64 kernel and typing at its serial port (log: $(A64_KEYS_LOG))..."
-	@KEYS="$(TEST_KEYS)" QEMU_ARGS="-drive file=$(A64_TEST_DISK),if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0" \
+	@KEYS="$(TEST_KEYS)" SLOTS=4 QEMU_ARGS="-smp 4 -drive file=$(A64_TEST_DISK),if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0" \
 	    $(KERNEL64_DIR)/scripts/aarch64-boot.sh $(KERNEL_A64_IMAGE) $(A64_KEYS_LOG) 40
 	@ARCH=aarch64 DISK=$(A64_TEST_DISK) TFSTOOL=$(TFSTOOL_RS) CWORDS_HOST=$(CWORDS_HOST) CWORDS_TAAJ=$(C_A64_BIN)/cwords CPRIMES_HOST=$(CPRIMES_HOST) CPRIMES_LIMIT=$(CPRIMES_LIMIT) TYPED="$(TEST_TYPED)" EXPECT="$(TEST_EXPECT)" \
 	    $(KERNEL64_DIR)/scripts/check-boot.sh $(A64_KEYS_LOG) "" > $(A64_KEYS_LOG).out || { grep -a "^FAIL" $(A64_KEYS_LOG).out; echo "FAIL: the typed session on AArch64 (all of it in $(A64_KEYS_LOG).out)"; exit 1; }
@@ -852,7 +860,54 @@ ifeq ($(HAVE_A64),yes)
 	    $(KERNEL64_DIR)/scripts/aarch64-boot.sh $(KERNEL_A64_IMAGE) $(A64_BUSY_LOG) 40
 	@grep -aq '\[shell\] ran "echo still here"' $(A64_BUSY_LOG) && grep -aq '^still here' $(A64_BUSY_LOG) \
 	    || { echo "FAIL: with a program computing in the background, the terminal showed nothing more (log: $(A64_BUSY_LOG))"; exit 1; }
+	@grep -aq '"cprimes" exited with code 0' $(A64_BUSY_LOG) \
+	    || { echo "FAIL: what the kernel said behind an unfinished line of the terminal never came out (log: $(A64_BUSY_LOG))"; exit 1; }
 	@echo "aarch64-keys-test passed"
+
+# The AArch64 kernel on a machine with UEFI firmware: TheTaaJBoot's
+# loader for it (bootloader/src/boot/uefi/aarch64.c), on a FAT
+# partition with the kernel's image beside it - what a memory stick for
+# such a machine would hold.
+#
+# The firmware is QEMU's, from the qemu-efi-aarch64 package.
+UEFI_A64_EFI  = $(BOOTLOADER_BUILD_DIR)/uefi/BOOTAA64.EFI
+A64_ESP_IMG   = $(BUILD_DIR)/aarch64/esp.img
+AAVMF_DIR     = /usr/share/AAVMF
+HAVE_A64_UEFI := $(shell [ "$(HAVE_A64)" = yes ] && [ "$(HAVE_CLANG)" = yes ] && [ -f $(AAVMF_DIR)/AAVMF_CODE.fd ] && echo yes)
+
+aarch64-esp: kernel-aarch64
+ifeq ($(HAVE_A64_UEFI),yes)
+	@echo "Building the UEFI loader for AArch64, and a partition with it and the kernel..."
+	$(MAKE) -C $(UEFI_DIR) ROOT_DIR=$(abspath bootloader) aarch64
+	@rm -f $(A64_ESP_IMG)
+	$(MKFS_FAT) -C -n TAAJESP $(A64_ESP_IMG) 8192 >/dev/null
+	mmd -i $(A64_ESP_IMG) ::/EFI ::/EFI/BOOT ::/kernel
+	mcopy -i $(A64_ESP_IMG) $(UEFI_A64_EFI) ::/EFI/BOOT/BOOTAA64.EFI
+	mcopy -i $(A64_ESP_IMG) $(KERNEL_A64_IMAGE) ::/kernel/Image
+else
+	@echo "NOTE: no UEFI boot of AArch64 - it needs clang, lld and QEMU's firmware (sudo apt install clang lld qemu-efi-aarch64)"
+endif
+
+# As `make run-aarch64`, started by UEFI firmware. The firmware talks
+# on the same serial port first; RUN_A64 adds QEMU options here too.
+run-aarch64-uefi: aarch64-esp run-aarch64-disk
+ifneq ($(HAVE_A64_UEFI),yes)
+	@echo "ERROR: no UEFI boot of AArch64 - it needs clang, lld and QEMU's firmware (sudo apt install clang lld qemu-efi-aarch64)"; exit 1
+endif
+	@cp $(AAVMF_DIR)/AAVMF_VARS.fd $(BUILD_DIR)/aarch64/run-vars.fd
+	@echo "(to leave QEMU: Ctrl+A, then X)"
+	qemu-system-aarch64 -M virt,acpi=off -cpu cortex-a72 -smp 4 -m 512M -nographic \
+	    -drive if=pflash,format=raw,readonly=on,file=$(AAVMF_DIR)/AAVMF_CODE.fd \
+	    -drive if=pflash,format=raw,file=$(BUILD_DIR)/aarch64/run-vars.fd \
+	    -drive file=$(A64_ESP_IMG),format=raw,if=none,id=esp -device virtio-blk-pci,drive=esp \
+	    $(RUN_A64_DEVICES) $(RUN_A64)
+
+aarch64-uefi-test: aarch64-esp aarch64-test-disk
+ifeq ($(HAVE_A64_UEFI),yes)
+	@$(KERNEL64_DIR)/scripts/aarch64-uefi-test.sh $(A64_ESP_IMG) $(A64_TEST_DISK) $(BUILD_DIR)/aarch64
+else
+	@echo "NOTE: aarch64-uefi-test skipped - it needs clang, lld and QEMU's firmware (sudo apt install clang lld qemu-efi-aarch64)"
+endif
 else
 	@echo "qemu-system-aarch64 or llvm-objcopy not found: the AArch64 boots are not run"
 endif
@@ -873,14 +928,14 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 7
-TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test
+TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared
 	@$(MAKE) --no-print-directory -j$(TEST_JOBS) --output-sync=target test64-parts
 	@echo "test64: all passed"
 
-test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64
+test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64 aarch64-esp
 
 test64-parts: $(TEST64_PARTS)
 

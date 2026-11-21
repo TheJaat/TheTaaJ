@@ -1112,3 +1112,124 @@ make aarch64-keys-test
 should end `aarch64-test passed` and `aarch64-keys-test passed`. The second types 231 lines and takes about four minutes; its logs are `build/aarch64/keys.log` and `build/aarch64/busy.log`.
 
 Automated: `make test64`
+
+---
+
+## 061 · Every CPU, and a loader of my own
+
+[The entry](journal/061-every-cpu-and-a-loader-of-my-own.md)
+
+**1. Four CPUs on AArch64**
+
+```
+make run-aarch64
+```
+
+The terminal you started it from is the machine's keyboard and screen. To leave QEMU: **Ctrl+A, then X**. The machine now has four CPUs.
+
+In the boot log:
+
+| Look for | Meaning |
+|---|---|
+| `[cpu] … the loader entered at level 1, with the MMU off` | new: the kernel says what state its loader left |
+| `[tree] firmware    called with hvc` | how this machine's firmware is asked |
+| `[smp] CPU 1 awake: named 0x1, stack below 0x…` (and CPU 2, CPU 3) | each CPU says so itself, on its own stack |
+| `[smp] 4 CPUs awake: CPU 1, 2, 3 started by the firmware (PSCI 1.1, asked by hvc)` | all started |
+| `[smp] counting together: 4 CPUs reached 400000 of 400000 with a lock; without one …, … lost` | the lock works; without one, counts are lost (the lost number differs each time) |
+| `[smp] 4 CPUs run threads: each has its own timer and idle thread, and all take from one queue` | the scheduler has them |
+| `[selftest] smp: threads ran on all 4 CPUs at once; 40000 hand-offs between two threads, none lost; nothing leaked` | threads really ran everywhere |
+| `[selftest] wake-ups: a thread woken by a busy CPU ran on an idle one … us later (median of 40; …; 41 interrupts between CPUs)` | one CPU interrupts another |
+
+| Type | You should see |
+|---|---|
+| `cprimes 24000000 &` four times | `[1] cprimes 24000000` … `[4] cprimes 24000000` |
+| `time wait` | four lines `cprimes: 1507122 primes below 24000000`, then `took … s; the 4 CPUs worked for … s in all` - the second number is three to four times the first (I saw `took 9.91 s; the 4 CPUs worked for 36.93 s in all`) |
+| `chello one` | `Hello from C`, `argc 2`, `argv[1] one` - each on a line of its own. Log lines (`[process] … "chello" exited with code 0`, `[shell] ran "chello one"`) may come before, after or between them, but not inside one |
+
+**2. Other machines**
+
+```
+make run-aarch64 RUN_A64="-smp 1"
+make run-aarch64 RUN_A64="-M virt,gic-version=3 -smp 8"
+make run-aarch64 RUN_A64="-M virt,virtualization=on"
+make run-aarch64 RUN_A64="-smp 20"
+```
+
+| Look for | Meaning |
+|---|---|
+| first: `[smp] 1 CPU: no others to start` | one CPU still works |
+| second: `[irq] GIC version 3: …` and `[smp] 8 CPUs awake: CPU 1, 2, 3, 4, 5, 6, 7 started by the firmware (PSCI 1.1, asked by hvc)` | the other interrupt controller, eight CPUs |
+| third: `the loader entered at level 2, with the MMU off` and `… (PSCI 1.1, asked by smc)` | entered at level 2: the firmware is called the other way |
+| fourth: `[smp] 4 more CPU(s) than the 16 this kernel uses: left asleep` and `[smp] 16 CPUs awake: …` | more CPUs than the kernel has room for |
+
+(A later `-smp` wins over the `-smp 4` the Makefile gives.)
+
+**3. Booted by UEFI firmware, through my loader**
+
+```
+make run-aarch64-uefi
+```
+
+The firmware prints first: `UEFI firmware (version …)`, then `BdsDxe: failed to load Boot0001 "UEFI Misc Device" … Not Found` (that is the system's own disk, which has nothing on it to boot), then `BdsDxe: starting Boot0002 "UEFI Non-Block Boot Device" …`. Then:
+
+| Look for | Meaning |
+|---|---|
+| `TheTaaJBoot (UEFI, AArch64)` | my loader is running |
+| `kernel … KiB at 0x…` | where it put the image |
+| `device tree … bytes at 0x…, copied to 0x… with 3 ranges the firmware keeps` | the tree it found, and what it added |
+| `firmware at exception level 1 - exiting boot services` | the last thing it can say |
+| `Hello from TheTaaJ!` | the kernel |
+| `[cpu] … the loader entered at level 1, with the MMU off` | the loader turned it off |
+| three lines `[tree] reserved    0x… - 0x…` | the firmware's memory, read by the kernel out of the tree |
+| the `[smp]` lines of 1, and then the shell | everything else is the same |
+
+| Type | You should see |
+|---|---|
+| `cat welcome` | `Hello from the host` |
+| `chello` | `Hello from C` and `argc 1` |
+
+**4. Firmware that has no device tree**
+
+```
+make aarch64-esp
+cp /usr/share/AAVMF/AAVMF_VARS.fd build/aarch64/vars.fd
+qemu-system-aarch64 -M virt -cpu cortex-a72 -m 512M -nographic \
+    -drive if=pflash,format=raw,readonly=on,file=/usr/share/AAVMF/AAVMF_CODE.fd \
+    -drive if=pflash,format=raw,file=build/aarch64/vars.fd \
+    -drive file=build/aarch64/esp.img,format=raw,if=none,id=esp -device virtio-blk-pci,drive=esp
+```
+
+(`-M virt` without `acpi=off`.) You should see `TheTaaJBoot: the firmware has no device tree to give (on QEMU: start the machine with -M virt,acpi=off) (status 0x800000000000000e)`, and no `Hello from TheTaaJ!`. After five seconds the firmware says `BdsDxe: failed to start Boot0001 … Not Found` and tries the network (`>>Start PXE over IPv4.`). Leave with Ctrl+A, then X.
+
+**5. Lines kept whole, and not held for ever**
+
+In `make run-aarch64`:
+
+| Type | You should see |
+|---|---|
+| `chello fail` | `Hello from C`, `argc 2`, `argv[1] fail`, `chello exited with code 3` - each line whole; no `[process]` or `[shell]` text in the middle of one |
+| `cprimes 100 > out &` then nothing | `[1] cprimes 100 > out`, a new prompt `taaj:/> `, and a moment later, on the prompt's line, `[process] … "cprimes" exited with code 0` - the kernel's message waited for the prompt's line to end, briefly, and then did not |
+| Enter | `[1] done  cprimes 100 > out` |
+
+**6. Host checks**
+
+```
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu psci
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu logmerge
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu gic
+```
+
+should say `5 passed`, `8 passed` and `13 passed`.
+
+**7. The three AArch64 tests alone**
+
+```
+make user-aarch64 cprogs-aarch64 kernel-aarch64
+make aarch64-test
+make aarch64-keys-test
+make aarch64-uefi-test
+```
+
+should end `aarch64-test: all passed`, `aarch64-keys-test passed` and `aarch64-uefi-test passed`. The UEFI test needs QEMU's firmware (`sudo apt install qemu-efi-aarch64`); without it the test says it was skipped.
+
+Automated: `make test64`
