@@ -3,7 +3,7 @@ BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
-        kernel64 iso64 run64 run-disk boot64-test smp64-test kernel64-test fault64-test test64 \
+        kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test user64 libc64 cprogs64 cput libc-test
 
 # Default target
@@ -579,6 +579,54 @@ smp64-test: iso64
 	    || { echo "FAIL: 20 CPUs: the kernel did not say it left 4 asleep"; exit 1; }
 	@echo "smp64-test passed"
 
+# A kernel made too big on purpose: 768 KiB of ballast put its end well
+# above 2 MiB, where the BIOS loader used to refuse it. Booted both
+# ways, it checks every byte of the ballast. The BIOS image also carries
+# a ramdisk, which for a 64-bit kernel must now land above the kernel -
+# at 3 MiB, where the kernel's file was staged - and not at 2 MiB,
+# through the middle of it.
+BIG64_DIR = $(BUILD_DIR)/big64
+BIG64_ISO = $(BUILD_DIR)/big64.iso
+BIG64_ELF = $(KERNEL64_DIR)/target/big-image/x86_64-unknown-none/release/kernel64
+BIG64_LOG = $(BUILD_DIR)/big64
+BIG64_SAID = \[test\] big image: the kernel ends at 0x[0-9a-f]+, above 2 MiB; 768 KiB of it at 0x[0-9a-f]+-0x[0-9a-f]+ is byte for byte what was built
+big64-test: build-bootloader user64 uefi-loader
+	@echo "Building a kernel that ends above 2 MiB..."
+	cd $(KERNEL64_DIR) && cargo build --release --quiet --features big-image --target-dir target/big-image
+	rm -rf $(BIG64_DIR)
+	mkdir -p $(BIG64_DIR)/kernel
+	cp $(STAGE1_BIN) $(STAGE2_BIN) $(BIG64_DIR)/
+	strip --strip-debug -o $(BIG64_DIR)/kernel/kernel.elf $(BIG64_ELF)
+	head -c 8192 /dev/urandom > $(BIG64_DIR)/RAMDISK.MDR
+ifeq ($(HAVE_CLANG),yes)
+	$(MKFS_FAT) -C -n TAAJESP $(BIG64_DIR)/efiboot.img 8192 >/dev/null
+	mmd -i $(BIG64_DIR)/efiboot.img ::/EFI ::/EFI/BOOT ::/kernel
+	mcopy -i $(BIG64_DIR)/efiboot.img $(UEFI_EFI) ::/EFI/BOOT/BOOTX64.EFI
+	mcopy -i $(BIG64_DIR)/efiboot.img $(BIG64_DIR)/kernel/kernel.elf ::/kernel/kernel.elf
+	xorriso -as mkisofs -R -J -iso-level 3 \
+		-b stage1.bin -no-emul-boot -boot-load-size 4 \
+		-eltorito-alt-boot -e efiboot.img -no-emul-boot \
+		-o $(BIG64_ISO) $(BIG64_DIR) 2>/dev/null
+else
+	xorriso -as mkisofs -R -J -b stage1.bin -iso-level 3 -no-emul-boot \
+		-boot-load-size 4 -o $(BIG64_ISO) $(BIG64_DIR) 2>/dev/null
+endif
+	@echo "Booting it via BIOS (serial log: $(BIG64_LOG)-bios.log)..."
+	@$(KERNEL64_DIR)/scripts/qemu-boot.sh $(BIG64_ISO) $(BIG64_LOG)-bios.log 40
+	@grep -qE "$(BIG64_SAID)" $(BIG64_LOG)-bios.log \
+	    || { tail -5 $(BIG64_LOG)-bios.log; echo "FAIL: BIOS: the big kernel did not boot, or was not loaded whole"; exit 1; }
+	@grep -q "ramdisk        0x2000 bytes at 0x300000" $(BIG64_LOG)-bios.log \
+	    || { grep "ramdisk" $(BIG64_LOG)-bios.log; echo "FAIL: BIOS: the ramdisk is not at 3 MiB, above the kernel"; exit 1; }
+	@! grep -q "FAILED\|PANIC\|EXCEPTION" $(BIG64_LOG)-bios.log || { echo "FAIL: BIOS: the big kernel reported a failure"; exit 1; }
+ifeq ($(HAVE_CLANG),yes)
+	@echo "Booting it via UEFI (serial log: $(BIG64_LOG)-uefi.log)..."
+	@QEMU_ARGS="-bios $(OVMF)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(BIG64_ISO) $(BIG64_LOG)-uefi.log 40
+	@grep -qE "$(BIG64_SAID)" $(BIG64_LOG)-uefi.log \
+	    || { tail -5 $(BIG64_LOG)-uefi.log; echo "FAIL: UEFI: the big kernel did not boot, or was not loaded whole"; exit 1; }
+	@! grep -q "FAILED\|PANIC\|EXCEPTION" $(BIG64_LOG)-uefi.log || { echo "FAIL: UEFI: the big kernel reported a failure"; exit 1; }
+endif
+	@echo "big64-test passed"
+
 # Unit tests of the kernel's pure logic (frames, page tables, heap,
 # locks), compiled for and run on this machine rather than in a VM.
 HOST_TRIPLE = $(shell PATH="$(PATH)" rustc -vV | sed -n 's/^host: //p')
@@ -659,7 +707,7 @@ fault64-test: build-bootloader user64
 
 # Every layer: host unit tests, a normal boot (BIOS and UEFI) with its
 # self-tests, and the fault boots.
-test64: kernel64-test boot64-test boot64-uefi-test smp64-test fault64-test
+test64: kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test
 	@echo "test64: all passed"
 
 # Clean everything

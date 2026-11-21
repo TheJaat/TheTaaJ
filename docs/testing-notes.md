@@ -180,3 +180,47 @@ cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu sched
 should end `27 passed`.
 
 Automated: `make test64`
+
+---
+
+## 048 · The Kernel Outgrows Its Megabyte
+
+[The entry](journal/048-the-kernel-outgrows-its-megabyte.md)
+
+```
+make big64-test
+```
+
+It builds a second kernel (a minute the first time) and boots it twice. You should see, at the end:
+
+| Look for | You should see |
+|---|---|
+| The last line | `big64-test passed` |
+
+and in the two logs:
+
+```
+grep -a "big image\|ramdisk  " build/big64-bios.log build/big64-uefi.log
+```
+
+| Look for | You should see |
+|---|---|
+| `build/big64-bios.log` … `ramdisk` | `ramdisk        0x2000 bytes at 0x300000` — at 3 MiB, above the kernel |
+| `build/big64-bios.log` … `big image` | `[test] big image: the kernel ends at 0x2c…, above 2 MiB; 768 KiB of it at 0x…-0x… is byte for byte what was built` |
+| `build/big64-uefi.log` … `big image` | The same line (and `ramdisk        none`: the UEFI loader carries no ramdisk) |
+| `FAILED` | Nothing |
+
+**The ordinary system** — it is loaded by the changed loader too
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| nothing | The system starts as before, to the shell's prompt |
+| `ls`, `primes`, `ps` | As before |
+
+**To see the wall itself** (optional): in `kernel/kernel64/linker.ld` change `KERNEL_LOAD_LIMIT = 0x300000;` to `0x100000;` and run `make kernel64`. The build should stop with `the kernel image ends above 3 MiB, where the bootloader refuses to load it`. Change it back.
+
+Automated: `make test64`
