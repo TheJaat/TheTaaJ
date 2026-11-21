@@ -101,6 +101,31 @@ pub mod mmio {
     pub const DEVICE_GPU: u32 = 16;
     pub const DEVICE_INPUT: u32 = 18;
 
+    /// INTERRUPT_STATUS: the device used a buffer.
+    pub const INTERRUPT_USED: u32 = 1;
+    /// INTERRUPT_STATUS: its configuration changed.
+    pub const INTERRUPT_CONFIG: u32 = 2;
+
+    /// How many entries to give a legacy queue: the most the device
+    /// takes (`max`, what QUEUE_SIZE_MAX reads) that is a power of two
+    /// and whose rings fit in `room` bytes. None if the queue does not
+    /// exist (`max` 0) or not even two entries fit.
+    ///
+    /// On a PCI bus a legacy device fixes the size and the driver must
+    /// find the memory. Here the driver chooses, so it can start from
+    /// the memory it has.
+    pub fn queue_size(max: u32, room: usize) -> Option<u16> {
+        // 32768 is the largest size virtio allows.
+        let mut size = max.min(32768).checked_ilog2().map(|log| 1u32 << log)?;
+        while size >= 2 {
+            if super::Layout::legacy(size as u16).total <= room {
+                return Some(size as u16);
+            }
+            size /= 2;
+        }
+        None
+    }
+
     /// What is in one place.
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct Identity {
@@ -375,6 +400,33 @@ mod tests {
         move |offset| {
             assert!(offset % 4 == 0 && offset < 16, "read of register {offset:#x}");
             values[offset as usize / 4]
+        }
+    }
+
+    #[test]
+    fn a_queue_is_as_big_as_the_device_and_the_memory_allow() {
+        use mmio::queue_size;
+        // QEMU's answer (1024) and the block driver's 32 KiB: all of
+        // it fits, exactly.
+        assert_eq!(Layout::legacy(1024).total, 0x8000);
+        assert_eq!(queue_size(1024, 0x8000), Some(1024));
+        // One byte less room: the next size down.
+        assert_eq!(queue_size(1024, 0x7FFF), Some(512));
+        // The device's limit, when that is the smaller.
+        assert_eq!(queue_size(8, 0x8000), Some(8));
+        // Not a power of two: the one below.
+        assert_eq!(queue_size(100, 0x8000), Some(64));
+        // More than virtio allows is not believed.
+        assert_eq!(queue_size(u32::MAX, usize::MAX), Some(32768));
+        // No queue; no room for any.
+        assert_eq!(queue_size(0, 0x8000), None);
+        assert_eq!(queue_size(1024, 0x1000), None);
+        assert_eq!(queue_size(1, 0x8000), None);
+        // Whatever is chosen fits.
+        for room in [0x2000, 0x3000, 0x5000, 0x10000] {
+            let size = queue_size(4096, room).unwrap();
+            assert!(Layout::legacy(size).total <= room);
+            assert!(Layout::legacy(size * 2).total > room || size == 4096);
         }
     }
 

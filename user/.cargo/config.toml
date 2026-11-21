@@ -13,5 +13,10 @@ rustflags = ["-C", "relocation-model=static"]
 # "softfloat" for the reason above: the kernel leaves the floating
 # point registers switched off, and a program that touched one would
 # be ended for it.
+#
+# max-page-size: some AArch64 systems have 64 KiB pages, so the linker
+# lines every segment up on 64 KiB in the file, to be loadable on all
+# of them. This system's pages are 4 KiB; the default was 60 KB of
+# zeroes in every program (the C programs' link says the same).
 [target.aarch64-unknown-none-softfloat]
-rustflags = ["-C", "relocation-model=static"]
+rustflags = ["-C", "relocation-model=static", "-C", "link-arg=-zmax-page-size=4096"]

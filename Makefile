@@ -730,7 +730,7 @@ HAVE_A64     := $(shell command -v qemu-system-aarch64 >/dev/null && [ -n "$(LLV
 # The programs the AArch64 kernel embeds: the user/ crate again, for
 # the other CPU. Named one by one, because a few programs are for the PC
 # only (they use I/O ports) and would not compile.
-USER_A64_BINS := hello peek cli spin echod echoc fs fscheck memro heapcheck forever regs
+USER_A64_BINS := hello peek cli spin echod echoc fs fscheck memro heapcheck forever regs blk blkcheck
 
 user-aarch64:
 	cd user && cargo build --release --target $(KERNEL_A64_TARGET) $(addprefix --bin ,$(USER_A64_BINS))

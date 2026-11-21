@@ -931,3 +931,95 @@ make run64
 | `ls` | the files on the disk, as before |
 
 Automated: `make test64`
+
+---
+
+## 059 · One driver, two machines
+
+[The entry](journal/059-one-driver-two-machines.md)
+
+**1. A disk, driven by a program**
+
+```
+python3 kernel/kernel64/scripts/disk-pattern.py make /tmp/taaj-a64-disk.img 6143
+make run-aarch64 RUN_A64="-drive file=/tmp/taaj-a64-disk.img,if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0"
+```
+
+Nothing to type. To leave QEMU: **Ctrl+A, then X**. Near the end:
+
+| Look for | Meaning |
+|---|---|
+| `[virtio] 0xa003e00 block device: registers in the page at 0xa003000, 64 KiB DMA at 0x…, interrupt 79, off until its driver waits - ready for a driver` | the kernel made the three capabilities |
+| `[blk] virtio disk at 0xa003e00: 6143 sectors (3071 KiB), queue of 1024, interrupts` | the driver, a program, set the device up |
+| `[blkcheck] 348 checks, all passed: 6143 sectors, 33 written at 100 and the last one` (twice) | every request and refusal behaved |
+| `[process] … "blk" exited with code 0` (twice) | the driver ended when its clients left |
+| `[selftest] disk: blk and blkcheck, twice on one device - every check passed; 338 interrupts passed to the driver; nothing leaked` | interrupts were used; no memory or channel left behind (the number may differ a little) |
+
+Then, after leaving QEMU, the disk itself:
+
+```
+python3 kernel/kernel64/scripts/disk-pattern.py check /tmp/taaj-a64-disk.img 6143 written
+```
+
+should print `the disk image, read from outside: 34 sectors written, 6109 as they were`.
+
+**2. The other interrupt controller**
+
+```
+python3 kernel/kernel64/scripts/disk-pattern.py make /tmp/taaj-a64-disk.img 6143
+make run-aarch64 RUN_A64="-M virt,gic-version=3 -drive file=/tmp/taaj-a64-disk.img,if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0"
+```
+
+| Look for | Meaning |
+|---|---|
+| `[irq] GIC version 3: 288 interrupt lines, all off but the timer's` | version 3 |
+| the same `[blk]`, `[blkcheck]` and `[selftest] disk:` lines as in 1 | the interrupt was routed there too |
+
+**3. A read-only disk**
+
+```
+python3 kernel/kernel64/scripts/disk-pattern.py make /tmp/taaj-a64-disk.img 6143
+make run-aarch64 RUN_A64="-drive file=/tmp/taaj-a64-disk.img,if=none,format=raw,id=d0,readonly=on -device virtio-blk-device,drive=d0"
+python3 kernel/kernel64/scripts/disk-pattern.py check /tmp/taaj-a64-disk.img 6143 untouched
+```
+
+| Look for | Meaning |
+|---|---|
+| `[blk] virtio disk at 0xa003e00: 6143 sectors (3071 KiB), read-only, queue of 1024, interrupts` | the driver noticed |
+| `[blkcheck] 340 checks, all passed: 6143 sectors, read-only - every write refused` | no write got through |
+| `the disk image, read from outside: 0 sectors written, 6143 as they were` | and the file agrees |
+
+**4. No disk, and a disk with no driver**
+
+```
+make run-aarch64
+make run-aarch64 RUN_A64="-global virtio-mmio.force-legacy=false -drive file=/tmp/taaj-a64-disk.img,if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0"
+```
+
+| Look for | Meaning |
+|---|---|
+| `[selftest] disk: no block device a driver exists for - not run` | both |
+| `[virtio] 0xa003e00 block device: the modern interface - no driver speaks it yet` | the second only |
+
+**5. Host checks**
+
+```
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu gic
+cd kernel/abi && cargo test
+cd virtio && cargo test
+```
+
+Each should end `test result: ok.` - 12, 7 and 8 tests.
+
+**6. The PC's disk, through the same driver**
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `ls` | the files on the disk, as before |
+| `disk` | `disk: … sectors of 512 bytes (… KiB)`, as before |
+
+Automated: `make test64`

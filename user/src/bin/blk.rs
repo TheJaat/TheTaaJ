@@ -1,14 +1,25 @@
 //! blk - the virtio block driver: a disk, from ring 3.
 //!
-//! Startup handles, from init:
-//!   1  the device's I/O ports (its BAR 0)
+//! The same driver for a disk on a PCI bus, reached through I/O ports
+//! (the PC), and for one at a fixed place in memory (virtio-mmio: the
+//! AArch64 `virt` machine). Which it has been given, it learns from the
+//! description that arrives first: the two are of different lengths.
+//! Only setting the device up, telling it of a new request and
+//! answering its interrupt differ - `Transport` below; the queue, the
+//! requests and the service are the same code.
+//!
+//! Startup handles, from whoever starts it (init; on AArch64, so far,
+//! the kernel's self-test):
+//!   1  the device's registers: I/O ports (its BAR 0), or the memory
+//!      they are in
 //!   2  its DMA memory: physically contiguous, its address known
-//!   3  the device channel: init sends the PciDeviceInfo first
+//!   3  the device channel: the PciDeviceInfo or MmioDeviceInfo
+//!      comes first
 //!   4  the request channel (abi::block): reads and writes - for the
 //!      file service, which owns what is on the disk
 //!   5  a second request channel: reads only - for anyone who may look
 //!      at the disk but not change it (the shell)
-//!   6  the device's interrupt (MSI-X), if it has one - else polled
+//!   6  the device's interrupt, if it has one - else polled
 //!
 //! Two channels, two levels of authority: which one a client was given
 //! decides what it may do. The kernel knows nothing of it - handle
@@ -45,10 +56,11 @@
 #![no_std]
 #![no_main]
 
-use abi::{block, PciDeviceInfo};
+use abi::{block, MmioDeviceInfo, PciDeviceInfo};
+#[cfg(target_arch = "x86_64")]
 use taaj::port::{in16, in32, out16, out32, out8};
 use taaj::{println, Error, Handle};
-use virtio::{legacy, Buffer, Layout, Queue};
+use virtio::{legacy, mmio, Buffer, Layout, Queue};
 
 taaj::program!(main);
 
@@ -59,8 +71,72 @@ const DATA: usize = 0x9000;
 const DATA_MAX: usize = block::SECTORS_MAX as usize * block::SECTOR;
 const DMA_NEEDED: u64 = (DATA + DATA_MAX) as u64;
 
+/// How the device's registers are reached.
+#[derive(Clone, Copy)]
+enum Transport {
+    /// I/O ports, from this one on: a legacy virtio device on a PCI bus.
+    #[cfg(target_arch = "x86_64")]
+    Ports(u16),
+    /// Memory: where the registers are mapped here. Each is 32 bits, at
+    /// a multiple of four (`virtio::mmio`).
+    Memory(*mut u32),
+}
+
+impl Transport {
+    /// A memory-mapped register, read.
+    ///
+    /// # Safety
+    /// `registers` must be a mapping of a virtio-mmio device's
+    /// registers and `offset` one of them.
+    unsafe fn read(registers: *mut u32, offset: u32) -> u32 {
+        // SAFETY: the caller's promise. Volatile: a read is a question
+        // put to the device, never to be skipped or repeated.
+        unsafe { registers.byte_add(offset as usize).read_volatile() }
+    }
+
+    /// # Safety
+    /// As for `read`.
+    unsafe fn write(registers: *mut u32, offset: u32, value: u32) {
+        // SAFETY: as for `read`.
+        unsafe { registers.byte_add(offset as usize).write_volatile(value) }
+    }
+
+    /// "Queue 0 has a new request."
+    fn notify(self) {
+        match self {
+            // SAFETY: the device's notify register.
+            #[cfg(target_arch = "x86_64")]
+            Transport::Ports(ports) => unsafe { out16(ports + legacy::QUEUE_NOTIFY, 0) },
+            // SAFETY: the same register, in memory.
+            Transport::Memory(registers) => unsafe { Transport::write(registers, mmio::QUEUE_NOTIFY, 0) },
+        }
+    }
+
+    /// After an interrupt: tells the device it was seen.
+    ///
+    /// With MSI-X (the PC) an interrupt is a message, sent once, and
+    /// there is nothing to answer. A memory-mapped device raises a line
+    /// and holds it up until told which of its reasons were seen. The
+    /// order matters to the caller: this first, and only then a look
+    /// at the queue - a request that finishes after the look raises
+    /// the line again, one that finished before is found by the look.
+    /// The other way round, one could finish between the two and never
+    /// be noticed.
+    fn interrupt_seen(self) {
+        match self {
+            #[cfg(target_arch = "x86_64")]
+            Transport::Ports(_) => {}
+            // SAFETY: the two interrupt registers.
+            Transport::Memory(registers) => unsafe {
+                let why = Transport::read(registers, mmio::INTERRUPT_STATUS);
+                Transport::write(registers, mmio::INTERRUPT_ACK, why);
+            },
+        }
+    }
+}
+
 struct Disk {
-    ports: u16,
+    transport: Transport,
     queue: Queue,
     /// Where the DMA memory is mapped here, and where it is for the device.
     memory: *mut u8,
@@ -73,6 +149,7 @@ struct Disk {
 impl Disk {
     /// Sets the device up, following the legacy sequence: reset, say
     /// hello, agree on features, give it the queue, say ready.
+    #[cfg(target_arch = "x86_64")]
     fn start(info: &PciDeviceInfo, memory: *mut u8, interrupt: Option<Handle>) -> Result<Disk, &'static str> {
         let ports = info.io_base;
         let register = |offset: u16| ports + offset;
@@ -114,7 +191,75 @@ impl Disk {
             let config = register(legacy::device_config(info.msix));
             let sectors = u64::from(in32(config)) | u64::from(in32(config + 4)) << 32;
             Ok(Disk {
-                ports,
+                transport: Transport::Ports(ports),
+                queue,
+                memory,
+                physical: info.dma_physical,
+                interrupt,
+                sectors,
+                read_only: offered & virtio::block::FEATURE_READ_ONLY != 0,
+            })
+        }
+    }
+
+    /// The same sequence for a device whose registers are in memory, at
+    /// `registers`. Three things differ from the PCI one:
+    ///
+    ///   - the driver says how big a page is (the queue's address is
+    ///     given in pages) and how the used ring is aligned;
+    ///   - the driver chooses the queue's size, up to the device's
+    ///     limit - so it takes the largest its memory holds;
+    ///   - there is no choosing of interrupts: the device has one line.
+    ///
+    /// # Safety
+    /// `registers` must be a mapping of the device's registers, and
+    /// `memory` one of the DMA memory `info` describes.
+    unsafe fn start_mapped(
+        info: &MmioDeviceInfo,
+        registers: *mut u32,
+        memory: *mut u8,
+        interrupt: Option<Handle>,
+    ) -> Result<Disk, &'static str> {
+        // SAFETY (each register access below): the caller's promise.
+        unsafe {
+            let read = |offset| Transport::read(registers, offset);
+            let write = |offset, value| Transport::write(registers, offset, value);
+            let status = |bits: u8| write(mmio::STATUS, u32::from(bits));
+
+            // The kernel looked already, but this process trusts what
+            // it reads, not what it was told.
+            if read(mmio::MAGIC) != mmio::MAGIC_VALUE || read(mmio::DEVICE_ID) != mmio::DEVICE_BLOCK {
+                return Err("these are not a virtio block device's registers");
+            }
+            if read(mmio::VERSION) != 1 {
+                return Err("only the legacy register interface is spoken here");
+            }
+            status(0); // reset: forget any old queue, let go of the interrupt
+            status(legacy::ACKNOWLEDGE);
+            status(legacy::ACKNOWLEDGE | legacy::DRIVER);
+
+            write(mmio::HOST_FEATURES_SELECT, 0);
+            let offered = read(mmio::HOST_FEATURES);
+            write(mmio::GUEST_FEATURES_SELECT, 0);
+            write(mmio::GUEST_FEATURES, 0);
+
+            write(mmio::GUEST_PAGE_SIZE, 4096);
+            write(mmio::QUEUE_SELECT, 0);
+            let Some(size) = mmio::queue_size(read(mmio::QUEUE_SIZE_MAX), QUEUE_AREA) else {
+                status(legacy::FAILED);
+                return Err("no queue, or none that fits the DMA memory");
+            };
+            let layout = Layout::legacy(size);
+            // SAFETY: as in `start` - the start of the DMA memory.
+            let queue = Queue::new(memory, layout);
+            write(mmio::QUEUE_SIZE, u32::from(size));
+            write(mmio::QUEUE_ALIGN, 4096);
+            write(mmio::QUEUE_PFN, (info.dma_physical / 4096) as u32);
+            status(legacy::ACKNOWLEDGE | legacy::DRIVER | legacy::DRIVER_OK);
+
+            let sectors = u64::from(read(mmio::CONFIG)) | u64::from(read(mmio::CONFIG + 4)) << 32;
+            Ok(Disk {
+                transport: Transport::Memory(registers),
                 queue,
                 memory,
                 physical: info.dma_physical,
@@ -157,8 +302,7 @@ impl Disk {
         if self.queue.submit(&buffers).is_none() {
             return block::IO_ERROR; // cannot happen: one request at a time
         }
-        // SAFETY: the device's notify register.
-        unsafe { out16(self.ports + legacy::QUEUE_NOTIFY, 0) };
+        self.transport.notify();
 
         // Wait for it to come back. The interrupt count is what makes
         // this safe: one that fires before the wait begins is not lost.
@@ -168,6 +312,8 @@ impl Disk {
                     if taaj::interrupt_wait(line).is_err() {
                         return block::IO_ERROR;
                     }
+                    // Before the loop looks at the queue again.
+                    self.transport.interrupt_seen();
                 }
                 None => taaj::yield_now(),
             }
@@ -267,8 +413,90 @@ impl Disk {
     }
 }
 
+/// The description is a PCI device's: its registers are I/O ports.
+#[cfg(target_arch = "x86_64")]
+fn start_on_pci(info: &PciDeviceInfo, ports: Handle, dma: Handle, interrupt: Option<Handle>) -> Result<Disk, i64> {
+    if info.dma_size < DMA_NEEDED {
+        println!("[blk] no usable device description");
+        return Err(2);
+    }
+    if taaj::ioports_enable(ports).is_err() {
+        return Err(3);
+    }
+    let memory = map(dma, "the DMA memory")?;
+    let disk = Disk::start(info, memory, interrupt).map_err(|why| {
+        println!("[blk] the device would not start: {why}");
+        5
+    })?;
+    println!(
+        "[blk] virtio disk at {:02x}:{:02x}.{}: {} sectors ({} KiB){}, queue of {}, {}",
+        info.bus,
+        info.device,
+        info.function,
+        disk.sectors,
+        disk.sectors / 2,
+        if disk.read_only { ", read-only" } else { "" },
+        disk.queue.size(),
+        if interrupt.is_some() { "MSI-X interrupts" } else { "polled" }
+    );
+    Ok(disk)
+}
+
+/// No PCI bus on this CPU's machines so far.
+#[cfg(not(target_arch = "x86_64"))]
+fn start_on_pci(_: &PciDeviceInfo, _: Handle, _: Handle, _: Option<Handle>) -> Result<Disk, i64> {
+    println!("[blk] a PCI device, which this build cannot drive");
+    Err(2)
+}
+
+/// The description is of a device in memory.
+fn start_in_memory(info: &MmioDeviceInfo, registers: Handle, dma: Handle, interrupt: Option<Handle>) -> Result<Disk, i64> {
+    // What must hold for the register accesses to be inside what gets
+    // mapped: asked of the kernel, not taken from the description.
+    let end = info.offset_in_page() as u64 + u64::from(info.registers_size);
+    let fits = taaj::memory_size(registers).is_ok_and(|size| end <= size);
+    if info.dma_size < DMA_NEEDED || u64::from(info.registers_size) < u64::from(mmio::CONFIG) + 8 || !fits {
+        println!("[blk] no usable device description");
+        return Err(2);
+    }
+    let page = map(registers, "the device's registers")?;
+    let memory = map(dma, "the DMA memory")?;
+    // SAFETY: inside the mapping (checked above); the registers begin
+    // on a multiple of four, as the cast needs, or the device is not
+    // one - which `start_mapped` finds out from the magic number.
+    let disk = unsafe {
+        let registers = page.add(info.offset_in_page()).cast::<u32>();
+        if !registers.is_aligned() {
+            println!("[blk] no usable device description");
+            return Err(2);
+        }
+        Disk::start_mapped(info, registers, memory, interrupt)
+    }
+    .map_err(|why| {
+        println!("[blk] the device would not start: {why}");
+        5
+    })?;
+    println!(
+        "[blk] virtio disk at {:#x}: {} sectors ({} KiB){}, queue of {}, {}",
+        info.registers,
+        disk.sectors,
+        disk.sectors / 2,
+        if disk.read_only { ", read-only" } else { "" },
+        disk.queue.size(),
+        if interrupt.is_some() { "interrupts" } else { "polled" }
+    );
+    Ok(disk)
+}
+
+fn map(memory: Handle, what: &str) -> Result<*mut u8, i64> {
+    taaj::memory_map(memory, true).map_err(|error| {
+        println!("[blk] cannot map {what}: {error:?}");
+        4
+    })
+}
+
 fn main() -> i64 {
-    let (Some(ports), Some(dma), Some(device), Some(writers), Some(readers)) = (
+    let (Some(registers), Some(dma), Some(device), Some(writers), Some(readers)) = (
         taaj::startup_handle(0),
         taaj::startup_handle(1),
         taaj::startup_handle(2),
@@ -281,42 +509,23 @@ fn main() -> i64 {
     let interrupt = taaj::startup_handle(5);
 
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
-    let info = match taaj::receive(device, &mut message, &mut []) {
-        Ok((n, _)) => PciDeviceInfo::from_bytes(&message[..n]),
-        Err(_) => None,
+    let described = match taaj::receive(device, &mut message, &mut []) {
+        Ok((n, _)) => &message[..n],
+        Err(_) => &[],
     };
-    let Some(info) = info.filter(|i| i.dma_size >= DMA_NEEDED) else {
+    // Which kind of device: the two descriptions differ in length.
+    let started = if let Some(info) = PciDeviceInfo::from_bytes(described) {
+        start_on_pci(&info, registers, dma, interrupt)
+    } else if let Some(info) = MmioDeviceInfo::from_bytes(described) {
+        start_in_memory(&info, registers, dma, interrupt)
+    } else {
         println!("[blk] no usable device description");
-        return 2;
+        Err(2)
     };
-    if taaj::ioports_enable(ports).is_err() {
-        return 3;
-    }
-    let memory = match taaj::memory_map(dma, true) {
-        Ok(memory) => memory,
-        Err(error) => {
-            println!("[blk] cannot map the DMA memory: {error:?}");
-            return 4;
-        }
-    };
-    let mut disk = match Disk::start(&info, memory, interrupt) {
+    let mut disk = match started {
         Ok(disk) => disk,
-        Err(why) => {
-            println!("[blk] the device would not start: {why}");
-            return 5;
-        }
+        Err(code) => return code,
     };
-    println!(
-        "[blk] virtio disk at {:02x}:{:02x}.{}: {} sectors ({} KiB){}, queue of {}, {}",
-        info.bus,
-        info.device,
-        info.function,
-        disk.sectors,
-        disk.sectors / 2,
-        if disk.read_only { ", read-only" } else { "" },
-        disk.queue.size(),
-        if interrupt.is_some() { "MSI-X interrupts" } else { "polled" }
-    );
 
     let mut reply = [0u8; abi::MESSAGE_MAX as usize];
     let channels = [writers, readers];
