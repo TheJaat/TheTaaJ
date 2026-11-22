@@ -2093,3 +2093,63 @@ make aarch64-tcc-test
 | `tcc64-test passed`, `aarch64-tcc-test passed` | all of it, on each machine |
 
 Automated: make test64
+
+---
+
+## 072 · C++ on TheTaaJ
+
+[The entry](journal/072-cxx-on-taaj.md)
+
+**1. The PC: C++ programs**
+
+```
+make run64
+```
+
+The first `make run64` after this step builds `libc++.a` for the PC, which takes a few minutes.
+
+| Type | You should see |
+|---|---|
+| `cxxhello pear apple pear fig` | `Hello from C++`, `4 words, 3 different, in order: apple fig pear pear`, `pear 2, apple 1, fig 1`, `the longest: apple (5 letters)` |
+| `cxxhello` | `Hello from C++`, `give me some words: cxxhello pear apple pear fig` |
+| `cxxhello antidisestablishmentarianism` | `1 word, 1 different, …`, `the longest: antidisestablishmentarianism (28 letters)`, then `caught: no word may be longer than 12 letters, and "antidisestablishmentarianism" is 28` |
+| `cxxlib` | after a moment, `c++: 56 checks, all passed`, then `c++: the objects outside main were destroyed` |
+| `cxxlib throw` | `libc++abi: terminating due to uncaught exception of type std::runtime_error: nobody catches this`, then `cxxlib exited with code 134` |
+
+**2. The C library's new parts**
+
+`clib` reads `welcome` and `docs/`, which the test disks have and the run disk does not; make them first (skip the first two lines if they are already there):
+
+| Type | You should see |
+|---|---|
+| `mkdir docs` | nothing printed |
+| `echo Hello from the host > welcome` | nothing printed |
+| `with files clib` | `library: 70 checks, all passed`, then `library: atexit ran its handlers, newest first` |
+| `ls` | `cxxhello` (about 427,000 bytes), `cxxlib` (about 751,000) and `clib` among the programs |
+
+**3. AArch64**
+
+Close any AArch64 QEMU first: `build/aarch64/taaj-disk.img` is the disk `make run-aarch64` uses.
+
+```
+make run-aarch64
+```
+
+The same as parts 1 and 2, typed at the terminal. `cxxhello` is about 410,000 bytes and `cxxlib` about 714,000.
+
+**4. The tests by themselves**
+
+```
+make libc-test
+make cxx64-test
+make aarch64-cxx-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `math: 150135396 checks against this machine's, 0 failed` | math.c gives glibc's answers, bit for bit |
+| `scan: 200461 checks, all the same as the host's sscanf` | sscanf reads what glibc's does |
+| `C++ on TheTaaJ (x86_64): cxxlib's 56 checks passed, the destructors ran after main, an uncaught exception ended in std::terminate, cxxhello sorted, counted and caught` | all of part 1 on the PC (`aarch64` for the other) |
+| `cxx64-test passed`, `aarch64-cxx-test passed` | each machine |
+
+Automated: make test64
