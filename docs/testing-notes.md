@@ -2153,3 +2153,63 @@ make aarch64-cxx-test
 | `cxx64-test passed`, `aarch64-cxx-test passed` | each machine |
 
 Automated: make test64
+
+---
+
+## 073 · LLVM on TheTaaJ
+
+[The entry](journal/073-llvm-on-taaj.md)
+
+**1. The PC: llvm-tblgen**
+
+```
+make llvm-put
+make run64
+```
+
+The first `make llvm-put` builds LLVM's Support and TableGen for the PC, about 230 files, which takes a few minutes. It puts `llvm-tblgen`, the 25 `.td` files it reads (under `src/llvm`) and a broken `bad.td` on the run disk. Close QEMU before running it.
+
+| Type | You should see |
+|---|---|
+| `with readonly llvm-tblgen --version` | `TheTaaJ LLVM version 18.1.3`, `  Optimized build.` |
+| `time with files llvm-tblgen -gen-vt -I src/llvm/include src/llvm/include/llvm/CodeGen/ValueTypes.td -o vt.inc` | `took` about 2 s |
+| `time with files llvm-tblgen -gen-intrinsic-enums -I src/llvm/include src/llvm/include/llvm/IR/Intrinsics.td -o enums.inc` | `took` about 9 s |
+| `with files llvm-tblgen bad.td` | `bad.td:2:17: error: Couldn't find class 'Nothing'`, the line `def something : Nothing;` with a `^` under `Nothing`, then `llvm-tblgen exited with code 1` |
+| `ls` | `vt.inc` 18018, `enums.inc` 32736, `llvm-tblgen` 3634824, `bad.td` 38, and `src/` |
+
+**2. The C library's new parts**
+
+`clib` reads `welcome` and `docs/`. Make them first if they are not there yet:
+
+| Type | You should see |
+|---|---|
+| `mkdir docs` | nothing printed |
+| `echo Hello from the host > welcome` | nothing printed |
+| `with files clib` | `library: 104 checks, all passed`, then `library: atexit ran its handlers, newest first` |
+| `cxxlib` | `c++: 62 checks, all passed`, then `c++: the objects outside main were destroyed` |
+
+**3. AArch64**
+
+Close any AArch64 QEMU first.
+
+```
+make llvm-put-aarch64
+make run-aarch64
+```
+
+The same as parts 1 and 2, typed at the terminal. Its disk already has `welcome`. The `-gen-vt` job takes about 3.5 s, and the intrinsics job about 19 s. `llvm-tblgen` is 3171856 bytes.
+
+**4. The tests by themselves**
+
+```
+make libc-test
+make llvm64-test
+make aarch64-llvm-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `llvm-tblgen on TheTaaJ (x86_64) read 25 .td files and wrote, byte for byte as the host's: vt.inc (18018 bytes) enums.inc (32736 bytes) impl.inc (3203861 bytes); took …` | all three jobs, and their outputs equal to the host's (`aarch64` for the other) |
+| `llvm64-test passed`, `aarch64-llvm-test passed` | each machine |
+
+Automated: make test64
