@@ -92,7 +92,11 @@
 #include <cstddef>
 #include <cstring>
 #include <ctime>
+#if defined(_LIBCPP_HAS_NO_FILESYSTEM)
+#include <sstream>
+#else
 #include <fstream>
+#endif
 #include <limits>
 #include <memory>
 #include <optional>
@@ -4207,11 +4211,21 @@ bool CompilerInvocation::ParseLangArgs(LangOptions &Opts, ArgList &Args,
   }
 
   if (const Arg *A = Args.getLastArg(OPT_frandomize_layout_seed_file_EQ)) {
+#if defined(_LIBCPP_HAS_NO_FILESYSTEM)
+    // TheTaaJ: no <fstream>; see LayoutOverrideSource.cpp.
+    auto Buffer = llvm::MemoryBuffer::getFile(A->getValue(0));
+    if (!Buffer)
+      Diags.Report(diag::err_drv_cannot_open_randomize_layout_seed_file)
+          << A->getValue(0);
+    std::istringstream SeedFile(Buffer ? (*Buffer)->getBuffer().str()
+                                       : std::string());
+#else
     std::ifstream SeedFile(A->getValue(0));
 
     if (!SeedFile.is_open())
       Diags.Report(diag::err_drv_cannot_open_randomize_layout_seed_file)
           << A->getValue(0);
+#endif
 
     std::getline(SeedFile, Opts.RandstructSeed);
   }
