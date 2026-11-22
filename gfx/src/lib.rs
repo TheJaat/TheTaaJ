@@ -107,6 +107,26 @@ impl Rect {
     pub fn offset(&self, dx: i32, dy: i32) -> Rect {
         Rect { x: self.x.saturating_add(dx), y: self.y.saturating_add(dy), ..*self }
     }
+
+    /// The smallest rectangle holding both. An empty one adds nothing:
+    /// the union of an empty rectangle and another is the other.
+    pub fn union(&self, other: &Rect) -> Rect {
+        if self.is_empty() {
+            return *other;
+        }
+        if other.is_empty() {
+            return *self;
+        }
+        let left = self.x.min(other.x);
+        let top = self.y.min(other.y);
+        let right = self.right().max(other.right());
+        let bottom = self.bottom().max(other.bottom());
+        // Two rectangles inside i32 can span more than u32 only in
+        // theory; saturate rather than wrap.
+        let width = u32::try_from(right - i64::from(left)).unwrap_or(u32::MAX);
+        let height = u32::try_from(bottom - i64::from(top)).unwrap_or(u32::MAX);
+        Rect { x: left, y: top, width, height }
+    }
 }
 
 /// Pixels to read from: `width` x `height`, each row starting `stride`
@@ -168,6 +188,23 @@ impl<'a> Surface<'a> {
 
     pub fn bounds(&self) -> Rect {
         Rect::new(0, 0, self.width, self.height)
+    }
+
+    /// The part of this surface inside `rect`, as a surface of its own
+    /// whose (0, 0) is that part's top-left corner; and where that part
+    /// is here. Drawing on it cannot reach a pixel outside `rect`: the
+    /// window server redraws a damaged rectangle through one, and
+    /// everything it draws - backgrounds, frames, titles - is cut at the
+    /// rectangle's edge for free.
+    pub fn region(&mut self, rect: Rect) -> (Surface<'_>, Rect) {
+        let area = rect.clip(&self.bounds());
+        if area.is_empty() {
+            return (Surface { pixels: &mut [], width: 0, height: 0, stride: self.stride }, area);
+        }
+        let start = area.y as usize * self.stride + area.x as usize;
+        let length = (area.height as usize - 1) * self.stride + area.width as usize;
+        let pixels = &mut self.pixels[start..start + length];
+        (Surface { pixels, width: area.width, height: area.height, stride: self.stride }, area)
     }
 
     /// The same pixels, to read.
@@ -387,6 +424,49 @@ mod tests {
         assert!(Rect::new(10, 10, 0, 5).is_empty());
         assert!(Rect::new(3, 4, 2, 2).contains(4, 5) && !Rect::new(3, 4, 2, 2).contains(5, 5));
         assert_eq!(Rect::new(i32::MAX - 1, 0, 1, 1).offset(5, 0).x, i32::MAX);
+    }
+
+    #[test]
+    fn two_rectangles_make_one_that_holds_both() {
+        assert_eq!(Rect::new(0, 0, 10, 10).union(&Rect::new(20, 5, 5, 10)), Rect::new(0, 0, 25, 15));
+        assert_eq!(Rect::new(-5, -5, 2, 2).union(&Rect::new(3, 3, 2, 2)), Rect::new(-5, -5, 10, 10));
+        // An empty rectangle adds nothing, wherever it is.
+        assert_eq!(Rect::new(100, 100, 0, 0).union(&Rect::new(1, 2, 3, 4)), Rect::new(1, 2, 3, 4));
+        assert_eq!(Rect::new(1, 2, 3, 4).union(&Rect::new(-50, 0, 7, 0)), Rect::new(1, 2, 3, 4));
+        assert!(Rect::default().union(&Rect::default()).is_empty());
+        // At the ends of i32: saturated, not wrapped.
+        let huge = Rect::new(i32::MIN, 0, 1, 1).union(&Rect::new(i32::MAX, 0, u32::MAX, 1));
+        assert_eq!((huge.x, huge.width), (i32::MIN, u32::MAX));
+    }
+
+    #[test]
+    fn a_region_is_a_surface_that_cannot_draw_outside_itself() {
+        let mut pixels = vec![0u32; 10 * 6];
+        let mut surface = Surface::new(&mut pixels, 10, 6, 10).unwrap();
+        {
+            // Half off the right edge: cut to what is on the surface.
+            let (mut region, area) = surface.region(Rect::new(6, 2, 10, 3));
+            assert_eq!(area, Rect::new(6, 2, 4, 3));
+            assert_eq!((region.width(), region.height()), (4, 3));
+            // A fill far bigger than the region stays inside it.
+            region.fill(Rect::new(-100, -100, 1000, 1000), 7);
+            region.put(0, 0, 9); // the region's (0, 0) is the surface's (6, 2)
+        }
+        for y in 0..6 {
+            for x in 0..10 {
+                let want = match (x, y) {
+                    (6, 2) => 9,
+                    (6..=9, 2..=4) => 7,
+                    _ => 0,
+                };
+                assert_eq!(surface.get(x, y), Some(want), "({x}, {y})");
+            }
+        }
+        // Off the surface: an empty region, on which drawing does nothing.
+        let (mut region, area) = surface.region(Rect::new(20, 20, 5, 5));
+        assert!(area.is_empty());
+        region.fill(Rect::new(0, 0, 5, 5), 1);
+        assert_eq!(region.get(0, 0), None);
     }
 
     #[test]

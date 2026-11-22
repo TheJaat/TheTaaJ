@@ -26,6 +26,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gui"
+version = "0.1.0"
+dependencies = [
+ "gfx",
+]
+
+[[package]]
 name = "heap"
 version = "0.1.0"
 
@@ -56,6 +63,7 @@ dependencies = [
  "console",
  "fileserver",
  "gfx",
+ "gui",
  "heap",
  "input",
  "net",

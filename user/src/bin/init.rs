@@ -22,20 +22,23 @@
 //!   5  the system handle
 //!
 //! The services: registry (where the others are found), display (the
-//! screen), fs (files - on the disk, if there is one), blk (the disk
-//! driver), nic (the network card's driver) and net (the network, for
-//! programs - both only if there is a card), shell, kbd (the PC's PS/2
-//! keyboard and mouse) and hid (virtio keyboards, mice and tablets -
-//! only if there are any). The keys go to the shell; where the pointer
-//! is, and its buttons, to display, which draws the arrow.
+//! window server), fs (files - on the disk, if there is one), blk (the
+//! disk driver), nic (the network card's driver) and net (the network,
+//! for programs - both only if there is a card), shell, kbd (the PC's
+//! PS/2 keyboard and mouse) and hid (virtio keyboards, mice and
+//! tablets, if there are any).
 //!
-//! The terminal is the screen and a keyboard when the machine has both.
-//! A PC always does; an AArch64 machine does when QEMU was given ramfb
-//! and a virtio input device (init cannot tell a keyboard from a mouse:
-//! only hid asks the device). Otherwise the terminal is the serial
-//! port, and one driver, serial, is both keyboard and screen. It is
-//! given the keys' channel to send on and the display's to read, and
-//! nothing else in the system knows the difference.
+//! The terminal is a window on the screen when the machine has a screen
+//! and a keyboard. A PC always does; an AArch64 machine does when QEMU
+//! was given ramfb and a virtio input device (init cannot tell a
+//! keyboard from a mouse: only hid asks the device). Then the drivers'
+//! keys and pointer reports go to display, which passes the keys on to
+//! the window with the focus - to the shell, on a channel of its own,
+//! while that is the terminal - and programs open windows on its
+//! "windows" channel. Otherwise the terminal is the serial port, and
+//! one driver, serial, is both keyboard and screen: it is given the
+//! keys' channel to send on and the display's to read, there is no
+//! window server, and nothing else in the system knows the difference.
 //!
 //! What a service works *on* - an interrupt line, ports, the
 //! framebuffer's memory, the channel its requests arrive on - init
@@ -355,6 +358,16 @@ fn main() -> i64 {
     let Ok((hid_devices_tx, hid_devices_rx)) = taaj::channel_create() else { return 2 };
     let Ok((hid_ping_tx, hid_ping_rx)) = taaj::channel_create() else { return 2 };
     let Ok((display_tx, display_rx)) = taaj::channel_create() else { return 2 };
+    // With a screen, the keyboard drivers' keys go to the window server,
+    // which passes them on to the window with the focus - to the shell
+    // on this channel while that is the terminal. And programs open
+    // windows on another ("windows"); with no window server, its far end
+    // is closed, so they are told at once instead of waiting.
+    let Ok((shell_keys_out, shell_keys_in)) = taaj::channel_create() else { return 2 };
+    let Ok((windows_out, windows_in)) = taaj::channel_create() else { return 2 };
+    if serial_terminal {
+        let _ = taaj::close(windows_in);
+    }
     // The display and the keyboard driver answer no requests, so each
     // gets a channel only for the watchdog's pings (abi::PING).
     let Ok((display_ping_tx, display_ping_rx)) = taaj::channel_create() else { return 2 };
@@ -452,6 +465,10 @@ fn main() -> i64 {
         Grant { handle: display_tx, rights: SEND },           // 37: pointer reports, to the display
         Grant { handle: hid_devices_rx, rights: RECEIVE },    // 38: input devices, for hid
         Grant { handle: hid_ping_rx, rights: RECEIVE },       // 39: pings, for hid
+        Grant { handle: shell_keys_in, rights: RECEIVE },     // 40: keys, for the shell (from display)
+        Grant { handle: shell_keys_out, rights: SEND },       // 41: keys, from display to the shell
+        Grant { handle: windows_in, rights: RECEIVE },        // 42: windows to open, for display
+        Grant { handle: windows_out, rights: SEND },          // 43: windows to open, from programs
     ];
     // Only the shell's screen and files can be copied and passed on.
     debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21)));
@@ -469,7 +486,7 @@ fn main() -> i64 {
     // as for fs: it waits on nic while that is being replaced.
     let net_watch = card.and_then(|_| Watch::new(net_out, &[abi::net::INFO], 400));
     // The display and the keyboard driver: a ping on a channel of its own.
-    let display_watch = framebuffer.and_then(|_| Watch::new(display_ping_tx, &[abi::PING], 200));
+    let display_watch = framebuffer.filter(|_| !serial_terminal).and_then(|_| Watch::new(display_ping_tx, &[abi::PING], 200));
     let kbd_watch = Watch::new(kbd_ping_tx, &[abi::PING], 200);
     let hid_watch = (!serial_terminal && has_inputs).then(|| Watch::new(hid_ping_tx, &[abi::PING], 200)).flatten();
 
@@ -477,8 +494,11 @@ fn main() -> i64 {
     // services: a name, and which grant it means - the handle, and the
     // rights a client's copy gets. (The shell's old startup handles,
     // now asked for by name; and the disk, for fs.)
-    let registered: [(&str, usize); 10] = [
-        ("keys", 4),
+    let registered: [(&str, usize); 11] = [
+        // The keys come from the drivers straight to the shell where the
+        // terminal is a serial port; from the window server where it is
+        // a window.
+        ("keys", if serial_terminal { 4 } else { 40 }),
         ("display", 7),
         ("init", 8),
         ("system", 9),
@@ -488,6 +508,7 @@ fn main() -> i64 {
         ("disk.look", 19),
         ("nic", 32),
         ("net", 35),
+        ("windows", 43),
     ];
     // And the namespaces: whose, the receiving end of its channel, and
     // the names that exist on it. This table is the system's policy,
@@ -495,7 +516,7 @@ fn main() -> i64 {
     let namespaces: [(&str, Handle, &[&str]); 3] = [
         // (The shell has the network card itself only for the program
         // that tests its driver. Everything else uses "net".)
-        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "disk.look", "nic", "net"]),
+        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "disk.look", "nic", "net", "windows"]),
         ("fs", fs_names_rx, &["disk"]),
         ("net", net_names_rx, &["nic"]),
     ];
@@ -525,11 +546,16 @@ fn main() -> i64 {
         Service { name: "registry", grants: &[25], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
         Service {
             name: "display",
-            grants: if screen_text != 0 { &[5, 6, 22, 24] } else { &[5, 6, 22] },
+            // The screen, its messages, pings, the drivers' keys, the
+            // shell's keys, the windows to open - and the terminal's
+            // text, kept, if there was memory for it.
+            grants: if screen_text != 0 { &[5, 6, 22, 4, 41, 42, 24] } else { &[5, 6, 22, 4, 41, 42] },
             process: 0,
             restarts: [0; MAX_RESTARTS],
             restart_count: 0,
-            given_up: framebuffer.is_none(),
+            // Where the terminal is the serial port, its driver reads
+            // the display's messages: a window server would take them.
+            given_up: framebuffer.is_none() || serial_terminal,
             watch: display_watch,
         },
         Service { name: "fs", grants: &[10, 20, 27], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: fs_watch },

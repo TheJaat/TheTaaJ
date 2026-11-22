@@ -1738,3 +1738,66 @@ cd kernel/abi && cargo test    # 23 tests, the POINTER message among them
 ```
 
 Automated: `make test64`
+
+---
+
+## 067 · Windows
+
+[The entry](journal/067-windows.md)
+
+**1. The PC: windows**
+
+```
+make run64
+```
+
+Click inside the QEMU window so that it takes the mouse (**Ctrl+Alt+G** gives it back to the host).
+
+| Type / do | You should see |
+|---|---|
+| (at boot) | the amber band, and below it a window with the title bar "terminal", grey-blue text on navy, the shell's prompt in it; in the terminal you started QEMU from: `[display] window 1 "terminal" opened, 984x632 at (19, 80)` |
+| `counter &` | `[1] counter`; a small window "counter" opens over the terminal, at (200, 150), with an amber title bar and a red close box, `clicks: 0` and two buttons, `+1` and `quit`; the terminal's title bar turns grey-blue: the new window has the focus |
+| click `+1` | the button looks pushed in while held; `clicks: 1` when let go |
+| press on `+1`, move off it, let go | nothing counts |
+| type `+` | `clicks: 2`: keys go to the window with the focus. In the log: `[counter] key +` |
+| type `a` | nothing on the screen; in the log: `[counter] key a`, and the shell did not get it |
+| click anywhere on the terminal | the terminal comes to the front and its title bar turns amber; counter's turns grey-blue (it is behind the terminal now) |
+| `echo back` | `back`: the keys are the shell's again |
+| drag the terminal by its title bar | the terminal follows the pointer; where it was, the desktop shows again. It stops with part of its title bar still on the screen, however far you drag. In the log, when you let go: `[display] window 1 moved to (x, y)` |
+| click counter's title bar (drag the terminal aside first if it covers it) | counter comes to the front |
+| click counter's close box | `[display] window 2: its program is asked to close it`, `[counter] closed by its close box`; the window goes, and the terminal has the focus again |
+| `counter &`, then click `quit` | `[counter] quit`, and the window goes |
+
+**2. AArch64: the same, in a window of QEMU's**
+
+```
+make run-aarch64-screen
+```
+
+The arrow follows the host's pointer over QEMU's window with nothing to grab (a tablet). Every row of 1 applies, from `counter &` on.
+
+(I drove these through QEMU's monitor and QMP, as the automated tests do, and looked at the screenshots; not with a hand on a mouse in a window.)
+
+**3. The tests by themselves**
+
+```
+make gui64-test
+make aarch64-gui-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `check-pixels: 3 pixels as expected` | the terminal is drawn where it was dragged, and the desktop where it and counter were |
+| `check-pointer: the arrow is at (430, 162), 114 pixels of it on the screen, and nowhere else` | the arrow is on what was counter's close box |
+| `gui64-test passed` / `aarch64-gui-test passed` | every step: the window opened, clicked, typed into, the focus given back, the terminal dragged, the window closed |
+
+The log of one is the story of the test: `grep -a 'display\]\|counter\]\|shell\] line' build/gui64.log`.
+
+Host checks:
+
+```
+cd gui && cargo test           # 22 tests: the protocol, the desktop's rules, the toolkit
+cd gfx && cargo test           # 10 tests, Rect::union and Surface::region among them
+```
+
+Automated: `make test64`

@@ -1,0 +1,9 @@
+[package]
+name = "gui"
+version = "0.1.0"
+edition = "2021"
+description = "Windows: the protocol between programs and the window server, the server's bookkeeping (stacking, focus, dragging), and a small toolkit - with no machine in it"
+publish = false
+
+[dependencies]
+gfx = { path = "../gfx" }

@@ -15,6 +15,7 @@ pub mod files;
 pub mod net;
 pub mod nic;
 pub mod services;
+pub mod window;
 
 use core::arch::asm;
 use core::fmt::{self, Write};
