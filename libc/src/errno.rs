@@ -208,10 +208,56 @@ pub extern "C" fn strerror(code: c_int) -> *mut c_char {
     message(code).as_ptr().cast::<c_char>().cast_mut()
 }
 
+/// `strerror_r(code, buffer, size)`: POSIX's strerror into the
+/// caller's own buffer of `size` bytes - the form of it meant for
+/// programs with threads, which this library's strerror is safe for
+/// anyway, since its strings never change. 0; or ERANGE if the message
+/// does not fit (as much as fits is still there, ending in a zero).
+///
+/// # Safety
+/// `buffer` must be valid for writing `size` bytes.
+#[cfg_attr(not(test), no_mangle)]
+pub unsafe extern "C" fn strerror_r(code: c_int, buffer: *mut c_char, size: usize) -> c_int {
+    let text = message(code).as_bytes();
+    if size == 0 {
+        return ERANGE;
+    }
+    let fits = text.len() <= size; // the zero included
+    let n = text.len().min(size);
+    // SAFETY: the caller's promise: `size` writable bytes, and n <= size.
+    unsafe {
+        core::ptr::copy_nonoverlapping(text.as_ptr().cast::<c_char>(), buffer, n);
+        if !fits {
+            buffer.add(size - 1).write(0);
+        }
+    }
+    if fits {
+        0
+    } else {
+        ERANGE
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::ffi::CStr;
+
+    #[test]
+    fn strerror_r_copies_and_says_when_it_does_not_fit() {
+        let mut room = [1 as c_char; 64];
+        // SAFETY: 64 writable bytes.
+        assert_eq!(unsafe { strerror_r(ENOENT, room.as_mut_ptr(), room.len()) }, 0);
+        // SAFETY: strerror_r ended it with a zero.
+        let text = unsafe { CStr::from_ptr(room.as_ptr()) };
+        assert_eq!(text.to_bytes_with_nul(), message(ENOENT).as_bytes());
+        let mut small = [1 as c_char; 4];
+        // SAFETY: 4 writable bytes.
+        assert_eq!(unsafe { strerror_r(ENOENT, small.as_mut_ptr(), small.len()) }, ERANGE);
+        assert_eq!(small[3], 0);
+        // SAFETY: nothing is written when the size is 0.
+        assert_eq!(unsafe { strerror_r(ENOENT, core::ptr::null_mut(), 0) }, ERANGE);
+    }
 
     #[test]
     fn every_message_is_a_c_string_with_one_zero_at_its_end() {

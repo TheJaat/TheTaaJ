@@ -256,3 +256,18 @@ void *bsearch(const void *key, const void *base, size_t count, size_t size,
     }
     return NULL;
 }
+
+/* rand and srand: the generator the C standard gives as its example,
+ * so that a program gets the same numbers here as the standard says. */
+static unsigned long rand_next = 1;
+
+int rand(void)
+{
+    rand_next = rand_next * 1103515245 + 12345;
+    return (int)((unsigned)(rand_next / 65536) % 32768);
+}
+
+void srand(unsigned seed)
+{
+    rand_next = seed;
+}

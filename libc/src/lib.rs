@@ -27,7 +27,13 @@
 //!   rename, isatty                                 (descriptors.rs)
 //!   socket, connect, bind, listen, accept, send, recv,
 //!   shutdown, setsockopt, getsockname              (sockets.rs)
-//!   errno, strerror                                (errno.rs)
+//!   dup, dup2, fsync, fcntl                        (descriptors.rs)
+//!   stat, fstat, mkdir, rmdir, access, chdir,
+//!   opendir, readdir, truncate and the rest of
+//!   what a file *is*                               (status.rs)
+//!   nanosleep, getpid, sysconf, getrlimit, and
+//!   fork, exec and wait, which say they cannot     (system.rs)
+//!   errno, strerror, strerror_r                    (errno.rs)
 //!   malloc, free, calloc, realloc, strdup          (memory.rs)
 //!   strcmp, strcpy, strchr, strstr and the others  (string.rs)
 //!   memcpy, memmove, memset, memcmp, strlen: these five come with
@@ -47,6 +53,13 @@
 //! (only the "C" locale), and atexit.c, which runs the constructors
 //! before `main` and, from `exit`, the atexit handlers and destructors.
 //!
+//! And since LLVM (journal entry 073), what LLVM's Support library asks
+//! of a POSIX system: pthread.c (a process has one thread, so its locks
+//! only count and catch a thread waiting on itself), emutls.c (C++'s
+//! `thread_local` without a thread pointer), signal.c (signals a process
+//! sends itself), mmap.c (a file "mapped" by reading it into memory) and
+//! users.c (there are no users: everyone is 0).
+//!
 //! The headers a C program includes for these are in `include/`.
 //!
 //! Built as a static library (libc.a). The C program's object file and
@@ -62,6 +75,7 @@ pub mod errno;
 pub mod memory;
 pub mod number;
 pub mod sockets;
+pub mod status;
 pub mod string;
 pub mod system;
 
@@ -148,5 +162,11 @@ pub extern "C" fn exit(code: c_int) -> ! {
 /// can no longer be trusted.
 #[no_mangle]
 pub extern "C" fn _exit(code: c_int) -> ! {
+    taaj::exit(i64::from(code))
+}
+
+/// `_Exit(code)`: C99's name for `_exit`.
+#[no_mangle]
+pub extern "C" fn _Exit(code: c_int) -> ! {
     taaj::exit(i64::from(code))
 }

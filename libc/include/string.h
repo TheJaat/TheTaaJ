@@ -58,6 +58,15 @@ char *strpbrk(const char *s, const char *set);
 /* What an errno value means, in words. The string is the library's. */
 char *strerror(int code);
 
+/* strerror into buffer (size bytes): 0, or ERANGE if the message does
+ * not fit - as much of it as does is there, ending in a zero. POSIX's
+ * form, returning a number (not GNU's, which returns the string). */
+int strerror_r(int code, char *buffer, size_t size);
+
+/* What a signal (signal.h) is, in words: "interrupted", "bad memory
+ * access", ... The string is the library's: not to be changed. */
+char *strsignal(int signal);
+
 /* A copy of s in memory from malloc, to be freed; NULL if none. */
 char *strdup(const char *s);
 

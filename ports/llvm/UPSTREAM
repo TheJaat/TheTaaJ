@@ -21,5 +21,10 @@ targets in lib/Target), utils/TableGen (the source of llvm-tblgen) and
 the licence. Not its tests (780 MB), documentation, examples, tools or
 the other targets. Clang would go beside it, as clang/.
 
+LLVM is not built with CMake here but by tools/build-llvm.py, which
+reads the same CMakeLists.txt for its lists of sources. The settings
+CMake would have found out by trying the C library are in
+taaj/llvm-config.txt.
+
 LLVM is under the Apache License v2.0 with LLVM Exceptions (LICENSE.TXT,
 and each project's own copy).

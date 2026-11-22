@@ -85,6 +85,12 @@ int clock_gettime(clockid_t clock, struct timespec *t);
 #define TIME_UTC 1
 int timespec_get(struct timespec *t, int base);
 
+/* Sleeps for at least *wanted: in whole ticks of the system's clock
+ * (TICKS_PER_SECOND, 100 a second), rounded up. Nothing can wake the
+ * sleeper early (there are no signals), so *left, if given, is set to
+ * zero. */
+int nanosleep(const struct timespec *wanted, struct timespec *left);
+
 #ifdef __cplusplus
 }
 #endif

@@ -5,7 +5,8 @@ KERNEL_DIR = kernel
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
-        tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test
+        tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
+        llvm64 llvm-aarch64 llvm64-test aarch64-llvm-test llvm-put llvm-put-aarch64
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
@@ -204,7 +205,7 @@ CWORDS_HOST  = $(C_BIN)/host-cwords
 CPRIMES_HOST = $(C_BIN)/host-cprimes
 CPRIMES_LIMIT = 24000000
 LIBC_A       = $(C_BIN)/libc.a
-LIBC_C       = format stdio fcntl ctype stdlib inet float setjmp time abort fp128 math scan locale atexit
+LIBC_C       = format stdio fcntl ctype stdlib inet float setjmp time abort fp128 math scan locale atexit pthread emutls signal mmap users
 # The Rust half is built for targets without floating-point registers,
 # and its support library's floating-point helpers (__multf3 and the
 # like, for AArch64's 128-bit long double) and the few maths functions
@@ -1221,14 +1222,15 @@ CXX_A64_DIR   = $(BUILD_DIR)/cxx/aarch64
 CXX_PROGRAMS  = cxxhello cxxlib
 CXX64_LOG     = $(BUILD_DIR)/cxx64.log
 CXX_A64_LOG   = $(BUILD_DIR)/aarch64/cxx.log
-CXX_SOURCES  := $(shell find ports/llvm $(LIBC_DIR)/include -type f 2>/dev/null) tools/build-cxx.sh
+CXX_SOURCES  := $(shell find ports/llvm/libcxx ports/llvm/libcxxabi ports/llvm/libunwind $(LIBC_DIR)/include -type f 2>/dev/null) \
+                ports/llvm/taaj/__config_site tools/build-cxx.sh
 # Not freestanding, as the C programs are: C++'s library is the hosted
 # one. __TAAJ__ says which system it is for (libc++'s locale choice, its
 # clock), as tcc on TheTaaJ says it of itself.
 TAAJ_CXX_BASE     = --target=x86_64-unknown-none-elf -std=c++20 -O2 -fno-stack-protector -fno-pic -mno-red-zone \
-                    -nostdlibinc -D__TAAJ__ -ffunction-sections -fdata-sections
+                    -nostdlibinc -D__TAAJ__ -femulated-tls -ffunction-sections -fdata-sections
 TAAJ_A64_CXX_BASE = --target=aarch64-unknown-none-elf -std=c++20 -O2 -fno-stack-protector -fno-pic \
-                    -nostdlibinc -D__TAAJ__ -ffunction-sections -fdata-sections
+                    -nostdlibinc -D__TAAJ__ -femulated-tls -ffunction-sections -fdata-sections
 # C++'s headers first: libc++'s <stdlib.h> wraps the C library's.
 TAAJ_CXXFLAGS     = $(TAAJ_CXX_BASE) -Wall -Wextra -Werror -nostdinc++ -isystem $(CXX_X86_DIR)/include/c++/v1 \
                     -isystem $(CXX_X86_DIR)/include -isystem $(LIBC_DIR)/include
@@ -1290,6 +1292,80 @@ else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 C++ boot is not run"
 endif
 
+# LLVM (journal entry 073): LLVM itself, in ports/llvm/llvm, cross-
+# compiled for TheTaaJ by tools/build-llvm.py, which does what LLVM's
+# CMake build would for this configuration: the configured headers
+# (values in ports/llvm/taaj/llvm-config.txt), TableGen with the host's
+# llvm-tblgen of the same release, the libraries and the tools. Only
+# what changed is built again; the first build compiles some 230 files.
+#
+# C++17, LLVM's own standard; without exceptions or RTTI, as LLVM is
+# built everywhere; and -w, since the warnings are upstream's to mind.
+LLVM_X86_DIR  = $(BUILD_DIR)/llvm/x86_64
+LLVM_A64_DIR  = $(BUILD_DIR)/llvm/aarch64
+LLVM_TOOLS    = llvm-tblgen
+LLVM_TBLGEN  := $(shell command -v llvm-tblgen || ls /usr/bin/llvm-tblgen-* /usr/lib/llvm-*/bin/llvm-tblgen 2>/dev/null | sort -V | tail -1)
+LLVM64_LOG    = $(BUILD_DIR)/llvm64.log
+LLVM_A64_LOG  = $(BUILD_DIR)/aarch64/llvm.log
+TAAJ_LLVM_CXXFLAGS     = $(TAAJ_CXX_BASE) -std=c++17 -fno-rtti -fno-exceptions -w -nostdinc++ \
+                         -isystem $(CXX_X86_DIR)/include/c++/v1 -isystem $(CXX_X86_DIR)/include -isystem $(LIBC_DIR)/include
+TAAJ_A64_LLVM_CXXFLAGS = $(TAAJ_A64_CXX_BASE) -std=c++17 -fno-rtti -fno-exceptions -w -nostdinc++ \
+                         -isystem $(CXX_A64_DIR)/include/c++/v1 -isystem $(CXX_A64_DIR)/include -isystem $(LIBC_DIR)/include
+TAAJ_LLVM_CFLAGS       = --target=x86_64-unknown-none-elf -std=c11 -O2 -fno-stack-protector -fno-pic -mno-red-zone \
+                         -nostdlibinc -isystem $(LIBC_DIR)/include -w
+TAAJ_A64_LLVM_CFLAGS   = --target=aarch64-unknown-none-elf -std=c11 -O2 -fno-stack-protector -fno-pic \
+                         -nostdlibinc -isystem $(LIBC_DIR)/include -w
+
+llvm64: cxx64
+ifeq ($(HAVE_CC),yes)
+	@[ -n "$(LLVM_TBLGEN)" ] || { echo "llvm-tblgen not found (sudo apt install llvm-18)"; exit 1; }
+	@LLVM_TBLGEN=$(LLVM_TBLGEN) LLVM_AR=$(LLVM_AR) \
+	    TAAJ_LLVM_LINK="ld.lld $(TAAJ_CXX_LDFLAGS) {objects} $(CXX_X86_DIR)/libc++.a $(LIBC_A) -o {output}" \
+	    python3 tools/build-llvm.py x86_64 $(LLVM_X86_DIR) "$(TAAJ_LLVM_CXXFLAGS)" "$(TAAJ_LLVM_CFLAGS)" $(LLVM_TOOLS)
+else
+	@echo "Clang or lld not found: no LLVM (sudo apt install clang lld)"
+endif
+
+llvm-aarch64: cxx-aarch64
+ifeq ($(HAVE_CC),yes)
+	@[ -n "$(LLVM_TBLGEN)" ] || { echo "llvm-tblgen not found (sudo apt install llvm-18)"; exit 1; }
+	@LLVM_TBLGEN=$(LLVM_TBLGEN) LLVM_AR=$(LLVM_AR) \
+	    TAAJ_LLVM_LINK="ld.lld $(TAAJ_A64_CXX_LDFLAGS) {objects} $(CXX_A64_DIR)/libc++.a $(C_A64_BIN)/libc.a -o {output}" \
+	    python3 tools/build-llvm.py aarch64 $(LLVM_A64_DIR) "$(TAAJ_A64_LLVM_CXXFLAGS)" "$(TAAJ_A64_LLVM_CFLAGS)" $(LLVM_TOOLS)
+else
+	@echo "Clang or lld not found: no LLVM for AArch64 (sudo apt install clang lld)"
+endif
+
+# llvm-tblgen and the .td files it reads, on the disk `make run64` (or
+# `make run-aarch64`) attaches, to try by hand. Not part of run-disk:
+# the first LLVM build takes minutes, and the program and the files
+# take 5.5 MB of the disk's 16 MiB. Close QEMU first.
+llvm-put: llvm64 run-disk
+	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) sh tools/put-llvm.sh $(RUN_DISK) $(LLVM_X86_DIR)/bin
+
+llvm-put-aarch64: llvm-aarch64 run-aarch64-disk
+	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) sh tools/put-llvm.sh $(RUN_A64_DISK) $(LLVM_A64_DIR)/bin
+
+# llvm-tblgen on TheTaaJ, writing what LLVM's own build writes first -
+# the value types and the intrinsics - compared byte for byte with the
+# host's llvm-tblgen.
+llvm64-test: iso64 llvm64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) $(KERNEL64_DIR)/scripts/llvm-test.sh x86_64 $(ISO64_IMG) $(LLVM64_LOG).disk $(LLVM64_LOG) $(LLVM_X86_DIR)/bin
+	@echo "llvm64-test passed"
+else
+	@echo "FAIL: LLVM needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+
+aarch64-llvm-test: kernel-aarch64 llvm-aarch64 tfstool-rs
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) $(KERNEL64_DIR)/scripts/llvm-test.sh aarch64 $(KERNEL_A64_IMAGE) $(LLVM_A64_LOG).disk $(LLVM_A64_LOG) $(LLVM_A64_DIR)/bin
+	@echo "aarch64-llvm-test passed"
+else
+	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 LLVM boot is not run"
+endif
+
 # Every layer: host unit tests, a normal boot (BIOS and UEFI) with its
 # self-tests, the fault boots, and the AArch64 kernel.
 #
@@ -1306,14 +1382,14 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 7
-TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test tcc64-test aarch64-tcc-test cxx64-test aarch64-cxx-test
+TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test tcc64-test aarch64-tcc-test cxx64-test aarch64-cxx-test llvm64-test aarch64-llvm-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared
 	@$(MAKE) --no-print-directory -j$(TEST_JOBS) --output-sync=target test64-parts
 	@echo "test64: all passed"
 
-test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64 aarch64-esp tcc64 tcc-aarch64 cxx64 cxx-aarch64
+test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64 aarch64-esp tcc64 tcc-aarch64 cxx64 cxx-aarch64 llvm64 llvm-aarch64
 
 test64-parts: $(TEST64_PARTS)
 

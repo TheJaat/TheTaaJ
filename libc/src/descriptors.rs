@@ -32,7 +32,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::cell::UnsafeCell;
-use core::ffi::{c_char, c_int, c_void, CStr};
+use core::ffi::{c_char, c_int, c_long, c_void, CStr};
 use core::hint;
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -75,7 +75,7 @@ pub(crate) enum Open {
 pub(crate) struct File {
     /// From the root, with the '/' in front: what it meant when it was
     /// opened, whatever directory that was said in.
-    path: String,
+    pub(crate) path: String,
     offset: u64,
     flags: c_int,
 }
@@ -85,7 +85,7 @@ impl File {
         self.flags & O_ACCMODE != O_WRONLY
     }
 
-    fn writes(&self) -> bool {
+    pub(crate) fn writes(&self) -> bool {
         self.flags & O_ACCMODE != O_RDONLY
     }
 }
@@ -97,13 +97,19 @@ pub(crate) struct State {
     /// The file service: not asked for until a file is first opened,
     /// and then once (the outer Option) - a program may have been
     /// given none (the inner).
-    files: Option<Option<Files>>,
+    pub(crate) files: Option<Option<Files>>,
     /// The network service, the same way: asked for at the first
     /// socket.
     pub(crate) net: Option<Option<taaj::net::Net>>,
 }
 
 impl State {
+    /// The file service, asked for the first time it is needed; None if
+    /// this program was not given one.
+    pub(crate) fn files(&mut self) -> Option<&Files> {
+        self.files.get_or_insert_with(taaj::file_service).as_ref()
+    }
+
     fn new() -> State {
         let mut table = Vec::with_capacity(OPEN_MAX);
         table.extend([Some(Open::Input), Some(Open::Output), Some(Open::Error)]);
@@ -154,7 +160,7 @@ pub(crate) fn fail<T: From<i8>>(code: c_int) -> T {
 }
 
 /// The file service's reasons, as errno numbers.
-fn reason(error: FileError) -> c_int {
+pub(crate) fn reason(error: FileError) -> c_int {
     use taaj::files::Status as No;
     match error {
         FileError::Refused(No::NotFound) => ENOENT,
@@ -177,7 +183,7 @@ fn reason(error: FileError) -> c_int {
 ///
 /// # Safety
 /// `path` must be null or point to a string that ends in a zero byte.
-unsafe fn text<'a>(path: *const c_char) -> Result<&'a str, c_int> {
+pub(crate) unsafe fn text<'a>(path: *const c_char) -> Result<&'a str, c_int> {
     if path.is_null() {
         return Err(EFAULT);
     }
@@ -537,4 +543,138 @@ pub extern "C" fn isatty(fd: c_int) -> c_int {
     // and errno says which kind of no it was.
     errno.store(no, Ordering::Relaxed);
     0
+}
+
+/// A second entry for what `fd` is open on. A file's copy starts where
+/// the first has got to, but moves on its own afterwards: the place is
+/// kept per descriptor here, where Unix shares one between the two. A
+/// socket cannot be copied yet (its unread bytes would have to be
+/// shared): EOPNOTSUPP.
+fn copy_of(state: &State, fd: c_int) -> Result<Open, c_int> {
+    match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
+        Some(Open::Input) => Ok(Open::Input),
+        Some(Open::Output) => Ok(Open::Output),
+        Some(Open::Error) => Ok(Open::Error),
+        Some(Open::File(file)) => Ok(Open::File(File { path: file.path.clone(), offset: file.offset, flags: file.flags })),
+        Some(Open::Socket(_)) => Err(EOPNOTSUPP),
+        None => Err(EBADF),
+    }
+}
+
+/// `dup(fd)`: a second descriptor for the same thing, the lowest number
+/// free.
+#[no_mangle]
+pub extern "C" fn dup(fd: c_int) -> c_int {
+    with(|state| {
+        let copy = match copy_of(state, fd) {
+            Ok(copy) => copy,
+            Err(code) => return fail(code),
+        };
+        let Some(slot) = state.free_slot() else { return fail(EMFILE) };
+        state.table[slot] = Some(copy);
+        slot as c_int
+    })
+}
+
+/// `dup2(fd, to)`: makes `to` a second descriptor for what `fd` is open
+/// on, closing whatever `to` was first. dup2(fd, fd) changes nothing.
+#[no_mangle]
+pub extern "C" fn dup2(fd: c_int, to: c_int) -> c_int {
+    with(|state| {
+        let copy = match copy_of(state, fd) {
+            Ok(copy) => copy,
+            Err(code) => return fail(code),
+        };
+        let Some(slot) = usize::try_from(to).ok().filter(|&slot| slot < OPEN_MAX) else { return fail(EBADF) };
+        if fd == to {
+            return to;
+        }
+        while state.table.len() <= slot {
+            state.table.push(None);
+        }
+        state.table[slot] = Some(copy);
+        to
+    })
+}
+
+/// `fsync(fd)`: every write has reached the file service before it
+/// returned, so there is nothing left to write out. 0 for an open
+/// descriptor; EBADF otherwise.
+#[no_mangle]
+pub extern "C" fn fsync(fd: c_int) -> c_int {
+    with(|state| match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
+        Some(_) => 0,
+        None => fail(EBADF),
+    })
+}
+
+// fcntl's commands and flags (fcntl.h).
+const F_DUPFD: c_int = 0;
+const F_GETFD: c_int = 1;
+const F_SETFD: c_int = 2;
+const F_GETFL: c_int = 3;
+const F_SETFL: c_int = 4;
+const F_GETLK: c_int = 5;
+const F_SETLK: c_int = 6;
+const F_SETLKW: c_int = 7;
+const F_DUPFD_CLOEXEC: c_int = 1030;
+const FD_CLOEXEC: c_long = 1;
+const O_NONBLOCK: c_int = 0o4000;
+const O_CLOEXEC: c_int = 0o2000000;
+
+/// What the C function `fcntl` (libc/c/fcntl.c) calls, its argument
+/// already taken out: fcntl.h says what each command does here.
+#[no_mangle]
+pub extern "C" fn __taaj_fcntl(fd: c_int, command: c_int, argument: c_long) -> c_int {
+    if command == F_DUPFD || command == F_DUPFD_CLOEXEC {
+        return with(|state| {
+            let copy = match copy_of(state, fd) {
+                Ok(copy) => copy,
+                Err(code) => return fail(code),
+            };
+            let from = match usize::try_from(argument) {
+                Ok(from) if from < OPEN_MAX => from,
+                _ => return fail(EINVAL),
+            };
+            // A number past the end of the table is free too.
+            let free = |slot: usize| state.table.get(slot).is_none_or(Option::is_none);
+            let Some(slot) = (from..OPEN_MAX).find(|&slot| free(slot)) else { return fail(EMFILE) };
+            while state.table.len() <= slot {
+                state.table.push(None);
+            }
+            state.table[slot] = Some(copy);
+            slot as c_int
+        });
+    }
+    with(|state| {
+        let open = match usize::try_from(fd).ok().and_then(|fd| state.table.get_mut(fd)).and_then(Option::as_mut) {
+            Some(open) => open,
+            None => return fail(EBADF),
+        };
+        match (command, open) {
+            (F_GETFD, Open::File(file)) => c_int::from(file.flags & O_CLOEXEC != 0),
+            (F_GETFD, _) => 0,
+            (F_SETFD, Open::File(file)) => {
+                if argument & FD_CLOEXEC != 0 {
+                    file.flags |= O_CLOEXEC;
+                } else {
+                    file.flags &= !O_CLOEXEC;
+                }
+                0
+            }
+            (F_SETFD, _) => 0,
+            (F_GETFL, Open::File(file)) => file.flags & !O_CLOEXEC,
+            (F_GETFL, Open::Input) => O_RDONLY,
+            (F_GETFL, Open::Output | Open::Error) => O_WRONLY,
+            (F_GETFL, Open::Socket(_)) => 2, // O_RDWR
+            (F_SETFL, Open::File(file)) => {
+                let changeable = O_APPEND | O_NONBLOCK;
+                file.flags = (file.flags & !changeable) | (argument as c_int & changeable);
+                0
+            }
+            (F_SETFL, _) => 0,
+            (F_GETLK | F_SETLK | F_SETLKW, _) => fail(ENOLCK),
+            _ => fail(EINVAL),
+        }
+    })
 }

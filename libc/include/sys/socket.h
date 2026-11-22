@@ -35,6 +35,8 @@ struct sockaddr {
     char sa_data[14];
 };
 
+#define AF_UNIX 1      /* names in the file system: not here (socket fails) */
+#define AF_LOCAL AF_UNIX
 #define AF_INET 2      /* IPv4 - the only family here */
 #define PF_INET AF_INET
 #define SOCK_STREAM 1  /* a connection: TCP */

@@ -16,8 +16,8 @@
 # The shell has no wildcards, so every file is named.
 
 cd /src/libc/c
-tcc -c format.c stdio.c fcntl.c ctype.c stdlib.c inet.c float.c setjmp.c time.c abort.c fp128.c math.c scan.c locale.c atexit.c
-tcc -ar rcs ../libc.a /lib/libc-rust.o format.o stdio.o fcntl.o ctype.o stdlib.o inet.o float.o setjmp.o time.o abort.o fp128.o math.o scan.o locale.o atexit.o
+tcc -c format.c stdio.c fcntl.c ctype.c stdlib.c inet.c float.c setjmp.c time.c abort.c fp128.c math.c scan.c locale.c atexit.c pthread.c emutls.c signal.c mmap.c users.c
+tcc -ar rcs ../libc.a /lib/libc-rust.o format.o stdio.o fcntl.o ctype.o stdlib.o inet.o float.o setjmp.o time.o abort.o fp128.o math.o scan.o locale.o atexit.o pthread.o emutls.o signal.o mmap.o users.o
 
 cd /src/libc/programs
 tcc -L.. chello.c -o chello

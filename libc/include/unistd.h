@@ -47,6 +47,41 @@ off_t lseek(int fd, off_t offset, int whence);
 /* Removes a file. */
 int unlink(const char *path);
 
+/* Sleeps for at least that many microseconds (nanosleep, time.h). */
+int usleep(unsigned microseconds);
+
+/* Names that do not start with '/' are taken from path from now on;
+ * getcwd says it. For this program only. */
+int chdir(const char *path);
+
+/* The file becomes length bytes long: cut short, or with zeros added. */
+int truncate(const char *path, off_t length);
+int ftruncate(int fd, off_t length);
+
+/* Links: TheTaaJ's files have one name each and there are no symbolic
+ * links. link and symlink fail with EPERM; readlink with EINVAL ("not
+ * a link") for anything that is there. */
+int link(const char *from, const char *to);
+int symlink(const char *target, const char *path);
+ssize_t readlink(const char *path, char *buffer, size_t size);
+
+/* Files have no owners: these change nothing, and succeed for what is
+ * there. */
+int chown(const char *path, uid_t owner, gid_t group);
+int fchown(int fd, uid_t owner, gid_t group);
+
+/* Removes an empty directory. */
+int rmdir(const char *path);
+
+/* May the program use what is at path so? F_OK: it is there; R_OK,
+ * X_OK: it is there (a program given the files may read them all);
+ * W_OK: and this program may change files. 0, or -1 with errno. */
+#define F_OK 0
+#define X_OK 1
+#define W_OK 2
+#define R_OK 4
+int access(const char *path, int mode);
+
 /* 1 if the descriptor is the screen; 0 if it is a file or another
  * program (errno ENOTTY), or not open at all (EBADF). */
 int isatty(int fd);
@@ -59,9 +94,66 @@ _Noreturn void _exit(int code);
  * NULL, with errno ERANGE, if it does not fit. */
 char *getcwd(char *buffer, size_t size);
 
+/* The kernel's number for this process. */
+pid_t getpid(void);
+
+/* Facts about the system: sysconf(_SC_PAGESIZE) is the size of a page
+ * of memory (4096 here), _SC_NPROCESSORS_ONLN how many processors the
+ * program can use (1: a program has one thread), _SC_CLK_TCK the
+ * ticks of the clock in a second. -1, with EINVAL, for anything else.
+ * The numbers are Linux's. */
+#define _SC_ARG_MAX 0
+#define _SC_CLK_TCK 2
+#define _SC_OPEN_MAX 4
+#define _SC_PAGESIZE 30
+#define _SC_PAGE_SIZE _SC_PAGESIZE
+#define _SC_NPROCESSORS_CONF 83
+#define _SC_NPROCESSORS_ONLN 84
+#define _SC_GETPW_R_SIZE_MAX 70
+
+/* The least room for a program's arguments POSIX lets a system give. */
+#define _POSIX_ARG_MAX 4096
+long sysconf(int name);
+int getpagesize(void);
+
+/* Asks for SIGALRM in `seconds`. The kernel sends programs no signals
+ * (signal.h), so it never comes; returns 0. */
+unsigned alarm(unsigned seconds);
+
 /* Replaces the program with another. TheTaaJ starts programs as new
  * processes and never replaces one: this always fails (ENOSYS). */
 int execvp(const char *file, char *const argv[]);
+int execv(const char *path, char *const argv[]);
+int execve(const char *path, char *const argv[], char *const environment[]);
+
+/* Copies the running program: not how TheTaaJ starts programs, and a C
+ * program cannot start one yet: always -1, ENOSYS. */
+pid_t fork(void);
+
+/* The session a process is in: there are no sessions, so each process
+ * is its own, and the answer is its number. */
+pid_t getsid(pid_t process);
+
+/* The user and group the program runs as: there are no users (pwd.h),
+ * so always 0. */
+uid_t getuid(void);
+uid_t geteuid(void);
+gid_t getgid(void);
+gid_t getegid(void);
+
+/* The machine's name: "taaj". */
+int gethostname(char *name, size_t size);
+
+/* A second descriptor for what fd is open on: the lowest free number
+ * (dup), or `to`, closing what was there first (dup2). A file's copy
+ * has its own place in the file - unlike Unix, where the two share
+ * one - since the place is kept per descriptor here (fcntl.h). */
+int dup(int fd);
+int dup2(int fd, int to);
+
+/* Writing out to the disk: every write already reaches the file
+ * service before it returns, so these have nothing left to do. */
+int fsync(int fd);
 
 #ifdef __cplusplus
 }

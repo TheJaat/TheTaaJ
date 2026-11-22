@@ -94,6 +94,17 @@ char *realpath(const char *path, char *resolved);
  * program killed by SIGABRT): nothing waiting in streams is written. */
 _Noreturn void abort(void);
 
+/* Ends the program at once with `code`, as _exit (unistd.h) does:
+ * nothing waiting in streams is written, no atexit handler runs. */
+_Noreturn void _Exit(int code);
+
+/* Numbers that look random and are not: the same sequence every time
+ * for the same srand seed (1 if srand is never called) - the C
+ * standard's own example generator. For games and tests, not secrets. */
+#define RAND_MAX 32767
+int rand(void);
+void srand(unsigned seed);
+
 /* The same in base ten, with no way of saying it failed. */
 int atoi(const char *text);
 long atol(const char *text);

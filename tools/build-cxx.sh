@@ -29,10 +29,13 @@
 #     libc++      the standard library: strings, containers,
 #                 algorithms, iostreams, ...
 #
-# The parts of libc++ that need what TheTaaJ does not have yet - threads,
+# The parts of libc++ that need what TheTaaJ does not have yet -
 # directories, entropy, wide characters, time zones - are left out (see
 # ports/llvm/taaj/__config_site). Upstream's own build is CMake; the
 # lists of sources here follow its CMakeLists.txt for that configuration.
+# Threads are in, on the C library's pthread for one thread (libc/
+# include/pthread.h); thread_local variables need -femulated-tls in
+# CXXFLAGS (libc/c/emutls.c).
 #
 # KEEP_GOING=1 in the environment goes on past a file that does not
 # compile, to see every error at once - for porting; the archive made
@@ -91,10 +94,11 @@ done
 for src in cxa_aux_runtime.cpp cxa_default_handlers.cpp cxa_demangle.cpp cxa_exception_storage.cpp \
            cxa_guard.cpp cxa_handlers.cpp cxa_vector.cpp cxa_virtual.cpp stdlib_exception.cpp \
            stdlib_stdexcept.cpp stdlib_typeinfo.cpp abort_message.cpp fallback_malloc.cpp \
-           private_typeinfo.cpp stdlib_new_delete.cpp cxa_exception.cpp cxa_personality.cpp; do
+           private_typeinfo.cpp stdlib_new_delete.cpp cxa_exception.cpp cxa_personality.cpp \
+           cxa_thread_atexit.cpp; do
     compile "$OUT/obj/cxxabi" "$LLVM/libcxxabi/src/$src" \
         -I"$LLVM/libcxxabi/include" -I"$LLVM/libcxx/src" \
-        -D_LIBCXXABI_BUILDING_LIBRARY -D_LIBCXXABI_HAS_NO_THREADS -D_LIBCPP_BUILDING_LIBRARY \
+        -D_LIBCXXABI_BUILDING_LIBRARY -D_LIBCPP_BUILDING_LIBRARY \
         -DLIBCXXABI_USE_LLVM_UNWINDER
 done
 
@@ -104,7 +108,9 @@ for src in algorithm.cpp any.cpp bind.cpp call_once.cpp charconv.cpp chrono.cpp 
            new_handler.cpp new_helpers.cpp optional.cpp print.cpp random_shuffle.cpp ryu/d2fixed.cpp \
            ryu/d2s.cpp ryu/f2s.cpp stdexcept.cpp string.cpp system_error.cpp typeinfo.cpp valarray.cpp \
            variant.cpp vector.cpp verbose_abort.cpp \
-           ios.cpp ios.instantiations.cpp iostream.cpp locale.cpp ostream.cpp regex.cpp strstream.cpp; do
+           ios.cpp ios.instantiations.cpp iostream.cpp locale.cpp ostream.cpp regex.cpp strstream.cpp \
+           atomic.cpp barrier.cpp condition_variable_destructor.cpp condition_variable.cpp future.cpp \
+           mutex_destructor.cpp mutex.cpp shared_mutex.cpp thread.cpp; do
     compile "$OUT/obj/cxx" "$LLVM/libcxx/src/$src" \
         -I"$LLVM/libcxx/src" -I"$LLVM/libcxxabi/include" \
         -D_LIBCPP_BUILDING_LIBRARY -DLIBCXX_BUILDING_LIBCXXABI \

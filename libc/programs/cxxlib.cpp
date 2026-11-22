@@ -3,7 +3,9 @@
 // destructors after it, function-local statics, new and delete) and the
 // standard library (strings, containers, algorithms, iostreams, string
 // streams, <charconv>, <format>, <regex>, <chrono>, smart pointers,
-// <optional>, <variant>, <any>, <functional>).
+// <optional>, <variant>, <any>, <functional>), and threads as they are
+// for a program with one thread: <mutex>, call_once, thread_local, a
+// timed wait, and std::thread, which cannot start a second one.
 //
 //   cxxlib          every check; "c++: N checks, all passed", and last of
 //                   all, from a destructor after main has returned,
@@ -17,6 +19,7 @@
 #include <charconv>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -28,6 +31,7 @@
 #include <list>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <numeric>
 #include <optional>
 #include <random>
@@ -37,6 +41,8 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <system_error>
+#include <thread>
 #include <typeinfo>
 #include <unordered_map>
 #include <variant>
@@ -421,6 +427,59 @@ static void the_rest()
           "<cmath>'s exact functions");
 }
 
+// ---- one thread ----
+
+static thread_local int per_thread = 7;
+
+static void one_thread()
+{
+    std::mutex mutex;
+    {
+        std::lock_guard<std::mutex> held(mutex);
+    }
+    check(mutex.try_lock(), "a mutex is free again after its lock_guard");
+    mutex.unlock();
+    std::recursive_mutex recursive;
+    recursive.lock();
+    check(recursive.try_lock(), "a recursive mutex is taken again by its holder");
+    recursive.unlock();
+    recursive.unlock();
+
+    // Its first use makes it, from its starting value (-femulated-tls:
+    // libc/c/emutls.c), and it then keeps what is put in it.
+    per_thread += 1;
+    check(per_thread == 8, "a thread_local variable");
+
+    std::once_flag once;
+    int calls = 0;
+    std::call_once(once, [&] { calls++; });
+    std::call_once(once, [&] { calls++; });
+    check(calls == 1, "call_once calls once");
+
+    // Nobody can notify it, so it waits out its time - and not less.
+    std::condition_variable condition;
+    std::unique_lock<std::mutex> lock(mutex);
+    auto start = std::chrono::steady_clock::now();
+    auto status = condition.wait_for(lock, std::chrono::milliseconds(50));
+    auto waited = std::chrono::steady_clock::now() - start;
+    check(status == std::cv_status::timeout && waited >= std::chrono::milliseconds(50),
+          "a condition_variable waits out its time");
+    lock.unlock();
+
+#ifdef __TAAJ__
+    // A second thread cannot be made: std::thread says so with the
+    // exception the standard gives for it.
+    bool refused = false;
+    try {
+        std::thread second([] {});
+        second.join();
+    } catch (const std::system_error &e) {
+        refused = e.code() == std::errc::resource_unavailable_try_again;
+    }
+    check(refused, "std::thread: no second thread, said with resource_unavailable_try_again");
+#endif
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1 && std::strcmp(argv[1], "throw") == 0) {
@@ -437,6 +496,7 @@ int main(int argc, char **argv)
     containers();
     streams();
     the_rest();
+    one_thread();
     std::cout << "c++: " << checks << " checks, " << (failures ? "some FAILED" : "all passed") << std::endl;
     return failures ? 1 : 0;
 }

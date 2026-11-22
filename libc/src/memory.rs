@@ -39,6 +39,20 @@
 //!
 //! malloc's blocks keep 16 in the "align" word, so free can tell how
 //! far back their start is - 16 bytes - the same way.
+//!
+//! Small blocks - 1 KiB or less, header included - do not go back to
+//! the heap when they are freed. The heap is a list of free blocks in
+//! address order (the `heap` crate), simple and O(n): every allocation
+//! walks it for the first block big enough, every free walks it for the
+//! place to put the block back. A C or C++ program makes and frees
+//! small blocks by the million - LLVM's TableGen took three minutes
+//! over work the host does in a second - and the list grows with them.
+//! So each size of small block, in steps of 16 bytes, has a list of its
+//! own: free puts a block on the front of its size's list, malloc takes
+//! it off again - one step each way, however many there are. New small
+//! blocks are cut from 64 KiB pieces of the heap. What is on these
+//! lists stays there for blocks of that size: it is never given back to
+//! the heap for others.
 
 use alloc::alloc::{alloc, dealloc};
 use core::alloc::Layout;
@@ -54,6 +68,103 @@ const HEADER: usize = 16;
 /// strictest of them (long double) wants 16. The header is the same
 /// size, so the address after it is as well aligned as the block.
 const ALIGNMENT: usize = 16;
+
+/// The largest block, header included, kept on a list of its size.
+const SMALL_MAX: usize = 1024;
+
+/// How much is taken from the heap at a time to cut small blocks from.
+const PIECE: usize = 64 * 1024;
+
+/// The small blocks: a list of free ones for each size (16, 32, ...,
+/// SMALL_MAX, at index size / 16), each free block holding the address
+/// of the next in its first word; and the rest of the piece new blocks
+/// are being cut from.
+struct Small {
+    free: [*mut u8; SMALL_MAX / ALIGNMENT + 1],
+    next: *mut u8,
+    end: *mut u8,
+}
+
+/// The one Small, behind a spin lock: a program here has one thread,
+/// so it is never waited for; it is what makes a `static` of raw
+/// pointers sound.
+struct SmallLock {
+    locked: core::sync::atomic::AtomicBool,
+    small: core::cell::UnsafeCell<Small>,
+}
+
+// SAFETY: `small` is reached only while `locked` is held.
+unsafe impl Sync for SmallLock {}
+
+static SMALL: SmallLock = SmallLock {
+    locked: core::sync::atomic::AtomicBool::new(false),
+    small: core::cell::UnsafeCell::new(Small {
+        free: [ptr::null_mut(); SMALL_MAX / ALIGNMENT + 1],
+        next: ptr::null_mut(),
+        end: ptr::null_mut(),
+    }),
+};
+
+fn with_small<R>(f: impl FnOnce(&mut Small) -> R) -> R {
+    use core::sync::atomic::Ordering;
+    while SMALL.locked.swap(true, Ordering::Acquire) {
+        core::hint::spin_loop();
+    }
+    // SAFETY: the lock is held, so this is the only reference.
+    let result = f(unsafe { &mut *SMALL.small.get() });
+    SMALL.locked.store(false, Ordering::Release);
+    result
+}
+
+/// Which list a block for `size` bytes is on, if it is small: its whole
+/// size, header included, in 16-byte steps.
+fn small_class(size: usize) -> Option<usize> {
+    let whole = size.checked_add(HEADER)?;
+    (whole <= SMALL_MAX).then(|| whole.div_ceil(ALIGNMENT))
+}
+
+/// A block of `class` * 16 bytes: off its list, or cut from the piece
+/// (and a new piece taken when this one has too little left).
+fn take_small(class: usize) -> *mut u8 {
+    with_small(|small| {
+        let block = small.free[class];
+        if !block.is_null() {
+            // SAFETY: a block on the list holds the next one's address in
+            // its first word (put there by give_small).
+            small.free[class] = unsafe { block.cast::<*mut u8>().read() };
+            return block;
+        }
+        let bytes = class * ALIGNMENT;
+        if (small.end as usize) - (small.next as usize) < bytes {
+            // SAFETY: the layout is of nonzero size.
+            let piece = unsafe { alloc(Layout::from_size_align(PIECE, ALIGNMENT).unwrap()) };
+            if piece.is_null() {
+                return ptr::null_mut();
+            }
+            // The rest of the old piece, less than one block, is left.
+            small.next = piece;
+            // SAFETY: PIECE bytes from `piece`.
+            small.end = unsafe { piece.add(PIECE) };
+        }
+        let block = small.next;
+        // SAFETY: at least `bytes` are left in the piece.
+        small.next = unsafe { small.next.add(bytes) };
+        block
+    })
+}
+
+/// Puts a small block back on the front of its list.
+///
+/// # Safety
+/// `block` must be a block of `class` taken by take_small, not in use.
+unsafe fn give_small(block: *mut u8, class: usize) {
+    with_small(|small| {
+        // SAFETY: the block is the caller's to give, at least 16 bytes,
+        // and aligned for a pointer.
+        unsafe { block.cast::<*mut u8>().write(small.free[class]) };
+        small.free[class] = block;
+    });
+}
 
 /// The size written in front of a block that malloc returned.
 ///
@@ -79,6 +190,22 @@ unsafe fn alignment_of_block(pointer: *mut c_void) -> usize {
 /// of two, 16 or more), behind a header of `alignment` bytes, and writes
 /// the size and alignment at the header's end.
 fn allocate(size: usize, alignment: usize) -> *mut c_void {
+    if alignment == ALIGNMENT {
+        if let Some(class) = small_class(size) {
+            let block = take_small(class);
+            if block.is_null() {
+                return no_memory();
+            }
+            // SAFETY: the block has class * 16 >= size + HEADER bytes,
+            // aligned to 16: the header's two words fit before `start`.
+            unsafe {
+                let start = block.add(HEADER);
+                start.sub(HEADER).cast::<usize>().write(size);
+                start.sub(HEADER / 2).cast::<usize>().write(ALIGNMENT);
+                return start.cast();
+            }
+        }
+    }
     let Some(layout) = size.checked_add(alignment).and_then(|total| Layout::from_size_align(total, alignment).ok())
     else {
         return no_memory();
@@ -147,6 +274,12 @@ pub unsafe extern "C" fn free(pointer: *mut c_void) {
     unsafe {
         let size = size_of_block(pointer);
         let alignment = alignment_of_block(pointer);
+        if alignment == ALIGNMENT {
+            if let Some(class) = small_class(size) {
+                give_small(pointer.cast::<u8>().sub(HEADER), class);
+                return;
+            }
+        }
         let layout = Layout::from_size_align_unchecked(size + alignment, alignment);
         dealloc(pointer.cast::<u8>().sub(alignment), layout);
     }

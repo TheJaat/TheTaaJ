@@ -1,0 +1,64 @@
+# llvm-config.txt - LLVM's configuration for TheTaaJ: the values CMake
+# would have found by testing the system, for tools/build-llvm.py to
+# put into include/llvm/Config/*.cmake. NAME=VALUE; a name not here, or
+# with nothing after the =, is "no".
+#
+# The host and target triples and the native target are set by the
+# script, from the CPU it builds for.
+
+PACKAGE_NAME=LLVM
+PACKAGE_VERSION=18.1.3
+PACKAGE_STRING=LLVM 18.1.3
+PACKAGE_BUGREPORT=https://github.com/llvm/llvm-project/issues/
+PACKAGE_VENDOR=TheTaaJ
+LLVM_VERSION_MAJOR=18
+LLVM_VERSION_MINOR=1
+LLVM_VERSION_PATCH=3
+
+# A program has one thread on TheTaaJ today. LLVM still uses std::mutex
+# and its kin, which the C library's pthread provides for one thread.
+LLVM_ENABLE_THREADS=0
+LLVM_HAS_ATOMICS=1
+
+LLVM_ON_UNIX=1
+LLVM_HAS_X86_TARGET=1
+LLVM_HAS_AARCH64_TARGET=1
+LLVM_UNREACHABLE_OPTIMIZE=1
+LLVM_ENABLE_ABI_BREAKING_CHECKS=0
+LLVM_ENABLE_REVERSE_ITERATION=0
+
+# No stack traces on a crash: there is no backtrace() and no way to
+# find a function's name in a stripped program.
+ENABLE_BACKTRACES=0
+ENABLE_CRASH_OVERRIDES=0
+LLVM_ENABLE_CRASH_DUMPS=0
+
+# What the C library has.
+HAVE_ERRNO_H=1
+HAVE_FCNTL_H=1
+HAVE_ISATTY=1
+HAVE_PTHREAD_H=1
+HAVE_PTHREAD_MUTEX_LOCK=1
+HAVE_SIGNAL_H=1
+HAVE_SYSCONF=1
+HAVE_GETPAGESIZE=1
+HAVE_SYS_MMAN_H=1
+HAVE_SYS_STAT_H=1
+HAVE_SYS_RESOURCE_H=1
+HAVE_SYS_TIME_H=1
+HAVE_SYS_TYPES_H=1
+HAVE_UNISTD_H=1
+HAVE_SYSEXITS_H=1
+HAVE_STRUCT_STAT_ST_MTIM_TV_NSEC=1
+
+LLVM_ENABLE_ZLIB=0
+LLVM_ENABLE_ZSTD=0
+LLVM_ENABLE_DIA_SDK=0
+LLVM_USE_INTEL_JITEVENTS=0
+LLVM_USE_OPROFILE=0
+LLVM_USE_PERF=0
+LLVM_FORCE_ENABLE_STATS=0
+LLVM_VERSION_PRINTER_SHOW_HOST_TARGET_INFO=1
+LLVM_GISEL_COV_ENABLED=0
+LLVM_SUPPORT_XCODE_SIGNPOSTS=0
+LLVM_WINDOWS_PREFER_FORWARD_SLASH=0

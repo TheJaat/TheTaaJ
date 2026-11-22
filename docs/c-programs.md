@@ -103,13 +103,19 @@ A program that only reads standard input and writes standard output needs neithe
 | Header | What is in it |
 |---|---|
 | `stdio.h` | `printf` `fprintf` `snprintf` `sprintf` and their `v` forms; `puts` `fputs` `putchar` `putc` `fputc`; `fopen` `fclose` `fflush` `setvbuf`; `fgetc` `getc` `getchar` `ungetc` `fgets`; `fread` `fwrite`; `fseek` `ftell` `rewind`; `feof` `ferror` `clearerr` `fileno`; `perror`; `remove` `rename`; `stdin` `stdout` `stderr` |
-| `stdlib.h` | `malloc` `calloc` `realloc` `free`; `exit`; `strtol` `strtoul` `atoi` `atol`; `abs` `labs`; `qsort` `bsearch` |
-| `string.h` | `strlen` `strnlen` `strcmp` `strncmp` `strcpy` `strncpy` `strcat` `strncat` `strchr` `strrchr` `strstr` `strspn` `strcspn` `strdup` `strerror`; `memcpy` `memmove` `memset` `memcmp` `memchr` |
+| `stdlib.h` | `malloc` `calloc` `realloc` `free`; `exit` `_Exit` `atexit`; `getenv` (always NULL: there is no environment); `rand` `srand`; `strtol` `strtoul` `atoi` `atol`; `abs` `labs`; `qsort` `bsearch` |
+| `string.h` | `strlen` `strnlen` `strcmp` `strncmp` `strcpy` `strncpy` `strcat` `strncat` `strchr` `strrchr` `strstr` `strspn` `strcspn` `strdup` `strerror` `strerror_r` `strsignal`; `memcpy` `memmove` `memset` `memcmp` `memchr` |
 | `ctype.h` | `isalpha` `isdigit` `isalnum` `isupper` `islower` `isxdigit` `isspace` `isblank` `isprint` `isgraph` `ispunct` `iscntrl`; `toupper` `tolower` |
 | `errno.h` | `errno`, and the numbers Linux uses for the errors that can happen here |
-| `unistd.h` | `read` `write` `close` `lseek` `unlink` `isatty` `_exit` |
-| `fcntl.h` | `open`, and `O_RDONLY` `O_WRONLY` `O_RDWR` `O_CREAT` `O_EXCL` `O_TRUNC` `O_APPEND` |
-| `sys/types.h` | `ssize_t` `off_t` |
+| `unistd.h` | `read` `write` `close` `lseek` `unlink` `isatty` `_exit`; `dup` `dup2` `fsync`; `getcwd` `chdir` `rmdir` `access` `truncate` `ftruncate` `readlink`; `getpid` `sysconf` `getpagesize` `usleep`; `fork` `execv` `execve` (which fail with `ENOSYS`) |
+| `fcntl.h` | `open` `fcntl`, and `O_RDONLY` `O_WRONLY` `O_RDWR` `O_CREAT` `O_EXCL` `O_TRUNC` `O_APPEND` and the rest of the `O_` flags |
+| `sys/stat.h` | `stat` `fstat` `lstat` `mkdir` `chmod` `umask`: a file's kind, size and a number for it; no owners, permissions or times are kept |
+| `dirent.h` | `opendir` `readdir` `rewinddir` `closedir` |
+| `sys/mman.h` | `mmap` `munmap`: a file is read into memory, not mapped; changes are not written back |
+| `signal.h` | `signal` `sigaction` `raise` `kill` `sigprocmask`: only signals a process sends itself |
+| `pthread.h` | mutexes, condition variables, `pthread_once`, keys: a process has one thread, so `pthread_create` fails with `EAGAIN` |
+| `time.h` | `time` `clock` `clock_gettime` `nanosleep` |
+| `sys/types.h` | `ssize_t` `off_t` `pid_t` `uid_t` `mode_t` and the other POSIX types |
 
 Each header says in its comments what its functions do and where they differ from other systems.
 
@@ -121,10 +127,11 @@ Code that needs any of these will not compile or link:
 - **Single keys.** The keyboard arrives a line at a time; a program cannot see a key as it is pressed, the arrow keys, or turn the showing of typed text off (no `termios`). An editor or a game cannot be written yet.
 - **The transcendental functions** of `math.h`: `sin` `cos` `exp` `log` `pow` and their kind are declared but not there yet. `sqrt` `fmod` `floor` `ceil` `round` `trunc` `hypot` `fmin` `fmax` and the classifying macros are.
 - **An exact `strtold`**: a long double is read through a double, so text with more digits than a double keeps is not rounded to the nearest long double.
-- **Processes**: no `fork`, `exec`, `system`, `wait`, `pipe`, signals, or `getpid`.
-- **Directories**: no `mkdir`, `opendir`, `stat`, `getcwd`, `chdir`.
-- **The environment and sleeping**: no `getenv`, `sleep`. (`time`, `clock` and `clock_gettime` count from the moment the system started.)
-- Wide characters (`wchar.h` has only `mbstate_t`), locales other than "C", threads.
+- **Processes**: `fork`, `exec` and `wait` are declared but fail (`ENOSYS`, `ECHILD`); there is no `system` or `pipe`. Signals reach a process only from itself (`raise`, or `kill` of its own number).
+- **Threads**: `pthread_create` fails with `EAGAIN`. The locks are there, and count, so code written for threads runs with one.
+- **Links, owners, permissions and file times**: `link` and `symlink` fail with `EPERM`; `stat` says every time is 0 and every owner 0. `flock` and `fcntl`'s locks fail with `ENOLCK`.
+- **Sleeping by seconds**: `nanosleep` and `usleep` are there, `sleep` is not. (`time`, `clock` and `clock_gettime` count from the moment the system started.)
+- Wide characters (`wchar.h` has only `mbstate_t`), locales other than "C".
 
 And things that are there but are not what a Unix program expects:
 
@@ -170,4 +177,4 @@ make cxx64 CXX_PROGRAMS=mine        # libc/programs/mine.cpp -> build/cxx/x86_64
 tools/tfstool-rs/target/release/tfstool put build/taaj-disk.img mine build/cxx/x86_64/bin/mine
 ```
 
-The first `make cxx64` builds `libc++.a`, which takes a few minutes; after that only the program is compiled. Exceptions, `dynamic_cast` and `typeid`, global constructors and destructors, the containers and algorithms, `iostream`, `<format>` and `<regex>` work; `libc/programs/cxxlib.cpp` checks them all. What is left out: `std::thread` and its relations, `<filesystem>`, `std::random_device`, wide characters, and every locale but "C". The linker script is `user/cxx.ld`, not `user.ld`: it keeps the tables an exception needs to find its way up the stack, and `--eh-frame-hdr` makes the linker add a sorted index to them, so that a throw finds its way faster.
+The first `make cxx64` builds `libc++.a`, which takes a few minutes; after that only the program is compiled. Exceptions, `dynamic_cast` and `typeid`, global constructors and destructors, the containers and algorithms, `iostream`, `<format>` and `<regex>` work; `libc/programs/cxxlib.cpp` checks them all. `std::mutex` and `thread_local` work too, with one thread; `std::thread` throws `resource_unavailable_try_again`. What is left out: `<filesystem>`, `std::random_device`, wide characters, and every locale but "C". The linker script is `user/cxx.ld`, not `user.ld`: it keeps the tables an exception needs to find its way up the stack, and `--eh-frame-hdr` makes the linker add a sorted index to them, so that a throw finds its way faster.

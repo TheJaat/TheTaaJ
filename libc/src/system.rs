@@ -237,3 +237,212 @@ pub extern "C" fn getenv(_name: *const c_char) -> *mut c_char {
 pub extern "C" fn execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int {
     crate::descriptors::fail(ENOSYS)
 }
+
+/// `nanosleep(wanted, left)`: sleeps for at least `*wanted`, in whole
+/// ticks of the system's clock (abi::TICKS_PER_SECOND a second),
+/// rounded up so that it is never shorter. Nothing can wake the program
+/// early - there are no signals - so `*left` is always zero. 0, or -1
+/// with EINVAL if the time is negative or its nanoseconds are not
+/// below a second.
+///
+/// # Safety
+/// `wanted` must be valid for reading, `left` null or valid for writing.
+#[no_mangle]
+pub unsafe extern "C" fn nanosleep(wanted: *const Timespec, left: *mut Timespec) -> c_int {
+    // SAFETY: the caller's promise.
+    let wanted = unsafe { wanted.read() };
+    if wanted.tv_sec < 0 || !(0..1_000_000_000).contains(&wanted.tv_nsec) {
+        return crate::descriptors::fail(crate::errno::EINVAL);
+    }
+    let tick = 1_000_000_000 / abi::TICKS_PER_SECOND;
+    let ticks = (wanted.tv_sec as u64) * abi::TICKS_PER_SECOND + (wanted.tv_nsec as u64).div_ceil(tick);
+    if ticks > 0 {
+        taaj::sleep(ticks);
+    }
+    if !left.is_null() {
+        // SAFETY: the caller's promise, and it is not null.
+        unsafe { left.write(Timespec { tv_sec: 0, tv_nsec: 0 }) };
+    }
+    0
+}
+
+/// `sched_yield()`: lets the kernel run something else now.
+#[no_mangle]
+pub extern "C" fn sched_yield() -> c_int {
+    taaj::yield_now();
+    0
+}
+
+/// `getpid()`: the kernel's number for this process.
+#[no_mangle]
+pub extern "C" fn getpid() -> c_int {
+    taaj::process_id() as c_int
+}
+
+// sysconf's questions, with Linux's numbers (unistd.h says the same).
+const SC_ARG_MAX: c_int = 0;
+const SC_CLK_TCK: c_int = 2;
+const SC_OPEN_MAX: c_int = 4;
+const SC_PAGESIZE: c_int = 30;
+const SC_NPROCESSORS_CONF: c_int = 83;
+const SC_NPROCESSORS_ONLN: c_int = 84;
+const SC_GETPW_R_SIZE_MAX: c_int = 70;
+
+/// `sysconf(name)`: a few facts about the system. The page is 4096
+/// bytes on both CPUs TheTaaJ runs on. A program has one thread, so as
+/// far as it can use them there is one processor. -1 with EINVAL for a
+/// question not answered here.
+#[no_mangle]
+pub extern "C" fn sysconf(name: c_int) -> c_long {
+    match name {
+        SC_PAGESIZE => 4096,
+        // POSIX's least: a C program cannot start another yet anyway.
+        SC_ARG_MAX => 4096,
+        SC_CLK_TCK => abi::TICKS_PER_SECOND as c_long,
+        SC_OPEN_MAX => 32,
+        SC_NPROCESSORS_CONF | SC_NPROCESSORS_ONLN => 1,
+        // There is no user entry to need room (pwd.h): no limit, which
+        // sysconf says by -1 with errno left as it was.
+        SC_GETPW_R_SIZE_MAX => -1,
+        _ => crate::descriptors::fail(crate::errno::EINVAL),
+    }
+}
+
+/// `getpagesize()`: sysconf(_SC_PAGESIZE), the old way of asking.
+#[no_mangle]
+pub extern "C" fn getpagesize() -> c_int {
+    4096
+}
+
+/// `waitpid(process, status, options)`: a C program here cannot start
+/// another (there is no fork, exec or posix_spawn yet), so it has no
+/// children to wait for: -1 with ECHILD, as POSIX says.
+#[no_mangle]
+pub extern "C" fn waitpid(_process: c_int, _status: *mut c_int, _options: c_int) -> c_int {
+    crate::descriptors::fail(crate::errno::ECHILD)
+}
+
+/// `wait(status)`: waitpid for any child - and there are none.
+#[no_mangle]
+pub extern "C" fn wait(status: *mut c_int) -> c_int {
+    waitpid(-1, status, 0)
+}
+
+/// `wait4(process, status, options, usage)`: waitpid that also says how
+/// much the child used. There are no children: ECHILD.
+#[no_mangle]
+pub extern "C" fn wait4(process: c_int, status: *mut c_int, options: c_int, _usage: *mut u8) -> c_int {
+    waitpid(process, status, options)
+}
+
+/// `fork()`: copying a running program is not how TheTaaJ starts
+/// programs (a new one is started from its file, as a new process), and
+/// a C program cannot do that yet either: -1, ENOSYS.
+#[no_mangle]
+pub extern "C" fn fork() -> c_int {
+    crate::descriptors::fail(ENOSYS)
+}
+
+/// `execv(path, argv)`: as execvp - never replaced: -1, ENOSYS.
+#[no_mangle]
+pub extern "C" fn execv(_path: *const c_char, _argv: *const *const c_char) -> c_int {
+    crate::descriptors::fail(ENOSYS)
+}
+
+/// `execve(path, argv, environment)`: the same.
+#[no_mangle]
+pub extern "C" fn execve(_path: *const c_char, _argv: *const *const c_char, _env: *const *const c_char) -> c_int {
+    crate::descriptors::fail(ENOSYS)
+}
+
+/// `getsid(process)`: the session a process is in. TheTaaJ has no
+/// sessions (or process groups): each process is taken to be its own,
+/// so the answer is its number.
+#[no_mangle]
+pub extern "C" fn getsid(process: c_int) -> c_int {
+    if process == 0 {
+        getpid()
+    } else {
+        process
+    }
+}
+
+/// `gethostname(name, size)`: the machine's name, which is "taaj" -
+/// there is no way to name it anything else yet. 0; or -1 with
+/// ENAMETOOLONG if it does not fit with its zero.
+///
+/// # Safety
+/// `name` must be valid for writing `size` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn gethostname(name: *mut c_char, size: usize) -> c_int {
+    let host = b"taaj\0";
+    if size < host.len() {
+        return crate::descriptors::fail(crate::errno::ENAMETOOLONG);
+    }
+    // SAFETY: the caller's promise: `size` writable bytes, and it fits.
+    unsafe { ptr::copy_nonoverlapping(host.as_ptr().cast::<c_char>(), name, host.len()) };
+    0
+}
+
+/// sys/resource.h's `struct rlimit`.
+#[repr(C)]
+pub struct Rlimit {
+    current: u64,
+    maximum: u64,
+}
+
+const RLIM_INFINITY: u64 = u64::MAX;
+const RLIMIT_NOFILE: c_int = 7;
+
+/// `getrlimit(resource, limit)`: how much of something this program may
+/// use. Descriptors: the library's table of 32. Nothing else has a limit
+/// that can be raised or lowered: the stack is the size the program
+/// asked for when it was linked (the kernel reads it from the ELF
+/// file), and memory is what there is. Those are "infinite" here, as
+/// Linux says of a limit nobody set.
+///
+/// # Safety
+/// `limit` must be valid for writing.
+#[no_mangle]
+pub unsafe extern "C" fn getrlimit(resource: c_int, limit: *mut Rlimit) -> c_int {
+    let (current, maximum) = match resource {
+        RLIMIT_NOFILE => (32, 32),
+        0..=15 => (RLIM_INFINITY, RLIM_INFINITY),
+        _ => return crate::descriptors::fail(crate::errno::EINVAL),
+    };
+    // SAFETY: the caller's promise.
+    unsafe { limit.write(Rlimit { current, maximum }) };
+    0
+}
+
+/// `setrlimit(resource, limit)`: the limits cannot be changed - asking
+/// for what they already are succeeds, anything else is EPERM.
+///
+/// # Safety
+/// `limit` must be valid for reading.
+#[no_mangle]
+pub unsafe extern "C" fn setrlimit(resource: c_int, limit: *const Rlimit) -> c_int {
+    let mut now = Rlimit { current: 0, maximum: 0 };
+    // SAFETY: `now` is writable.
+    if unsafe { getrlimit(resource, &mut now) } != 0 {
+        return -1;
+    }
+    // SAFETY: the caller's promise.
+    let wanted = unsafe { limit.read() };
+    if wanted.current == now.current && wanted.maximum == now.maximum {
+        0
+    } else {
+        crate::descriptors::fail(crate::errno::EPERM)
+    }
+}
+
+/// `usleep(microseconds)`: nanosleep, in microseconds.
+#[no_mangle]
+pub extern "C" fn usleep(microseconds: u32) -> c_int {
+    let wanted = Timespec {
+        tv_sec: (microseconds / 1_000_000) as c_long,
+        tv_nsec: ((microseconds % 1_000_000) * 1000) as c_long,
+    };
+    // SAFETY: `wanted` is readable, and no time is left to be told.
+    unsafe { nanosleep(&wanted, ptr::null_mut()) }
+}
