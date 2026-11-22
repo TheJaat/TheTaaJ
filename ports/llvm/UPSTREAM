@@ -1,0 +1,20 @@
+LLVM's C++ runtimes - libc++, libc++abi and libunwind - as they are
+upstream, with TheTaaJ's changes on top (see the history of this
+directory).
+
+  from     https://github.com/llvm/llvm-project
+  release  llvmorg-18.1.3 (llvm-project-18.1.3.src.tar.xz,
+           sha256 2929f62d69dec0379e529eb632c40e15191e36f3bd58c2cb2df0413a0dc48651)
+
+18.1.3 because it is the clang that builds TheTaaJ (Ubuntu's clang 18):
+libc++'s headers are written for a clang of their own release or newer.
+
+Of each project only include/ and src/ are here (and libcxx/vendor, the
+default assertion handler), with its licence - not
+the tests, benchmarks, documentation or build system around them (their
+CMakeLists.txt are kept, as the lists of what the libraries are made
+of). The rest of the monorepo is not here yet; clang and LLVM itself
+would go beside these, by the same names.
+
+LLVM is under the Apache License v2.0 with LLVM Exceptions (LICENSE.TXT,
+and each project's own copy).
