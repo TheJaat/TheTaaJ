@@ -3559,6 +3559,8 @@ static const char * const target_os_defs =
     "__NetBSD__\0"
 # elif TARGETOS_OpenBSD
     "__OpenBSD__\0"
+# elif TARGETOS_TheTaaJ
+    "__TAAJ__\0"
 # else
     "__linux__\0"
     "__linux\0"
@@ -3566,8 +3568,10 @@ static const char * const target_os_defs =
     "__ANDROID__\0"
 #  endif
 # endif
+# if !TARGETOS_TheTaaJ
     "__unix__\0"
     "__unix\0"
+# endif
 #endif
     ;
 

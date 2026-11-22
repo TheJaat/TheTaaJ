@@ -186,8 +186,13 @@ extern long double strtold (const char *__nptr, char **__endptr);
 #endif
 
 /* only native compiler supports -run */
+/* TheTaaJ: not even natively. -run puts the compiled code in memory and
+   jumps to it, which needs memory that is first written and then
+   executed; TheTaaJ hands a program no such memory (W^X), so a tcc for
+   TheTaaJ only writes executables. */
 #if defined _WIN32 == defined TCC_TARGET_PE \
-    && defined __APPLE__ == defined TCC_TARGET_MACHO
+    && defined __APPLE__ == defined TCC_TARGET_MACHO \
+    && !defined TARGETOS_TheTaaJ
 # if defined __i386__ && defined TCC_TARGET_I386
 #  define TCC_IS_NATIVE
 # elif defined __x86_64__ && defined TCC_TARGET_X86_64
@@ -224,6 +229,9 @@ extern long double strtold (const char *__nptr, char **__endptr);
     || defined TARGETOS_NetBSD \
     || defined TARGETOS_FreeBSD_kernel
 # define TARGETOS_BSD 1
+#elif defined TARGETOS_TheTaaJ
+/* TheTaaJ: an ELF system, but not Linux - see the paths below, and
+   target_os_defs in tccpp.c */
 #elif !(defined TCC_TARGET_PE || defined TCC_TARGET_MACHO)
 # define TARGETOS_Linux 1 /* for tccdefs_.h */
 #endif
@@ -258,6 +266,23 @@ extern long double strtold (const char *__nptr, char **__endptr);
 
 #if !defined CONFIG_TCCDIR && !defined _WIN32
 # define CONFIG_TCCDIR "/usr/local/lib/tcc"
+#endif
+
+/* TheTaaJ: tcc's own headers and libtcc1.a in /lib/tcc, the C library's
+   headers in /include and libc.a in /lib. There are no crt1.o, crti.o
+   and crtn.o (libc.a has _start), no shared libraries, and so no ELF
+   interpreter: every program is linked whole. A cross compiler, which
+   runs on another system and finds these elsewhere, sets them in its
+   config.h. */
+#ifdef TARGETOS_TheTaaJ
+# ifndef CONFIG_TCC_SYSINCLUDEPATHS
+#  define CONFIG_TCC_SYSINCLUDEPATHS "{B}/include" PATHSEP "/include"
+# endif
+# ifndef CONFIG_TCC_LIBPATHS
+#  define CONFIG_TCC_LIBPATHS "{B}" PATHSEP "/lib"
+# endif
+# define CONFIG_TCC_CRTPREFIX "{B}"
+# define CONFIG_TCC_ELFINTERP "-"
 #endif
 
 #ifdef CONFIG_TRIPLET

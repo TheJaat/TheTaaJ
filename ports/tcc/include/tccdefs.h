@@ -38,7 +38,7 @@
     #define __SIZE_TYPE__ unsigned long
     #define __PTRDIFF_TYPE__ long
     #define __LP64__ 1
-# if defined __linux__
+# if defined __linux__ || defined __TAAJ__
     #define __INT64_TYPE__ long
 # else /* APPLE, BSD */
     #define __INT64_TYPE__ long long
@@ -60,7 +60,7 @@
 #if defined _WIN32
     #define __WCHAR_TYPE__ unsigned short
     #define __WINT_TYPE__ unsigned short
-#elif defined __linux__
+#elif defined __linux__ || defined __TAAJ__
     #define __WCHAR_TYPE__ int
     #define __WINT_TYPE__ unsigned int
 #else

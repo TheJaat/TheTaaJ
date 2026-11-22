@@ -1765,7 +1765,10 @@ static void tcc_tcov_add_file(TCCState *s1, const char *filename)
 /* add libc crt1/crti objects */
 ST_FUNC void tccelf_add_crtbegin(TCCState *s1)
 {
-#if TARGETOS_OpenBSD
+#if TARGETOS_TheTaaJ
+    /* nothing: _start is in libc.a */
+    (void)s1;
+#elif TARGETOS_OpenBSD
     if (s1->output_type != TCC_OUTPUT_DLL)
         tcc_add_crt(s1, "crt0.o");
     if (s1->output_type == TCC_OUTPUT_DLL)
@@ -1800,7 +1803,9 @@ ST_FUNC void tccelf_add_crtbegin(TCCState *s1)
 
 ST_FUNC void tccelf_add_crtend(TCCState *s1)
 {
-#if TARGETOS_OpenBSD
+#if TARGETOS_TheTaaJ
+    (void)s1;
+#elif TARGETOS_OpenBSD
     if (s1->output_type == TCC_OUTPUT_DLL)
         tcc_add_crt(s1, "crtendS.o");
     else
@@ -3359,6 +3364,15 @@ invalid:
 	  sh = &shdr[sh->sh_info];
         /* ignore sections types we do not handle (plus relocs to those) */
         sh_name = strsec + sh->sh_name;
+        /* TheTaaJ: and sections marked SHF_EXCLUDE, which are not to be
+           linked at all (Rust's objects carry their LLVM bitcode in one,
+           .llvmbc). Loaded, such a section would also take the flag's
+           bit - the same one as SHF_PRIVATE above - and be made one of
+           tcc's private sections, which have no number: every symbol in
+           it would then look undefined (on AArch64, the $d mapping
+           symbols: "unresolved reference to '$d'"). */
+        if (sh->sh_flags & SHF_EXCLUDE)
+            continue;
         if (0 == strncmp(sh_name, ".debug_", 7)
          || 0 == strncmp(sh_name, ".stab", 5)) {
 	    if (!s1->do_debug || seencompressed)

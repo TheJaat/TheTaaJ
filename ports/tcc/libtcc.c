@@ -905,6 +905,10 @@ LIBTCCAPI TCCState *tcc_new(void)
 #ifdef CONFIG_NEW_DTAGS
     s->enable_new_dtags = 1;
 #endif
+#if TARGETOS_TheTaaJ
+    /* TheTaaJ has no shared libraries, so -static is always on. */
+    s->static_link = 1;
+#endif
     s->ppfp = stdout;
     /* might be used in error() before preprocess_start() */
     s->include_stack_ptr = s->include_stack;
