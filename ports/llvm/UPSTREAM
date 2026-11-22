@@ -1,5 +1,5 @@
 LLVM's C++ runtimes - libc++, libc++abi and libunwind - LLVM
-itself and Clang, as they are upstream, with TheTaaJ's changes on top (see the
+itself, Clang and lld, as they are upstream, with TheTaaJ's changes on top (see the
 history of this directory).
 
   from     https://github.com/llvm/llvm-project
@@ -35,6 +35,11 @@ program), utils/TableGen (the source of clang-tblgen), its top
 CMakeLists.txt (the version) and its licence. Not Clang's tests,
 documentation, the static analyser, the ARC migrator, the interpreter
 or the other tools.
+
+Of lld (lld/): include/, Common/, ELF/ (the linker for ELF files, the
+only kind TheTaaJ has), tools/lld (the program), its top CMakeLists.txt
+(the version) and its licence. Not lld's tests, documentation, or its
+linkers for Windows (COFF, MinGW), Apple (MachO) or WebAssembly.
 
 LLVM is not built with CMake here but by tools/build-llvm.py, which
 reads the same CMakeLists.txt for its lists of sources. The settings
