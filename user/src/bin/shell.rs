@@ -115,6 +115,8 @@ const NET_PROGRAMS: &[&str] = &["ping", "netinfo", "udpecho", "udpsend", "tcpech
 const WEB_PROGRAMS: &[&str] = &["httpd"];
 /// And these open windows: they are given the window server.
 const WINDOW_PROGRAMS: &[&str] = &["counter"];
+/// And these open windows on files they change: the editor.
+const EDIT_PROGRAMS: &[&str] = &["edit"];
 /// The shell's own commands - the words `run_words` knows, and must be
 /// kept the same as. They read no input, so in a pipeline one may only
 /// stand first.
@@ -1322,6 +1324,7 @@ impl Shell {
             Grant::Usual if on_disk(NET_PROGRAMS) => &[("net", "net")],
             Grant::Usual if on_disk(WEB_PROGRAMS) => &[("net", "net"), ("files", "files.look")],
             Grant::Usual if on_disk(WINDOW_PROGRAMS) => &[("windows", "windows")],
+            Grant::Usual if on_disk(EDIT_PROGRAMS) => &[("windows", "windows"), ("files", "files")],
             Grant::Usual => &[],
         };
         // The registry makes a channel on which only those names exist,

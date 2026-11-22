@@ -75,6 +75,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 065 | [A page from TheTaaJ: a web server on the disk, with the HTTP parser as a module of the `net` crate with no machine in it; it is given the network and the files to read only, and serves a page that `curl` and a browser on the host fetch](065-a-page-from-taaj.md) | written | `9b98da9` (TheKernel `205957c`) |
 | 066 | [A screen and a pointer: a screen for AArch64 through QEMU's firmware configuration device, a driver for virtio keyboards, mice and tablets, the PC's PS/2 mouse, and a drawing crate with no machine in it; the display draws the arrow and says where each click lands](066-a-screen-and-a-pointer.md) | written | `5a1b808` (TheKernel `f9504ab`) |
 | 067 | [Windows: the display becomes a window server - programs' windows in shared memory, composed through a back buffer, clicks and keys routed by a window manager with no machine in it (the `gui` crate, with a small toolkit); the console becomes the terminal window, and `counter` is the first program with a window](067-windows.md) | written | `671a897` (TheKernel `a9bda0f`) |
+| 068 | [A text editor: `edit FILE` in a window of its own - type, delete, move, scroll a page at a time, click to place the cursor, save with Ctrl+S, and a warning before unsaved changes are dropped; the editing in `gui::text`, tested on the host, and a boot test that reads the saved files back off the disk](068-text-editor.md) | written | this step |
 
 ## How to run what the entries describe
 

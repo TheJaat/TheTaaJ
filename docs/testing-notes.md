@@ -1801,3 +1801,90 @@ cd gfx && cargo test           # 10 tests, Rect::union and Surface::region among
 ```
 
 Automated: `make test64`
+
+---
+
+## 068 · A text editor
+
+[The entry](journal/068-text-editor.md)
+
+**1. The PC: write a file**
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `edit hello.md` | a window "edit hello.md" over the terminal, with a block cursor at the top left and a status line ` hello.md  line 1/1, column 1  a new file`; in the terminal you started QEMU from: `[edit] new file hello.md` |
+| `# Hello`, Enter, `written on TheTaaJ` | the text as typed; the status line shows `line 2/2, column 19  [modified]` |
+| Backspace a few times, then retype | characters go and come back; Backspace at the start of line 2 joins it onto line 1, Enter splits it again |
+| the arrows, Home, End | the cursor moves; Up and Down from the end of a long line through a short one come back to the same column |
+| click anywhere in the text | the cursor jumps there (or to the end of that line) |
+| Ctrl+S | `saved, N bytes` in the status line, `[modified]` gone; in the log: `[edit] saved hello.md: N bytes, 2 lines` |
+| type something, then Ctrl+Q | `unsaved changes: ctrl+q again to drop them` |
+| Ctrl+Q | the window closes, and the shell has the keys again |
+| `cat hello.md` | what was saved, without the last change |
+
+**2. A long file: scrolling through a journal entry**
+
+Put the previous entry on the disk first, with QEMU closed (the disk exists after the first `make run64`):
+
+```
+tools/tfstool-rs/target/release/tfstool put build/taaj-disk.img journal.md docs/journal/067-windows.md
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `edit journal.md` | `# Windows` at the top; `[edit] opened journal.md: 325 lines, …`. Its dashes and arrows are drawn as `?`: the font has only ASCII |
+| Page Down | the view moves 23 lines, and the old last line is now the first; `[edit] view from line 24` |
+| hold Down | the view scrolls a line at a time once the cursor reaches the bottom |
+| End on a line longer than 76 characters | the view scrolls sideways |
+| the close box with unsaved changes | the status line warns; a second press closes |
+
+**3. Write a journal entry, and copy it to the host**
+
+```
+make run64
+```
+
+In TheTaaJ: `edit entry.md`, write, Ctrl+S, Ctrl+Q. Close QEMU, then on the host:
+
+```
+tools/tfstool-rs/target/release/tfstool get build/taaj-disk.img entry.md > entry.md
+```
+
+`entry.md` holds exactly what was saved.
+
+**4. AArch64**
+
+```
+make run-aarch64-screen
+```
+
+The same as 1 to 3, in QEMU's window, with `build/aarch64/taaj-disk.img` as the disk. It is the disk `make run-aarch64` uses, so close any other AArch64 QEMU first.
+
+(I drove these through QEMU's monitor and QMP, as the automated tests do, and looked at a screenshot; not with my own hands on the keys.)
+
+**5. The tests by themselves**
+
+```
+make edit64-test
+make aarch64-edit-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `check-pixels: 3 pixels as expected` | the cursor, the status line and the text drawn where they should be |
+| `edit64-test passed` / `aarch64-edit-test passed` | every step of the three editing sessions, and the files on the disk exactly as typed, the unsaved changes not in them |
+
+The editor's side of the story: `grep -a 'edit\]' build/edit64.log`. The files it saved, as read back: `build/edit64.log.note.got` and `build/edit64.log.long.got`.
+
+Host checks:
+
+```
+cd gui && cargo test           # 38 tests, 16 of them the editor's (gui::text)
+```
+
+Automated: `make test64`
