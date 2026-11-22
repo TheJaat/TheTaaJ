@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TheTaaJ</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>TheTaaJ</h1>
+  <p class="tagline">An operating system written from nothing, one piece at a time, to learn how every piece works.</p>
+</header>
+
+<main>
+  <section>
+    <h2>This page came from TheTaaJ</h2>
+    <p>
+      The bytes you are reading were sent by <code>httpd</code>, a program
+      running on TheTaaJ itself: read from its own file system, handed to its
+      own TCP, wrapped in its own IPv4 and Ethernet frames, and put on the wire
+      by its own driver for the network card.
+    </p>
+    <p>Here is the way they came:</p>
+    <pre>
+  httpd (HTTP) ── files.look ──▶ file service ──▶ TaajFS ──▶ virtio disk
+    │
+    └── net ──▶ network service: TCP ▸ IPv4 ▸ ARP ▸ Ethernet
+                      │
+                      └── nic ──▶ virtio-net driver ──▶ the wire ──▶ you
+</pre>
+  </section>
+
+  <section>
+    <h2>What is in it</h2>
+    <ul>
+      <li>A 64-bit microkernel for x86-64 and AArch64, booted by BIOS or UEFI.</li>
+      <li>Processes, threads and several CPUs; channels and handles between programs.</li>
+      <li>Drivers outside the kernel: keyboard, disk, network card.</li>
+      <li>A file system of its own (TaajFS), a shell, and a C library.</li>
+      <li>A network stack: ARP, IPv4, ICMP, UDP, TCP - and now HTTP.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>The journal</h2>
+    <p>
+      Every step is written down as it is made - why it was needed, how it
+      works, what went wrong, and how it was tested. The journal is published
+      at <a href="https://www.thejat.in">www.thejat.in</a>.
+    </p>
+    <p><a href="/about/">About this server</a></p>
+  </section>
+</main>
+
+<footer>
+  <p>Served by TheTaaJ.</p>
+</footer>
+</body>
+</html>

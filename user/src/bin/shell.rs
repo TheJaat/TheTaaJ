@@ -110,6 +110,9 @@ const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp"]
 const CARD_PROGRAMS: &[&str] = &["niccheck"];
 /// And these are given the network.
 const NET_PROGRAMS: &[&str] = &["ping", "netinfo", "udpecho", "udpsend", "tcpecho", "tcpsend", "cnet"];
+/// And these are given both: the network, and the files to read only -
+/// a web server, which gives files out and must never change one.
+const WEB_PROGRAMS: &[&str] = &["httpd"];
 /// The shell's own commands - the words `run_words` knows, and must be
 /// kept the same as. They read no input, so in a pipeline one may only
 /// stand first.
@@ -1315,6 +1318,7 @@ impl Shell {
             Grant::Usual if on_disk(LOOK_PROGRAMS) => &[("files", "files.look")],
             Grant::Usual if on_disk(CARD_PROGRAMS) => &[("nic", "nic")],
             Grant::Usual if on_disk(NET_PROGRAMS) => &[("net", "net")],
+            Grant::Usual if on_disk(WEB_PROGRAMS) => &[("net", "net"), ("files", "files.look")],
             Grant::Usual => &[],
         };
         // The registry makes a channel on which only those names exist,

@@ -1583,3 +1583,87 @@ make libc-test                 # errno, and inet.c against this machine's own
 ```
 
 Automated: `make test64`
+
+---
+
+## 065 · A page from TheTaaJ
+
+[The entry](journal/065-a-page-from-taaj.md)
+
+**1. The page, from the PC**
+
+Start the machine with the host's port 8080 passed on to the machine's port 80. (`make run64` puts the site on its disk as `www`, beside the programs.)
+
+```
+make run64 RUN_NET="-netdev user,id=n0,hostfwd=tcp:127.0.0.1:8080-:80 -device virtio-net-pci,netdev=n0"
+```
+
+| Type (in QEMU) | You should see |
+|---|---|
+| `httpd &` | `[1] httpd`, and `httpd: serving /www on port 80` |
+
+On the host, in another terminal:
+
+| Type (on the host) | You should see |
+|---|---|
+| `curl -i http://127.0.0.1:8080/` | `HTTP/1.1 200 OK`, `Server: TheTaaJ`, `Content-Type: text/html; charset=utf-8`, `Content-Length: 1974`, `Connection: close`, an empty line, and the page; in QEMU: `httpd: 10.0.2.2 "GET /" 200 1974 bytes` |
+| `curl -s http://127.0.0.1:8080/ \| cmp - user/www/index.html && echo same` (in the TheTaaJ directory) | `same` |
+| `curl -s http://127.0.0.1:8080/style.css \| cmp - user/www/style.css && echo same` | `same` |
+| `curl -I http://127.0.0.1:8080/about/` | `HTTP/1.1 200 OK` and `Content-Length: 1549`, no page (HEAD); in QEMU: `"HEAD /about/" 200 0 bytes` |
+| `curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/nothing` | `404` |
+| `curl --path-as-is -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8080/../welcome` | `403`; in QEMU: `"GET /../welcome" 403 182 bytes` |
+| `curl -i -X POST -d x=1 http://127.0.0.1:8080/` | `HTTP/1.1 405 Method Not Allowed` and `Allow: GET, HEAD` |
+| `printf 'GET / HTTP/1.0\r\n\r\n' \| nc -N 127.0.0.1 8080 \| head -1` | `HTTP/1.1 200 OK` |
+
+| Look for | Meaning |
+|---|---|
+| without `--path-as-is`, the `..` request is a `404`, and QEMU logs `"GET /welcome"` | curl removed the `..` itself before sending; the server never saw it |
+
+And in a browser on the host: open `http://127.0.0.1:8080/`.
+
+| Look for | Meaning |
+|---|---|
+| the page "TheTaaJ", in a serif font with a diagram in a grey box; "About this server" leads to a page with a table | the page and its style sheet both came from the machine |
+| in QEMU: `"GET /" 200 1974 bytes` and `"GET /style.css" 200 1374 bytes` (a browser may also ask for `/favicon.ico`: `404`) | |
+
+(I have not looked at the page in a browser myself: this row is what it should show.)
+
+**2. The same on AArch64**
+
+```
+make run-aarch64 RUN_A64_DEVICES="-drive file=build/aarch64/taaj-disk.img,if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0 -netdev user,id=n0,hostfwd=tcp:127.0.0.1:8080-:80 -device virtio-net-device,netdev=n0"
+```
+
+The terminal is the keyboard and screen. To leave QEMU: **Ctrl+A, then X**.
+
+| Type | You should see |
+|---|---|
+| `httpd &` | `[1] httpd`, `httpd: serving /www on port 80` |
+
+| Type (on the host, another terminal, in the TheTaaJ directory) | You should see |
+|---|---|
+| `curl -s http://127.0.0.1:8080/ \| head -5` | `<!doctype html>`, `<html lang="en">`, `<head>`, ... |
+| `curl -s http://127.0.0.1:8080/ \| cmp - user/www/index.html && echo same` | `same`; in QEMU: `httpd: 10.0.2.2 "GET /" 200 1974 bytes` |
+
+**3. The tests by themselves**
+
+```
+make http64-test
+make aarch64-http-test
+```
+
+Each prints the host's verdict and ends `http64-test passed` / `aarch64-http-test passed`:
+
+| Look for | Meaning |
+|---|---|
+| `host: ok: 17 checks` | every one of the nineteen connections was answered as it should be, the 1 MiB file byte for byte |
+
+The machine's side is in `build/http64.log` (and `build/aarch64/http.log`): `grep -a 'httpd:' build/http64.log` shows one line per connection, ending with `httpd: 10.0.2.2 sent no request`.
+
+Host checks:
+
+```
+cd net && cargo test           # 78 tests: the protocols, TCP, the stack and HTTP
+```
+
+Automated: `make test64`

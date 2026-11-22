@@ -1,0 +1,88 @@
+/* The site TheTaaJ serves about itself: one page, plain and readable. */
+:root {
+  --text: #1d1f21;
+  --muted: #5c6166;
+  --line: #d8dbde;
+  --accent: #8a3b12;
+  --background: #fbfaf7;
+  --code: #f0eee8;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --text: #e4e2dc;
+    --muted: #a3a7ab;
+    --line: #3a3d40;
+    --accent: #e39a6b;
+    --background: #17191b;
+    --code: #222528;
+  }
+}
+
+body {
+  margin: 0 auto;
+  max-width: 44rem;
+  padding: 2rem 1rem 3rem;
+  font: 17px/1.6 Georgia, "Times New Roman", serif;
+  color: var(--text);
+  background: var(--background);
+}
+
+h1, h2 {
+  font-family: system-ui, sans-serif;
+  line-height: 1.2;
+}
+
+h1 {
+  margin: 0;
+  font-size: 2.4rem;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  margin-top: 2.2rem;
+  font-size: 1.25rem;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 0.3rem;
+}
+
+.tagline {
+  color: var(--muted);
+  margin-top: 0.4rem;
+}
+
+a {
+  color: var(--accent);
+}
+
+code, pre {
+  font: 14px/1.5 ui-monospace, Menlo, Consolas, monospace;
+  background: var(--code);
+}
+
+code {
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+}
+
+pre {
+  padding: 1rem;
+  overflow-x: auto;
+  border-radius: 4px;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+td, th {
+  text-align: left;
+  padding: 0.25rem 1rem 0.25rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+footer {
+  margin-top: 3rem;
+  color: var(--muted);
+  font-size: 0.9rem;
+}

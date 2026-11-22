@@ -18,12 +18,14 @@
 //!       UDP        from one program to another: a port number each
 //!       TCP        a connection: bytes that arrive, in order, or are
 //!                  sent again (`tcp`)
+//!         HTTP       a request for a page, and its answer (`http`)
 
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
 
 pub mod checksum;
+pub mod http;
 pub mod stack;
 pub mod tcp;
 

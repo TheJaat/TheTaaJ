@@ -215,12 +215,12 @@ TAAJ_CFLAGS  = --target=x86_64-unknown-none-elf -std=c11 -O2 -Wall -Wextra -Werr
 TAAJ_LDFLAGS = -static -nostdlib --gc-sections -s -T user/user.ld
 ifeq ($(HAVE_CC),yes)
 C_PROGRAMS   = chello cmem cprint cfile cstdio cwords cask cprimes cnet
-ROOT_FILES   = 33
+ROOT_FILES   = 34
 C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret w i t h spc f i l e s spc c f i l e spc c h e c k ret c f i l e spc c a t spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc n o f i l e spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc w r i t e spc c n o spc x ret w i t h spc f i l e s spc c f i l e spc w r i t e spc c n o t e spc m a d e spc b y spc c ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc l o n g spc shift-dot spc c l o n g ret c f i l e spc c a t spc shift-comma spc l o n g spc shift-dot spc c l o n g 2 ret c f i l e ret c a s k ret a d a ret 4 0 ret x ret 2 ret ctrl-d c a s k spc o n e ret f i r s t ret e c h o spc a f t e r ret e c h o spc a d a spc shift-dot spc w h o ret c a s k spc o n e spc shift-comma spc w h o ret c a t spc l o n g spc shift-backslash spc c w o r d s spc minus n spc 3 ret w i t h spc r e a d o n l y spc c w o r d s spc minus n spc 2 5 spc c w o r d s spc l o n g spc shift-dot spc c w 1 ret c w o r d s spc minus n spc 5 spc shift-comma spc l o n g spc shift-dot spc c w 2 ret c w o r d s spc l o n g ret c w o r d s spc minus n spc n o n e ret c w o r d s spc minus x ret w i t h spc f i l e s spc c s t d i o spc c h e c k ret c s t d i o spc l i n e s spc w e l c o m e ret c s t d i o spc l i n e s spc shift-comma spc w e l c o m e ret w i t h spc r e a d o n l y spc c s t d i o spc l i n e s spc l o n g spc shift-dot spc c n u m ret w i t h spc f i l e s spc c s t d i o spc c o p y spc l o n g spc c c o p y ret c s t d i o spc o r d e r ret c s t d i o spc e n d spc shift-dot spc c e n d ret c s t d i o spc l o s t spc shift-dot spc c l o s t ret c s t d i o spc e n d ret c s t d i o ret c p r i n t spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c p r i n t spc l o n g spc shift-backslash spc w c ret c p r i n t spc shift-dot spc p o u t ret c m e m ret c m e m spc s o r t spc p e a r spc a p p l e spc f i g spc a p p l e ret c m e m spc h u g e ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret c p r i m e s spc 1 0 0 ret ~ c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret t i m e spc w a i t ret ~~
 EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^files: 48 checks, all passed;^cfile: welcome: this program was not given the files;^cfile: nofile: no such file or directory;^cno: the files are read-only here;^cnote: 10 bytes;^usage: cfile cat;^hello, ada \(typed\);^cask: not a number: x;^total: 42;^one line: first \(typed\);^after\s*$$;^one line: ada \(from a file or another program\);^ +301  300\s*$$;^ +300  line\s*$$;^1200 words, 302 different;^cwords: long: this program was not given the files;^0 words, 0 different;^cwords: -n needs a number from 1 up, not .none.;^usage: cwords \[-n COUNT\];^streams: 52 checks, all passed;^cstdio: welcome: this program was not given the files;^   1  Hello from the host;^ccopy: 4692 bytes;^write was called second - printf was called first\s*$$;^no new line, and still here;^usage: cstdio lines;^printf: 42 -7 ff 0X2A \[   hi\] \[hi   \] \[00042\] x 100.\s*$$;^sizes: 18446744073709551615 -9223372036854775808\s*$$;^printf returned 6\s*$$;^snprintf: wanted 12, kept <hello, >;^argument 2 of 2: two words\s*$$;^puts: a line of its own\s*$$;^fputs and putchar\s*$$;^cprint: 9 lines went to standard output;^cprint: 7 lines went to standard output;^1 line, 1 word, 601 bytes;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes;^cprimes: 25 primes below 100\s*$$;^\[4\] cprimes 24000000;^took [0-9]+\.[0-9][0-9] s; the 4 CPUs worked for [0-9]+\.[0-9][0-9] s in all
 else
 C_PROGRAMS   =
-ROOT_FILES   = 24
+ROOT_FILES   = 25
 C_KEYS       =
 EXPECT_C     =
 endif
@@ -407,7 +407,19 @@ TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EX
 # and what must not run, or must not write.
 USER_BIN     = user/target/x86_64-unknown-none/release
 TFSTOOL_RS   = tools/tfstool-rs/target/release/tfstool
-DISK_PROGRAMS = ls cat write append rm mkdir mv cp wc yes primes forever given niccheck ping netinfo udpecho udpsend tcpecho tcpsend
+DISK_PROGRAMS = ls cat write append rm mkdir mv cp wc yes primes forever given niccheck ping netinfo udpecho udpsend tcpecho tcpsend httpd
+# The web site httpd gives out (user/www), put in the directory www of a
+# disk: put-site DISK. Only the run disks and the HTTP test's disk have
+# it - the other test disks are counted, directory by directory.
+SITE_DIR     = user/www
+SITE_FILES   = index.html style.css about/index.html
+define put-site
+	@$(TFSTOOL_RS) mkdir $(1) www > /dev/null 2>&1; $(TFSTOOL_RS) mkdir $(1) www/about > /dev/null 2>&1; true
+	@for file in $(SITE_FILES); do \
+	    $(TFSTOOL_RS) rm $(1) www/$$file > /dev/null 2>&1; \
+	    $(TFSTOOL_RS) put $(1) www/$$file $(SITE_DIR)/$$file > /dev/null || exit 1; \
+	done
+endef
 # make-test-disk-from DISK USER_BIN C_BIN: the programs are those
 # compiled for one CPU or the other; everything else is the same.
 define make-test-disk-from
@@ -446,6 +458,7 @@ run-disk: user64 cprogs64 tfstool-rs
 	    $(TFSTOOL_RS) rm $(RUN_DISK) $$program > /dev/null 2>&1; \
 	    $(TFSTOOL_RS) put $(RUN_DISK) $$program $(C_BIN)/$$program > /dev/null || exit 1; \
 	done
+	$(call put-site,$(RUN_DISK))
 
 # One C program of your own, built and put on that disk (close QEMU
 # first: the disk is its while it runs):
@@ -818,6 +831,7 @@ run-aarch64-disk: user-aarch64 cprogs-aarch64 tfstool-rs
 	    $(TFSTOOL_RS) rm $(RUN_A64_DISK) $$program > /dev/null 2>&1; \
 	    $(TFSTOOL_RS) put $(RUN_A64_DISK) $$program $(C_A64_BIN)/$$program > /dev/null || exit 1; \
 	done
+	$(call put-site,$(RUN_A64_DISK))
 
 # The serial port is this terminal: what you type goes to the shell.
 # Ctrl+A, then X, leaves QEMU. RUN_A64 adds QEMU options:
@@ -955,6 +969,8 @@ IP64_LOG      = $(BUILD_DIR)/ip64.log
 IP_A64_LOG    = $(BUILD_DIR)/aarch64/ip.log
 TCP64_LOG     = $(BUILD_DIR)/tcp64.log
 TCP_A64_LOG   = $(BUILD_DIR)/aarch64/tcp.log
+HTTP64_LOG    = $(BUILD_DIR)/http64.log
+HTTP_A64_LOG  = $(BUILD_DIR)/aarch64/http.log
 ip64-test: iso64 cprogs64 tfstool-rs
 	$(call make-test-disk,$(IP64_LOG).disk)
 	@$(KERNEL64_DIR)/scripts/ip-test.sh x86_64 $(ISO64_IMG) $(IP64_LOG).disk $(IP64_LOG)
@@ -985,6 +1001,30 @@ else
 	@echo "qemu-system-aarch64 or llvm-objcopy not found: the AArch64 boots are not run"
 endif
 
+# The web server: httpd on the machine, curl and sockets on this host
+# (kernel64/scripts/http-test.sh). The test disk has the site, and a
+# file of 1 MiB to be fetched and compared byte for byte.
+define make-http-disk
+	$(call put-site,$(1))
+	@head -c 1048576 /dev/urandom > $(1).big && $(TFSTOOL_RS) put $(1) www/big.bin $(1).big > /dev/null
+endef
+http64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(HTTP64_LOG).disk)
+	$(call make-http-disk,$(HTTP64_LOG).disk)
+	@$(KERNEL64_DIR)/scripts/http-test.sh x86_64 $(ISO64_IMG) $(HTTP64_LOG).disk $(HTTP64_LOG) $(SITE_DIR) $(HTTP64_LOG).disk.big
+	@echo "http64-test passed"
+
+aarch64-http-test: kernel-aarch64 user-aarch64 cprogs-aarch64 tfstool-rs
+ifeq ($(HAVE_A64),yes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	$(call make-test-disk-from,$(HTTP_A64_LOG).disk,$(A64_USER_BIN),$(C_A64_BIN))
+	$(call make-http-disk,$(HTTP_A64_LOG).disk)
+	@$(KERNEL64_DIR)/scripts/http-test.sh aarch64 $(KERNEL_A64_IMAGE) $(HTTP_A64_LOG).disk $(HTTP_A64_LOG) $(SITE_DIR) $(HTTP_A64_LOG).disk.big
+	@echo "aarch64-http-test passed"
+else
+	@echo "qemu-system-aarch64 or llvm-objcopy not found: the AArch64 boots are not run"
+endif
+
 # Every layer: host unit tests, a normal boot (BIOS and UEFI) with its
 # self-tests, the fault boots, and the AArch64 kernel.
 #
@@ -1001,7 +1041,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 7
-TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test
+TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared

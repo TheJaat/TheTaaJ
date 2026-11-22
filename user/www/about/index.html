@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About this server - TheTaaJ</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>About this server</h1>
+  <p class="tagline"><a href="/">TheTaaJ</a> / about</p>
+</header>
+
+<main>
+  <section>
+    <h2>httpd</h2>
+    <p>
+      <code>httpd</code> is a small web server written for TheTaaJ in Rust. It
+      answers <code>GET</code> and <code>HEAD</code>, one connection at a time,
+      one request per connection, and gives out the files under one directory
+      of the disk.
+    </p>
+    <table>
+      <tr><th>Asked for</th><th>Answered with</th></tr>
+      <tr><td><code>/</code> or a directory</td><td>its <code>index.html</code></td></tr>
+      <tr><td>a file under the site</td><td>200, the file</td></tr>
+      <tr><td>nothing by that name</td><td>404</td></tr>
+      <tr><td>a way out of the site (<code>..</code>)</td><td>403</td></tr>
+      <tr><td>POST, PUT, DELETE</td><td>405</td></tr>
+      <tr><td>no request in 10 seconds</td><td>408</td></tr>
+    </table>
+  </section>
+
+  <section>
+    <h2>What it may touch</h2>
+    <p>
+      The shell gives <code>httpd</code> two services and nothing else: the
+      network, and the channel to the file service that can only read. A
+      request cannot change a byte on the disk, because the program that
+      answers it has no way to.
+    </p>
+  </section>
+</main>
+
+<footer>
+  <p>Served by TheTaaJ.</p>
+</footer>
+</body>
+</html>
