@@ -2285,3 +2285,83 @@ make aarch64-llvm-test
 | `llvm64-test passed`, `aarch64-llvm-test passed` | each machine |
 
 Automated: make test64
+
+---
+
+## 075 · Clang on TheTaaJ
+
+[The entry](journal/075-clang-on-taaj.md)
+
+**1. The PC: clang**
+
+```
+make llvm-put
+make run64 RUN_DISK=build/llvm-disk.img
+```
+
+The first `make llvm-put` builds Clang for the PC: about 620 files more than E2, which takes a while. It makes a new 192 MiB run disk, `build/llvm-disk.img`, with what E2's had, plus:
+- `clang`, its headers in `/lib/clang/18/include`, and the C library's headers in `/include`;
+- TheTaaJ's C programs in `/src` (`src/cwords.c`, `src/chello.c`, ...);
+- `cflags`: the options TheTaaJ's build compiles them with, as a response file;
+- a broken `bad.c`.
+
+Close QEMU before running it.
+
+| Type | You should see |
+|---|---|
+| `with readonly clang --version` | `TheTaaJ clang version 18.1.3`, `Target: x86_64-unknown-taaj`, `Thread model: posix`, `InstalledDir: /` |
+| `with readonly clang -print-resource-dir` | `/lib/clang/18` |
+| `time with files clang @cflags -fno-ident -c src/cwords.c` | `took` about 20 s, nothing else printed |
+| `time with files clang @cflags -c src/chello.c src/cmem.c src/cprint.c` | `took` about 35 s: three objects, from one clang |
+| `with files clang @cflags -S src/chello.c -o chello.s` | nothing printed |
+| `with files clang -c bad.c` | `bad.c:2:12: error: use of undeclared identifier 'x'`, the line `    2 \|     return x;` with a `^` under the `x`, `1 error generated.`, then `clang exited with code 1` |
+| `with files clang -c nothere.c` | `clang: error: no such file or directory: 'nothere.c'`, `clang: error: no input files`, then `clang exited with code 1` |
+| `ls` | `cwords.o` 5808, `chello.o` 2976, `cmem.o` 12864, `cprint.o` 2936, `chello.s` 7997, `clang` 82217968 (the last four were made without `-fno-ident`, so they carry `TheTaaJ clang version 18.1.3` in `.comment`) |
+
+**2. The same object from the host's clang**
+
+Close QEMU first. On the host:
+
+```
+tools/tfstool-rs/target/release/tfstool get build/llvm-disk.img cwords.o > /tmp/taaj-cwords.o
+mkdir -p /tmp/e3/src && cp libc/programs/cwords.c /tmp/e3/src/
+cd /tmp/e3
+clang-18 --target=x86_64-unknown-none-elf -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding \
+    -fno-stack-protector -fno-pic -mno-red-zone -nostdlibinc -isystem ~/Workspace/TheTaaJ/libc/include \
+    -fno-ident -c src/cwords.c -o /tmp/host-cwords.o
+cmp /tmp/taaj-cwords.o /tmp/host-cwords.o && echo same
+cd -
+```
+
+The host compiles from `src/cwords.c` too, in a directory of its own: an object holds the name of the file it was compiled from.
+
+| Look for | Meaning |
+|---|---|
+| `same` | the object TheTaaJ wrote is the host's, byte for byte |
+
+**3. AArch64**
+
+Close any AArch64 QEMU first.
+
+```
+make llvm-put-aarch64
+make run-aarch64 RUN_A64_DISK=build/aarch64/llvm-disk.img
+```
+
+The same as part 1, typed at the terminal. `clang --version` says `Target: aarch64-unknown-taaj`. The `cwords.c` step takes about 40 s and the three-file step about 55 s. `clang` is 67332776 bytes, `cwords.o` (with `-fno-ident`) 6648, `chello.o` 3336, `cmem.o` 13720, `cprint.o` 3432.
+
+**4. The tests by themselves**
+
+```
+make clang64-test
+make aarch64-clang-test
+make llvm64-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `clang on TheTaaJ (x86_64) wrote, byte for byte as the host's: chello.o cmem.o cprint.o cfile.o cstdio.o cwords.o cask.o cprimes.o cnet.o cfloat.o clib.o other.o cwords.s cstdio.i` | every output equal to the host's (`aarch64` for the other machine) |
+| `clang's headers not on the disk (names over 27 bytes): avx512vlvp2intersectintrin.h ...` | the ten headers TaajFS cannot name yet |
+| `clang64-test passed`, `aarch64-clang-test passed`, `llvm64-test passed` | each machine; llvm64-test now checks `llc: error: llc: bad.ll` |
+
+Automated: make test64
