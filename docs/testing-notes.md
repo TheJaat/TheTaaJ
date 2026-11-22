@@ -2213,3 +2213,75 @@ make aarch64-llvm-test
 | `llvm64-test passed`, `aarch64-llvm-test passed` | each machine |
 
 Automated: make test64
+
+---
+
+## 074 · LLVM code generation on TheTaaJ
+
+[The entry](journal/074-llvm-code-generation.md)
+
+**1. The PC: llc and llvm-mc**
+
+```
+make llvm-put
+make run64 RUN_DISK=build/llvm-disk.img
+```
+
+The first `make llvm-put` builds LLVM's code generators for the PC: about 1,500 files, which takes a long time. It makes a new 128 MiB run disk, `build/llvm-disk.img`, with everything the usual run disk has, plus:
+- `llvm-tblgen`, `llc`, `llvm-mc`;
+- `cwords.c` in LLVM's language for each machine (`x86_64.ll`, `aarch64.ll`) and in AArch64 assembly (`aarch64.s`);
+- a broken `bad.ll` and `bad.s`.
+
+Close QEMU before running it.
+
+| Type | You should see |
+|---|---|
+| `with readonly llc --version` | `TheTaaJ LLVM version 18.1.3`, `Default target: x86_64-unknown-taaj`, and under `Registered Targets:` `aarch64`, `arm64`, `x86` and `x86-64` among others |
+| `time with files llc -O2 x86_64.ll -o x86_64.s` | `took` about 6 s |
+| `time with files llvm-mc -triple=x86_64-unknown-none-elf -filetype=obj x86_64.s -o x86_64.o` | `took` about 2 s |
+| `time with files llc -O2 -filetype=obj aarch64.ll -o aarch64.o` | `took` about 7 s: AArch64 code, made on the PC |
+| `with files llvm-mc -triple=aarch64-unknown-none-elf -filetype=obj aarch64.s -o mc-aarch64.o` | nothing printed |
+| `with files llc bad.ll -o bad.out` | `program: error: program: bad.ll:2:7: error: value doesn't match function result type 'i32'`, the line `  ret i64 0` with a `^` under `i64`, then `llc exited with code 1` |
+| `with files llvm-mc -triple=x86_64-unknown-none-elf -filetype=obj bad.s -o bad.o` | `bad.s:2:2: error: invalid instruction mnemonic 'notaninstruction'`, the line with `^~~~~~~~~~~~~~~~` under it, then `llvm-mc exited with code 1` |
+| `ls` | `x86_64.s` 15906, `x86_64.o` 5848, `aarch64.o` 6712, `mc-aarch64.o` 6712, `llc` 34185400, `llvm-mc` 11067720 |
+
+**2. The same files from the host's LLVM**
+
+Close QEMU first. On the host:
+
+```
+tools/tfstool-rs/target/release/tfstool get build/llvm-disk.img aarch64.o > /tmp/taaj-aarch64.o
+/usr/lib/llvm-18/bin/llc -O2 -filetype=obj build/llvm64.log.work/aarch64.ll -o /tmp/host-aarch64.o
+cmp /tmp/taaj-aarch64.o /tmp/host-aarch64.o && echo same
+```
+
+| Look for | Meaning |
+|---|---|
+| `same` | the object TheTaaJ wrote is the host's, byte for byte (`build/llvm64.log.work` is there once `make llvm64-test` has run) |
+
+**3. AArch64**
+
+Close any AArch64 QEMU first.
+
+```
+make llvm-put-aarch64
+make run-aarch64 RUN_A64_DISK=build/aarch64/llvm-disk.img
+```
+
+The same as part 1, typed at the terminal. `llc --version` says `Default target: aarch64-unknown-taaj`. The two `llc` steps take about 9 s each, and the `llvm-mc` steps about 3 s. `llc` is 28930096 bytes and `llvm-mc` 10395896. The four files it writes are the same sizes as on the PC, and the same bytes.
+
+**4. The tests by themselves**
+
+```
+make libc-test
+make llvm64-test
+make aarch64-llvm-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `libm: 45602992 checks against this machine's long double, 43614069 the nearest double, 0 too far off` | musl's functions on the host, against glibc's |
+| `llc and llvm-mc on TheTaaJ (x86_64) wrote, byte for byte as the host's: x86_64.s (15906 bytes) aarch64.o (6712 bytes) x86_64.o (5848 bytes) mc-aarch64.o (6712 bytes)` | llc and llvm-mc's outputs equal to the host's (`aarch64` for the other machine) |
+| `llvm64-test passed`, `aarch64-llvm-test passed` | each machine |
+
+Automated: make test64
