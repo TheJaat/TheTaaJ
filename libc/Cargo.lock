@@ -19,6 +19,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "gfx"
+version = "0.1.0"
+dependencies = [
+ "console",
+]
+
+[[package]]
 name = "heap"
 version = "0.1.0"
 
@@ -56,6 +63,7 @@ dependencies = [
  "abi",
  "console",
  "fileserver",
+ "gfx",
  "heap",
  "input",
  "net",

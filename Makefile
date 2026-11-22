@@ -671,6 +671,7 @@ kernel64-test:
 	cd taajfs && cargo test
 	cd virtio && cargo test
 	cd net && cargo test
+	cd gfx && cargo test
 	$(MAKE) libc-test
 
 # The C library's string functions, compiled for this machine and
@@ -760,7 +761,7 @@ HAVE_A64     := $(shell command -v qemu-system-aarch64 >/dev/null && [ -n "$(LLV
 # The programs the AArch64 kernel embeds: the user/ crate again, for
 # the other CPU. Named one by one, because a few programs are for the PC
 # only (they use I/O ports) and would not compile.
-USER_A64_BINS := $(filter-out kbd port gs display,$(patsubst user/src/bin/%.rs,%,$(wildcard user/src/bin/*.rs)))
+USER_A64_BINS := $(filter-out kbd port gs,$(patsubst user/src/bin/%.rs,%,$(wildcard user/src/bin/*.rs)))
 
 user-aarch64:
 	cd user && cargo build --release --target $(KERNEL_A64_TARGET) $(addprefix --bin ,$(USER_A64_BINS))
@@ -845,6 +846,17 @@ RUN_A64_DEVICES = -drive file=$(RUN_A64_DISK),if=none,format=raw,id=d0 -device v
 run-aarch64: kernel-aarch64 run-aarch64-disk
 	@echo "(to leave QEMU: Ctrl+A, then X)"
 	qemu-system-aarch64 -M virt -cpu cortex-a72 -smp 4 -m 512M -nographic -kernel $(KERNEL_A64_IMAGE) $(RUN_A64_DEVICES) $(RUN_A64)
+
+# The same machine with a screen: QEMU's window shows the ramfb screen,
+# and takes the keys (a virtio keyboard) and the pointer (a virtio
+# tablet - the arrow follows QEMU's own pointer, with nothing to grab).
+# The serial port is the kernel's log, in this terminal. Close the
+# window to leave. RUN_A64_DISPLAY picks QEMU's window kind:
+#   make run-aarch64-screen RUN_A64_DISPLAY="-display sdl"
+RUN_A64_DISPLAY =
+run-aarch64-screen: kernel-aarch64 run-aarch64-disk
+	qemu-system-aarch64 -M virt -cpu cortex-a72 -smp 4 -m 512M -serial stdio $(RUN_A64_DISPLAY) -kernel $(KERNEL_A64_IMAGE) \
+	    -device ramfb -device virtio-keyboard-device -device virtio-tablet-device $(RUN_A64_DEVICES) $(RUN_A64)
 
 # Boots on several machines, and one deliberate fault.
 aarch64-test: user-aarch64
@@ -1025,6 +1037,28 @@ else
 	@echo "qemu-system-aarch64 or llvm-objcopy not found: the AArch64 boots are not run"
 endif
 
+# The screen and the pointer (journal entry 066): a line typed and the
+# pointer moved and clicked - the PS/2 mouse on the PC; on AArch64 a
+# ramfb screen with a virtio keyboard, mouse and tablet - and the
+# screen read back for the arrow.
+SCREEN64_LOG   = $(BUILD_DIR)/screen64.log
+SCREEN_A64_LOG = $(BUILD_DIR)/aarch64/screen.log
+
+screen64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(SCREEN64_LOG).disk)
+	@$(KERNEL64_DIR)/scripts/screen-test.sh x86_64 $(ISO64_IMG) $(SCREEN64_LOG).disk $(SCREEN64_LOG)
+	@echo "screen64-test passed"
+
+aarch64-screen-test: kernel-aarch64 user-aarch64 cprogs-aarch64 tfstool-rs
+ifeq ($(HAVE_A64),yes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	$(call make-test-disk-from,$(SCREEN_A64_LOG).disk,$(A64_USER_BIN),$(C_A64_BIN))
+	@$(KERNEL64_DIR)/scripts/screen-test.sh aarch64 $(KERNEL_A64_IMAGE) $(SCREEN_A64_LOG).disk $(SCREEN_A64_LOG)
+	@echo "aarch64-screen-test passed"
+else
+	@echo "qemu-system-aarch64 or llvm-objcopy not found: the AArch64 boots are not run"
+endif
+
 # Every layer: host unit tests, a normal boot (BIOS and UEFI) with its
 # self-tests, the fault boots, and the AArch64 kernel.
 #
@@ -1041,7 +1075,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 7
-TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test
+TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared

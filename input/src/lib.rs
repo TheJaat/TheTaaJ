@@ -21,7 +21,9 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod evdev;
 pub mod line;
+pub mod pointer;
 pub mod serial;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

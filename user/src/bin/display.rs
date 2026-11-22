@@ -4,7 +4,8 @@
 //!   1  the framebuffer's memory object (READ and WRITE)
 //!   2  a channel of display messages (abi::display): first INFO - the
 //!      framebuffer's description - then TEXT from whoever was given
-//!      the sending end (the shell)
+//!      the sending end (the shell), and POINTER from the drivers of
+//!      the mouse or tablet
 //!
 //! It maps the framebuffer - the same physical pixels the graphics card
 //! scans out - paints the background, and runs a text console on it:
@@ -23,12 +24,20 @@
 //!     a thousand lines costs a few screens' worth of drawing, not a
 //!     thousand - lines that scroll past between two paints are never
 //!     drawn at all, as in any terminal.
+//!
+//! And the pointer: an arrow that follows the mouse, drawn by the `gfx`
+//! crate over whatever is on the screen. It keeps a copy of what it
+//! covers, so moving it puts that back - nothing under it is redrawn.
+//! While text is painted it is lifted off and put back after, so the
+//! copy it keeps is never of a screen that has changed under it.
 
 #![no_std]
 #![no_main]
 
+use abi::display::{Pointer as Report, ABSOLUTE_MAX};
 use abi::FramebufferInfo;
 use console::{font, Grid, MAX_COLUMNS, MAX_ROWS};
+use gfx::{Format, Pointer, Surface};
 use taaj::{println, Error};
 
 taaj::program!(main);
@@ -66,7 +75,64 @@ struct Screen {
     text: u32,
 }
 
+/// Where the pointer is, and the buttons that were held.
+struct Mouse {
+    x: i32,
+    y: i32,
+    buttons: u8,
+    arrow: Pointer,
+}
+
+impl Mouse {
+    /// Takes a report: moves, clamped to the screen. Says so if a
+    /// button went down - one line, where: what a click will mean once
+    /// there are windows, and what the tests check positions by.
+    fn take(&mut self, report: Report, width: u32, height: u32) {
+        let (right, bottom) = (width as i32 - 1, height as i32 - 1);
+        if report.absolute {
+            // 0..=ABSOLUTE_MAX across: the first pixel to the last.
+            self.x = (i64::from(report.x) * i64::from(right) / i64::from(ABSOLUTE_MAX)) as i32;
+            self.y = (i64::from(report.y) * i64::from(bottom) / i64::from(ABSOLUTE_MAX)) as i32;
+        } else {
+            self.x = self.x.saturating_add(report.x).clamp(0, right);
+            self.y = self.y.saturating_add(report.y).clamp(0, bottom);
+        }
+        let pressed = report.buttons & !self.buttons;
+        self.buttons = report.buttons;
+        for (bit, name) in [(1, "left"), (2, "right"), (4, "middle")] {
+            if pressed & bit != 0 {
+                println!("[display] {name} button at ({}, {})", self.x, self.y);
+            }
+        }
+    }
+}
+
 impl Screen {
+    /// The framebuffer as a `gfx` surface - for the pointer, which reads
+    /// back what it covers.
+    fn surface(&mut self) -> Surface<'_> {
+        let stride = self.fb.pitch as usize / 4;
+        // SAFETY: the mapping holds `height` rows of `pitch` bytes, and
+        // a framebuffer of 32 bits a pixel has a pitch that is a
+        // multiple of four (checked in main). The slice lives while
+        // `self` is borrowed mutably, so `cell` and the rest - which
+        // write through `base` - cannot run meanwhile.
+        let pixels = unsafe { core::slice::from_raw_parts_mut(self.base.cast::<u32>(), stride * self.fb.height as usize) };
+        Surface::new(pixels, self.fb.width, self.fb.height, stride).expect("the slice is exactly as big as the surface")
+    }
+
+    fn format(&self) -> Format {
+        let fb = &self.fb;
+        Format {
+            red_size: fb.red_size,
+            red_shift: fb.red_shift,
+            green_size: fb.green_size,
+            green_shift: fb.green_shift,
+            blue_size: fb.blue_size,
+            blue_shift: fb.blue_shift,
+        }
+    }
+
     /// Builds a pixel value from 8-bit red, green and blue, placing each
     /// channel where *this* framebuffer wants it. Hard-coding 0x00RRGGBB
     /// would work in QEMU and show wrong colours on hardware that orders
@@ -204,7 +270,7 @@ fn main() -> i64 {
             Err(_) => return 2,
         }
     };
-    if fb.bpp != 32 || fb.width == 0 || fb.height == 0 {
+    if fb.bpp != 32 || fb.width == 0 || fb.height == 0 || fb.pitch % 4 != 0 || fb.pitch / 4 < fb.width {
         println!("[display] {} bits per pixel: not supported yet", fb.bpp);
         return 3;
     }
@@ -276,6 +342,15 @@ fn main() -> i64 {
     if found && grid.rows_used() > 0 {
         println!("[display] the text on the screen was kept: {} lines shown again", grid.rows_used());
     }
+    // The pointer starts in the middle; it is drawn once something
+    // moves it - a screen with no mouse shows no arrow.
+    let format = screen.format();
+    let mut mouse = Mouse {
+        x: fb.width as i32 / 2,
+        y: fb.height as i32 / 2,
+        buttons: 0,
+        arrow: Pointer::new(format.pixel(0, 0, 0), format.pixel(0xFF, 0xFF, 0xFF)),
+    };
 
     loop {
         // Wait for text; then take whatever else is already waiting,
@@ -294,6 +369,7 @@ fn main() -> i64 {
         }
         let mut taken = 0;
         let mut stall = 0;
+        let mut moved = false;
         loop {
             let n = match receive(messages, &mut message) {
                 Ok(n) => n,
@@ -302,6 +378,10 @@ fn main() -> i64 {
             };
             if n > 0 && message[0] == abi::display::TEXT {
                 grid.write_all(&message[1..n], &mut |_| {});
+            }
+            if let Some(report) = Report::from_message(&message[..n]) {
+                mouse.take(report, fb.width, fb.height);
+                moved = true;
             }
             if n == 9 && message[0] == abi::display::STALL {
                 let mut ticks = [0u8; 8];
@@ -315,7 +395,14 @@ fn main() -> i64 {
                 break;
             }
         }
+        // The arrow off while the text is painted, and back on after -
+        // where it now is.
+        let drawn = mouse.arrow.shown().is_some();
+        mouse.arrow.hide(&mut screen.surface());
         screen.sync(grid, shown);
+        if drawn || moved {
+            mouse.arrow.show(&mut screen.surface(), mouse.x, mouse.y);
+        }
         // The test of a display that has stopped: what was asked for
         // is on the screen, and then nothing is done.
         if stall > 0 {

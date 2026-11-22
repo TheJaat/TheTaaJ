@@ -13,6 +13,7 @@ test = false
 [dependencies]
 abi = { path = "../kernel/abi" }
 input = { path = "../input" }
+gfx = { path = "../gfx" }
 console = { path = "../console" }
 heap = { path = "../heap" }
 fileserver = { path = "../fileserver" }

@@ -1,16 +1,22 @@
-//! The PS/2 keyboard driver - in user mode.
+//! The PS/2 keyboard and mouse driver - in user mode.
 //!
 //! init starts it with exactly what it needs, as startup handles:
-//!   1  the keyboard's interrupt line (it may wait on it, nothing more)
+//!   1  the controller's interrupt line (it may wait on it, nothing
+//!      more): the keyboard's and the mouse's, which share it
 //!   2  I/O port 0x60, the 8042 controller's data port
 //!   3  I/O port 0x64, its status/command port
 //!   4  a channel to send terminal bytes on (send only)
+//!   5  pings from init (abi::PING)
+//!   6  the display's channel, to send the mouse's movements on (send
+//!      only; abi::display::POINTER)
 //! None of them can be duplicated or passed on.
 //!
 //! It sets the controller up, then loops: wait for the interrupt, read
-//! the waiting bytes, decode them into key presses (the `input` crate),
-//! and send each press as terminal bytes. If it crashes, the kernel
-//! survives, and init starts a new one.
+//! the waiting bytes, and sort them by the controller's status - bit 5
+//! says a byte is the mouse's. The keyboard's are decoded into key
+//! presses (the `input` crate) and each sent as terminal bytes; the
+//! mouse's into movements (`input::pointer`), each sent to the display.
+//! If it crashes, the kernel survives, and init starts a new one.
 //!
 //! F12 is a deliberate bug - the driver reads address 0 - so that the
 //! crash and the restart can be tested (and seen).
@@ -21,6 +27,8 @@
 #![no_std]
 #![no_main]
 
+use abi::display::Pointer;
+use input::pointer::{Ps2Mouse, Report};
 use input::{terminal_bytes, Decoder, Key};
 use taaj::port::{in8, out8};
 use taaj::{println, Error};
@@ -43,7 +51,19 @@ const ENABLE_PORT_1: u8 = 0xAE;
 const CONFIG_PORT_1_INTERRUPT: u8 = 1 << 0;
 const CONFIG_PORT_2_INTERRUPT: u8 = 1 << 1;
 const CONFIG_PORT_1_CLOCK_OFF: u8 = 1 << 4;
+const CONFIG_PORT_2_CLOCK_OFF: u8 = 1 << 5;
 const CONFIG_TRANSLATION: u8 = 1 << 6;
+
+/// In the status: the byte waiting at 0x60 is from the second port -
+/// the mouse.
+const FROM_MOUSE: u8 = 1 << 5;
+const ENABLE_PORT_2: u8 = 0xA8;
+/// "The next byte written to 0x60 is for the mouse, not the keyboard."
+const TO_MOUSE: u8 = 0xD4;
+/// Mouse commands, and its answer to each.
+const MOUSE_DEFAULTS: u8 = 0xF6;
+const MOUSE_REPORT: u8 = 0xF4;
+const MOUSE_ACK: u8 = 0xFA;
 
 /// A missing controller never sets its status bits; give up after this
 /// many polls instead of hanging.
@@ -68,9 +88,9 @@ fn command(byte: u8) -> bool {
     true
 }
 
-/// Sets the controller up for keyboard interrupts in scancode set 1.
-/// False if no controller answers.
-fn init_controller() -> bool {
+/// Sets the controller up for keyboard interrupts in scancode set 1,
+/// and the mouse's if `mouse`. False if no controller answers.
+fn init_controller(mouse: bool) -> bool {
     // Quiet both ports while reconfiguring, and drop any stale byte.
     if !command(DISABLE_PORT_1) || !command(DISABLE_PORT_2) {
         return false;
@@ -86,12 +106,66 @@ fn init_controller() -> bool {
     let mut config = unsafe { in8(DATA) };
     config |= CONFIG_PORT_1_INTERRUPT | CONFIG_TRANSLATION;
     config &= !(CONFIG_PORT_2_INTERRUPT | CONFIG_PORT_1_CLOCK_OFF);
+    if mouse {
+        config |= CONFIG_PORT_2_INTERRUPT;
+        config &= !CONFIG_PORT_2_CLOCK_OFF;
+    }
     if !command(WRITE_CONFIG) || !wait_writable() {
         return false;
     }
     // SAFETY: the configuration byte WRITE_CONFIG asks for.
     unsafe { out8(DATA, config) };
-    command(ENABLE_PORT_1)
+    command(ENABLE_PORT_1) && (!mouse || command(ENABLE_PORT_2))
+}
+
+/// Keys pressed while the mouse was being set up: kept, to be decoded
+/// once the driver's loop runs. A few at most - setting up takes
+/// milliseconds - and any beyond that are lost.
+struct Early {
+    bytes: [u8; 16],
+    count: usize,
+}
+
+impl Early {
+    fn keep(&mut self, byte: u8) {
+        if let Some(slot) = self.bytes.get_mut(self.count) {
+            *slot = byte;
+            self.count += 1;
+        }
+    }
+}
+
+/// One command to the mouse, and its acknowledgement. False if it does
+/// not answer - there is no mouse.
+///
+/// The controller has one byte to give at a time, from either device.
+/// A key pressed just now is a byte in front of the mouse's answer, and
+/// the answer comes only once that byte is read: so every byte is read,
+/// and the keyboard's are kept (`early`), not mistaken for no answer.
+fn tell_mouse(byte: u8, early: &mut Early) -> bool {
+    if !command(TO_MOUSE) || !wait_writable() {
+        return false;
+    }
+    // SAFETY: the byte TO_MOUSE announced, sent when the controller is ready.
+    unsafe { out8(DATA, byte) };
+    for _ in 0..32 {
+        if !wait_readable() {
+            return false;
+        }
+        // SAFETY: the status says a byte is there; reading it takes it.
+        let (status, data) = unsafe { (in8(STATUS), in8(DATA)) };
+        if status & FROM_MOUSE == 0 {
+            early.keep(data);
+        } else {
+            return data == MOUSE_ACK;
+        }
+    }
+    false
+}
+
+/// Sets the mouse to its defaults and asks it to report movement.
+fn start_mouse(early: &mut Early) -> bool {
+    tell_mouse(MOUSE_DEFAULTS, early) && tell_mouse(MOUSE_REPORT, early)
 }
 
 fn main() -> i64 {
@@ -104,21 +178,59 @@ fn main() -> i64 {
     if taaj::ioports_enable(data_port).is_err() || taaj::ioports_enable(status_port).is_err() {
         return 2;
     }
-    if !init_controller() {
+    // Pings from init, if it watches this driver (abi::PING); and where
+    // the mouse's movements go, if anywhere.
+    let mut pings = taaj::startup_handle(4);
+    let pointer_out = taaj::startup_handle(5);
+    // The mouse is set up only for someone to tell; and the controller
+    // set up again without it if it does not answer.
+    let mut mouse = pointer_out.is_some();
+    if !init_controller(mouse) {
         println!("[kbd] no PS/2 controller answered");
         return 3;
     }
-    println!("[kbd] PS/2 keyboard ready (driver in ring 3, process {})", taaj::process_id());
+    let mut early = Early { bytes: [0; 16], count: 0 };
+    if mouse && !start_mouse(&mut early) {
+        mouse = false;
+        if !init_controller(false) {
+            println!("[kbd] no PS/2 controller answered");
+            return 3;
+        }
+    }
+    // (The test scripts wait for this line's start before typing.)
+    println!(
+        "[kbd] PS/2 keyboard ready (driver in ring 3, process {}){}",
+        taaj::process_id(),
+        if mouse { "; the mouse too" } else { "" }
+    );
 
-    // Pings from init, if it watches this driver (abi::PING).
-    let mut pings = taaj::startup_handle(4);
     let mut decoder = Decoder::new();
+    let mut packets = Ps2Mouse::new();
+    let mut early = early.bytes.into_iter().take(early.count);
     loop {
         // Everything waiting first: the interrupt may have fired before
-        // this driver started, or several times while it was busy.
+        // this driver started, or several times while it was busy. (And
+        // before that, the keys pressed while the mouse was set up.)
         // SAFETY: status has no side effects; data is read only when full.
-        while unsafe { in8(STATUS) } & OUTPUT_FULL != 0 {
-            let byte = unsafe { in8(DATA) };
+        loop {
+            let (status, byte) = match early.next() {
+                Some(byte) => (OUTPUT_FULL, byte),
+                None => {
+                    let status = unsafe { in8(STATUS) };
+                    if status & OUTPUT_FULL == 0 {
+                        break;
+                    }
+                    (status, unsafe { in8(DATA) })
+                }
+            };
+            if status & FROM_MOUSE != 0 {
+                if let (Some(Report::Relative { dx, dy, buttons }), Some(out)) = (packets.feed(byte), pointer_out) {
+                    let message = Pointer { absolute: false, x: dx, y: dy, buttons }.to_message();
+                    // A display that lags loses movements, not the driver.
+                    let _ = taaj::send(out, &message, &[]);
+                }
+                continue;
+            }
             let Some(event) = decoder.feed(byte) else { continue };
             if event.pressed && event.key == Key::Function(12) {
                 println!("[kbd] F12: simulating a driver bug - reading address 0");

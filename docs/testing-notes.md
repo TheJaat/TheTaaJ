@@ -1667,3 +1667,74 @@ cd net && cargo test           # 78 tests: the protocols, TCP, the stack and HTT
 ```
 
 Automated: `make test64`
+
+---
+
+## 066 · A screen and a pointer
+
+[The entry](journal/066-a-screen-and-a-pointer.md)
+
+**1. The PC: the arrow and clicks**
+
+```
+make run64
+```
+
+Click inside the QEMU window: QEMU then sends the host's mouse to the machine as a PS/2 mouse. **Ctrl+Alt+G** gives the mouse back to the host.
+
+| Type / do | You should see |
+|---|---|
+| (at boot, in the terminal) | `[irq] PS/2 mouse on GSI 12, sharing the keyboard's vector` and `[kbd] PS/2 keyboard ready (driver in ring 3, process N); the mouse too` |
+| move the mouse | a white arrow with a black outline moves on the screen |
+| click left, right, middle | in the terminal: `[display] left button at (X, Y)`, `right …`, `middle …`, with where the arrow's tip was |
+| move far past any edge | the arrow stops at the edge; a click there says `(0, …)`, `(1023, …)`, `(…, 0)` or `(…, 767)` |
+| `echo hi` | `hi` on the screen; where the text is drawn under the arrow, the arrow stays on top and nothing is left behind when it moves away |
+
+(I drove these with the monitor's `mouse_move` and `mouse_button`, not a hand on a mouse: these rows are what a real mouse should give.)
+
+**2. AArch64: a screen, a keyboard and a tablet**
+
+```
+make run-aarch64-screen
+```
+
+QEMU opens a window; the kernel's log stays in the terminal. Close the window to leave.
+
+| Type / do | You should see |
+|---|---|
+| (at boot, in the terminal) | `[screen] ramfb: 1024x768, 32 bits a pixel, 3072 KiB at …`, `[hid] virtio tablet at …: "QEMU Virtio Tablet"`, `[hid] virtio keyboard at …: "QEMU Virtio Keyboard"` |
+| (in the window) | the amber band, the gradient, and the shell's prompt, as on the PC |
+| `echo hi` (typed in the window) | `hi`, on the screen |
+| move the host's mouse over the window | the arrow follows it with nothing to grab: the tablet sends where the host's pointer is |
+| click near the window's top-left, then bottom-right corner | `[display] left button at (X, Y)` close to `(0, 0)`, then close to `(1023, 767)` |
+
+`make run-aarch64` is unchanged: the serial terminal, no window.
+
+(I started this without a window, `RUN_A64_DISPLAY="-display none"`, and saw the boot lines and the shell; the window rows are what it should show.)
+
+**3. The tests by themselves**
+
+```
+make screen64-test
+make aarch64-screen-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `clicks: left (512, 384);right (612, 434);middle (1023, 767);left (783, 527)` (PC) | each click at the place worked out by hand, and the pointer stopped at the corner |
+| `clicks: left (512, 384);right (612, 434);middle (511, 191);right (0, 0);left (1023, 767);left (783, 527)` (AArch64) | the mouse's steps and the tablet's jumps both moved the one pointer |
+| `check-pointer: the arrow is at (783, 527), 114 pixels of it on the screen, and nowhere else` | the screenshot has the arrow where the pointer is, and none left behind |
+| `screen64-test passed` / `aarch64-screen-test passed` | |
+
+The screenshots are `build/screen64.log.ppm` and `build/aarch64/screen.log.ppm`, and they open in an image viewer.
+
+Host checks:
+
+```
+cd gfx && cargo test           # 8 tests: clipping, copy, text, the arrow, save-under
+cd input && cargo test         # 41 tests: keys, PS/2 packets, evdev events, virtio keys
+cd virtio && cargo test        # 12 tests, the input device's configuration among them
+cd kernel/abi && cargo test    # 23 tests, the POINTER message among them
+```
+
+Automated: `make test64`

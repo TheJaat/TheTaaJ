@@ -263,6 +263,92 @@ pub mod net {
     }
 }
 
+/// The input device (virtio-input): keyboards, mice and tablets. One
+/// queue of events from the device - eight bytes each, Linux's input
+/// events - and a configuration that answers questions: write what is
+/// asked into `select` and `subsel`, then read `size` and that many
+/// bytes of the answer.
+pub mod input {
+    /// Events come back through queue 0. (Queue 1 is for the driver to
+    /// send to the device - a keyboard's lights - and is not used.)
+    pub const QUEUE_EVENTS: u16 = 0;
+    /// One event: type (u16), code (u16), value (u32), little-endian.
+    pub const EVENT_SIZE: usize = 8;
+
+    /// The configuration's fields, from its start.
+    pub const CONFIG_SELECT: u32 = 0;
+    pub const CONFIG_SUBSEL: u32 = 1;
+    pub const CONFIG_SIZE: u32 = 2;
+    /// Where the answer starts; at most 128 bytes of it.
+    pub const CONFIG_ANSWER: u32 = 8;
+    pub const ANSWER_MAX: usize = 128;
+
+    /// Questions (`select`): the device's name, as text...
+    pub const SELECT_NAME: u8 = 0x01;
+    /// ...which codes of event type `subsel` it sends, a bit each...
+    pub const SELECT_EVENT_BITS: u8 = 0x11;
+    /// ...and the range of absolute axis `subsel`.
+    pub const SELECT_ABS_INFO: u8 = 0x12;
+
+    /// Event types, as the bits question names them.
+    pub const EV_KEY: u8 = 0x01;
+    pub const EV_REL: u8 = 0x02;
+    pub const EV_ABS: u8 = 0x03;
+    /// A key every keyboard has: 'A' (Linux's KEY_A).
+    pub const KEY_A: u16 = 30;
+    pub const BTN_LEFT: u16 = 0x110;
+
+    /// One event, from its eight bytes.
+    pub fn event(bytes: &[u8; EVENT_SIZE]) -> (u16, u16, u32) {
+        (
+            u16::from_le_bytes([bytes[0], bytes[1]]),
+            u16::from_le_bytes([bytes[2], bytes[3]]),
+            u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]),
+        )
+    }
+
+    /// Whether bit `n` is set in a bits answer (bit 0 is the low bit of
+    /// the first byte).
+    pub fn has_bit(bits: &[u8], n: u16) -> bool {
+        bits.get(usize::from(n / 8)).is_some_and(|byte| byte & (1 << (n % 8)) != 0)
+    }
+
+    /// An absolute axis's range, from the first eight bytes of its
+    /// answer: (min, max), each a u32 that holds an i32.
+    pub fn abs_range(answer: &[u8]) -> Option<(i32, i32)> {
+        let min = answer.get(0..4)?;
+        let max = answer.get(4..8)?;
+        Some((i32::from_le_bytes(min.try_into().ok()?), i32::from_le_bytes(max.try_into().ok()?)))
+    }
+
+    /// What a device is, from what it says it sends.
+    #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+    pub enum Kind {
+        Keyboard,
+        /// Says how far it moved.
+        Mouse,
+        /// Says where it is.
+        Tablet,
+        /// Nothing this system uses.
+        Other,
+    }
+
+    /// The kind, from the answers to "which keys?", "which relative
+    /// axes?" and "which absolute axes?". A keyboard has an 'A'; a
+    /// pointer has a left button and axes.
+    pub fn kind(keys: &[u8], relative: &[u8], absolute: &[u8]) -> Kind {
+        if has_bit(keys, KEY_A) {
+            Kind::Keyboard
+        } else if has_bit(absolute, 0) && has_bit(absolute, 1) {
+            Kind::Tablet
+        } else if has_bit(relative, 0) && has_bit(relative, 1) {
+            Kind::Mouse
+        } else {
+            Kind::Other
+        }
+    }
+}
+
 /// Descriptor flags.
 pub const DESC_NEXT: u16 = 1;
 pub const DESC_WRITE: u16 = 2; // the device writes this buffer
@@ -446,6 +532,28 @@ impl Queue {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_input_device_is_known_by_what_it_sends() {
+        use input::*;
+        assert_eq!(event(&[1, 0, 30, 0, 1, 0, 0, 0]), (1, 30, 1));
+        assert_eq!(event(&[3, 0, 1, 0, 0xFF, 0x7F, 0, 0]), (3, 1, 0x7FFF));
+        assert_eq!(event(&[2, 0, 0, 0, 0xFE, 0xFF, 0xFF, 0xFF]).2 as i32, -2);
+        // Bits: KEY_A is bit 30 - byte 3, bit 6.
+        let mut keys = [0u8; 16];
+        keys[3] = 1 << 6;
+        assert!(has_bit(&keys, KEY_A) && !has_bit(&keys, 29) && !has_bit(&keys, 500));
+        let mut buttons = [0u8; 40];
+        buttons[(BTN_LEFT / 8) as usize] = 1 << (BTN_LEFT % 8);
+        assert_eq!(kind(&keys, &[], &[]), Kind::Keyboard);
+        assert_eq!(kind(&buttons, &[0b11], &[]), Kind::Mouse);
+        assert_eq!(kind(&buttons, &[], &[0b11]), Kind::Tablet);
+        assert_eq!(kind(&buttons, &[0b01], &[0b10]), Kind::Other);
+        assert_eq!(kind(&[], &[], &[]), Kind::Other);
+        assert_eq!(abs_range(&[0, 0, 0, 0, 0xFF, 0x7F, 0, 0, 9, 9]), Some((0, 32767)));
+        assert_eq!(abs_range(&[0xFF, 0xFF, 0xFF, 0xFF, 1, 0, 0, 0]), Some((-1, 1)));
+        assert_eq!(abs_range(&[1, 2, 3]), None);
+    }
 
     /// A fake set of registers: the first four, as given.
     fn registers(values: [u32; 4]) -> impl Fn(u32) -> u32 {

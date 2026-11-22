@@ -1,0 +1,9 @@
+[package]
+name = "gfx"
+version = "0.1.0"
+edition = "2021"
+description = "Drawing: pixel formats, surfaces, rectangles, text in TheTaaJ's font, and a pointer - with no machine in it"
+publish = false
+
+[dependencies]
+console = { path = "../console" }

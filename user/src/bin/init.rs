@@ -11,22 +11,31 @@
 //!   6  the system handle: the right to look at memory and processes
 //! (all with every right but the launcher's, so init can share them out.)
 //!
-//! and five on an AArch64 machine, where the terminal is a serial port:
+//! and five on an AArch64 machine:
 //!   1  the launcher
 //!   2  the serial port's interrupt line
 //!   3  the memory its registers are in
-//!   4  the channel of devices (a disk: its description, registers,
-//!      DMA memory and interrupt)
+//!   4  the channel of devices - a screen if QEMU was given one (ramfb,
+//!      described as on the PC), a disk, network cards and input
+//!      devices (each: its description, registers, DMA memory and
+//!      interrupt)
 //!   5  the system handle
 //!
 //! The services: registry (where the others are found), display (the
 //! screen), fs (files - on the disk, if there is one), blk (the disk
 //! driver), nic (the network card's driver) and net (the network, for
-//! programs - both only if there is a card), shell, and kbd (the
-//! keyboard driver). Where the terminal
-//! is a serial port, one driver - serial - is both keyboard and
-//! screen: it is given the keys' channel to send on and the display's
-//! to read, and nothing else in the system knows the difference.
+//! programs - both only if there is a card), shell, kbd (the PC's PS/2
+//! keyboard and mouse) and hid (virtio keyboards, mice and tablets -
+//! only if there are any). The keys go to the shell; where the pointer
+//! is, and its buttons, to display, which draws the arrow.
+//!
+//! The terminal is the screen and a keyboard when the machine has both.
+//! A PC always does; an AArch64 machine does when QEMU was given ramfb
+//! and a virtio input device (init cannot tell a keyboard from a mouse:
+//! only hid asks the device). Otherwise the terminal is the serial
+//! port, and one driver, serial, is both keyboard and screen. It is
+//! given the keys' channel to send on and the display's to read, and
+//! nothing else in the system knows the difference.
 //!
 //! What a service works *on* - an interrupt line, ports, the
 //! framebuffer's memory, the channel its requests arrive on - init
@@ -89,12 +98,13 @@ taaj::program!(main);
 /// What the shell may ask init to run: programs, not services.
 const RUNNABLE: &[&str] = &["hello", "peek"];
 
-/// Whether this machine's terminal is a serial port - keyboard and
-/// screen in one, driven by `serial` - and not a keyboard and a
-/// framebuffer. Decided by the CPU for now: the PC has the one, QEMU's
-/// AArch64 machine the other. (It is a property of the machine, not of
-/// the CPU, and should come from the kernel when one CPU has both.)
-const SERIAL_TERMINAL: bool = cfg!(not(target_arch = "x86_64"));
+/// Whether this machine's keyboard, if it has a screen, is the PS/2
+/// one the kernel hands init the ports of (the PC's), or a virtio one
+/// that arrives as a device (QEMU's AArch64 machine).
+const PS2_KEYBOARD: bool = cfg!(target_arch = "x86_64");
+
+/// The most input devices passed on to `hid`.
+const INPUTS_MAX: usize = 4;
 
 /// A device the kernel found (a disk, a network card), as it described
 /// it: on a PCI bus, or at a place in memory. Each kind's driver is the
@@ -277,9 +287,6 @@ fn main() -> i64 {
         println!("[init] started without the kernel's handles");
         return 1;
     };
-    // Ports are enabled by whoever holds them, whatever the rights; a
-    // memory object must be mapped, to read and to write.
-    let input_rights = if SERIAL_TERMINAL { READ | WRITE } else { 0 };
     let Ok((keys_out, keys_in)) = taaj::channel_create() else { return 2 };
 
     // What the kernel found: a message per device, then the channel
@@ -289,6 +296,9 @@ fn main() -> i64 {
     let mut fb_memory = 0;
     let mut disk: Option<(Device, [Handle; 3], usize)> = None;
     let mut card: Option<(Device, [Handle; 3], usize)> = None;
+    // Keyboards, mice, tablets - virtio ones: each with its handles,
+    // kept here and copied to each `hid` that is started.
+    let mut inputs: [Option<(MmioDeviceInfo, [Handle; 3], usize)>; INPUTS_MAX] = [None; INPUTS_MAX];
     loop {
         let mut message = [0u8; 64];
         let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
@@ -316,6 +326,11 @@ fn main() -> i64 {
             } else if info.device == virtio::mmio::DEVICE_NETWORK && info.version == 1 && card.is_none() && (2..=3).contains(&count) {
                 card = Some((Device::Mmio(info), [handles[0], handles[1], handles[2]], count));
                 used = true;
+            } else if let (virtio::mmio::DEVICE_INPUT, 1, 2..=3, Some(slot)) =
+                (info.device, info.version, count, inputs.iter_mut().find(|slot| slot.is_none()))
+            {
+                *slot = Some((info, [handles[0], handles[1], handles[2]], count));
+                used = true;
             } else {
                 println!("[init] no driver for the device at {:#x} (virtio kind {})", info.registers, info.device);
             }
@@ -327,6 +342,18 @@ fn main() -> i64 {
         }
     }
     let _ = taaj::close(devices);
+    // The terminal: a serial port - keyboard and screen in one, driven
+    // by `serial` - unless there is a screen and a keyboard for it: the
+    // PC's PS/2 keyboard, or virtio input devices.
+    let has_inputs = inputs.iter().any(Option::is_some);
+    let serial_terminal = framebuffer.is_none() || !(PS2_KEYBOARD || has_inputs);
+    // Ports are enabled by whoever holds them, whatever the rights; a
+    // memory object must be mapped, to read and to write.
+    let input_rights = if PS2_KEYBOARD { 0 } else { READ | WRITE };
+    // The input devices' driver: their descriptions and handles, a
+    // message each, before it starts; and its pings.
+    let Ok((hid_devices_tx, hid_devices_rx)) = taaj::channel_create() else { return 2 };
+    let Ok((hid_ping_tx, hid_ping_rx)) = taaj::channel_create() else { return 2 };
     let Ok((display_tx, display_rx)) = taaj::channel_create() else { return 2 };
     // The display and the keyboard driver answer no requests, so each
     // gets a channel only for the watchdog's pings (abi::PING).
@@ -422,6 +449,9 @@ fn main() -> i64 {
         Grant { handle: net_in, rights: RECEIVE },            // 34: requests, for net
         Grant { handle: net_out, rights: SEND },              // 35: requests, to net
         Grant { handle: net_names_tx, rights: SEND },         // 36: lookups, from net
+        Grant { handle: display_tx, rights: SEND },           // 37: pointer reports, to the display
+        Grant { handle: hid_devices_rx, rights: RECEIVE },    // 38: input devices, for hid
+        Grant { handle: hid_ping_rx, rights: RECEIVE },       // 39: pings, for hid
     ];
     // Only the shell's screen and files can be copied and passed on.
     debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21)));
@@ -441,6 +471,7 @@ fn main() -> i64 {
     // The display and the keyboard driver: a ping on a channel of its own.
     let display_watch = framebuffer.and_then(|_| Watch::new(display_ping_tx, &[abi::PING], 200));
     let kbd_watch = Watch::new(kbd_ping_tx, &[abi::PING], 200);
+    let hid_watch = (!serial_terminal && has_inputs).then(|| Watch::new(hid_ping_tx, &[abi::PING], 200)).flatten();
 
     // What the registry is told, each time one is started. The
     // services: a name, and which grant it means - the handle, and the
@@ -536,19 +567,67 @@ fn main() -> i64 {
             watch: net_watch,
         },
         Service { name: "shell", grants: &[26], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
-        // The keys: a keyboard's driver, or the serial port's - which
-        // is also the screen, and so reads the display's channel (6).
+        // The keys: the PS/2 keyboard's driver (which is the mouse's
+        // too, and so may send to the display: 37), or the serial
+        // port's - which is also the screen, and so reads the display's
+        // channel (6). Neither, where the keys are virtio devices'.
         Service {
-            name: if SERIAL_TERMINAL { "serial" } else { "kbd" },
-            grants: if SERIAL_TERMINAL { &[0, 1, 3, 6, 23] } else { &[0, 1, 2, 3, 23] },
+            name: if serial_terminal { "serial" } else { "kbd" },
+            grants: if serial_terminal { &[0, 1, 3, 6, 23] } else { &[0, 1, 2, 3, 23, 37] },
             process: 0,
             restarts: [0; MAX_RESTARTS],
             restart_count: 0,
-            given_up: false,
+            given_up: !serial_terminal && !PS2_KEYBOARD,
             watch: kbd_watch,
+        },
+        // Virtio keyboards and pointers: keys to the shell (3),
+        // movements to the display (37).
+        Service {
+            name: "hid",
+            grants: &[38, 3, 37, 39],
+            process: 0,
+            restarts: [0; MAX_RESTARTS],
+            restart_count: 0,
+            given_up: serial_terminal || !has_inputs,
+            watch: hid_watch,
         },
     ];
     let launch = |service: &Service| {
+        // The input devices, before their driver starts: it takes what
+        // is waiting and no more. Whatever an earlier one left unread
+        // is thrown away first - it would be the same devices twice.
+        if service.name == "hid" {
+            let mut stale = [0u8; abi::MESSAGE_MAX as usize];
+            let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
+            while let Ok(Some(_)) = taaj::poll(&[hid_devices_rx]) {
+                let Ok((_, count)) = taaj::receive(hid_devices_rx, &mut stale, &mut handles) else { break };
+                for &handle in &handles[..count] {
+                    let _ = taaj::close(handle);
+                }
+            }
+            for (info, handles, count) in inputs.iter().flatten() {
+                // Copies that can be handed over, with the rights the
+                // driver needs: registers and DMA memory mapped to read
+                // and write, the interrupt to wait on.
+                let mut copies = [0u64; 3];
+                let mut made = 0;
+                for (n, &handle) in handles[..*count].iter().enumerate() {
+                    let rights = if n == 2 { RECEIVE } else { READ | WRITE };
+                    match taaj::duplicate(handle, rights | TRANSFER) {
+                        Ok(copy) => {
+                            copies[n] = copy;
+                            made += 1;
+                        }
+                        Err(_) => break,
+                    }
+                }
+                if made < *count || taaj::send(hid_devices_tx, &info.to_bytes(), &copies[..made]).is_err() {
+                    for &copy in &copies[..made] {
+                        let _ = taaj::close(copy);
+                    }
+                }
+            }
+        }
         let mut list = [&grants[0]; 8];
         for (n, &g) in service.grants.iter().enumerate() {
             list[n] = &grants[g];
@@ -622,8 +701,8 @@ fn main() -> i64 {
 
     loop {
         // Watch every service still running, and the request channel.
-        let mut watched = [0u64; 16];
-        let mut which = [0usize; 16];
+        let mut watched = [0u64; 24];
+        let mut which = [0usize; 24];
         let mut count = 0;
         for (n, service) in services.iter().enumerate() {
             if !service.given_up {
