@@ -1,0 +1,15 @@
+TCC - the Tiny C Compiler - as it is upstream, with TheTaaJ's changes
+on top (see the history of this directory).
+
+  from     https://repo.or.cz/tinycc.git
+  commit   84fdcd9a941c0ebf549c30401f59056081deee2e
+           "tccgen: Pass unqualified aggregate values through an ellipsis"
+  version  0.9.28rc
+
+Everything in the commit is here except win32/, which is Windows'
+headers and libraries and nothing TheTaaJ uses.
+
+TCC is under the GNU Lesser General Public License, version 2.1 (COPYING;
+RELICENSING lists the parts some of its authors have also put under a
+BSD-like licence). The files in lib/ that are linked into the programs
+TCC makes say their own terms at their top.
