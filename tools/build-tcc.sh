@@ -21,6 +21,9 @@
 #                    ...) and libtcc1.a, its helpers
 #   tcc              TCC itself, compiled by clang, linked with LIBC_A:
 #                    the program that runs on TheTaaJ
+#   libc-rust.o      the Rust half of LIBC_A as one object, for building
+#                    the C library on TheTaaJ (libc/build.taaj): there is
+#                    no Rust compiler there, so this half comes made
 #
 # libtcc1.a is compiled by the cross TCC - the helpers are what code TCC
 # writes calls, so TCC compiles them, as upstream's own build does. On
@@ -42,7 +45,7 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 VERSION=$(cat "$SRC/VERSION")
 
 case $ARCH in
-    x86_64)  TARGET=TCC_TARGET_X86_64; HELPERS="libtcc1.c alloca.S builtin.c stdatomic.c atomic.S" ;;
+    x86_64)  TARGET=TCC_TARGET_X86_64; HELPERS="libtcc1.c va_list.c alloca.S builtin.c stdatomic.c atomic.S" ;;
     aarch64) TARGET=TCC_TARGET_ARM64;  HELPERS="alloca.S builtin.c stdatomic.c atomic.S" ;;
     *) echo "build-tcc: no such CPU: $ARCH" >&2; exit 2 ;;
 esac
@@ -88,6 +91,18 @@ for helper in $HELPERS; do
 done
 rm -f "$OUT/lib/tcc/libtcc1.a"
 "$OUT/cross/taaj-tcc" -ar rcs "$OUT/lib/tcc/libtcc1.a" "$OUT"/helpers/*.o
+
+# The Rust half: every member of LIBC_A that is not one of libc/c's
+# objects, in the archive's order, merged into one object by the
+# linker (-r: a relocatable object out, not a program).
+echo "  LD      libc-rust.o ($ARCH)"
+rm -rf "$OUT/rust"
+mkdir -p "$OUT/rust"
+(cd "$OUT/rust" && ar x "$LIBC_DIR/$(basename "$LIBC_A")")
+C_PARTS=$(cd "$ROOT/libc/c" && ls ./*.c | sed -e 's|^\./||' -e 's/\.c$/.o/')
+RUST_PARTS=$(ar t "$LIBC_A" | grep -vxF "$C_PARTS")
+# shellcheck disable=SC2086 # one word per member
+(cd "$OUT/rust" && ld.lld -r $RUST_PARTS -o "$OUT/libc-rust.o")
 
 echo "  CC      ports/tcc/tcc.c ($ARCH)"
 # shellcheck disable=SC2086 # the flags are words

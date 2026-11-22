@@ -37,6 +37,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -515,10 +516,21 @@ char *fgets(char *to, int size, FILE *stream)
     return to;
 }
 
+/* size times count into *total; false if it does not fit in a size_t
+ * (then fread and fwrite do nothing). Plain C rather than clang's
+ * __builtin_mul_overflow, so that TCC compiles this file too. */
+static int product(size_t size, size_t count, size_t *total)
+{
+    if (count != 0 && size > SIZE_MAX / count)
+        return 0;
+    *total = size * count;
+    return 1;
+}
+
 size_t fread(void *to, size_t size, size_t count, FILE *stream)
 {
     size_t total;
-    if (__builtin_mul_overflow(size, count, &total) || total == 0)
+    if (!product(size, count, &total) || total == 0)
         return 0;
     if (begin_reading(stream) < 0)
         return 0;
@@ -555,7 +567,7 @@ size_t fread(void *to, size_t size, size_t count, FILE *stream)
 size_t fwrite(const void *from, size_t size, size_t count, FILE *stream)
 {
     size_t total;
-    if (__builtin_mul_overflow(size, count, &total) || total == 0)
+    if (!product(size, count, &total) || total == 0)
         return 0;
     if (begin_writing(stream) < 0 || put(stream, from, total) < 0)
         return 0;

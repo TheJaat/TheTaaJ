@@ -19,41 +19,43 @@
 #if defined(__x86_64__)
 
 /* jmp_buf: rbx, rbp, r12, r13, r14, r15, the stack pointer as it will
- * be after setjmp returns, and the return address. */
+ * be after setjmp returns, and the return address.
+ *
+ * In AT&T syntax - source first, then destination; registers with %,
+ * constants with $, and 8(%rdi) for [rdi + 8] - because it is the one
+ * both clang and TCC's own assembler read. */
 __asm__(
     ".text\n"
-    ".intel_syntax noprefix\n"
     ".global setjmp\n"
     ".type setjmp, @function\n"
     "setjmp:\n"
-    "    mov [rdi], rbx\n"
-    "    mov [rdi + 8], rbp\n"
-    "    mov [rdi + 16], r12\n"
-    "    mov [rdi + 24], r13\n"
-    "    mov [rdi + 32], r14\n"
-    "    mov [rdi + 40], r15\n"
-    "    lea rdx, [rsp + 8]\n" /* the return address is popped by ret */
-    "    mov [rdi + 48], rdx\n"
-    "    mov rdx, [rsp]\n"
-    "    mov [rdi + 56], rdx\n"
-    "    xor eax, eax\n"
+    "    movq %rbx, (%rdi)\n"
+    "    movq %rbp, 8(%rdi)\n"
+    "    movq %r12, 16(%rdi)\n"
+    "    movq %r13, 24(%rdi)\n"
+    "    movq %r14, 32(%rdi)\n"
+    "    movq %r15, 40(%rdi)\n"
+    "    leaq 8(%rsp), %rdx\n" /* the return address is popped by ret */
+    "    movq %rdx, 48(%rdi)\n"
+    "    movq (%rsp), %rdx\n"
+    "    movq %rdx, 56(%rdi)\n"
+    "    xorl %eax, %eax\n"
     "    ret\n"
     ".global longjmp\n"
     ".type longjmp, @function\n"
     "longjmp:\n"
-    "    mov eax, esi\n"
-    "    test eax, eax\n"
+    "    movl %esi, %eax\n"
+    "    testl %eax, %eax\n"
     "    jnz 1f\n"
-    "    inc eax\n" /* longjmp(b, 0) makes setjmp return 1 */
-    "1:  mov rbx, [rdi]\n"
-    "    mov rbp, [rdi + 8]\n"
-    "    mov r12, [rdi + 16]\n"
-    "    mov r13, [rdi + 24]\n"
-    "    mov r14, [rdi + 32]\n"
-    "    mov r15, [rdi + 40]\n"
-    "    mov rsp, [rdi + 48]\n"
-    "    jmp qword ptr [rdi + 56]\n"
-    ".att_syntax prefix\n");
+    "    incl %eax\n" /* longjmp(b, 0) makes setjmp return 1 */
+    "1:  movq (%rdi), %rbx\n"
+    "    movq 8(%rdi), %rbp\n"
+    "    movq 16(%rdi), %r12\n"
+    "    movq 24(%rdi), %r13\n"
+    "    movq 32(%rdi), %r14\n"
+    "    movq 40(%rdi), %r15\n"
+    "    movq 48(%rdi), %rsp\n"
+    "    jmp *56(%rdi)\n");
 
 #elif defined(__aarch64__)
 
@@ -95,8 +97,11 @@ __asm__(
     "    ldp d10, d11, [x0, #120]\n"
     "    ldp d12, d13, [x0, #136]\n"
     "    ldp d14, d15, [x0, #152]\n"
-    "    cmp w1, #0\n"
-    "    csinc w0, w1, wzr, ne\n" /* value, or 0 + 1 if it is 0 */
+    /* value, or 1 if it is 0. A branch rather than cmp and csinc:
+     * TCC's assembler for this CPU does not know those two. */
+    "    cbnz w1, 1f\n"
+    "    mov w1, #1\n"
+    "1:  mov w0, w1\n"
     "    br x30\n");
 
 #else

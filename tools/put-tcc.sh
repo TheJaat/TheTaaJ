@@ -5,6 +5,7 @@
 #   /tcc                 the compiler
 #   /include/...         the C library's headers (libc/include)
 #   /lib/libc.a          the C library
+#   /lib/libc-rust.o     its Rust half, for building it on TheTaaJ
 #   /lib/tcc/include/... TCC's own headers
 #   /lib/tcc/libtcc1.a   TCC's helpers
 #
@@ -41,4 +42,5 @@ put tcc "$TCC_DIR/tcc"
 tree "$ROOT/libc/include" include
 directory lib
 put lib/libc.a "$LIBC_A"
+put lib/libc-rust.o "$TCC_DIR/libc-rust.o"
 tree "$TCC_DIR/lib/tcc" lib/tcc

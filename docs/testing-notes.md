@@ -1970,3 +1970,71 @@ make boot64-test
 | `cfloat 1: 30000000 rounds, 0 wrong` (and 2, 3, 4) | four programs doing floating point at once, each keeping its own registers |
 
 Automated: make test64
+
+---
+
+## 070 · TheTaaJ builds its C library and C programs
+
+[The entry](journal/070-building-on-taaj.md)
+
+**1. The PC: build the C library and the programs on TheTaaJ**
+
+`make run64` puts tcc, the sources in `/src` and the script `/src/build` on the run disk.
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `ls /src/libc/c` | the C library's `.c` files and `format.h` |
+| `time source /src/build` | each command after a `+`, no errors, `built: the C library and 11 programs`, then `took` about 20 to 40 s |
+| `ls ..` | the prompt is `taaj:/src/libc/programs>` now: the script's `cd` stays done. `libc.a` (about 225,000 bytes), `c/`, `programs/` |
+| `./cprimes 100` | `cprimes: 25 primes below 100` |
+| `./chello built here` | `Hello from C`, `argc 3`, `argv[1] built`, `argv[2] here` |
+| `cd /` | the prompt is `taaj:/>` again |
+| `write broken tcc nofile.c` | `broken: 13 bytes` |
+| `source broken` | `+ tcc nofile.c`, `tcc: error: file 'nofile.c' not found`, `tcc exited with code 1`, `source: broken: stopped at line 1` |
+
+**2. Change a program on TheTaaJ, and rebuild it there**
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `edit /src/libc/programs/chello.c` | the editor, the file's first lines |
+| Page Down twice, then Down seven times | the status line says `line 54/…`, on `print("Hello from C\n");` |
+| End, Left five times, Backspace, `TheTaaJ` | the line now reads `print("Hello from TheTaaJ\n");` |
+| Ctrl+S, Ctrl+Q | saved, and the shell again |
+| `cd /src/libc/programs` | the prompt says `taaj:/src/libc/programs>` |
+| `tcc -L.. chello.c -o chello` | nothing printed |
+| `./chello` | `Hello from TheTaaJ` |
+| `chello` | `Hello from C`: a bare name is always the program in `/`, wherever the shell is |
+
+**3. AArch64**
+
+Close any AArch64 QEMU first: `build/aarch64/taaj-disk.img` is the disk `make run-aarch64` uses.
+
+```
+make run-aarch64
+```
+
+The same as part 1, typed at the terminal. The build takes about 45 s, and this `libc.a` is about 276,000 bytes.
+
+**4. The tests by themselves**
+
+```
+make tcc64-test
+make aarch64-tcc-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `took … s; the 2 CPUs worked for … s in all` in `build/tcc64.log` | how long the build took on TheTaaJ |
+| `source: broken: stopped at line 3` in the log | a script stops at the command that fails |
+| `tcc on TheTaaJ wrote all 28 files byte for byte as tcc on the host does: …` | everything built on TheTaaJ is exactly what the cross compiler builds |
+| `tcc64-test passed`, `aarch64-tcc-test passed` | all of it, both boots, on each machine |
+
+Automated: make test64

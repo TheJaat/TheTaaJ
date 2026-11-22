@@ -52,13 +52,19 @@ def main():
         undefined = {m: symbols(nm, os.path.join(work, m), "-u") for m in names}
         keep = {m for m in names if not SUPPORT.match(m)}
         need = set(ALWAYS).union(*(undefined[m] for m in keep))
+        # What is kept already defines some of that: a member is taken
+        # only for a symbol nothing kept has, so that no symbol is
+        # defined twice (tools/build-tcc.sh merges the Rust half into one
+        # object, where two definitions would be an error).
+        have = set().union(*(defined[m] for m in keep))
         changed = True
         while changed:
             changed = False
             for m in names:
-                if m not in keep and defined[m] & need:
+                if m not in keep and defined[m] & (need - have):
                     keep.add(m)
                     need |= undefined[m]
+                    have |= defined[m]
                     changed = True
         kept = [m for m in names if m in keep]
         before = os.path.getsize(archive)

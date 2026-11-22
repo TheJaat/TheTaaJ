@@ -69,6 +69,10 @@
 //! program that is given the files is told the directory it was started
 //! in, and resolves the names it is given against that (taaj::files).
 //!
+//! `source FILE` runs the lines of a file as if they were typed, one
+//! after another, and stops at the first that fails: a script, such as
+//! the one that builds the C library on TheTaaJ (libc/build.taaj).
+//!
 //! Output goes to the screen and to the kernel's debug log (the serial
 //! line), which is what the boot tests read.
 
@@ -80,7 +84,7 @@ extern crate alloc;
 use alloc::collections::VecDeque;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::cell::RefCell;
+use core::cell::{Cell, RefCell};
 use core::fmt::Write;
 
 use abi::ProcessEntry;
@@ -122,7 +126,12 @@ const EDIT_PROGRAMS: &[&str] = &["edit"];
 /// kept the same as. They read no input, so in a pipeline one may only
 /// stand first.
 const OWN_COMMANDS: &[&str] =
-    &["help", "echo", "cd", "pwd", "clear", "uptime", "mem", "ps", "time", "run", "with", "fs", "display", "disk", "jobs", "kill", "wait", "services", "registry"];
+    &["help", "echo", "cd", "pwd", "clear", "uptime", "mem", "ps", "time", "run", "with", "fs", "display", "disk", "jobs", "kill", "wait", "services", "registry", "source"];
+/// The largest script `source` reads.
+const SCRIPT_MAX: u64 = 64 * 1024;
+/// How deep scripts may run scripts: deep enough for any real use, and
+/// a script that sources itself stops instead of running for ever.
+const SOURCE_DEPTH_MAX: u32 = 4;
 /// "one CPU" or "4 CPUs": how many, in words a sentence can use.
 fn cpus_text(cpus: u64) -> String {
     if cpus == 1 {
@@ -190,6 +199,13 @@ struct Shell {
     redirection: RefCell<Redirection>,
     /// Everything the shell has running: see `Job`.
     jobs: RefCell<Vec<Job>>,
+    /// Whether the line being run has failed: a program that ended with
+    /// a code other than 0 (or was killed), a command that is not
+    /// there, a directory `cd` could not go to. Cleared as each line
+    /// starts; `source` reads it after each line.
+    failed: Cell<bool>,
+    /// How many scripts are running inside one another.
+    sourcing: Cell<u32>,
 }
 
 /// Programs the shell started and has not finished with: one program,
@@ -535,10 +551,71 @@ impl Shell {
             return self.write(b"cd: no file service\n");
         };
         match files.stat(&wanted) {
-            Ok((Kind::Directory, _)) => *self.directory.borrow_mut() = wanted,
+            Ok((Kind::Directory, _)) => return *self.directory.borrow_mut() = wanted,
             Ok((Kind::File, _)) => say!(self, "cd: {argument}: not a directory\n"),
             Err(error) => say!(self, "cd: {argument}: {}\n", error.describe()),
         }
+        self.failed.set(true);
+    }
+
+    /// `source FILE`: the file's lines, run one by one as if typed -
+    /// except blank lines and those that begin with `#`, which are for
+    /// the reader. Each is shown first, after a `+`, so the screen says
+    /// how far it got.
+    ///
+    /// It stops at the first line that fails, and says which. A Unix
+    /// shell would go on (unless told `set -e`); but a script here is a
+    /// build, and a build that goes on after a compiler error only
+    /// buries the error under the ones that follow from it.
+    fn source(&self, name: &str) {
+        let path = path::resolve(&self.directory.borrow(), name);
+        let Some(files) = self.look.as_ref().or(self.files.as_ref()) else {
+            self.failed.set(true);
+            return tell!(self, "source: no file service\n");
+        };
+        let size = match files.stat(&path) {
+            Ok((Kind::File, size)) => size,
+            Ok((Kind::Directory, _)) => {
+                self.failed.set(true);
+                return tell!(self, "source: {name}: is a directory\n");
+            }
+            Err(error) => {
+                self.failed.set(true);
+                return tell!(self, "source: {name}: {}\n", error.describe());
+            }
+        };
+        if size > SCRIPT_MAX {
+            self.failed.set(true);
+            return tell!(self, "source: {name}: longer than {} KiB\n", SCRIPT_MAX / 1024);
+        }
+        if self.sourcing.get() >= SOURCE_DEPTH_MAX {
+            self.failed.set(true);
+            return tell!(self, "source: {name}: scripts {SOURCE_DEPTH_MAX} deep - does one source itself?\n");
+        }
+        let mut script = Vec::new();
+        if let Err(error) = files.read(&path, |piece| script.extend_from_slice(piece)) {
+            self.failed.set(true);
+            return tell!(self, "source: {name}: {}\n", error.describe());
+        }
+        let Ok(script) = String::from_utf8(script) else {
+            self.failed.set(true);
+            return tell!(self, "source: {name}: not text (not UTF-8)\n");
+        };
+        self.sourcing.set(self.sourcing.get() + 1);
+        for (n, line) in script.lines().enumerate() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            println!("[shell] {name} line {}: {line:?}", n + 1);
+            tell!(self, "+ {line}\n");
+            self.run(line);
+            if self.failed.get() {
+                tell!(self, "source: {name}: stopped at line {}\n", n + 1);
+                break;
+            }
+        }
+        self.sourcing.set(self.sourcing.get() - 1);
     }
 
     /// Runs a line as it was typed: divides it into words - spaces,
@@ -552,9 +629,13 @@ impl Shell {
     /// the line is done. And it may be several commands joined by `|`:
     /// then the input is the first one's and the output the last one's.
     fn run(&self, text: &str) {
+        self.failed.set(false);
         let line = match input::line::parse(text) {
             Ok(line) => line,
-            Err(error) => return tell!(self, "{}\n", error.describe()),
+            Err(error) => {
+                self.failed.set(true);
+                return tell!(self, "{}\n", error.describe());
+            }
         };
         let commands = &line.commands;
         // `parse` gives at least one command, so there is a first and
@@ -577,7 +658,7 @@ impl Shell {
             }
         }
         if !self.redirect(first.input.as_ref(), last.output.as_ref()) {
-            return;
+            return self.failed.set(true);
         }
         {
             let mut redirection = self.redirection.borrow_mut();
@@ -593,6 +674,7 @@ impl Shell {
         // starts with none.
         let done = self.redirection.take();
         if let (Some((name, _)), Some(error)) = (&last.output, done.failed) {
+            self.failed.set(true);
             tell!(self, "{name}: {}\n", error.describe());
         }
     }
@@ -617,9 +699,11 @@ impl Shell {
     /// the next command as a file would be.
     fn run_pipeline(&self, commands: &[Command]) {
         if commands.len() > PIPELINE_MAX {
+            self.failed.set(true);
             return tell!(self, "a pipeline can join {PIPELINE_MAX} commands at most\n");
         }
         if let Some(own) = commands[1..].iter().map(name).find(|name| OWN_COMMANDS.contains(name)) {
+            self.failed.set(true);
             return tell!(self, "{own} is one of the shell's own commands: it reads nothing, so it can only begin a pipeline\n");
         }
         // Every program is found and read before any is started: a
@@ -639,6 +723,7 @@ impl Shell {
                 Ok(image) => images.push(image),
                 Err(why) => {
                     close_all(images);
+                    self.failed.set(true);
                     return match why {
                         "unknown command" => tell!(self, "unknown command: {name} (try help)\n"),
                         why => tell!(self, "run: {name} {why}\n"),
@@ -726,6 +811,7 @@ impl Shell {
         if failed {
             // One could not be started: the ones before it have nobody
             // to write to. End them, and let go of everything.
+            self.failed.set(true);
             close_all(images.chain(carried));
             for &process in &started {
                 let _ = taaj::kill(process);
@@ -772,6 +858,7 @@ impl Shell {
                   \x20              job N, wait waits for them all\n\
                   \x20 cd [DIR], pwd    go to DIR (to the root); say where this is\n\
                   \x20 time COMMAND     run COMMAND, and say how long it took\n\
+                  \x20 source FILE      run FILE's lines as commands; stop at one that fails\n\
                   \x20 run NAME ARGS    run a program: a file, or hello, peek (Ctrl+C stops it)\n\
                   \x20 NAME ARGS    the same, for a file in the root (./NAME, or a\n\
                   \x20              path with a /, for one elsewhere). On the disk:\n\
@@ -897,6 +984,13 @@ impl Shell {
                     Err(error) => say!(self, "{name}: {}\n", error.describe()),
                 },
                 _ => self.write(b"usage: services [NAME]\n"),
+            },
+            "source" => match arguments {
+                [file] => self.source(file),
+                _ => {
+                    self.failed.set(true);
+                    self.write(b"usage: source FILE\n");
+                }
             },
             "registry" => match (rest, self.services.crash()) {
                 ("crash", Ok(())) => self.write(b"registry: asked to crash\n"),
@@ -1223,9 +1317,15 @@ impl Shell {
     /// alone is a command, and says nothing unless it failed.
     fn run_program(&self, name: &str, arguments: &[String], explicit: bool, grant: Grant) {
         let image = match self.program_image(name) {
-            Ok(None) if !explicit => return tell!(self, "unknown command: {name} (try help)\n"),
+            Ok(None) if !explicit => {
+                self.failed.set(true);
+                return tell!(self, "unknown command: {name} (try help)\n");
+            }
             Ok(image) => image,
-            Err(why) => return tell!(self, "run: {name} {why}\n"),
+            Err(why) => {
+                self.failed.set(true);
+                return tell!(self, "run: {name} {why}\n");
+            }
         };
         // Standard output and input. With no redirection: the screen,
         // as the shell has it, and no input. With one: a new channel,
@@ -1246,6 +1346,7 @@ impl Shell {
         };
         let keyboard = matches!(&feed, Some(Feed { from: Supply::Keyboard, .. }));
         let Some(process) = self.start(name, arguments, image, grant, stdout, Stdin { channel: stdin, keyboard }) else {
+            self.failed.set(true);
             return close_all(output.into_iter().chain(feed.map(|feed| feed.to)));
         };
         if self.redirection.borrow().background {
@@ -1260,6 +1361,9 @@ impl Shell {
     /// shell's to say, and not part of what the program printed: it
     /// goes to the user even when the output goes to a file.
     fn report(&self, name: &str, code: Result<i64, Error>, explicit: bool) {
+        if !matches!(code, Ok(0) | Ok(abi::NO_READER)) {
+            self.failed.set(true);
+        }
         match code {
             Ok(abi::KILLED) => tell!(self, "{name} was killed by the kernel (it broke a rule)\n"),
             Ok(abi::STOPPED) => tell!(self, "{name} was stopped\n"),
@@ -1913,6 +2017,8 @@ fn main() -> i64 {
         directory: RefCell::new(String::new()),
         redirection: RefCell::new(Redirection::default()),
         jobs: RefCell::new(Vec::new()),
+        failed: Cell::new(false),
+        sourcing: Cell::new(0),
         // Last: the lookups above borrow it, and this moves it.
         services,
     };

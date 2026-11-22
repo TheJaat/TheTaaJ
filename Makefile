@@ -476,6 +476,7 @@ run-disk: user64 cprogs64 tcc64 tfstool-rs
 	$(call put-site,$(RUN_DISK))
 ifeq ($(HAVE_CC),yes)
 	@TFSTOOL=$(TFSTOOL_RS) tools/put-tcc.sh $(RUN_DISK) $(TCC_X86_DIR) $(LIBC_A)
+	@TFSTOOL=$(TFSTOOL_RS) tools/put-sources.sh $(RUN_DISK)
 endif
 
 # One C program of your own, built and put on that disk (close QEMU
@@ -861,6 +862,7 @@ run-aarch64-disk: user-aarch64 cprogs-aarch64 tcc-aarch64 tfstool-rs
 	$(call put-site,$(RUN_A64_DISK))
 ifeq ($(HAVE_CC),yes)
 	@TFSTOOL=$(TFSTOOL_RS) tools/put-tcc.sh $(RUN_A64_DISK) $(TCC_A64_DIR) $(C_A64_BIN)/libc.a
+	@TFSTOOL=$(TFSTOOL_RS) tools/put-sources.sh $(RUN_A64_DISK)
 endif
 
 # The serial port is this terminal: what you type goes to the shell.
@@ -1155,20 +1157,21 @@ else
 endif
 
 # tcc on TheTaaJ compiles three programs there, which run there; then
-# what it wrote is compared, byte for byte, with what the cross compiler
-# writes from the same sources.
-tcc64-test: iso64 tcc64 tfstool-rs
+# the C library and every C program, by a script (libc/build.taaj);
+# then a program typed into the editor. What it wrote is compared, byte
+# for byte, with what the cross compiler writes from the same sources.
+tcc64-test: iso64 user64 tcc64 tfstool-rs
 ifeq ($(HAVE_CC),yes)
-	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/tcc-test.sh x86_64 $(ISO64_IMG) $(TCC64_LOG).disk $(TCC64_LOG) $(TCC_X86_DIR) $(LIBC_A)
+	@TFSTOOL=$(TFSTOOL_RS) EDIT=$(USER_BIN)/edit $(KERNEL64_DIR)/scripts/tcc-test.sh x86_64 $(ISO64_IMG) $(TCC64_LOG).disk $(TCC64_LOG) $(TCC_X86_DIR) $(LIBC_A)
 	@echo "tcc64-test passed"
 else
 	@echo "FAIL: tcc needs clang and lld (sudo apt install clang lld)"; exit 1
 endif
 
-aarch64-tcc-test: kernel-aarch64 tcc-aarch64 tfstool-rs
+aarch64-tcc-test: kernel-aarch64 user-aarch64 tcc-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
-	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/tcc-test.sh aarch64 $(KERNEL_A64_IMAGE) $(TCC_A64_LOG).disk $(TCC_A64_LOG) $(TCC_A64_DIR) $(C_A64_BIN)/libc.a
+	@TFSTOOL=$(TFSTOOL_RS) EDIT=$(A64_USER_BIN)/edit $(KERNEL64_DIR)/scripts/tcc-test.sh aarch64 $(KERNEL_A64_IMAGE) $(TCC_A64_LOG).disk $(TCC_A64_LOG) $(TCC_A64_DIR) $(C_A64_BIN)/libc.a
 	@echo "aarch64-tcc-test passed"
 else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 tcc boot is not run"

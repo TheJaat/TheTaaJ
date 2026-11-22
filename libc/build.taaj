@@ -1,0 +1,34 @@
+# build.taaj - builds TheTaaJ's C library and its C programs on
+# TheTaaJ, with tcc. A script for the shell: on a disk made by
+# tools/put-sources.sh it is /src/build, and
+#
+#     source /src/build
+#
+# runs it, line by line, stopping at the first that fails.
+#
+# The C library is two halves. The C half (libc/c) is compiled here.
+# The Rust half cannot be - there is no Rust compiler on TheTaaJ - so
+# it comes ready-made, as one object: /lib/libc-rust.o
+# (tools/build-tcc.sh). tcc's archiver puts the two together into
+# libc.a, and every program in libc/programs is then compiled and
+# linked with that new library (-L.. puts it before /lib/libc.a).
+#
+# The shell has no wildcards, so every file is named.
+
+cd /src/libc/c
+tcc -c format.c stdio.c fcntl.c ctype.c stdlib.c inet.c float.c setjmp.c time.c abort.c fp128.c
+tcc -ar rcs ../libc.a /lib/libc-rust.o format.o stdio.o fcntl.o ctype.o stdlib.o inet.o float.o setjmp.o time.o abort.o fp128.o
+
+cd /src/libc/programs
+tcc -L.. chello.c -o chello
+tcc -L.. cmem.c -o cmem
+tcc -L.. cprint.c -o cprint
+tcc -L.. cfile.c -o cfile
+tcc -L.. cstdio.c -o cstdio
+tcc -L.. cwords.c -o cwords
+tcc -L.. cask.c -o cask
+tcc -L.. cprimes.c -o cprimes
+tcc -L.. cnet.c -o cnet
+tcc -L.. cfloat.c -o cfloat
+tcc -L.. clib.c -o clib
+echo built: the C library and 11 programs
