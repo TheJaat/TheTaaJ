@@ -162,6 +162,67 @@ pub unsafe extern "C" fn gettimeofday(tv: *mut Timeval, _tz: *mut u8) -> c_int {
     0
 }
 
+/// `struct timespec`, as time.h declares it.
+#[repr(C)]
+pub struct Timespec {
+    tv_sec: c_long,
+    tv_nsec: c_long,
+}
+
+/// The two clocks time.h names; both are the time since boot.
+const CLOCK_REALTIME: c_int = 0;
+const CLOCK_MONOTONIC: c_int = 1;
+/// timespec_get's one time base.
+const TIME_UTC: c_int = 1;
+
+/// The time since boot as a timespec.
+fn now() -> Timespec {
+    let (seconds, microseconds) = since_boot();
+    Timespec { tv_sec: seconds as c_long, tv_nsec: (microseconds * 1000) as c_long }
+}
+
+/// `clock_gettime(clock, t)`: the time on CLOCK_REALTIME or
+/// CLOCK_MONOTONIC, which here are the same clock - since boot, never
+/// set back. 0, or -1 with errno EINVAL for any other clock.
+///
+/// # Safety
+/// `t` must be valid for writing.
+#[no_mangle]
+pub unsafe extern "C" fn clock_gettime(clock: c_int, t: *mut Timespec) -> c_int {
+    if clock != CLOCK_REALTIME && clock != CLOCK_MONOTONIC {
+        crate::errno::errno.store(crate::errno::EINVAL, core::sync::atomic::Ordering::Relaxed);
+        return -1;
+    }
+    // SAFETY: the caller's promise.
+    unsafe { t.write(now()) };
+    0
+}
+
+/// `timespec_get(t, base)`: C11's clock_gettime(CLOCK_REALTIME, t).
+/// Returns `base` if it is TIME_UTC, the only one; else 0.
+///
+/// # Safety
+/// `t` must be valid for writing.
+#[no_mangle]
+pub unsafe extern "C" fn timespec_get(t: *mut Timespec, base: c_int) -> c_int {
+    if base != TIME_UTC {
+        return 0;
+    }
+    // SAFETY: the caller's promise.
+    unsafe { t.write(now()) };
+    base
+}
+
+/// `clock()`: the processor time used, in microseconds
+/// (CLOCKS_PER_SEC). TheTaaJ does not tell a program its own share of
+/// the CPU yet, so this is the time since boot - which, measured twice
+/// and subtracted, is at least an upper bound on the time used between.
+#[no_mangle]
+pub extern "C" fn clock() -> c_long {
+    let (seconds, microseconds) = since_boot();
+    (seconds * 1_000_000 + microseconds) as c_long
+}
+
 /// `getenv(name)`: a TheTaaJ program has no environment - what it is
 /// given comes as handles and arguments - so no variable is ever set.
 #[no_mangle]

@@ -8,6 +8,10 @@
 #ifdef NDEBUG
 #define assert(condition) ((void)0)
 #else
+#ifdef __cplusplus
+extern "C" [[noreturn]] void __taaj_assert_failed(const char *condition, const char *file, int line, const char *function);
+#else
 _Noreturn void __taaj_assert_failed(const char *condition, const char *file, int line, const char *function);
+#endif
 #define assert(condition) ((condition) ? (void)0 : __taaj_assert_failed(#condition, __FILE__, __LINE__, __func__))
 #endif

@@ -12,8 +12,9 @@ and a lot for a compiler on TheTaaJ to read every time it links.
 What is kept: every member that is not compiler_builtins, and then,
 again and again until nothing changes, every compiler_builtins member
 that defines a symbol something already kept leaves undefined - plus
-the five that a compiler may call without being asked (memcpy, memmove,
-memset, memcmp and bcmp, for copying structures and the like). Members
+what a compiler may call without being asked: memcpy, memmove, memset,
+memcmp and bcmp, for copying structures and the like, and the helpers
+for 128-bit integers. Members
 whose symbols have all been made local (the soft-float helpers, see
 LIBC_RUST_PRIVATE in the Makefile) define nothing anyone can ask for,
 and go.
@@ -27,8 +28,14 @@ import subprocess
 import sys
 import tempfile
 
-# What a compiler may call by itself, with no call in the source.
-ALWAYS = {"memcpy", "memmove", "memset", "memcmp", "bcmp"}
+# What a compiler may call by itself, with no call in the source: the
+# block copies, and the arithmetic on 128-bit integers (__int128), which
+# neither CPU does in one instruction - C++'s <charconv> and <format>
+# divide them, for one.
+ALWAYS = {"memcpy", "memmove", "memset", "memcmp", "bcmp",
+          "__udivti3", "__umodti3", "__divti3", "__modti3", "__udivmodti4", "__multi3", "__muloti4",
+          "__ashlti3", "__ashrti3", "__lshrti3", "__floattidf", "__floatuntidf", "__floattisf",
+          "__floatuntisf", "__fixdfti", "__fixunsdfti", "__fixsfti", "__fixunssfti"}
 
 # compiler_builtins' members: its Rust objects, and the C and assembly
 # it has besides (the AArch64 atomics, a few of LLVM's own helpers),

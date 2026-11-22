@@ -51,6 +51,12 @@
 #  include <__support/musl/xlocale.h>
 #elif defined(_LIBCPP_HAS_MUSL_LIBC)
 #  include <__support/musl/xlocale.h>
+#elif defined(__TAAJ__)
+// TheTaaJ's C library has one locale, "C", and none of POSIX's *_l
+// functions: the same fallbacks as an old newlib.
+#  include <__support/xlocale/__nop_locale_mgmt.h>
+#  include <__support/xlocale/__posix_l_fallback.h>
+#  include <__support/xlocale/__strtonum_fallback.h>
 #endif
 
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)

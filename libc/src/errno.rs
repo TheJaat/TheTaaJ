@@ -62,6 +62,53 @@ pub const ETIMEDOUT: c_int = 110;
 pub const ECONNREFUSED: c_int = 111;
 pub const EHOSTUNREACH: c_int = 113;
 
+/// The rest of POSIX's: no part of TheTaaJ sets these yet, but C++'s
+/// std::errc names every one, and a program may set or test them.
+pub const EPERM: c_int = 1;
+pub const ESRCH: c_int = 3;
+pub const EINTR: c_int = 4;
+pub const ENXIO: c_int = 6;
+pub const E2BIG: c_int = 7;
+pub const ENOEXEC: c_int = 8;
+pub const ECHILD: c_int = 10;
+pub const EAGAIN: c_int = 11;
+pub const EBUSY: c_int = 16;
+pub const EXDEV: c_int = 18;
+pub const ENODEV: c_int = 19;
+pub const ENFILE: c_int = 23;
+pub const ETXTBSY: c_int = 26;
+pub const EMLINK: c_int = 31;
+pub const EDOM: c_int = 33;
+pub const EDEADLK: c_int = 35;
+pub const ENAMETOOLONG: c_int = 36;
+pub const ENOLCK: c_int = 37;
+pub const ELOOP: c_int = 40;
+pub const ENOMSG: c_int = 42;
+pub const EIDRM: c_int = 43;
+pub const ENOSTR: c_int = 60;
+pub const ENODATA: c_int = 61;
+pub const ETIME: c_int = 62;
+pub const ENOSR: c_int = 63;
+pub const ENOLINK: c_int = 67;
+pub const EPROTO: c_int = 71;
+pub const EMULTIHOP: c_int = 72;
+pub const EBADMSG: c_int = 74;
+pub const EOVERFLOW: c_int = 75;
+pub const EILSEQ: c_int = 84;
+pub const EMSGSIZE: c_int = 90;
+pub const EPROTOTYPE: c_int = 91;
+pub const EADDRNOTAVAIL: c_int = 99;
+pub const ENETDOWN: c_int = 100;
+pub const ENETRESET: c_int = 102;
+pub const ECONNABORTED: c_int = 103;
+pub const EALREADY: c_int = 114;
+pub const EINPROGRESS: c_int = 115;
+pub const ESTALE: c_int = 116;
+pub const EDQUOT: c_int = 122;
+pub const ECANCELED: c_int = 125;
+pub const EOWNERDEAD: c_int = 130;
+pub const ENOTRECOVERABLE: c_int = 131;
+
 /// Every number this library sets, with what it means - each message
 /// ending in the zero byte that makes it a C string. Where the system
 /// already has words for the thing (the file service's, which `cat`
@@ -103,6 +150,50 @@ pub const MESSAGES: &[(c_int, &str)] = &[
     (ETIMEDOUT, "the service, or the other side, is not answering\0"),
     (ECONNREFUSED, "nothing is listening on that port there\0"),
     (EHOSTUNREACH, "nobody on this network has that address\0"),
+    (EPERM, "not permitted\0"),
+    (ESRCH, "no such process\0"),
+    (EINTR, "interrupted\0"),
+    (ENXIO, "no such device or address\0"),
+    (E2BIG, "the arguments are too long\0"),
+    (ENOEXEC, "not a program that can be run\0"),
+    (ECHILD, "no child process\0"),
+    (EAGAIN, "not now: try again\0"),
+    (EBUSY, "in use\0"),
+    (EXDEV, "not on the same file system\0"),
+    (ENODEV, "no such device\0"),
+    (ENFILE, "too many files open in the system\0"),
+    (ETXTBSY, "a program that is running\0"),
+    (EMLINK, "too many links\0"),
+    (EDOM, "outside the function's domain\0"),
+    (EDEADLK, "it would wait for itself forever\0"),
+    (ENAMETOOLONG, "the name is too long\0"),
+    (ENOLCK, "no lock to be had\0"),
+    (ELOOP, "too many links followed\0"),
+    (ENOMSG, "no message of that kind\0"),
+    (EIDRM, "that identifier was removed\0"),
+    (ENOSTR, "not a stream device\0"),
+    (ENODATA, "no data\0"),
+    (ETIME, "the timer ran out\0"),
+    (ENOSR, "no stream resources\0"),
+    (ENOLINK, "the link is gone\0"),
+    (EPROTO, "the other side broke the protocol\0"),
+    (EMULTIHOP, "too many hops\0"),
+    (EBADMSG, "a message that makes no sense\0"),
+    (EOVERFLOW, "too big for the type it goes in\0"),
+    (EILSEQ, "not a valid character\0"),
+    (EMSGSIZE, "the message is too long\0"),
+    (EPROTOTYPE, "the wrong kind of socket for that protocol\0"),
+    (EADDRNOTAVAIL, "that address is not this machine's\0"),
+    (ENETDOWN, "the network is down\0"),
+    (ENETRESET, "the network dropped the connection\0"),
+    (ECONNABORTED, "the connection was given up\0"),
+    (EALREADY, "already under way\0"),
+    (EINPROGRESS, "under way, not finished\0"),
+    (ESTALE, "a file that is no longer there\0"),
+    (EDQUOT, "over the disk quota\0"),
+    (ECANCELED, "cancelled\0"),
+    (EOWNERDEAD, "its owner died holding it\0"),
+    (ENOTRECOVERABLE, "broken past repair\0"),
 ];
 
 /// What `code` means, as text ending in a zero byte.

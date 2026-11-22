@@ -73,3 +73,5 @@ inet_aton taaj_inet_aton
 inet_ntoa taaj_inet_ntoa
 inet_pton taaj_inet_pton
 inet_ntop taaj_inet_ntop
+vasprintf taaj_vasprintf
+asprintf taaj_asprintf

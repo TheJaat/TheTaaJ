@@ -46,6 +46,10 @@
 #ifndef _STDIO_H
 #define _STDIO_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdarg.h>
 #include <stddef.h>
 
@@ -167,6 +171,17 @@ int vsnprintf(char *to, size_t size, const char *format, va_list arguments) __at
 /* Into a buffer whose size they are not told. Use snprintf. */
 int sprintf(char *to, const char *format, ...) __attribute__((format(printf, 2, 3)));
 int vsprintf(char *to, const char *format, va_list arguments) __attribute__((format(printf, 2, 0)));
+/* The same into memory from malloc, as big as it needs to be: *to is
+ * set to it, for the program to free. Returns the length, or -1 (and
+ * *to is then not set) if there was no memory. (format.c) */
+int asprintf(char **to, const char *format, ...) __attribute__((format(printf, 2, 3)));
+int vasprintf(char **to, const char *format, va_list arguments) __attribute__((format(printf, 2, 0)));
+
+/* Numbers and words read out of a string, by a format like printf's;
+ * returns how many were stored, or EOF if the string ended before the
+ * first. Only from strings so far. (scan.c) */
+int sscanf(const char *text, const char *format, ...) __attribute__((format(scanf, 2, 3)));
+int vsscanf(const char *text, const char *format, va_list arguments) __attribute__((format(scanf, 2, 0)));
 
 /* Says on standard error why the last call failed: "doing: reason". */
 void perror(const char *doing);
@@ -179,5 +194,9 @@ int puts(const char *string);
 int fputc(int byte, FILE *stream);
 int putc(int byte, FILE *stream);
 int putchar(int byte);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

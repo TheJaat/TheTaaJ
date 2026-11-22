@@ -8,6 +8,10 @@
 #ifndef _LIMITS_H
 #define _LIMITS_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define CHAR_BIT 8
 #define SCHAR_MIN (-128)
 #define SCHAR_MAX 127
@@ -39,5 +43,9 @@
 
 /* The room a path needs, its zero byte included. */
 #define PATH_MAX 4096
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

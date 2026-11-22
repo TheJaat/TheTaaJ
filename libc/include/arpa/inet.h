@@ -8,6 +8,10 @@
 #ifndef _ARPA_INET_H
 #define _ARPA_INET_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <netinet/in.h>
 
 uint16_t htons(uint16_t value);
@@ -32,5 +36,9 @@ char *inet_ntoa(struct in_addr address);
 #define INET_ADDRSTRLEN 16
 int inet_pton(int family, const char *text, void *address);
 const char *inet_ntop(int family, const void *address, char *out, socklen_t size);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -8,6 +8,15 @@
 #ifndef _SETJMP_H
 #define _SETJMP_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* C11's _Noreturn is C++'s [[noreturn]]. */
+#if defined(__cplusplus) && !defined(_Noreturn)
+#define _Noreturn [[noreturn]]
+#endif
+
 /* What is kept: the registers a call must preserve, and where to go
  * back to - 8 of them on x86_64; 22 on AArch64, which preserves more. */
 #if defined(__aarch64__)
@@ -18,5 +27,9 @@ typedef long jmp_buf[8];
 
 int setjmp(jmp_buf buffer);
 _Noreturn void longjmp(jmp_buf buffer, int value);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

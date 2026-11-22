@@ -5,7 +5,7 @@ KERNEL_DIR = kernel
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
-        tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test
+        tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
@@ -204,7 +204,7 @@ CWORDS_HOST  = $(C_BIN)/host-cwords
 CPRIMES_HOST = $(C_BIN)/host-cprimes
 CPRIMES_LIMIT = 24000000
 LIBC_A       = $(C_BIN)/libc.a
-LIBC_C       = format stdio fcntl ctype stdlib inet float setjmp time abort fp128
+LIBC_C       = format stdio fcntl ctype stdlib inet float setjmp time abort fp128 math scan locale atexit
 # The Rust half is built for targets without floating-point registers,
 # and its support library's floating-point helpers (__multf3 and the
 # like, for AArch64's 128-bit long double) and the few maths functions
@@ -232,7 +232,7 @@ ifeq ($(HAVE_CC),yes)
 C_PROGRAMS   = chello cmem cprint cfile cstdio cwords cask cprimes cnet cfloat clib
 ROOT_FILES   = 38
 C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret w i t h spc f i l e s spc c f i l e spc c h e c k ret c f i l e spc c a t spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc n o f i l e spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc w r i t e spc c n o spc x ret w i t h spc f i l e s spc c f i l e spc w r i t e spc c n o t e spc m a d e spc b y spc c ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc l o n g spc shift-dot spc c l o n g ret c f i l e spc c a t spc shift-comma spc l o n g spc shift-dot spc c l o n g 2 ret c f i l e ret c a s k ret a d a ret 4 0 ret x ret 2 ret ctrl-d c a s k spc o n e ret f i r s t ret e c h o spc a f t e r ret e c h o spc a d a spc shift-dot spc w h o ret c a s k spc o n e spc shift-comma spc w h o ret c a t spc l o n g spc shift-backslash spc c w o r d s spc minus n spc 3 ret w i t h spc r e a d o n l y spc c w o r d s spc minus n spc 2 5 spc c w o r d s spc l o n g spc shift-dot spc c w 1 ret c w o r d s spc minus n spc 5 spc shift-comma spc l o n g spc shift-dot spc c w 2 ret c w o r d s spc l o n g ret c w o r d s spc minus n spc n o n e ret c w o r d s spc minus x ret w i t h spc f i l e s spc c s t d i o spc c h e c k ret c s t d i o spc l i n e s spc w e l c o m e ret c s t d i o spc l i n e s spc shift-comma spc w e l c o m e ret w i t h spc r e a d o n l y spc c s t d i o spc l i n e s spc l o n g spc shift-dot spc c n u m ret w i t h spc f i l e s spc c s t d i o spc c o p y spc l o n g spc c c o p y ret c s t d i o spc o r d e r ret c s t d i o spc e n d spc shift-dot spc c e n d ret c s t d i o spc l o s t spc shift-dot spc c l o s t ret c s t d i o spc e n d ret c s t d i o ret c p r i n t spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c p r i n t spc l o n g spc shift-backslash spc w c ret c p r i n t spc shift-dot spc p o u t ret c m e m ret c m e m spc s o r t spc p e a r spc a p p l e spc f i g spc a p p l e ret c m e m spc h u g e ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret w i t h spc f i l e s spc c l i b ret c l i b spc a s s e r t ret c p r i m e s spc 1 0 0 ret ~ c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c f l o a t spc 1 spc shift-7 ret c f l o a t spc 2 spc shift-7 ret c f l o a t spc 3 spc shift-7 ret c f l o a t spc 4 spc shift-7 ret t i m e spc w a i t ret ~~
-EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^files: 48 checks, all passed;^cfile: welcome: this program was not given the files;^cfile: nofile: no such file or directory;^cno: the files are read-only here;^cnote: 10 bytes;^usage: cfile cat;^hello, ada \(typed\);^cask: not a number: x;^total: 42;^one line: first \(typed\);^after\s*$$;^one line: ada \(from a file or another program\);^ +301  300\s*$$;^ +300  line\s*$$;^1200 words, 302 different;^cwords: long: this program was not given the files;^0 words, 0 different;^cwords: -n needs a number from 1 up, not .none.;^usage: cwords \[-n COUNT\];^streams: 52 checks, all passed;^cstdio: welcome: this program was not given the files;^   1  Hello from the host;^ccopy: 4692 bytes;^write was called second - printf was called first\s*$$;^no new line, and still here;^usage: cstdio lines;^printf: 42 -7 ff 0X2A \[   hi\] \[hi   \] \[00042\] x 100.\s*$$;^sizes: 18446744073709551615 -9223372036854775808\s*$$;^printf returned 6\s*$$;^snprintf: wanted 12, kept <hello, >;^argument 2 of 2: two words\s*$$;^puts: a line of its own\s*$$;^fputs and putchar\s*$$;^cprint: 9 lines went to standard output;^cprint: 7 lines went to standard output;^1 line, 1 word, 601 bytes;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes;^library: [0-9]+ checks, all passed;^libc/programs/clib.c:[0-9]+: main: assertion failed: number == 2;^clib exited with code 134;^cprimes: 25 primes below 100\s*$$;^\[4\] cprimes 24000000;^cfloat 1: 30000000 rounds, 0 wrong;^cfloat 2: 30000000 rounds, 0 wrong;^cfloat 3: 30000000 rounds, 0 wrong;^cfloat 4: 30000000 rounds, 0 wrong;^took [0-9]+\.[0-9][0-9] s; the 4 CPUs worked for [0-9]+\.[0-9][0-9] s in all
+EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^files: 48 checks, all passed;^cfile: welcome: this program was not given the files;^cfile: nofile: no such file or directory;^cno: the files are read-only here;^cnote: 10 bytes;^usage: cfile cat;^hello, ada \(typed\);^cask: not a number: x;^total: 42;^one line: first \(typed\);^after\s*$$;^one line: ada \(from a file or another program\);^ +301  300\s*$$;^ +300  line\s*$$;^1200 words, 302 different;^cwords: long: this program was not given the files;^0 words, 0 different;^cwords: -n needs a number from 1 up, not .none.;^usage: cwords \[-n COUNT\];^streams: 52 checks, all passed;^cstdio: welcome: this program was not given the files;^   1  Hello from the host;^ccopy: 4692 bytes;^write was called second - printf was called first\s*$$;^no new line, and still here;^usage: cstdio lines;^printf: 42 -7 ff 0X2A \[   hi\] \[hi   \] \[00042\] x 100.\s*$$;^sizes: 18446744073709551615 -9223372036854775808\s*$$;^printf returned 6\s*$$;^snprintf: wanted 12, kept <hello, >;^argument 2 of 2: two words\s*$$;^puts: a line of its own\s*$$;^fputs and putchar\s*$$;^cprint: 9 lines went to standard output;^cprint: 7 lines went to standard output;^1 line, 1 word, 601 bytes;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes;^library: [0-9]+ checks, all passed;^library: atexit ran its handlers, newest first;^libc/programs/clib.c:[0-9]+: main: assertion failed: number == 2;^clib exited with code 134;^cprimes: 25 primes below 100\s*$$;^\[4\] cprimes 24000000;^cfloat 1: 30000000 rounds, 0 wrong;^cfloat 2: 30000000 rounds, 0 wrong;^cfloat 3: 30000000 rounds, 0 wrong;^cfloat 4: 30000000 rounds, 0 wrong;^took [0-9]+\.[0-9][0-9] s; the 4 CPUs worked for [0-9]+\.[0-9][0-9] s in all
 else
 C_PROGRAMS   =
 ROOT_FILES   = 27
@@ -462,7 +462,7 @@ RUN_DISK_ARGS = -drive file=$(RUN_DISK),format=raw,if=none,id=disk0 -device virt
 # needs nothing from the host. `make run64 RUN_NET=` for a machine
 # without a card.
 RUN_NET      = -netdev user,id=n0 -device virtio-net-pci,netdev=n0
-run-disk: user64 cprogs64 tcc64 tfstool-rs
+run-disk: user64 cprogs64 tcc64 cxx64 tfstool-rs
 	@[ -f $(RUN_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_DISK) 4096 > /dev/null && truncate -s 16M $(RUN_DISK) \
 	    && echo "Made a new disk: $(RUN_DISK)"; }
 	@for program in $(DISK_PROGRAMS); do \
@@ -477,6 +477,10 @@ run-disk: user64 cprogs64 tcc64 tfstool-rs
 ifeq ($(HAVE_CC),yes)
 	@TFSTOOL=$(TFSTOOL_RS) tools/put-tcc.sh $(RUN_DISK) $(TCC_X86_DIR) $(LIBC_A)
 	@TFSTOOL=$(TFSTOOL_RS) tools/put-sources.sh $(RUN_DISK) x86_64 $(TCC_X86_DIR)
+	@for program in $(CXX_PROGRAMS); do \
+	    $(TFSTOOL_RS) rm $(RUN_DISK) $$program > /dev/null 2>&1; \
+	    $(TFSTOOL_RS) put $(RUN_DISK) $$program $(CXX_X86_DIR)/bin/$$program > /dev/null || exit 1; \
+	done
 endif
 
 # One C program of your own, built and put on that disk (close QEMU
@@ -714,8 +718,14 @@ kernel64-test:
 #
 # And ctype.c, stdlib.c and inet.c the same way: every answer compared
 # with this machine's own.
+#
+# And math.c: every name it defines, and ldexp, which it calls, renamed
+# taaj_..., and its answers compared bit for bit with glibc's for
+# millions of numbers (math_test.c). And scan.c's sscanf, with glibc's
+# beside it (scan_test.c).
 HOST_CFLAGS    = -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=undefined
-FORMAT_RENAMED = -Dvsnprintf=taaj_vsnprintf -Dsnprintf=taaj_snprintf -Dvsprintf=taaj_vsprintf -Dsprintf=taaj_sprintf
+FORMAT_RENAMED = -Dvsnprintf=taaj_vsnprintf -Dsnprintf=taaj_snprintf -Dvsprintf=taaj_vsprintf -Dsprintf=taaj_sprintf \
+                 -Dvasprintf=taaj_vasprintf -Dasprintf=taaj_asprintf
 libc-test:
 	@mkdir -p $(LIBC_DIR)/target
 	rustc --edition 2021 --test $(LIBC_DIR)/src/string.rs -o $(LIBC_DIR)/target/string-test
@@ -758,6 +768,21 @@ ifeq ($(HAVE_CC),yes)
 	clang -fsanitize=address,undefined $(LIBC_DIR)/target/host/inet.o $(LIBC_DIR)/target/host/inet_test.o \
 	    -o $(LIBC_DIR)/target/host/inet-test
 	$(LIBC_DIR)/target/host/inet-test
+	clang $(HOST_CFLAGS) -ffreestanding -nostdlibinc -isystem $(LIBC_DIR)/include \
+	    -c $(LIBC_DIR)/c/math.c -o $(LIBC_DIR)/target/host/math.o
+	{ $(LLVM_NM) --defined-only --extern-only -j $(LIBC_DIR)/target/host/math.o | grep -v '^__\(asan\|ubsan\|odr\)'; \
+	  echo ldexp; echo ldexpf; } | awk '{print $$1, "taaj_" $$1}' > $(LIBC_DIR)/target/host/math_names
+	objcopy --redefine-syms=$(LIBC_DIR)/target/host/math_names $(LIBC_DIR)/target/host/math.o
+	clang $(HOST_CFLAGS) -c $(LIBC_DIR)/c/math_test.c -o $(LIBC_DIR)/target/host/math_test.o
+	clang -fsanitize=address,undefined $(LIBC_DIR)/target/host/math.o $(LIBC_DIR)/target/host/math_test.o -lm \
+	    -o $(LIBC_DIR)/target/host/math-test
+	$(LIBC_DIR)/target/host/math-test
+	clang $(HOST_CFLAGS) -ffreestanding -nostdlibinc -isystem $(LIBC_DIR)/include -Dsscanf=taaj_sscanf -Dvsscanf=taaj_vsscanf \
+	    -c $(LIBC_DIR)/c/scan.c -o $(LIBC_DIR)/target/host/scan.o
+	clang $(HOST_CFLAGS) -Wno-format -c $(LIBC_DIR)/c/scan_test.c -o $(LIBC_DIR)/target/host/scan_test.o
+	clang -fsanitize=address,undefined $(LIBC_DIR)/target/host/scan.o $(LIBC_DIR)/target/host/scan_test.o \
+	    -o $(LIBC_DIR)/target/host/scan-test
+	$(LIBC_DIR)/target/host/scan-test
 else
 	@echo "Clang not found: the printf comparison and the stream tests are not run (sudo apt install clang lld)"
 endif
@@ -846,7 +871,7 @@ aarch64-test-disk: user-aarch64 cprogs-aarch64 tfstool-rs
 # TaajFS volume kept from one run to the next, its programs replaced
 # with the ones just built.
 RUN_A64_DISK = $(BUILD_DIR)/aarch64/taaj-disk.img
-run-aarch64-disk: user-aarch64 cprogs-aarch64 tcc-aarch64 tfstool-rs
+run-aarch64-disk: user-aarch64 cprogs-aarch64 tcc-aarch64 cxx-aarch64 tfstool-rs
 	@mkdir -p $(BUILD_DIR)/aarch64
 	@[ -f $(RUN_A64_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_A64_DISK) 4096 > /dev/null && truncate -s 16M $(RUN_A64_DISK) \
 	    && printf 'Hello from the host\n' > $(RUN_A64_DISK).welcome && $(TFSTOOL_RS) put $(RUN_A64_DISK) welcome $(RUN_A64_DISK).welcome > /dev/null \
@@ -863,6 +888,10 @@ run-aarch64-disk: user-aarch64 cprogs-aarch64 tcc-aarch64 tfstool-rs
 ifeq ($(HAVE_CC),yes)
 	@TFSTOOL=$(TFSTOOL_RS) tools/put-tcc.sh $(RUN_A64_DISK) $(TCC_A64_DIR) $(C_A64_BIN)/libc.a
 	@TFSTOOL=$(TFSTOOL_RS) tools/put-sources.sh $(RUN_A64_DISK) aarch64 $(TCC_A64_DIR)
+	@for program in $(CXX_PROGRAMS); do \
+	    $(TFSTOOL_RS) rm $(RUN_A64_DISK) $$program > /dev/null 2>&1; \
+	    $(TFSTOOL_RS) put $(RUN_A64_DISK) $$program $(CXX_A64_DIR)/bin/$$program > /dev/null || exit 1; \
+	done
 endif
 
 # The serial port is this terminal: what you type goes to the shell.
@@ -1177,6 +1206,90 @@ else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 tcc boot is not run"
 endif
 
+# C++ (journal entry 072): LLVM's runtimes - libunwind, libc++abi and
+# libc++, in ports/llvm - cross-compiled for each CPU into one libc++.a
+# by tools/build-cxx.sh, which says what is in it and what is left out;
+# and the C++ programs in libc/programs, each one .cpp file, linked with
+# libc++.a and libc.a by user/cxx.ld (user.ld, keeping the tables a
+# throw needs to unwind the stack). libc++.a is rebuilt only when
+# something it is made of changes: it takes a few minutes.
+#
+# To build one of your own: make cxx64 CXX_PROGRAMS=name (with
+# libc/programs/name.cpp); it is then build/cxx/x86_64/bin/name.
+CXX_X86_DIR   = $(BUILD_DIR)/cxx/x86_64
+CXX_A64_DIR   = $(BUILD_DIR)/cxx/aarch64
+CXX_PROGRAMS  = cxxhello cxxlib
+CXX64_LOG     = $(BUILD_DIR)/cxx64.log
+CXX_A64_LOG   = $(BUILD_DIR)/aarch64/cxx.log
+CXX_SOURCES  := $(shell find ports/llvm $(LIBC_DIR)/include -type f 2>/dev/null) tools/build-cxx.sh
+# Not freestanding, as the C programs are: C++'s library is the hosted
+# one. __TAAJ__ says which system it is for (libc++'s locale choice, its
+# clock), as tcc on TheTaaJ says it of itself.
+TAAJ_CXX_BASE     = --target=x86_64-unknown-none-elf -std=c++20 -O2 -fno-stack-protector -fno-pic -mno-red-zone \
+                    -nostdlibinc -D__TAAJ__ -ffunction-sections -fdata-sections
+TAAJ_A64_CXX_BASE = --target=aarch64-unknown-none-elf -std=c++20 -O2 -fno-stack-protector -fno-pic \
+                    -nostdlibinc -D__TAAJ__ -ffunction-sections -fdata-sections
+# C++'s headers first: libc++'s <stdlib.h> wraps the C library's.
+TAAJ_CXXFLAGS     = $(TAAJ_CXX_BASE) -Wall -Wextra -Werror -nostdinc++ -isystem $(CXX_X86_DIR)/include/c++/v1 \
+                    -isystem $(CXX_X86_DIR)/include -isystem $(LIBC_DIR)/include
+TAAJ_A64_CXXFLAGS = $(TAAJ_A64_CXX_BASE) -Wall -Wextra -Werror -nostdinc++ -isystem $(CXX_A64_DIR)/include/c++/v1 \
+                    -isystem $(CXX_A64_DIR)/include -isystem $(LIBC_DIR)/include
+TAAJ_CXX_LDFLAGS     = -static -nostdlib --gc-sections -s --eh-frame-hdr -T user/cxx.ld
+TAAJ_A64_CXX_LDFLAGS = $(TAAJ_CXX_LDFLAGS) -z max-page-size=4096
+
+$(CXX_X86_DIR)/libc++.a: $(CXX_SOURCES)
+	@LLVM_AR=$(LLVM_AR) tools/build-cxx.sh x86_64 $(CXX_X86_DIR) "$(TAAJ_CXX_BASE)"
+
+$(CXX_A64_DIR)/libc++.a: $(CXX_SOURCES)
+	@LLVM_AR=$(LLVM_AR) tools/build-cxx.sh aarch64 $(CXX_A64_DIR) "$(TAAJ_A64_CXX_BASE)"
+
+cxx64: libc64
+ifeq ($(HAVE_CC),yes)
+	@$(MAKE) --no-print-directory $(CXX_X86_DIR)/libc++.a
+	@mkdir -p $(CXX_X86_DIR)/bin
+	@for program in $(CXX_PROGRAMS); do \
+	    echo "  CXX     $$program.cpp"; \
+	    clang $(TAAJ_CXXFLAGS) -c $(LIBC_DIR)/programs/$$program.cpp -o $(CXX_X86_DIR)/bin/$$program.o || exit 1; \
+	    ld.lld $(TAAJ_CXX_LDFLAGS) $(CXX_X86_DIR)/bin/$$program.o $(CXX_X86_DIR)/libc++.a $(LIBC_A) \
+	        -o $(CXX_X86_DIR)/bin/$$program || exit 1; \
+	done
+else
+	@echo "Clang or lld not found: no C++ (sudo apt install clang lld)"
+endif
+
+cxx-aarch64: cprogs-aarch64
+ifeq ($(HAVE_CC),yes)
+	@$(MAKE) --no-print-directory $(CXX_A64_DIR)/libc++.a
+	@mkdir -p $(CXX_A64_DIR)/bin
+	@for program in $(CXX_PROGRAMS); do \
+	    echo "  CXX     $$program.cpp (AArch64)"; \
+	    clang $(TAAJ_A64_CXXFLAGS) -c $(LIBC_DIR)/programs/$$program.cpp -o $(CXX_A64_DIR)/bin/$$program.o || exit 1; \
+	    ld.lld $(TAAJ_A64_CXX_LDFLAGS) $(CXX_A64_DIR)/bin/$$program.o $(CXX_A64_DIR)/libc++.a $(C_A64_BIN)/libc.a \
+	        -o $(CXX_A64_DIR)/bin/$$program || exit 1; \
+	done
+else
+	@echo "Clang or lld not found: no C++ for AArch64 (sudo apt install clang lld)"
+endif
+
+# The C++ programs on TheTaaJ: cxxlib's checks of the language's runtime
+# and the library, an exception nobody catches, cxxhello.
+cxx64-test: iso64 cxx64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/cxx-test.sh x86_64 $(ISO64_IMG) $(CXX64_LOG).disk $(CXX64_LOG) $(CXX_X86_DIR)/bin
+	@echo "cxx64-test passed"
+else
+	@echo "FAIL: C++ needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+
+aarch64-cxx-test: kernel-aarch64 cxx-aarch64 tfstool-rs
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/cxx-test.sh aarch64 $(KERNEL_A64_IMAGE) $(CXX_A64_LOG).disk $(CXX_A64_LOG) $(CXX_A64_DIR)/bin
+	@echo "aarch64-cxx-test passed"
+else
+	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 C++ boot is not run"
+endif
+
 # Every layer: host unit tests, a normal boot (BIOS and UEFI) with its
 # self-tests, the fault boots, and the AArch64 kernel.
 #
@@ -1193,14 +1306,14 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 7
-TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test tcc64-test aarch64-tcc-test
+TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test tcc64-test aarch64-tcc-test cxx64-test aarch64-cxx-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared
 	@$(MAKE) --no-print-directory -j$(TEST_JOBS) --output-sync=target test64-parts
 	@echo "test64: all passed"
 
-test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64 aarch64-esp tcc64 tcc-aarch64
+test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64 aarch64-esp tcc64 tcc-aarch64 cxx64 cxx-aarch64
 
 test64-parts: $(TEST64_PARTS)
 

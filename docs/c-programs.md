@@ -117,13 +117,14 @@ Each header says in its comments what its functions do and where they differ fro
 
 Code that needs any of these will not compile or link:
 
-- **`scanf`** and its family. Read lines with `fgets` and take them apart with `strtol`.
+- **`scanf` from a stream** (`scanf`, `fscanf`). `sscanf` reads from a string: read a line with `fgets`, then `sscanf` it.
 - **Single keys.** The keyboard arrives a line at a time; a program cannot see a key as it is pressed, the arrow keys, or turn the showing of typed text off (no `termios`). An editor or a game cannot be written yet.
-- **Floating point in `printf`** (`%f` `%e` `%g`). The arithmetic works; printing it does not. There is no `math.h`.
+- **The transcendental functions** of `math.h`: `sin` `cos` `exp` `log` `pow` and their kind are declared but not there yet. `sqrt` `fmod` `floor` `ceil` `round` `trunc` `hypot` `fmin` `fmax` and the classifying macros are.
+- **An exact `strtold`**: a long double is read through a double, so text with more digits than a double keeps is not rounded to the nearest long double.
 - **Processes**: no `fork`, `exec`, `system`, `wait`, `pipe`, signals, or `getpid`.
 - **Directories**: no `mkdir`, `opendir`, `stat`, `getcwd`, `chdir`.
-- **The environment and the clock**: no `getenv`, `time`, `sleep`.
-- `atexit`, `abort`, `assert.h`, `setjmp.h`, `locale.h`, wide characters, threads.
+- **The environment and sleeping**: no `getenv`, `sleep`. (`time`, `clock` and `clock_gettime` count from the moment the system started.)
+- Wide characters (`wchar.h` has only `mbstate_t`), locales other than "C", threads.
 
 And things that are there but are not what a Unix program expects:
 
@@ -159,3 +160,14 @@ cc -std=c11 -Wall -Wextra mine.c -o mine-host
 ```
 
 That is the quickest way to find out whether a bug is in the program or in TheTaaJ's library: run both on the same input and compare. `libc/programs/cwords.c` is tested exactly this way on every `make test64`.
+
+## C++
+
+A C++ program is built the same way, from one `.cpp` file in `libc/programs/`, and linked with LLVM's C++ library (`ports/llvm`, built for TheTaaJ by `tools/build-cxx.sh`) as well as the C library:
+
+```
+make cxx64 CXX_PROGRAMS=mine        # libc/programs/mine.cpp -> build/cxx/x86_64/bin/mine
+tools/tfstool-rs/target/release/tfstool put build/taaj-disk.img mine build/cxx/x86_64/bin/mine
+```
+
+The first `make cxx64` builds `libc++.a`, which takes a few minutes; after that only the program is compiled. Exceptions, `dynamic_cast` and `typeid`, global constructors and destructors, the containers and algorithms, `iostream`, `<format>` and `<regex>` work; `libc/programs/cxxlib.cpp` checks them all. What is left out: `std::thread` and its relations, `<filesystem>`, `std::random_device`, wide characters, and every locale but "C". The linker script is `user/cxx.ld`, not `user.ld`: it keeps the tables an exception needs to find its way up the stack, and `--eh-frame-hdr` makes the linker add a sorted index to them, so that a throw finds its way faster.

@@ -8,6 +8,10 @@
 #ifndef _STDINT_H
 #define _STDINT_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef signed char int8_t;
 typedef short int16_t;
 typedef int int32_t;
@@ -100,5 +104,9 @@ typedef unsigned long uintmax_t;
 #define UINT64_C(c) c##UL
 #define INTMAX_C(c) c##L
 #define UINTMAX_C(c) c##UL
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

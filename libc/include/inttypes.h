@@ -6,6 +6,10 @@
 #ifndef _INTTYPES_H
 #define _INTTYPES_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
 
 #define PRId8 "d"
@@ -34,5 +38,9 @@
 #define PRIdPTR "ld"
 #define PRIuPTR "lu"
 #define PRIxPTR "lx"
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

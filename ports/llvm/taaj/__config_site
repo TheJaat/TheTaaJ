@@ -1,0 +1,42 @@
+// __config_site - libc++'s configuration for TheTaaJ: what CMake would
+// write from libcxx/include/__config_site.in, written by hand
+// (tools/build-cxx.sh puts it beside the headers).
+//
+// What TheTaaJ's C library cannot do yet is switched off here, and
+// libc++ leaves out what depends on it:
+//
+//   threads          no pthreads: one thread per program, so no
+//                    <thread>, <mutex>, <condition_variable>, <future>
+//   filesystem       no directories in libc: no <filesystem>
+//   random device    no source of entropy: no std::random_device (the
+//                    generators in <random> are all there)
+//   wide characters  no wchar_t functions in libc: no std::wstring,
+//                    std::wcout and the like
+//   time zones       no tz database: no std::chrono::zoned_time
+//
+// Localization stays: <iostream>, <sstream>, <locale> work, with the
+// one locale TheTaaJ has, "C" (libc++'s fallbacks for a C library
+// without locales: __support/xlocale, chosen in <__locale> by __TAAJ__).
+
+#ifndef _LIBCPP___CONFIG_SITE
+#define _LIBCPP___CONFIG_SITE
+
+#define _LIBCPP_ABI_VERSION 1
+#define _LIBCPP_ABI_NAMESPACE __1
+#define _LIBCPP_HAS_NO_THREADS
+#define _LIBCPP_HAS_NO_FILESYSTEM
+#define _LIBCPP_HAS_NO_RANDOM_DEVICE
+#define _LIBCPP_HAS_NO_WIDE_CHARACTERS
+#define _LIBCPP_HAS_NO_STD_MODULES
+#define _LIBCPP_HAS_NO_TIME_ZONE_DATABASE
+#define _LIBCPP_HAS_NO_VENDOR_AVAILABILITY_ANNOTATIONS
+
+// Which characters are letters, digits, spaces: libc++'s own table for
+// "C" (ctype<char>), since TheTaaJ's C library exports none.
+#define _LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE
+
+#define _LIBCPP_PSTL_CPU_BACKEND_SERIAL
+
+#define _LIBCPP_HARDENING_MODE_DEFAULT _LIBCPP_HARDENING_MODE_NONE
+
+#endif // _LIBCPP___CONFIG_SITE

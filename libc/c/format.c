@@ -28,6 +28,7 @@
 #include "format.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 /* Where the text is going, and how much has gone. */
@@ -661,6 +662,34 @@ int vsnprintf(char *to, size_t size, const char *format, va_list arguments)
     if (size > 0)
         to[buffer.used] = '\0';
     return total;
+}
+
+/* vasprintf: printed once to count, then again into a block of the
+ * right size. The arguments are read twice, so a copy of them is kept
+ * for the second time. */
+int vasprintf(char **to, const char *format, va_list arguments)
+{
+    va_list again;
+    va_copy(again, arguments);
+    int length = vsnprintf(NULL, 0, format, arguments);
+    char *text = length < 0 ? NULL : malloc((size_t)length + 1);
+    if (text == NULL) {
+        va_end(again);
+        return -1;
+    }
+    vsnprintf(text, (size_t)length + 1, format, again);
+    va_end(again);
+    *to = text;
+    return length;
+}
+
+int asprintf(char **to, const char *format, ...)
+{
+    va_list arguments;
+    va_start(arguments, format);
+    int length = vasprintf(to, format, arguments);
+    va_end(arguments);
+    return length;
 }
 
 int snprintf(char *to, size_t size, const char *format, ...)

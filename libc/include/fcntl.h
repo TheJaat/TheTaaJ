@@ -2,6 +2,10 @@
 #ifndef _FCNTL_H
 #define _FCNTL_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /* One of these: what the descriptor is for. */
 #define O_RDONLY 0      /* reading */
 #define O_WRONLY 1      /* writing */
@@ -21,5 +25,9 @@
  * program may do to files is decided by what it was started with
  * (`with files`, `with readonly`), not by the file. */
 int open(const char *path, int flags, ...);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

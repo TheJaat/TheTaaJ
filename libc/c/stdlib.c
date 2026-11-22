@@ -145,6 +145,36 @@ long labs(long number)
     return number < 0 ? -number : number;
 }
 
+long long llabs(long long number)
+{
+    return number < 0 ? -number : number;
+}
+
+long long atoll(const char *text)
+{
+    return strtoll(text, NULL, 10);
+}
+
+/* C99 says the quotient is rounded towards zero, as `/` does, so the
+ * remainder has the numerator's sign: div(-7, 2) is {-3, -1}. */
+div_t div(int numerator, int denominator)
+{
+    div_t result = {numerator / denominator, numerator % denominator};
+    return result;
+}
+
+ldiv_t ldiv(long numerator, long denominator)
+{
+    ldiv_t result = {numerator / denominator, numerator % denominator};
+    return result;
+}
+
+lldiv_t lldiv(long long numerator, long long denominator)
+{
+    lldiv_t result = {numerator / denominator, numerator % denominator};
+    return result;
+}
+
 /* ---- sorting ---- */
 
 /* qsort knows nothing about what it sorts: only how many items, how

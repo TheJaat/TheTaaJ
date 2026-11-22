@@ -5,6 +5,15 @@
 #ifndef _UNISTD_H
 #define _UNISTD_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* C11's _Noreturn is C++'s [[noreturn]]. */
+#if defined(__cplusplus) && !defined(_Noreturn)
+#define _Noreturn [[noreturn]]
+#endif
+
 #include <sys/types.h>
 
 /* The descriptors every program starts with. */
@@ -53,5 +62,9 @@ char *getcwd(char *buffer, size_t size);
 /* Replaces the program with another. TheTaaJ starts programs as new
  * processes and never replaces one: this always fails (ENOSYS). */
 int execvp(const char *file, char *const argv[]);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

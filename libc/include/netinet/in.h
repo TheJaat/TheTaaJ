@@ -2,6 +2,10 @@
 #ifndef _NETINET_IN_H
 #define _NETINET_IN_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdint.h>
 #include <sys/socket.h>
 
@@ -28,5 +32,9 @@ struct sockaddr_in {
 
 #define IPPROTO_TCP 6
 #define IPPROTO_UDP 17
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

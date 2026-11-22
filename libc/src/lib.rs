@@ -20,7 +20,8 @@
 //!
 //! So far:
 //!   _start   where the kernel starts the program: gets the arguments,
-//!            calls main, exits with what main returned
+//!            runs the constructors, calls main, exits with what main
+//!            returned
 //!   exit, _exit
 //!   open, close, read, write, lseek, unlink,
 //!   rename, isatty                                 (descriptors.rs)
@@ -40,6 +41,11 @@
 //! archive. The two halves call each other: C's fopen calls `open`
 //! here, and `exit` here calls C to write out what is still waiting in
 //! the streams' buffers.
+//!
+//! Since C++ came (journal entry 072) the C half also has the rest of
+//! what libc++ asks of a C library: math.c, scan.c (sscanf), locale.c
+//! (only the "C" locale), and atexit.c, which runs the constructors
+//! before `main` and, from `exit`, the atexit handlers and destructors.
 //!
 //! The headers a C program includes for these are in `include/`.
 //!
@@ -69,6 +75,15 @@ extern "C" {
 
     /// Writes out what every stream still holds (libc/c/stdio.c).
     fn __taaj_flush_streams();
+
+    /// Calls the constructors: C++'s objects outside functions, and C
+    /// functions marked `constructor` (libc/c/atexit.c).
+    fn __taaj_run_constructors();
+
+    /// Calls what atexit and __cxa_atexit registered, newest first -
+    /// C++'s destructors among them - then the `destructor` functions
+    /// (libc/c/atexit.c).
+    fn __taaj_run_destructors();
 }
 
 /// What a C program is told its own name is - `argv[0]`. The shell
@@ -98,6 +113,9 @@ pub extern "C" fn _start(startup_handles: u64, argument: u64) -> ! {
     // And the array: a pointer to each, then null.
     let mut argv: Vec<*mut c_char> = strings.iter_mut().map(|string| string.as_mut_ptr().cast()).collect();
     argv.push(core::ptr::null_mut());
+    // SAFETY: a C function taking and returning nothing; what it calls
+    // is the program's own code, compiled to be called exactly here.
+    unsafe { __taaj_run_constructors() };
     // SAFETY: `main` is the C program's, with the signature C gives it.
     // `argv` holds `strings.len()` pointers to zero-ended strings and a
     // null, all of which live until the process ends: `exit` below
@@ -108,14 +126,20 @@ pub extern "C" fn _start(startup_handles: u64, argument: u64) -> ! {
 
 /// `exit(code)`: ends the program. Returning from `main` does the same.
 ///
-/// First it writes out what the streams still hold: text a program
-/// printed may be waiting in a buffer (libc/c/stdio.c), and a program
-/// that ends by returning from `main` has no other moment to send it.
+/// First what was registered to run at the end (atexit, and C++'s
+/// destructors), which may still print; then it writes out what the
+/// streams still hold: text a program printed may be waiting in a
+/// buffer (libc/c/stdio.c), and a program that ends by returning from
+/// `main` has no other moment to send it.
 #[no_mangle]
 pub extern "C" fn exit(code: c_int) -> ! {
-    // SAFETY: a C function taking and returning nothing, which touches
-    // only the library's own streams.
-    unsafe { __taaj_flush_streams() };
+    // SAFETY: C functions taking and returning nothing. The first calls
+    // the program's own handlers; the second touches only the library's
+    // streams.
+    unsafe {
+        __taaj_run_destructors();
+        __taaj_flush_streams();
+    }
     taaj::exit(i64::from(code))
 }
 

@@ -31,7 +31,9 @@
 #  include <sys/time.h> // for gettimeofday and timeval
 #endif
 
-#if defined(__APPLE__) || defined(__gnu_hurd__) || (defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0)
+// TheTaaJ has clock_gettime with CLOCK_MONOTONIC, though not the rest
+// of what _POSIX_TIMERS promises (timer_create and the others).
+#if defined(__APPLE__) || defined(__gnu_hurd__) || (defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0) || defined(__TAAJ__)
 #  define _LIBCPP_HAS_CLOCK_GETTIME
 #endif
 

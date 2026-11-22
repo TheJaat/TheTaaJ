@@ -12,6 +12,10 @@
 #ifndef _CTYPE_H
 #define _CTYPE_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 int isalpha(int c);  /* a letter */
 int isdigit(int c);  /* 0 to 9 */
 int isalnum(int c);  /* a letter or a digit */
@@ -27,6 +31,13 @@ int iscntrl(int c);  /* not printed: below the space, and 127 */
 
 /* The other case of a letter; anything else as it was. */
 int toupper(int c);
+/* POSIX: is c one of the 128 ASCII codes; and c made into one. */
+int isascii(int c);
+int toascii(int c);
 int tolower(int c);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

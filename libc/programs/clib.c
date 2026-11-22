@@ -2,9 +2,13 @@
  * setjmp and longjmp, numbers from text (strtod and its family, with
  * cases that are hard to round right), ldexp, fabs, printf's floating
  * point, the long long conversions, strpbrk, the time and the calendar, getcwd, realpath,
- * fdopen, getenv and execvp.
+ * fdopen, getenv and execvp - and of what C++'s library needs of it:
+ * sscanf, asprintf, strftime and mktime, the exact parts of math.h,
+ * aligned_alloc, the locale, constructors and atexit.
  *
- *   with files clib     every check; "library: N checks, all passed"
+ *   with files clib     every check; "library: N checks, all passed",
+ *                       then, from the atexit handlers, "library: atexit
+ *                       ran its handlers, newest first"
  *   clib assert         a false assert: the message, and exit code 134
  *
  * The files checks read `welcome` and `docs/`, which every test disk
@@ -14,6 +18,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <locale.h>
 #include <math.h>
 #include <setjmp.h>
 #include <stdint.h>
@@ -205,6 +210,82 @@ static void files(void)
     check(execvp("ls", arguments) == -1 && errno == ENOSYS, "execvp: ENOSYS");
 }
 
+/* ---- what C++'s library needs ---- */
+
+static int constructed;
+__attribute__((constructor)) static void before_main(void)
+{
+    constructed = 1;
+}
+
+/* Run by exit, newest first: the second registered prints the start of
+ * the line, the first its end. */
+static void handler_first(void)
+{
+    printf("newest first\n");
+}
+
+static void handler_second(void)
+{
+    printf("library: atexit ran its handlers, ");
+}
+
+static void for_cxx(void)
+{
+    check(constructed == 1, "a constructor ran before main");
+    check(atexit(handler_first) == 0 && atexit(handler_second) == 0, "atexit");
+
+    int n = 0, got;
+    char word[16];
+    double weight = 0;
+    unsigned hex = 0;
+    got = sscanf("12 apples 3.5 ff", "%d %15s %lf %x", &n, word, &weight, &hex);
+    check(got == 4 && n == 12 && strcmp(word, "apples") == 0 && weight == 3.5 && hex == 255, "sscanf");
+    long double big = 0;
+    char rest[8];
+    /* 1e300 would not do: strtold goes through a double, which is
+     * not the nearest long double to it - and TCC, parsing a 1e300L
+     * here with the same strtold, would then write this file differently
+     * on TheTaaJ than on the host. 2^-20 is exact in both. */
+    got = sscanf("x=9.5367431640625e-7,abc", "x=%Lf,%[a-c]", &big, rest);
+    check(got == 2 && big == 0x1p-20L && strcmp(rest, "abc") == 0, "sscanf: %Lf and %[");
+    check(sscanf("", "%d", &n) == EOF && sscanf("z", "%d", &n) == 0, "sscanf: nothing, and no match");
+
+    char *text = NULL;
+    check(asprintf(&text, "%s %d %.2f", "pi", 3, 3.14159) == 9 && strcmp(text, "pi 3 3.14") == 0, "asprintf");
+    free(text);
+
+    struct tm t = {0};
+    t.tm_year = 126; /* 2026 */
+    t.tm_mon = 10;   /* November */
+    t.tm_mday = 22;
+    t.tm_hour = 17;
+    t.tm_min = 5;
+    time_t when = mktime(&t);
+    check(when == 1795367100 && t.tm_wday == 0 && t.tm_yday == 325, "mktime");
+    char date[64];
+    check(strftime(date, sizeof date, "%A %d %B %Y, %H:%M, week %V, day %j", &t) > 0
+              && strcmp(date, "Sunday 22 November 2026, 17:05, week 47, day 326") == 0,
+          "strftime");
+    t.tm_mday = 32; /* 32 November is 2 December */
+    mktime(&t);
+    check(t.tm_mon == 11 && t.tm_mday == 2, "mktime puts days out of range right");
+
+    check(sqrt(2.0) == 1.4142135623730951 && sqrt(-1.0) != sqrt(-1.0), "sqrt");
+    check(floor(-2.5) == -3.0 && ceil(-2.5) == -2.0 && round(-2.5) == -3.0 && rint(2.5) == 2.0, "rounding");
+    check(fmod(7.5, 2.0) == 1.5 && remainder(7.5, 2.0) == -0.5, "fmod and remainder");
+    int exponent;
+    check(frexp(48.0, &exponent) == 0.75 && exponent == 6, "frexp");
+    check(isnan(nan("")) && isinf(HUGE_VAL) && fpclassify(1e-310) == FP_SUBNORMAL && signbit(-0.0), "classifying");
+
+    void *aligned = aligned_alloc(256, 100);
+    check(aligned != NULL && ((uintptr_t)aligned & 255) == 0, "aligned_alloc");
+    free(aligned);
+
+    check(strcmp(setlocale(LC_ALL, ""), "C") == 0 && setlocale(LC_ALL, "fr_FR") == NULL, "setlocale");
+    check(strcmp(localeconv()->decimal_point, ".") == 0 && strcoll("a", "b") < 0, "localeconv and strcoll");
+}
+
 int main(int argc, char **argv)
 {
     if (argc > 1 && strcmp(argv[1], "assert") == 0) {
@@ -216,6 +297,7 @@ int main(int argc, char **argv)
     numbers();
     times();
     files();
+    for_cxx();
     if (failures == 0)
         printf("library: %d checks, all passed\n", checks);
     else

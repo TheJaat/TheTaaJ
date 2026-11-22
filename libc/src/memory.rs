@@ -25,13 +25,28 @@
 //!
 //! `free` steps back 16 bytes, reads the size, and can then give the
 //! block back as Rust requires.
+//!
+//! And aligned_alloc, for a block on a stricter boundary than 16 (C++
+//! asks for one for `new` of an over-aligned type). Its header is the
+//! alignment's size, not 16, so that what follows it is aligned too;
+//! the size and the alignment are in its last 16 bytes, just in front
+//! of the address returned, where free always looks:
+//!
+//!     +---------------- ... --+------+-------+---------------------+
+//!     |  padding              | size | align |  the program's bytes |
+//!     +---------------- ... --+------+-------+---------------------+
+//!     ^ the heap's block      ^ -16    ^ -8  ^ returned
+//!
+//! malloc's blocks keep 16 in the "align" word, so free can tell how
+//! far back their start is - 16 bytes - the same way.
 
 use alloc::alloc::{alloc, dealloc};
 use core::alloc::Layout;
 use core::ffi::{c_char, c_void};
 use core::ptr;
 
-/// The bytes in front of every block, where its size is kept.
+/// The bytes in front of every block of malloc's, where its size and
+/// alignment are kept.
 const HEADER: usize = 16;
 
 /// Every block starts on a multiple of this. C promises that what
@@ -40,20 +55,49 @@ const HEADER: usize = 16;
 /// size, so the address after it is as well aligned as the block.
 const ALIGNMENT: usize = 16;
 
-/// What to ask the heap for, for a block of `size` bytes: the header
-/// and the bytes. None if that is more than an address can count.
-fn layout(size: usize) -> Option<Layout> {
-    Layout::from_size_align(size.checked_add(HEADER)?, ALIGNMENT).ok()
-}
-
 /// The size written in front of a block that malloc returned.
 ///
 /// # Safety
-/// `pointer` must have come from `malloc` and not have been freed.
+/// `pointer` must have come from `malloc` (or aligned_alloc) and not
+/// have been freed.
 unsafe fn size_of_block(pointer: *mut c_void) -> usize {
     // SAFETY: malloc wrote a usize `HEADER` bytes before the address it
     // returned, at an address aligned for one.
     unsafe { pointer.cast::<u8>().sub(HEADER).cast::<usize>().read() }
+}
+
+/// The alignment written in front of a block: 16 for malloc's.
+///
+/// # Safety
+/// As for `size_of_block`.
+unsafe fn alignment_of_block(pointer: *mut c_void) -> usize {
+    // SAFETY: the word after the size, 8 bytes before the address.
+    unsafe { pointer.cast::<u8>().sub(HEADER / 2).cast::<usize>().read() }
+}
+
+/// Asks the heap for `size` bytes on a multiple of `alignment` (a power
+/// of two, 16 or more), behind a header of `alignment` bytes, and writes
+/// the size and alignment at the header's end.
+fn allocate(size: usize, alignment: usize) -> *mut c_void {
+    let Some(layout) = size.checked_add(alignment).and_then(|total| Layout::from_size_align(total, alignment).ok())
+    else {
+        return no_memory();
+    };
+    // SAFETY: the layout is never of size zero: it includes the header.
+    let block = unsafe { alloc(layout) };
+    if block.is_null() {
+        return no_memory();
+    }
+    // SAFETY: the block is at least `alignment` (>= 16) bytes and aligned
+    // to it, so the address `alignment` bytes on is aligned too and the
+    // two words just before it are inside the block, each aligned for a
+    // usize.
+    unsafe {
+        let start = block.add(alignment);
+        start.sub(HEADER).cast::<usize>().write(size);
+        start.sub(HEADER / 2).cast::<usize>().write(alignment);
+        start.cast()
+    }
 }
 
 /// The answer when there is no memory: null, and the reason in errno.
@@ -69,21 +113,19 @@ fn no_memory() -> *mut c_void {
 /// can be freed.
 #[no_mangle]
 pub extern "C" fn malloc(size: usize) -> *mut c_void {
-    let Some(layout) = layout(size) else {
-        return no_memory();
-    };
-    // SAFETY: the layout is never of size zero: it includes the header.
-    let block = unsafe { alloc(layout) };
-    if block.is_null() {
-        return no_memory();
+    allocate(size, ALIGNMENT)
+}
+
+/// `aligned_alloc(alignment, size)`: as malloc, on a multiple of
+/// `alignment`, which must be a power of two - or null, with errno
+/// EINVAL, if it is not. Freed by free.
+#[no_mangle]
+pub extern "C" fn aligned_alloc(alignment: usize, size: usize) -> *mut c_void {
+    if !alignment.is_power_of_two() {
+        crate::errno::errno.store(crate::errno::EINVAL, core::sync::atomic::Ordering::Relaxed);
+        return ptr::null_mut();
     }
-    // SAFETY: the block is at least HEADER bytes, aligned to 16: a
-    // usize fits at its start, and the address HEADER bytes on is still
-    // inside it (or just at its end, when `size` is zero).
-    unsafe {
-        block.cast::<usize>().write(size);
-        block.add(HEADER).cast()
-    }
+    allocate(size, alignment.max(ALIGNMENT))
 }
 
 /// `free(pointer)`: gives back what malloc, calloc or realloc returned.
@@ -98,14 +140,15 @@ pub unsafe extern "C" fn free(pointer: *mut c_void) {
     if pointer.is_null() {
         return;
     }
-    // SAFETY: by the caller's promise this is a live block of malloc's:
-    // its size is in front of it, the heap's own block starts HEADER
-    // bytes back, and was asked for with exactly this layout - which
-    // was valid then, so it is now.
+    // SAFETY: by the caller's promise this is a live block of malloc's
+    // or aligned_alloc's: its size and alignment are in front of it, the
+    // heap's own block starts `alignment` bytes back, and was asked for
+    // with exactly this layout - which was valid then, so it is now.
     unsafe {
         let size = size_of_block(pointer);
-        let layout = Layout::from_size_align_unchecked(size + HEADER, ALIGNMENT);
-        dealloc(pointer.cast::<u8>().sub(HEADER), layout);
+        let alignment = alignment_of_block(pointer);
+        let layout = Layout::from_size_align_unchecked(size + alignment, alignment);
+        dealloc(pointer.cast::<u8>().sub(alignment), layout);
     }
 }
 

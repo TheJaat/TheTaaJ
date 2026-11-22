@@ -9,6 +9,10 @@
 #ifndef _STRING_H
 #define _STRING_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stddef.h>
 
 /* Memory. memcpy's two blocks must not overlap; memmove's may. */
@@ -56,5 +60,15 @@ char *strerror(int code);
 
 /* A copy of s in memory from malloc, to be freed; NULL if none. */
 char *strdup(const char *s);
+
+/* Comparing as the locale orders letters - in "C", the only locale,
+ * as strcmp does (libc/c/locale.c). strxfrm copies `from` into `to` in
+ * a form strcmp orders the same way, and returns its length. */
+int strcoll(const char *a, const char *b);
+size_t strxfrm(char *to, const char *from, size_t size);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -2,13 +2,39 @@
 #ifndef _STDLIB_H
 #define _STDLIB_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/* C11's _Noreturn is C++'s [[noreturn]]. */
+#if defined(__cplusplus) && !defined(_Noreturn)
+#define _Noreturn [[noreturn]]
+#endif
+
 #include <stddef.h>
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1
 
+/* Quotient and remainder, from one division: div(7, 2) is {3, 1}. */
+typedef struct { int quot, rem; } div_t;
+typedef struct { long quot, rem; } ldiv_t;
+typedef struct { long long quot, rem; } lldiv_t;
+div_t div(int numerator, int denominator);
+ldiv_t ldiv(long numerator, long denominator);
+lldiv_t lldiv(long long numerator, long long denominator);
+
+/* The most bytes one character can take in the current locale. The
+ * only locale is "C", where every character is one byte. */
+#define MB_CUR_MAX ((size_t)1)
+
 /* Ends the program. Returning from main does the same. */
 _Noreturn void exit(int code);
+
+/* function, to be called when the program exits (by exit or by
+ * returning from main) - the last registered first, before the streams
+ * are written out. 0, or -1 if there is no memory for it. */
+int atexit(void (*function)(void));
 
 /* Memory, asked for while the program runs. Each returns NULL if there
  * is none to give.
@@ -22,6 +48,9 @@ void *malloc(size_t size);
 void *calloc(size_t count, size_t size);
 void *realloc(void *block, size_t size);
 void free(void *block);
+/* Memory on a multiple of `alignment` bytes (a power of two), for a
+ * type that needs more than malloc's 16; freed by free. */
+void *aligned_alloc(size_t alignment, size_t size);
 
 /* Text into a number: spaces, an optional sign, then digits in the
  * given base (2 to 36; letters are the digits past 9). Base 0 reads
@@ -72,6 +101,8 @@ long atol(const char *text);
 /* The number without its sign. */
 int abs(int number);
 long labs(long number);
+long long llabs(long long number);
+long long atoll(const char *text);
 
 /* Sorts count items of size bytes each, starting at base. compare is
  * given the addresses of two items and returns less than 0, 0, or
@@ -84,5 +115,9 @@ void qsort(void *base, size_t count, size_t size, int (*compare)(const void *, c
  * is none. */
 void *bsearch(const void *key, const void *base, size_t count, size_t size,
               int (*compare)(const void *, const void *));
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

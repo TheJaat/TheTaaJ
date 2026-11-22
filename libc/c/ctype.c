@@ -83,3 +83,13 @@ int tolower(int c)
 {
     return isupper(c) ? c + ('a' - 'A') : c;
 }
+
+int isascii(int c)
+{
+    return c >= 0 && c < 128;
+}
+
+int toascii(int c)
+{
+    return c & 0x7f;
+}

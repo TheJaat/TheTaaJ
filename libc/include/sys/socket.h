@@ -18,6 +18,10 @@
 #ifndef _SYS_SOCKET_H
 #define _SYS_SOCKET_H
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <sys/types.h>
 
 typedef unsigned int socklen_t;
@@ -77,5 +81,9 @@ int setsockopt(int socket, int level, int option, const void *value, socklen_t l
 /* The port of this machine a socket uses: after bind with port 0, or
  * after connect, which picks one. */
 int getsockname(int socket, struct sockaddr *address, socklen_t *length);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif
