@@ -1232,13 +1232,8 @@ impl Shell {
     /// a '/' in it - `tools/given`, `./given`, `/tools/given` - is a
     /// path, and is resolved like any other path, from here.
     fn program_image(&self, name: &str) -> Result<Option<Handle>, &'static str> {
-        let resolved;
-        let name = if name.contains('/') {
-            resolved = path::resolve(&self.directory.borrow(), name);
-            resolved.as_str()
-        } else {
-            name
-        };
+        let path = self.program_path(name);
+        let name = path.as_str();
         let Some(files) = self.look.as_ref().or(self.files.as_ref()) else { return Ok(None) };
         let size = match files.size(name) {
             Ok(size) => size,
@@ -1264,6 +1259,18 @@ impl Shell {
                 let _ = taaj::close(memory);
                 Err(why)
             }
+        }
+    }
+
+    /// The file a program's name means, as a path from the root without
+    /// the '/' in front ("" is the root): a bare name is a file in the
+    /// root, a name with a '/' in it a path from here (see
+    /// `program_image`).
+    fn program_path(&self, name: &str) -> String {
+        if name.contains('/') {
+            path::resolve(&self.directory.borrow(), name)
+        } else {
+            String::from(name)
         }
     }
 
@@ -1474,11 +1481,16 @@ impl Shell {
         // A copy: the borrow of the directory must not last while the
         // program runs.
         let directory = if names.is_empty() { String::new() } else { self.directory.borrow().clone() };
+        // The program's file, which it is told (as Linux's programs read
+        // /proc/self/exe): clang finds its headers from it. A program
+        // built into the kernel image has none.
+        let file = if image.is_some() { alloc::format!("/{}", self.program_path(name)) } else { String::new() };
         let request = abi::init::Run {
             kind: if image.is_some() { abi::init::IMAGE } else { abi::init::BUILT_IN },
             flags,
             name,
             directory: &directory,
+            file: &file,
             arguments,
         };
         let mut message = [0u8; abi::MESSAGE_MAX as usize];

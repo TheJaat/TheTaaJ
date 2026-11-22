@@ -6,7 +6,7 @@ KERNEL_DIR = kernel
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
-        llvm64 llvm-aarch64 llvm64-test aarch64-llvm-test llvm-put llvm-put-aarch64
+        llvm64 llvm-aarch64 clang-tblgen llvm64-test clang64-test aarch64-clang-test aarch64-llvm-test llvm-put llvm-put-aarch64
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
@@ -1328,7 +1328,11 @@ endif
 # built everywhere; and -w, since the warnings are upstream's to mind.
 LLVM_X86_DIR  = $(BUILD_DIR)/llvm/x86_64
 LLVM_A64_DIR  = $(BUILD_DIR)/llvm/aarch64
-LLVM_TOOLS    = llvm-tblgen llvm-mc llc
+LLVM_TOOLS    = llvm-tblgen llvm-mc llc clang
+# Clang's tables are written by clang-tblgen, which Ubuntu does not
+# package: it is built for the host from ports/llvm/clang
+# (tools/build-clang-tblgen.sh), against the host's LLVM 18.1.3.
+CLANG_TBLGEN  = $(BUILD_DIR)/clang-tblgen/clang-tblgen
 LLVM_TBLGEN  := $(shell command -v llvm-tblgen || ls /usr/bin/llvm-tblgen-* /usr/lib/llvm-*/bin/llvm-tblgen 2>/dev/null | sort -V | tail -1)
 LLVM64_LOG    = $(BUILD_DIR)/llvm64.log
 LLVM_A64_LOG  = $(BUILD_DIR)/aarch64/llvm.log
@@ -1341,41 +1345,44 @@ TAAJ_LLVM_CFLAGS       = --target=x86_64-unknown-none-elf -std=c11 -O2 -fno-stac
 TAAJ_A64_LLVM_CFLAGS   = --target=aarch64-unknown-none-elf -std=c11 -O2 -fno-stack-protector -fno-pic \
                          -nostdlibinc -isystem $(LIBC_DIR)/include -w
 
-llvm64: cxx64
+clang-tblgen:
+	@sh tools/build-clang-tblgen.sh $(dir $(CLANG_TBLGEN))
+
+llvm64: cxx64 clang-tblgen
 ifeq ($(HAVE_CC),yes)
 	@[ -n "$(LLVM_TBLGEN)" ] || { echo "llvm-tblgen not found (sudo apt install llvm-18)"; exit 1; }
-	@LLVM_TBLGEN=$(LLVM_TBLGEN) LLVM_AR=$(LLVM_AR) \
+	@LLVM_TBLGEN=$(LLVM_TBLGEN) CLANG_TBLGEN=$(abspath $(CLANG_TBLGEN)) LLVM_AR=$(LLVM_AR) \
 	    TAAJ_LLVM_LINK="ld.lld $(TAAJ_CXX_LDFLAGS) {objects} $(CXX_X86_DIR)/libc++.a $(LIBC_A) -o {output}" \
 	    python3 tools/build-llvm.py x86_64 $(LLVM_X86_DIR) "$(TAAJ_LLVM_CXXFLAGS)" "$(TAAJ_LLVM_CFLAGS)" $(LLVM_TOOLS)
 else
 	@echo "Clang or lld not found: no LLVM (sudo apt install clang lld)"
 endif
 
-llvm-aarch64: cxx-aarch64
+llvm-aarch64: cxx-aarch64 clang-tblgen
 ifeq ($(HAVE_CC),yes)
 	@[ -n "$(LLVM_TBLGEN)" ] || { echo "llvm-tblgen not found (sudo apt install llvm-18)"; exit 1; }
-	@LLVM_TBLGEN=$(LLVM_TBLGEN) LLVM_AR=$(LLVM_AR) \
+	@LLVM_TBLGEN=$(LLVM_TBLGEN) CLANG_TBLGEN=$(abspath $(CLANG_TBLGEN)) LLVM_AR=$(LLVM_AR) \
 	    TAAJ_LLVM_LINK="ld.lld $(TAAJ_A64_CXX_LDFLAGS) {objects} $(CXX_A64_DIR)/libc++.a $(C_A64_BIN)/libc.a -o {output}" \
 	    python3 tools/build-llvm.py aarch64 $(LLVM_A64_DIR) "$(TAAJ_A64_LLVM_CXXFLAGS)" "$(TAAJ_A64_LLVM_CFLAGS)" $(LLVM_TOOLS)
 else
 	@echo "Clang or lld not found: no LLVM for AArch64 (sudo apt install clang lld)"
 endif
 
-# LLVM's tools - llvm-tblgen, llc, llvm-mc - and work for them, on a
-# run disk of their own, to try by hand: they take 49 MB, three times
-# the usual run disk. The disk is the usual one in every other way (it
-# is made by run-disk), and big: 32768 blocks, 128 MiB. Boot it with
+# LLVM's tools - llvm-tblgen, llc, llvm-mc, clang - and work for them,
+# on a run disk of their own, to try by hand: they take 131 MB, eight
+# times the usual run disk. The disk is the usual one in every other way
+# (it is made by run-disk), and big: 49152 blocks, 192 MiB. Boot it with
 #   make run64 RUN_DISK=build/llvm-disk.img
 #   make run-aarch64 RUN_A64_DISK=build/aarch64/llvm-disk.img
 # Not part of run-disk: the first LLVM build takes many minutes.
 LLVM_DISK     = $(BUILD_DIR)/llvm-disk.img
 LLVM_A64_DISK = $(BUILD_DIR)/aarch64/llvm-disk.img
 llvm-put: llvm64
-	@$(MAKE) --no-print-directory run-disk RUN_DISK=$(LLVM_DISK) RUN_DISK_BLOCKS=32768
+	@$(MAKE) --no-print-directory run-disk RUN_DISK=$(LLVM_DISK) RUN_DISK_BLOCKS=49152
 	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) sh tools/put-llvm.sh $(LLVM_DISK) $(LLVM_X86_DIR)/bin
 
 llvm-put-aarch64: llvm-aarch64
-	@$(MAKE) --no-print-directory run-aarch64-disk RUN_A64_DISK=$(LLVM_A64_DISK) RUN_DISK_BLOCKS=32768
+	@$(MAKE) --no-print-directory run-aarch64-disk RUN_A64_DISK=$(LLVM_A64_DISK) RUN_DISK_BLOCKS=49152
 	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) sh tools/put-llvm.sh $(LLVM_A64_DISK) $(LLVM_A64_DIR)/bin
 
 # llvm-tblgen on TheTaaJ, writing what LLVM's own build writes first -
@@ -1398,6 +1405,28 @@ else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 LLVM boot is not run"
 endif
 
+# clang on TheTaaJ (journal entry 075): it compiles TheTaaJ's eleven C
+# programs, with the options the build gives them, and writes the same
+# objects, assembly and preprocessed C as the host's clang 18.1.3.
+CLANG64_LOG   = $(BUILD_DIR)/clang64.log
+CLANG_A64_LOG = $(BUILD_DIR)/aarch64/clang.log
+clang64-test: iso64 llvm64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) $(KERNEL64_DIR)/scripts/clang-test.sh x86_64 $(ISO64_IMG) $(CLANG64_LOG).disk $(CLANG64_LOG) $(LLVM_X86_DIR)/bin
+	@echo "clang64-test passed"
+else
+	@echo "FAIL: clang needs clang and lld on the host (sudo apt install clang lld)"; exit 1
+endif
+
+aarch64-clang-test: kernel-aarch64 llvm-aarch64 tfstool-rs
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) $(KERNEL64_DIR)/scripts/clang-test.sh aarch64 $(KERNEL_A64_IMAGE) $(CLANG_A64_LOG).disk $(CLANG_A64_LOG) $(LLVM_A64_DIR)/bin
+	@echo "aarch64-clang-test passed"
+else
+	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 clang boot is not run"
+endif
+
 # Every layer: host unit tests, a normal boot (BIOS and UEFI) with its
 # self-tests, the fault boots, and the AArch64 kernel.
 #
@@ -1414,7 +1443,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 7
-TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test tcc64-test aarch64-tcc-test cxx64-test aarch64-cxx-test llvm64-test aarch64-llvm-test
+TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test tcc64-test aarch64-tcc-test cxx64-test aarch64-cxx-test llvm64-test aarch64-llvm-test clang64-test aarch64-clang-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared

@@ -80,7 +80,7 @@ The object files come before `libc.a` on the linker's command line: a library is
 
 ## What a program is given
 
-- **Its arguments**, as `argc` and `argv`, divided as the shell divided them (`mine "two words" three` is two arguments). **`argv[0]` is always `program`**: the shell does not yet tell a program its name.
+- **Its arguments**, as `argc` and `argv`, divided as the shell divided them (`mine "two words" three` is two arguments). `argv[0]` is the name the program was started by, as on Unix: `mine` for `mine "two words" three`, `tools/mine` for `tools/mine`. The program can also learn its own file, as a path from the root (`/mine`), from `__taaj_executable()` (declare it `const char *__taaj_executable(void);`; null for a program built into the kernel image): what Linux tells a program in `/proc/self/exe`. LLVM's `getMainExecutable` uses it, and clang finds its headers with it.
 - **Standard output** (`stdout`, descriptor 1): the screen, or a file (`mine > out`), or the next program (`mine | wc`).
 - **Standard error** (`stderr`, descriptor 2): always the screen. Complaints go here, so that they are seen even when the output is going into a file.
 - **Standard input** (`stdin`, descriptor 0): a file (`mine < notes`), the program before it (`cat notes | mine`), or — with neither — **the keyboard**. From the keyboard a program gets whole lines: the shell shows what is typed and lets Backspace correct it, and Enter sends the line. Ctrl+D at the start of a line ends the input (`fgets` returns `NULL`); Ctrl+C stops the program. A program started in the background (`mine &`) has no input at all. `isatty(0)` says whether the input is being typed.

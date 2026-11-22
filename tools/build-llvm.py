@@ -8,7 +8,14 @@
     CXXFLAGS  clang's flags for a TheTaaJ C++ program, include paths and
               all (TAAJ_LLVM_CXXFLAGS in the Makefile)
     CFLAGS    the same for C (LLVM has a few C files: BLAKE3)
-    TOOL      the programs to build: llvm-tblgen, ...
+    TOOL      the programs to build: llvm-tblgen, llc, llvm-mc, clang
+
+Clang (ports/llvm/clang) is built the same way, beside LLVM: its
+libraries are found in its CMakeLists.txt files as LLVM's are, and
+its TableGen jobs are run with the host's clang-tblgen of the same
+release (CLANG_TBLGEN), which the Makefile builds from
+clang/utils/TableGen. A directory of Clang's is named here as LLVM's
+are, from ports/llvm/llvm: "../clang/lib/AST".
 
 LLVM's own build is CMake, which TheTaaJ's host does not have and which
 does not know TheTaaJ. What CMake would do for this configuration is
@@ -34,6 +41,7 @@ by side, one per CPU of the host.
 import concurrent.futures
 import os
 import re
+import shutil
 import struct
 import subprocess
 import sys
@@ -41,7 +49,9 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LLVM = os.path.join(ROOT, "ports", "llvm", "llvm")
 TAAJ = os.path.join(ROOT, "ports", "llvm", "taaj")
+CLANG = os.path.join(ROOT, "ports", "llvm", "clang")
 TBLGEN = os.environ.get("LLVM_TBLGEN", "llvm-tblgen-18")
+CLANG_TBLGEN = os.environ.get("CLANG_TBLGEN", "clang-tblgen")
 AR = os.environ.get("LLVM_AR", "llvm-ar-18")
 JOBS = os.cpu_count() or 4
 
@@ -58,6 +68,7 @@ TOOL_DIRECTORIES = {
     "llvm-tblgen": "utils/TableGen",
     "llvm-mc": "tools/llvm-mc",
     "llc": "tools/llc",
+    "clang": "../clang/tools/driver",
 }
 EXTRA_LIBRARIES = {"llvm-tblgen": ["TableGenGlobalISel", "TableGenCommon"]}
 
@@ -69,10 +80,15 @@ EXTRA_LIBRARIES = {"llvm-tblgen": ["TableGenGlobalISel", "TableGenCommon"]}
 OBJECT_LIBRARIES = {"TableGenCommon"}
 
 # The directories whose CMakeLists.txt declare libraries.
-SCAN = ["lib", "utils/TableGen"]
+SCAN = ["lib", "utils/TableGen", "../clang/lib"]
+# And those whose CMakeLists.txt hold only TableGen jobs.
+SCAN_TABLEGEN = ["include", "../clang/include"]
 
 # The targets built, and the parts of each that "AllTargets..." means.
 TARGETS = ["X86", "AArch64"]
+# What CMake's variables hold here, for the lists that use them (a
+# tool's LLVM_LINK_COMPONENTS starts with ${LLVM_TARGETS_TO_BUILD}).
+CMAKE_VARIABLES = {"LLVM_TARGETS_TO_BUILD": TARGETS}
 ALL_TARGETS = {
     "alltargetsasmparsers": "AsmParser",
     "alltargetscodegens": "CodeGen",
@@ -99,6 +115,27 @@ FLAGS = {"PARTIAL_SOURCES_INTENDED", "BUILDTREE_ONLY", "STATIC", "SHARED", "MODU
 BLAKE3 = ["BLAKE3/blake3.c", "BLAKE3/blake3_dispatch.c", "BLAKE3/blake3_portable.c"]
 BLAKE3_FLAGS = ["-DBLAKE3_NO_AVX512", "-DBLAKE3_NO_AVX2", "-DBLAKE3_NO_SSE41", "-DBLAKE3_NO_SSE2",
                 "-DBLAKE3_USE_NEON=0"]
+
+
+# What CMake writes as a tool's main when it is GENERATE_DRIVER (the
+# tool's own sources have a NAME_main instead), from
+# llvm/cmake/modules/llvm-driver-template.cpp.in.
+DRIVER_MAIN = """#include "llvm/Support/LLVMDriver.h"
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/Support/InitLLVM.h"
+
+int @TOOL_NAME@_main(int argc, char **, const llvm::ToolContext &);
+
+int main(int argc, char **argv) {
+  llvm::InitLLVM X(argc, argv);
+  return @TOOL_NAME@_main(argc, argv, {argv[0], nullptr, false});
+}
+"""
+
+
+def clang_tblgen_file():
+    """The clang-tblgen file itself, whose change means TableGen again."""
+    return CLANG_TBLGEN if os.path.isabs(CLANG_TBLGEN) else (shutil.which(CLANG_TBLGEN) or CLANG_TBLGEN)
 
 
 def fail(message):
@@ -128,7 +165,7 @@ def expanded(calls):
     """The calls with ${NAME} replaced by what set(NAME ...) said, for
     the lists LLVM keeps in variables (set(sources ...), and a tool's
     LLVM_LINK_COMPONENTS). A name never set is left out."""
-    variables, result = {}, []
+    variables, result = {k: list(v) for k, v in CMAKE_VARIABLES.items()}, []
     for call, arguments in calls:
         words = []
         for a in arguments:
@@ -179,15 +216,34 @@ class Components:
             for here, _, names in os.walk(os.path.join(LLVM, top)):
                 if "CMakeLists.txt" in names:
                     self.read(os.path.relpath(here, LLVM))
-        for here, _, names in os.walk(os.path.join(LLVM, "include")):
-            if "CMakeLists.txt" in names:
-                self.read(os.path.relpath(here, LLVM))
+        for top in SCAN_TABLEGEN:
+            for here, _, names in os.walk(os.path.join(LLVM, top)):
+                if "CMakeLists.txt" in names:
+                    self.read(os.path.relpath(here, LLVM))
 
     def read(self, directory):
         calls = expanded(cmake_calls(os.path.join(LLVM, directory, "CMakeLists.txt")))
-        for call, words, _ in calls:
+        for call, words, variables in calls:
             if call == "add_public_tablegen_target" and words:
                 self.tablegen[words[0]] = directory
+            # Clang's libraries: add_clang_library(clangAST files...
+            # LINK_LIBS clangBasic ...), with the parts of LLVM they
+            # need in LLVM_LINK_COMPONENTS, set just before. A library
+            # may name more of Clang's in clang_target_link_libraries.
+            if call == "add_clang_library" and words:
+                parts = sections(words[1:])
+                # Of LINK_LIBS only Clang's own libraries: the rest are
+                # the system's (Windows' "version", set under if(WIN32),
+                # which this reading of CMake does not follow).
+                links = [w for w in parts.get("LINK_LIBS", []) if w.startswith("clang")]
+                links += variables.get("LLVM_LINK_COMPONENTS", [])
+                library = Component(words[0], directory, files(directory, parts[""]), links,
+                                    parts.get("DEPENDS", []), None)
+                self.by_name[words[0].lower()] = library
+                continue
+            if call == "clang_target_link_libraries" and words and words[0].lower() in self.by_name:
+                self.by_name[words[0].lower()].links += [w for w in words[1:] if w.startswith("clang")]
+                continue
             if call not in ("add_llvm_component_library", "add_llvm_library", "add_llvm_target") or not words:
                 continue
             name = words[0]
@@ -248,10 +304,16 @@ class Components:
 
 def tool_of(directory, name):
     """A tool's sources and LLVM_LINK_COMPONENTS, from its CMakeLists.txt."""
+    found = None
     for call, words, variables in expanded(cmake_calls(os.path.join(LLVM, directory, "CMakeLists.txt"))):
-        if call in ("add_llvm_tool", "add_tablegen") and words and words[0] == name:
-            return files(directory, sections(words[1:])[""]), variables.get("LLVM_LINK_COMPONENTS", [])
-    fail(f"no {name} in {directory}/CMakeLists.txt")
+        if call in ("add_llvm_tool", "add_tablegen", "add_clang_tool") and words and words[0] == name:
+            found = files(directory, sections(words[1:])[""]), list(variables.get("LLVM_LINK_COMPONENTS", []))
+        # Clang's tool names Clang's libraries apart (clangBasic, ...).
+        elif call == "clang_target_link_libraries" and found and words and words[0] == name:
+            found[1].extend(w for w in words[1:] if w.startswith("clang"))
+    if not found:
+        fail(f"no {name} in {directory}/CMakeLists.txt")
+    return found
 
 
 def tablegen_jobs(directory):
@@ -265,6 +327,36 @@ def tablegen_jobs(directory):
                 definitions = os.path.join(LLVM, directory, definitions)
         elif call == "tablegen" and arguments and arguments[0] == "LLVM":
             jobs.append((definitions, arguments[1], arguments[2:]))
+    return jobs
+
+
+def clang_tablegen_jobs(directory):
+    """The TableGen jobs of one of Clang's directories, as (td file,
+    output, flags), for clang-tblgen. Clang writes them three ways:
+    clang_tablegen(out.inc -gen-... SOURCE x.td TARGET Name), the macro
+    clang_diag_gen(Component) for each part's diagnostics, and in
+    lib/Headers clang_generate_header(-gen-... x.td out.h) for the
+    headers made from .td files (arm_neon.h, ...). The definitions of
+    the macro and the function themselves are not jobs: their output
+    is a variable."""
+    here = os.path.join(LLVM, directory)
+
+    def word(w):
+        return w.replace("${CMAKE_CURRENT_SOURCE_DIR}", here).replace("${CLANG_SOURCE_DIR}", CLANG)
+
+    jobs = []
+    for call, arguments in cmake_calls(os.path.join(here, "CMakeLists.txt")):
+        if call == "clang_tablegen" and arguments and "$" not in arguments[0]:
+            output, rest = arguments[0], [word(a) for a in arguments[1:]]
+            flags = rest[:rest.index("SOURCE")]
+            td = rest[rest.index("SOURCE") + 1]
+            jobs.append((os.path.normpath(os.path.join(here, td)), output, flags))
+        elif call == "clang_diag_gen" and arguments:
+            jobs.append((os.path.join(here, "Diagnostic.td"), f"Diagnostic{arguments[0]}Kinds.inc",
+                         ["-gen-clang-diags-defs", f"-clang-component={arguments[0]}"]))
+        elif call == "clang_generate_header" and len(arguments) == 3 and "$" not in arguments[2]:
+            basic = os.path.join(CLANG, "include", "clang", "Basic")
+            jobs.append((os.path.join(basic, arguments[1]), arguments[2], [arguments[0], "-I", basic]))
     return jobs
 
 
@@ -306,9 +398,9 @@ def write_if_changed(path, text):
         f.write(text)
 
 
-def read_values():
+def read_values(name="llvm-config.txt"):
     values = {}
-    with open(os.path.join(TAAJ, "llvm-config.txt")) as f:
+    with open(os.path.join(TAAJ, name)) as f:
         for line in f:
             line = line.strip()
             if line and not line.startswith("#"):
@@ -395,6 +487,9 @@ def main():
         configure(os.path.join(config, kind + ".def.in"), os.path.join(gen, "include/llvm/Config", kind + ".def"),
                   values)
     write_if_changed(os.path.join(gen, "include/llvm/Support/VCSRevision.h"), "#undef LLVM_REVISION\n")
+    # The extensions linked into LLVM's tools (Polly, ...): none.
+    write_if_changed(os.path.join(gen, "include/llvm/Support/Extension.def"),
+                     "//extension handlers\n#undef HANDLE_EXTENSION\n")
 
     # 2. TableGen, for the libraries the tools need.
     components = Components()
@@ -424,11 +519,55 @@ def main():
             if code:
                 fail(f"llvm-tblgen failed on {output}:\n{text}")
 
+    # 2b. Clang's: its configured headers, and its TableGen jobs, run
+    # with clang-tblgen. What Clang generates goes in OUT/clang, as
+    # CMake's build tree has it in tools/clang.
+    clang_gen = os.path.join(out, "clang")
+    clang_directories = []
+    if "clang" in tools:
+        clang_values = read_values("clang-config.txt")
+        configure(os.path.join(CLANG, "include/clang/Basic/Version.inc.in"),
+                  os.path.join(clang_gen, "include/clang/Basic/Version.inc"), clang_values)
+        configure(os.path.join(CLANG, "include/clang/Config/config.h.cmake"),
+                  os.path.join(clang_gen, "include/clang/Config/config.h"), clang_values)
+        # Where the sources came from, which CMake asks git: a release
+        # tarball has no history, and the version says enough.
+        write_if_changed(os.path.join(clang_gen, "lib/Basic/VCSVersion.inc"), "")
+        for top in ("include", "lib"):
+            for here, _, names in sorted(os.walk(os.path.join(CLANG, top))):
+                if "CMakeLists.txt" not in names:
+                    continue
+                directory = os.path.relpath(here, CLANG)
+                jobs = clang_tablegen_jobs(os.path.relpath(here, LLVM))
+                if jobs:
+                    clang_directories.append(directory)
+                for td, output, flags in jobs:
+                    target = os.path.join(clang_gen, directory, output)
+                    depfile = target + ".d"
+                    deps = dependencies(depfile) or [td]
+                    if not newer(target, deps + [clang_tblgen_file()]):
+                        continue
+                    print(f"  TBLGEN  clang/{directory}/{output}")
+                    os.makedirs(os.path.dirname(target), exist_ok=True)
+                    command = [CLANG_TBLGEN, *flags, "-I", here, "-I", os.path.dirname(td),
+                               "-I", os.path.join(CLANG, "include"), "-I", os.path.join(LLVM, "include"),
+                               td, "-o", target, "-d", depfile]
+                    code, text = run(command)
+                    if code:
+                        fail(f"clang-tblgen failed on {output}:\n{text}")
+
     # 3. The libraries. Every generated directory is searched by every
     # compile, as CMake's include path does for a target's files.
     includes = ["-I", os.path.join(gen, "include"), "-I", os.path.join(LLVM, "include")]
     for directory in directories:
         includes += ["-I", os.path.join(gen, directory)]
+    if "clang" in tools:
+        includes += ["-I", os.path.join(clang_gen, "include"), "-I", os.path.join(CLANG, "include")]
+        # And those of lib/ (lib/AST's Opcodes.inc, lib/Basic's
+        # VCSVersion.inc), but not the headers made for programs.
+        for directory in clang_directories + ["lib/Basic"]:
+            if directory.startswith("lib/") and directory != "lib/Headers":
+                includes += ["-I", os.path.join(clang_gen, directory)]
     common = ["-D__STDC_CONSTANT_MACROS", "-D__STDC_FORMAT_MACROS", "-D__STDC_LIMIT_MACROS", "-DNDEBUG",
               "-ffunction-sections", "-fdata-sections"]
     work = []
@@ -446,12 +585,17 @@ def main():
             command += ["-I", os.path.join(LLVM, m.group(1)), "-I", os.path.join(gen, m.group(1))]
         if directory.startswith("utils/TableGen"):
             command += ["-I", os.path.join(LLVM, "utils/TableGen")]
+        # Who made this clang, in front of "clang version 18.1.3", as
+        # LLVM's tools say "TheTaaJ LLVM version" (CMake's CLANG_VENDOR,
+        # PACKAGE_VENDOR unless set).
+        if directory.startswith("../clang"):
+            command.append(f'-DCLANG_VENDOR="{values["PACKAGE_VENDOR"]} "')
         return command
 
     def objects_of(sources, directory):
         objects = []
         for source in sources:
-            obj = os.path.join(out, "obj", re.sub(r"\.(cpp|c)$", ".o", source))
+            obj = os.path.normpath(os.path.join(out, "obj", re.sub(r"\.(cpp|c)$", ".o", source)))
             objects.append(obj)
             depfile = obj[:-2] + ".d"
             deps = dependencies(depfile)
@@ -470,7 +614,13 @@ def main():
         archives[library] = (os.path.join(out, "lib", "LLVM" + library + ".a"),
                              objects_of(sources, component.directory))
 
-    # The tools' own sources.
+    # The tools' own sources. Clang's main is not among them: CMake
+    # writes it (GENERATE_DRIVER), from LLVM's template
+    # (llvm/cmake/modules/llvm-driver-template.cpp.in), as here.
+    if "clang" in tools:
+        driver = os.path.join(clang_gen, "tools/driver/clang-driver.cpp")
+        write_if_changed(driver, DRIVER_MAIN.replace("@TOOL_NAME@", "clang"))
+        wanted["clang"][0].append(driver)
     tool_objects = {name: objects_of(wanted[name][0], TOOL_DIRECTORIES[name]) for name in tools}
 
     failures = []
@@ -499,6 +649,20 @@ def main():
             code, text = run([AR, "rcs", archive, *objects])
             if code:
                 fail(f"cannot archive {library}:\n{text}")
+
+    # 3b. The headers clang brings with it (stddef.h, stdarg.h, the
+    # intrinsics: lib/Headers, and those made from .td files), in
+    # OUT/lib/clang/18/include, where a clang in OUT/bin looks for them.
+    if "clang" in tools:
+        resource = os.path.join(out, "lib", "clang", read_values("clang-config.txt")["CLANG_VERSION_MAJOR"], "include")
+        os.makedirs(resource, exist_ok=True)
+        made = [os.path.join(clang_gen, "lib/Headers", o) for _, o, _ in clang_tablegen_jobs("../clang/lib/Headers")]
+        for path in [os.path.join(CLANG, "lib/Headers", n) for n in sorted(os.listdir(os.path.join(CLANG, "lib/Headers")))
+                     if n.endswith(".h") or n == "module.modulemap"] + made:
+            copy = os.path.join(resource, os.path.basename(path))
+            if newer(copy, [path]):
+                with open(path, "rb") as f, open(copy, "wb") as g:
+                    g.write(f.read())
 
     # 4. The tools. TAAJ_LLVM_LINK says how: the linker and its flags,
     # with {objects} and {output} in their places.

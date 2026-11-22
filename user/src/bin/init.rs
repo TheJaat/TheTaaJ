@@ -878,8 +878,8 @@ fn serve_request(launcher: Handle, requests: Handle) {
     }
 
     // The arguments, waiting in a channel of their own - and the
-    // directory the program starts in, in another. Nothing to say
-    // (no arguments; the root) means no channel.
+    // directory the program starts in, in another. The root, which
+    // needs no saying, means no channel for the directory.
     let waiting = |text: &[u8]| -> Result<Option<Handle>, Error> {
         if text.is_empty() {
             return Ok(None);
@@ -889,7 +889,19 @@ fn serve_request(launcher: Handle, requests: Handle) {
         let _ = taaj::close(tx);
         sent.map(|()| Some(rx)).inspect_err(|_| close(&[rx]))
     };
-    let arguments = waiting(run.arguments);
+    // The command line is always sent, even with no arguments: after
+    // them (an empty message, if none) comes the program's name and its
+    // file (abi::startup::ARGUMENTS), which a C program needs as argv[0],
+    // and clang to find its headers.
+    let command_line = || -> Result<Option<Handle>, Error> {
+        let mut program = [0u8; 2 * 256 + 2];
+        let length = abi::arguments::encode([run.name, run.file].into_iter(), &mut program).ok_or(Error::InvalidArgument)?;
+        let (tx, rx) = taaj::channel_create()?;
+        let sent = taaj::send(tx, run.arguments, &[]).and_then(|()| taaj::send(tx, &program[..length], &[]));
+        let _ = taaj::close(tx);
+        sent.map(|()| Some(rx)).inspect_err(|_| close(&[rx]))
+    };
+    let arguments = command_line();
     let directory = waiting(run.directory.as_bytes());
     let (arguments, directory) = match (arguments, directory) {
         (Ok(arguments), Ok(directory)) => (arguments, directory),

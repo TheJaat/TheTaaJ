@@ -650,14 +650,40 @@ pub fn stdout() -> Option<Handle> {
 /// "hello". None at all is an empty list. They arrive as one message,
 /// so this reads them once - call it once.
 pub fn arguments() -> alloc::vec::Vec<alloc::string::String> {
-    let mut message = [0u8; abi::MESSAGE_MAX as usize];
-    let length = match flagged_handle(abi::startup::ARGUMENTS).map(|channel| receive(channel, &mut message, &mut [])) {
-        Some(Ok((length, _))) => length,
-        _ => 0,
+    command_line().arguments
+}
+
+/// The whole command line: the arguments, and the program itself - the
+/// name it was started by and its file (abi::startup::ARGUMENTS).
+pub struct CommandLine {
+    /// What it was started as: "ls", "tools/given". None if whoever
+    /// started it did not say.
+    pub name: Option<alloc::string::String>,
+    /// Its file, as a path from the root - "/ls" - or None: built into
+    /// the kernel image, or not said.
+    pub file: Option<alloc::string::String>,
+    pub arguments: alloc::vec::Vec<alloc::string::String>,
+}
+
+/// The command line, read from its channel. Like `arguments`, which is
+/// this without the program's name: call one of the two, once.
+pub fn command_line() -> CommandLine {
+    let words = |message: &[u8]| -> alloc::vec::Vec<alloc::string::String> {
+        abi::arguments::decode(message).map(|word| alloc::string::String::from_utf8_lossy(word).into_owned()).collect()
     };
-    abi::arguments::decode(&message[..length])
-        .map(|word| alloc::string::String::from_utf8_lossy(word).into_owned())
-        .collect()
+    let mut message = [0u8; abi::MESSAGE_MAX as usize];
+    let mut next = || -> Option<alloc::vec::Vec<alloc::string::String>> {
+        let channel = flagged_handle(abi::startup::ARGUMENTS)?;
+        let (length, _) = receive(channel, &mut message, &mut []).ok()?;
+        Some(words(&message[..length]))
+    };
+    let arguments = next().unwrap_or_default();
+    // The program, if init said: what it was started as, and its file.
+    // A channel with only the arguments on it is closed by now, so this
+    // does not wait.
+    let program = next().unwrap_or_default();
+    let mut program = program.into_iter().filter(|word| !word.is_empty());
+    CommandLine { name: program.next(), file: program.next(), arguments }
 }
 
 /// Where this program asks for services by name: its channel to the

@@ -83,6 +83,7 @@ pub mod status;
 pub mod string;
 pub mod system;
 
+use alloc::string::String;
 use alloc::vec::Vec;
 use core::ffi::{c_char, c_int};
 
@@ -104,9 +105,24 @@ extern "C" {
     fn __taaj_run_destructors();
 }
 
-/// What a C program is told its own name is - `argv[0]`. The shell
-/// does not tell a program its name yet, so this stands in.
+/// What a C program is told its own name is - `argv[0]` - when whoever
+/// started it did not say (init always does: abi::startup::ARGUMENTS).
 const NAME: &[u8] = b"program";
+
+/// The program's own file, as a path from the root, ending in a zero
+/// byte - or null, if it was not said (a program built into the kernel
+/// image). Set once, by `_start`, before `main`.
+static EXECUTABLE: core::sync::atomic::AtomicPtr<c_char> = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// The program's own file - "/clang" - or null: what a program on Linux
+/// learns from /proc/self/exe. LLVM's sys::fs::getMainExecutable asks
+/// (ports/llvm/llvm/lib/Support/Unix/Path.inc), and with it clang finds
+/// the headers it brings (/lib/clang/18/include beside /clang). Not part
+/// of any standard: declared where it is used.
+#[no_mangle]
+pub extern "C" fn __taaj_executable() -> *const c_char {
+    EXECUTABLE.load(core::sync::atomic::Ordering::Relaxed)
+}
 
 /// Where the kernel starts the program - what C calls crt0, "C runtime,
 /// part zero": the code that runs before `main` and makes the world
@@ -119,14 +135,22 @@ const NAME: &[u8] = b"program";
 #[no_mangle]
 pub extern "C" fn _start(startup_handles: u64, argument: u64) -> ! {
     taaj::set_startup(startup_handles, argument);
-    // The strings: the name, then the arguments as the shell divided
-    // them - each given the zero byte that ends a C string. (None can
-    // have one inside: they travelled here divided by zero bytes.)
+    // The strings: the name it was started by, then the arguments as
+    // the shell divided them - each given the zero byte that ends a C
+    // string. (None can have one inside: they travelled here divided by
+    // zero bytes.)
+    let command_line = taaj::command_line();
     let mut strings: Vec<Vec<u8>> = Vec::new();
-    strings.push(NAME.to_vec());
-    strings.extend(taaj::arguments().into_iter().map(|argument| argument.into_bytes()));
+    strings.push(command_line.name.map_or_else(|| NAME.to_vec(), String::into_bytes));
+    strings.extend(command_line.arguments.into_iter().map(|argument| argument.into_bytes()));
     for string in &mut strings {
         string.push(0);
+    }
+    // And its file, kept for as long as the program runs.
+    if let Some(file) = command_line.file {
+        let mut file = file.into_bytes();
+        file.push(0);
+        EXECUTABLE.store(Vec::leak(file).as_mut_ptr().cast(), core::sync::atomic::Ordering::Relaxed);
     }
     // And the array: a pointer to each, then null.
     let mut argv: Vec<*mut c_char> = strings.iter_mut().map(|string| string.as_mut_ptr().cast()).collect();
