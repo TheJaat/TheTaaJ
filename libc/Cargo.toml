@@ -20,6 +20,7 @@ abi = { path = "../kernel/abi" }
 panic = "abort"
 
 [profile.release]
+lto = true
 panic = "abort"
 opt-level = "s"
 codegen-units = 1

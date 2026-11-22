@@ -54,8 +54,10 @@ extern crate alloc;
 pub mod descriptors;
 pub mod errno;
 pub mod memory;
+pub mod number;
 pub mod sockets;
 pub mod string;
+pub mod system;
 
 use alloc::vec::Vec;
 use core::ffi::{c_char, c_int};

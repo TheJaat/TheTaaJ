@@ -228,6 +228,45 @@ int main(void)
         }
     }
 
+    /* Floating point. Ties first: exactly halfway, to the even digit -
+     * 0.125 is exact in binary, 0.15 is not (it is a little under). */
+    SAME("%.2f %.2f %.2f %.0f %.0f %.0f %.1f", 0.125, 0.375, 0.15, 0.5, 1.5, 2.5, 0.25);
+    SAME("%f %f %f %f", 0.0, -0.0, 1.0, -1.5);
+    SAME("%.0f|%#.0f|%.0e|%#.0e|%g|%#g", 3.0, 3.0, 3.0, 3.0, 3.0, 3.0);
+    SAME("%e %E %.3e %.10e %e", 12345.678, 0.000123, 9.9996, 1.0 / 3, 0.0);
+    SAME("%g %g %g %g %g %g %g", 100000.0, 1000000.0, 0.0001, 0.00001, 123456789.0, 0.1, 1e-300);
+    SAME("%G %.3g %.10g %.0g %#.3g %g", 1e-10, 3.14159, 2.0 / 3, 25.0, 1.0, 0.0);
+    SAME("%.17g %.17g %.17g %.17g", 0.1, 1e23, 2.2250738585072011e-308, 1.7976931348623157e308);
+    SAME("[%10.3f] [%-10.3f] [%010.3f] [%+f] [% f] [%+.2e] [%010g]", 3.14159, 3.14159, -3.14159, 2.0, 2.0, -1.0, 2.5);
+    SAME("%f %F %e %E %g %G [%8f] [%-8f] [%08f]", 1.0 / 0.0, -1.0 / 0.0, 1.0 / 0.0, 1.0 / 0.0, -1.0 / 0.0, 1.0 / 0.0,
+         1.0 / 0.0, -1.0 / 0.0, 1.0 / 0.0);
+    SAME("%f %F %e %g", __builtin_nan(""), __builtin_nan(""), -__builtin_nan(""), __builtin_nan(""));
+    SAME("%.0f", 1e308);
+    SAME("%f", 1.7976931348623157e308);
+    SAME("%.30f %.20e", 5e-324, 5e-324);
+    SAME("%.1074f", 5e-324); /* every digit: cut at the buffer, the length compared */
+    SAME("%.400e", 2.2250738585072014e-308);
+    SAME("%.3f %.15f %.16e %.0f %.0f", 9.9995, 0.1, 0.3, 9007199254740993.0, 4503599627370497.5);
+    SAME("%Lf %Le %Lg", 2.5L, 2.5L, 0.0001L);
+    SAME("%5.1f|%-7.2e|%.3G|%s", 99.95, 1e100, 1e-5, "after");
+    {
+        /* A thousand doubles from all over the range - random bits, so
+         * every exponent - each in six ways. */
+        uint64_t state = 0x9E3779B97F4A7C15u;
+        for (int i = 0; i < 1000; i++) {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            double value;
+            memcpy(&value, &state, sizeof value);
+            if (value != value || value - value != 0)
+                continue; /* NaN and infinity have had their turn */
+            SAME("%.17g|%e|%.25e|%g|%.0e", value, value, value, value, value);
+            if (value < 1e300 && value > -1e300)
+                SAME("%.3f", value);
+        }
+    }
+
     /* Where this library says what it does and the host need not
      * agree: checked against what is written down, not the host. */
     {

@@ -264,6 +264,22 @@ pub unsafe extern "C" fn strcspn(s: *const c_char, set: *const c_char) -> usize 
     s.iter().take_while(|byte| !set.contains(byte)).count()
 }
 
+/// `strpbrk(s, set)`: where in `s` the first of the bytes in `set` is,
+/// or null if none of them is: strcspn, as a pointer.
+///
+/// # Safety
+/// Both must point to strings that end in a zero byte.
+#[cfg_attr(not(test), no_mangle)]
+pub unsafe extern "C" fn strpbrk(s: *const c_char, set: *const c_char) -> *mut c_char {
+    // SAFETY: the caller's promise.
+    let (text, set) = unsafe { (bytes(s), bytes(set)) };
+    match text.iter().position(|byte| set.contains(byte)) {
+        // SAFETY: the position is within the string.
+        Some(at) => unsafe { s.add(at).cast_mut() },
+        None => ptr::null_mut(),
+    }
+}
+
 /// `memchr(s, c, n)`: where the byte `c` first is in the `n` bytes at
 /// `s`, or null. Memory, not a string: a zero does not stop it.
 ///
@@ -380,6 +396,17 @@ mod tests {
         }
         // Nothing was written past the last zero.
         assert_eq!(to[8..].iter().map(|&byte| byte as u8).collect::<Vec<_>>(), b"####");
+    }
+
+    #[test]
+    fn strpbrk_finds_the_first_of_any() {
+        let s = c(b"a=b+c\0");
+        unsafe {
+            assert_eq!(strpbrk(s, c(b"+=\0")), at(s, 1));
+            assert_eq!(strpbrk(s, c(b"c\0")), at(s, 4));
+            assert!(strpbrk(s, c(b"xyz\0")).is_null());
+            assert!(strpbrk(s, c(b"\0")).is_null());
+        }
     }
 
     #[test]

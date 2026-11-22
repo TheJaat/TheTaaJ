@@ -34,6 +34,7 @@ use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_void, CStr};
 use core::hint;
+use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 use taaj::files::{FileError, Files, Kind};
@@ -370,6 +371,93 @@ pub extern "C" fn lseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
         }
     })
 }
+
+/// Copies `text` and a zero byte into `buffer` (`size` bytes), or - if
+/// `buffer` is null - into memory from malloc, which the caller frees.
+/// Null, with errno ERANGE, if it does not fit.
+///
+/// # Safety
+/// `buffer` must be null or valid for writing `size` bytes.
+unsafe fn give(text: &str, buffer: *mut c_char, size: usize) -> *mut c_char {
+    let (buffer, size) = if buffer.is_null() {
+        let memory = crate::memory::malloc(text.len() + 1).cast::<c_char>();
+        if memory.is_null() {
+            return ptr::null_mut(); // malloc said why
+        }
+        (memory, text.len() + 1)
+    } else {
+        (buffer, size)
+    };
+    if text.len() + 1 > size {
+        errno.store(ERANGE, Ordering::Relaxed);
+        return ptr::null_mut();
+    }
+    // SAFETY: `size` bytes are writable, and text and its zero fit.
+    unsafe {
+        ptr::copy_nonoverlapping(text.as_ptr().cast::<c_char>(), buffer, text.len());
+        buffer.add(text.len()).write(0);
+    }
+    buffer
+}
+
+/// `getcwd(buffer, size)`: the directory this program was started in,
+/// as a path from the root ("/", "/docs") - names that do not start
+/// with '/' are taken from there. TheTaaJ has no `chdir` for a program
+/// yet, so it never changes. With a null `buffer`, the memory comes
+/// from malloc (as glibc does it).
+///
+/// # Safety
+/// `buffer` must be null or valid for writing `size` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn getcwd(buffer: *mut c_char, size: usize) -> *mut c_char {
+    let directory = with(|state| match state.files.get_or_insert_with(taaj::file_service).as_ref() {
+        Some(files) => format!("/{}", files.directory()),
+        // Not given the files: names mean nothing, and "/" is as true
+        // as anything.
+        None => String::from("/"),
+    });
+    // SAFETY: the caller's promise.
+    unsafe { give(&directory, buffer, size) }
+}
+
+/// `realpath(path, resolved)`: the whole path from the root that `path`
+/// names - ".", ".." and the starting directory worked out - if
+/// something is there. TheTaaJ's files have no symbolic links, so that
+/// is all there is to it. With a null `resolved`, the memory comes from
+/// malloc; otherwise `resolved` must have room for PATH_MAX bytes.
+///
+/// # Safety
+/// `path` must be null or point to a string that ends in a zero byte;
+/// `resolved` null or valid for writing PATH_MAX bytes.
+#[no_mangle]
+pub unsafe extern "C" fn realpath(path: *const c_char, resolved: *mut c_char) -> *mut c_char {
+    // SAFETY: the caller's promise.
+    let name = match unsafe { text(path) } {
+        Ok(name) => name,
+        Err(code) => return fail_null(code),
+    };
+    let whole = with(|state| {
+        let files = state.files.get_or_insert_with(taaj::file_service).as_ref().ok_or(EACCES)?;
+        files.stat(name).map_err(reason)?;
+        Ok(format!("/{}", files.resolve(name)))
+    });
+    match whole {
+        // SAFETY: the caller's promise.
+        Ok(whole) => unsafe { give(&whole, resolved, PATH_MAX) },
+        Err(code) => fail_null(code),
+    }
+}
+
+/// Sets errno and returns null: failing, for functions that return a
+/// pointer.
+fn fail_null(code: c_int) -> *mut c_char {
+    errno.store(code, Ordering::Relaxed);
+    ptr::null_mut()
+}
+
+/// The room a path needs, its zero byte included: limits.h's PATH_MAX
+/// (libc/include/limits.h), which must say the same.
+const PATH_MAX: usize = 4096;
 
 /// `unlink(path)`: removes a file. (A directory is `rmdir`'s to remove.)
 ///

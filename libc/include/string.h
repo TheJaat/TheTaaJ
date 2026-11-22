@@ -48,6 +48,9 @@ char *strstr(const char *in, const char *find);
 size_t strspn(const char *s, const char *set);
 size_t strcspn(const char *s, const char *set);
 
+/* Where in s the first byte that is in set is, or NULL. */
+char *strpbrk(const char *s, const char *set);
+
 /* What an errno value means, in words. The string is the library's. */
 char *strerror(int code);
 

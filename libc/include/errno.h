@@ -30,6 +30,7 @@ extern int errno;
 #define ESPIPE     29   /* a stream has no position to move */
 #define EROFS      30   /* the files are read-only here */
 #define ERANGE     34   /* a number too big to fit */
+#define ENOSYS     38   /* TheTaaJ does not do that */
 #define ENOTEMPTY  39   /* the directory is not empty */
 #define EPIPE      32   /* the connection is closed: nothing more can be written */
 #define ENOTSOCK   88   /* not a socket */

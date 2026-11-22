@@ -4,7 +4,8 @@ KERNEL_DIR = kernel
 
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
-        uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test
+        uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
+        tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
@@ -203,21 +204,35 @@ CWORDS_HOST  = $(C_BIN)/host-cwords
 CPRIMES_HOST = $(C_BIN)/host-cprimes
 CPRIMES_LIMIT = 24000000
 LIBC_A       = $(C_BIN)/libc.a
-LIBC_C       = format stdio fcntl ctype stdlib inet
+LIBC_C       = format stdio fcntl ctype stdlib inet float setjmp time abort fp128
+# The Rust half is built for targets without floating-point registers,
+# and its support library's floating-point helpers (__multf3 and the
+# like, for AArch64's 128-bit long double) and the few maths functions
+# it has (sqrtf, ...) take and return their numbers the way such a
+# target does: in general registers. C here passes them in FP and vector
+# registers. So in libc.a those are made local - invisible to the linker
+# - before the C half joins it: a C program then links with the C
+# library's own (libc/c/fp128.c, float.c), or not at all, never with
+# one that would read its arguments from the wrong registers.
+# The Rust objects also carry their LLVM bitcode (.llvmbc, .llvmcmd), for
+# link-time optimisation by a linker that can do it; no linker here
+# does, and it is most of their size, so it goes too.
+LIBC_RUST_PRIVATE = --remove-section=.llvmbc --remove-section=.llvmcmd \
+                    --regex --localize-symbol='^__[a-z]*tf[a-z]*[0-9]?$$' \
+                    --localize-symbol='^(sqrt|rint|cbrt|hypot|fmin|fmax|fma|floor|ceil|trunc|round|exp|exp2|log|log2|log10|pow|sin|cos|tan|atan|atan2|fabs|copysign|fmod|ldexp|frexp|scalbn)[fl]?$$'
 # Freestanding: no host headers or libraries, only libc/include and the
-# compiler's own (stddef.h, stdarg.h). General registers only: the
-# kernel does not save FPU or SSE state on a switch yet, so a C program
-# must not use them - float and double are done by library calls
-# (soft float; the functions are in libc.a).
+# compiler's own (stddef.h, stdarg.h). Floating point in the FPU and
+# SSE registers, which the kernel saves for each thread on every switch
+# (journal entry 069).
 TAAJ_CFLAGS  = --target=x86_64-unknown-none-elf -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding \
-               -fno-stack-protector -fno-pic -mno-red-zone -mgeneral-regs-only \
+               -fno-stack-protector -fno-pic -mno-red-zone \
                -nostdlibinc -isystem $(LIBC_DIR)/include
 TAAJ_LDFLAGS = -static -nostdlib --gc-sections -s -T user/user.ld
 ifeq ($(HAVE_CC),yes)
-C_PROGRAMS   = chello cmem cprint cfile cstdio cwords cask cprimes cnet
-ROOT_FILES   = 36
-C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret w i t h spc f i l e s spc c f i l e spc c h e c k ret c f i l e spc c a t spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc n o f i l e spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc w r i t e spc c n o spc x ret w i t h spc f i l e s spc c f i l e spc w r i t e spc c n o t e spc m a d e spc b y spc c ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc l o n g spc shift-dot spc c l o n g ret c f i l e spc c a t spc shift-comma spc l o n g spc shift-dot spc c l o n g 2 ret c f i l e ret c a s k ret a d a ret 4 0 ret x ret 2 ret ctrl-d c a s k spc o n e ret f i r s t ret e c h o spc a f t e r ret e c h o spc a d a spc shift-dot spc w h o ret c a s k spc o n e spc shift-comma spc w h o ret c a t spc l o n g spc shift-backslash spc c w o r d s spc minus n spc 3 ret w i t h spc r e a d o n l y spc c w o r d s spc minus n spc 2 5 spc c w o r d s spc l o n g spc shift-dot spc c w 1 ret c w o r d s spc minus n spc 5 spc shift-comma spc l o n g spc shift-dot spc c w 2 ret c w o r d s spc l o n g ret c w o r d s spc minus n spc n o n e ret c w o r d s spc minus x ret w i t h spc f i l e s spc c s t d i o spc c h e c k ret c s t d i o spc l i n e s spc w e l c o m e ret c s t d i o spc l i n e s spc shift-comma spc w e l c o m e ret w i t h spc r e a d o n l y spc c s t d i o spc l i n e s spc l o n g spc shift-dot spc c n u m ret w i t h spc f i l e s spc c s t d i o spc c o p y spc l o n g spc c c o p y ret c s t d i o spc o r d e r ret c s t d i o spc e n d spc shift-dot spc c e n d ret c s t d i o spc l o s t spc shift-dot spc c l o s t ret c s t d i o spc e n d ret c s t d i o ret c p r i n t spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c p r i n t spc l o n g spc shift-backslash spc w c ret c p r i n t spc shift-dot spc p o u t ret c m e m ret c m e m spc s o r t spc p e a r spc a p p l e spc f i g spc a p p l e ret c m e m spc h u g e ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret c p r i m e s spc 1 0 0 ret ~ c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret t i m e spc w a i t ret ~~
-EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^files: 48 checks, all passed;^cfile: welcome: this program was not given the files;^cfile: nofile: no such file or directory;^cno: the files are read-only here;^cnote: 10 bytes;^usage: cfile cat;^hello, ada \(typed\);^cask: not a number: x;^total: 42;^one line: first \(typed\);^after\s*$$;^one line: ada \(from a file or another program\);^ +301  300\s*$$;^ +300  line\s*$$;^1200 words, 302 different;^cwords: long: this program was not given the files;^0 words, 0 different;^cwords: -n needs a number from 1 up, not .none.;^usage: cwords \[-n COUNT\];^streams: 52 checks, all passed;^cstdio: welcome: this program was not given the files;^   1  Hello from the host;^ccopy: 4692 bytes;^write was called second - printf was called first\s*$$;^no new line, and still here;^usage: cstdio lines;^printf: 42 -7 ff 0X2A \[   hi\] \[hi   \] \[00042\] x 100.\s*$$;^sizes: 18446744073709551615 -9223372036854775808\s*$$;^printf returned 6\s*$$;^snprintf: wanted 12, kept <hello, >;^argument 2 of 2: two words\s*$$;^puts: a line of its own\s*$$;^fputs and putchar\s*$$;^cprint: 9 lines went to standard output;^cprint: 7 lines went to standard output;^1 line, 1 word, 601 bytes;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes;^cprimes: 25 primes below 100\s*$$;^\[4\] cprimes 24000000;^took [0-9]+\.[0-9][0-9] s; the 4 CPUs worked for [0-9]+\.[0-9][0-9] s in all
+C_PROGRAMS   = chello cmem cprint cfile cstdio cwords cask cprimes cnet cfloat clib
+ROOT_FILES   = 38
+C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret w i t h spc f i l e s spc c f i l e spc c h e c k ret c f i l e spc c a t spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc n o f i l e spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc w r i t e spc c n o spc x ret w i t h spc f i l e s spc c f i l e spc w r i t e spc c n o t e spc m a d e spc b y spc c ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc l o n g spc shift-dot spc c l o n g ret c f i l e spc c a t spc shift-comma spc l o n g spc shift-dot spc c l o n g 2 ret c f i l e ret c a s k ret a d a ret 4 0 ret x ret 2 ret ctrl-d c a s k spc o n e ret f i r s t ret e c h o spc a f t e r ret e c h o spc a d a spc shift-dot spc w h o ret c a s k spc o n e spc shift-comma spc w h o ret c a t spc l o n g spc shift-backslash spc c w o r d s spc minus n spc 3 ret w i t h spc r e a d o n l y spc c w o r d s spc minus n spc 2 5 spc c w o r d s spc l o n g spc shift-dot spc c w 1 ret c w o r d s spc minus n spc 5 spc shift-comma spc l o n g spc shift-dot spc c w 2 ret c w o r d s spc l o n g ret c w o r d s spc minus n spc n o n e ret c w o r d s spc minus x ret w i t h spc f i l e s spc c s t d i o spc c h e c k ret c s t d i o spc l i n e s spc w e l c o m e ret c s t d i o spc l i n e s spc shift-comma spc w e l c o m e ret w i t h spc r e a d o n l y spc c s t d i o spc l i n e s spc l o n g spc shift-dot spc c n u m ret w i t h spc f i l e s spc c s t d i o spc c o p y spc l o n g spc c c o p y ret c s t d i o spc o r d e r ret c s t d i o spc e n d spc shift-dot spc c e n d ret c s t d i o spc l o s t spc shift-dot spc c l o s t ret c s t d i o spc e n d ret c s t d i o ret c p r i n t spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c p r i n t spc l o n g spc shift-backslash spc w c ret c p r i n t spc shift-dot spc p o u t ret c m e m ret c m e m spc s o r t spc p e a r spc a p p l e spc f i g spc a p p l e ret c m e m spc h u g e ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret w i t h spc f i l e s spc c l i b ret c l i b spc a s s e r t ret c p r i m e s spc 1 0 0 ret ~ c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c f l o a t spc 1 spc shift-7 ret c f l o a t spc 2 spc shift-7 ret c f l o a t spc 3 spc shift-7 ret c f l o a t spc 4 spc shift-7 ret t i m e spc w a i t ret ~~
+EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^files: 48 checks, all passed;^cfile: welcome: this program was not given the files;^cfile: nofile: no such file or directory;^cno: the files are read-only here;^cnote: 10 bytes;^usage: cfile cat;^hello, ada \(typed\);^cask: not a number: x;^total: 42;^one line: first \(typed\);^after\s*$$;^one line: ada \(from a file or another program\);^ +301  300\s*$$;^ +300  line\s*$$;^1200 words, 302 different;^cwords: long: this program was not given the files;^0 words, 0 different;^cwords: -n needs a number from 1 up, not .none.;^usage: cwords \[-n COUNT\];^streams: 52 checks, all passed;^cstdio: welcome: this program was not given the files;^   1  Hello from the host;^ccopy: 4692 bytes;^write was called second - printf was called first\s*$$;^no new line, and still here;^usage: cstdio lines;^printf: 42 -7 ff 0X2A \[   hi\] \[hi   \] \[00042\] x 100.\s*$$;^sizes: 18446744073709551615 -9223372036854775808\s*$$;^printf returned 6\s*$$;^snprintf: wanted 12, kept <hello, >;^argument 2 of 2: two words\s*$$;^puts: a line of its own\s*$$;^fputs and putchar\s*$$;^cprint: 9 lines went to standard output;^cprint: 7 lines went to standard output;^1 line, 1 word, 601 bytes;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes;^library: [0-9]+ checks, all passed;^libc/programs/clib.c:[0-9]+: main: assertion failed: number == 2;^clib exited with code 134;^cprimes: 25 primes below 100\s*$$;^\[4\] cprimes 24000000;^cfloat 1: 30000000 rounds, 0 wrong;^cfloat 2: 30000000 rounds, 0 wrong;^cfloat 3: 30000000 rounds, 0 wrong;^cfloat 4: 30000000 rounds, 0 wrong;^took [0-9]+\.[0-9][0-9] s; the 4 CPUs worked for [0-9]+\.[0-9][0-9] s in all
 else
 C_PROGRAMS   =
 ROOT_FILES   = 27
@@ -447,7 +462,7 @@ RUN_DISK_ARGS = -drive file=$(RUN_DISK),format=raw,if=none,id=disk0 -device virt
 # needs nothing from the host. `make run64 RUN_NET=` for a machine
 # without a card.
 RUN_NET      = -netdev user,id=n0 -device virtio-net-pci,netdev=n0
-run-disk: user64 cprogs64 tfstool-rs
+run-disk: user64 cprogs64 tcc64 tfstool-rs
 	@[ -f $(RUN_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_DISK) 4096 > /dev/null && truncate -s 16M $(RUN_DISK) \
 	    && echo "Made a new disk: $(RUN_DISK)"; }
 	@for program in $(DISK_PROGRAMS); do \
@@ -459,6 +474,9 @@ run-disk: user64 cprogs64 tfstool-rs
 	    $(TFSTOOL_RS) put $(RUN_DISK) $$program $(C_BIN)/$$program > /dev/null || exit 1; \
 	done
 	$(call put-site,$(RUN_DISK))
+ifeq ($(HAVE_CC),yes)
+	@TFSTOOL=$(TFSTOOL_RS) tools/put-tcc.sh $(RUN_DISK) $(TCC_X86_DIR) $(LIBC_A)
+endif
 
 # One C program of your own, built and put on that disk (close QEMU
 # first: the disk is its while it runs):
@@ -501,7 +519,9 @@ ifeq ($(HAVE_CC),yes)
 	    clang $(TAAJ_CFLAGS) -c $(LIBC_DIR)/c/$$part.c -o $(C_BIN)/lib/$$part.o || exit 1; \
 	done
 	@cp $(LIBC_RUST_A) $(LIBC_A)
+	@$(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(LIBC_A)
 	@ar rs $(LIBC_A) $(addprefix $(C_BIN)/lib/,$(addsuffix .o,$(LIBC_C)))
+	@python3 -I tools/thin-archive.py $(LLVM_NM) $(LLVM_AR) $(LIBC_A)
 endif
 
 cprogs64: libc64
@@ -701,6 +721,8 @@ libc-test:
 	$(LIBC_DIR)/target/string-test
 	rustc --edition 2021 --test $(LIBC_DIR)/src/errno.rs -o $(LIBC_DIR)/target/errno-test
 	$(LIBC_DIR)/target/errno-test
+	rustc --edition 2021 --test $(LIBC_DIR)/src/number.rs -o $(LIBC_DIR)/target/number-test
+	$(LIBC_DIR)/target/number-test
 ifeq ($(HAVE_CC),yes)
 	@mkdir -p $(LIBC_DIR)/target/host
 	clang $(HOST_CFLAGS) -ffreestanding -nostdlibinc -isystem $(LIBC_DIR)/include $(FORMAT_RENAMED) \
@@ -757,6 +779,8 @@ KERNEL_A64_IMAGE  = $(BUILD_DIR)/aarch64/Image
 # llvm-objcopy, or the newest llvm-objcopy-NN: some systems install it
 # only under a name with its version.
 LLVM_OBJCOPY := $(shell command -v llvm-objcopy || ls /usr/bin/llvm-objcopy-* 2>/dev/null | sort -V | tail -1)
+LLVM_NM      := $(shell command -v llvm-nm || ls /usr/bin/llvm-nm-* 2>/dev/null | sort -V | tail -1)
+LLVM_AR      := $(shell command -v llvm-ar || ls /usr/bin/llvm-ar-* 2>/dev/null | sort -V | tail -1)
 HAVE_A64     := $(shell command -v qemu-system-aarch64 >/dev/null && [ -n "$(LLVM_OBJCOPY)" ] && echo yes)
 
 # The programs the AArch64 kernel embeds: the user/ crate again, for
@@ -776,11 +800,10 @@ user-aarch64:
 C_A64_BIN      = $(BUILD_DIR)/c-aarch64
 LIBC_A64_RUST  = $(LIBC_DIR)/target/$(KERNEL_A64_TARGET)/release/libc.a
 C_A64_PROGRAMS = $(C_PROGRAMS)
-# As TAAJ_CFLAGS. There is no red zone to switch off on this CPU, and
-# "general registers only" here means no floating point or vector
-# registers - which the kernel leaves switched off for programs.
+# As TAAJ_CFLAGS. There is no red zone to switch off on this CPU; the
+# floating-point and vector registers are saved per thread here too.
 TAAJ_A64_CFLAGS  = --target=aarch64-unknown-none-elf -std=c11 -O2 -Wall -Wextra -Werror -ffreestanding \
-                   -fno-stack-protector -fno-pic -mgeneral-regs-only \
+                   -fno-stack-protector -fno-pic \
                    -nostdlibinc -isystem $(LIBC_DIR)/include
 # The linker would otherwise line segments up for 64 KiB pages, which
 # some AArch64 systems use: 60 KiB of padding in every file.
@@ -793,7 +816,9 @@ ifeq ($(HAVE_CC),yes)
 	    clang $(TAAJ_A64_CFLAGS) -c $(LIBC_DIR)/c/$$part.c -o $(C_A64_BIN)/lib/$$part.o || exit 1; \
 	done
 	@cp $(LIBC_A64_RUST) $(C_A64_BIN)/libc.a
+	@$(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(C_A64_BIN)/libc.a
 	@ar rs $(C_A64_BIN)/libc.a $(addprefix $(C_A64_BIN)/lib/,$(addsuffix .o,$(LIBC_C)))
+	@python3 -I tools/thin-archive.py $(LLVM_NM) $(LLVM_AR) $(C_A64_BIN)/libc.a
 	@for program in $(C_A64_PROGRAMS); do \
 	    echo "  CC      $$program.c (AArch64)"; \
 	    clang $(TAAJ_A64_CFLAGS) -c $(LIBC_DIR)/programs/$$program.c -o $(C_A64_BIN)/$$program.o || exit 1; \
@@ -820,7 +845,7 @@ aarch64-test-disk: user-aarch64 cprogs-aarch64 tfstool-rs
 # TaajFS volume kept from one run to the next, its programs replaced
 # with the ones just built.
 RUN_A64_DISK = $(BUILD_DIR)/aarch64/taaj-disk.img
-run-aarch64-disk: user-aarch64 cprogs-aarch64 tfstool-rs
+run-aarch64-disk: user-aarch64 cprogs-aarch64 tcc-aarch64 tfstool-rs
 	@mkdir -p $(BUILD_DIR)/aarch64
 	@[ -f $(RUN_A64_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_A64_DISK) 4096 > /dev/null && truncate -s 16M $(RUN_A64_DISK) \
 	    && printf 'Hello from the host\n' > $(RUN_A64_DISK).welcome && $(TFSTOOL_RS) put $(RUN_A64_DISK) welcome $(RUN_A64_DISK).welcome > /dev/null \
@@ -834,6 +859,9 @@ run-aarch64-disk: user-aarch64 cprogs-aarch64 tfstool-rs
 	    $(TFSTOOL_RS) put $(RUN_A64_DISK) $$program $(C_A64_BIN)/$$program > /dev/null || exit 1; \
 	done
 	$(call put-site,$(RUN_A64_DISK))
+ifeq ($(HAVE_CC),yes)
+	@TFSTOOL=$(TFSTOOL_RS) tools/put-tcc.sh $(RUN_A64_DISK) $(TCC_A64_DIR) $(C_A64_BIN)/libc.a
+endif
 
 # The serial port is this terminal: what you type goes to the shell.
 # Ctrl+A, then X, leaves QEMU. RUN_A64 adds QEMU options:
@@ -1103,6 +1131,49 @@ else
 	@echo "qemu-system-aarch64 or llvm-objcopy not found: the AArch64 boots are not run"
 endif
 
+# TCC, the Tiny C Compiler (ports/tcc, journal entry 069): for each CPU
+# a cross compiler that runs here, and the tcc that runs on TheTaaJ,
+# compiled by clang and linked with that CPU's libc.a. tools/build-tcc.sh
+# says what is built where; tools/put-tcc.sh puts it on a disk.
+TCC_X86_DIR  = $(BUILD_DIR)/tcc/x86_64
+TCC_A64_DIR  = $(BUILD_DIR)/tcc/aarch64
+TCC64_LOG    = $(BUILD_DIR)/tcc64.log
+TCC_A64_LOG  = $(BUILD_DIR)/aarch64/tcc.log
+
+tcc64: libc64
+ifeq ($(HAVE_CC),yes)
+	@tools/build-tcc.sh x86_64 $(TCC_X86_DIR) $(LIBC_A) "$(TAAJ_CFLAGS)" "$(TAAJ_LDFLAGS)"
+else
+	@echo "Clang or lld not found: no tcc (sudo apt install clang lld)"
+endif
+
+tcc-aarch64: cprogs-aarch64
+ifeq ($(HAVE_CC),yes)
+	@tools/build-tcc.sh aarch64 $(TCC_A64_DIR) $(C_A64_BIN)/libc.a "$(TAAJ_A64_CFLAGS)" "$(TAAJ_A64_LDFLAGS)"
+else
+	@echo "Clang or lld not found: no tcc for AArch64 (sudo apt install clang lld)"
+endif
+
+# tcc on TheTaaJ compiles three programs there, which run there; then
+# what it wrote is compared, byte for byte, with what the cross compiler
+# writes from the same sources.
+tcc64-test: iso64 tcc64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/tcc-test.sh x86_64 $(ISO64_IMG) $(TCC64_LOG).disk $(TCC64_LOG) $(TCC_X86_DIR) $(LIBC_A)
+	@echo "tcc64-test passed"
+else
+	@echo "FAIL: tcc needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+
+aarch64-tcc-test: kernel-aarch64 tcc-aarch64 tfstool-rs
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/tcc-test.sh aarch64 $(KERNEL_A64_IMAGE) $(TCC_A64_LOG).disk $(TCC_A64_LOG) $(TCC_A64_DIR) $(C_A64_BIN)/libc.a
+	@echo "aarch64-tcc-test passed"
+else
+	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 tcc boot is not run"
+endif
+
 # Every layer: host unit tests, a normal boot (BIOS and UEFI) with its
 # self-tests, the fault boots, and the AArch64 kernel.
 #
@@ -1119,14 +1190,14 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 7
-TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test
+TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test tcc64-test aarch64-tcc-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared
 	@$(MAKE) --no-print-directory -j$(TEST_JOBS) --output-sync=target test64-parts
 	@echo "test64: all passed"
 
-test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64 aarch64-esp
+test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64 aarch64-esp tcc64 tcc-aarch64
 
 test64-parts: $(TEST64_PARTS)
 

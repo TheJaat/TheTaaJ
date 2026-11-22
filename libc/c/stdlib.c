@@ -112,6 +112,18 @@ unsigned long strtoul(const char *text, char **end, int base)
     return negative ? 0 - value : value;
 }
 
+/* long long is the same size as long on both of TheTaaJ's machines,
+ * so these are strtol and strtoul under the other names. */
+long long strtoll(const char *text, char **end, int base)
+{
+    return strtol(text, end, base);
+}
+
+unsigned long long strtoull(const char *text, char **end, int base)
+{
+    return strtoul(text, end, base);
+}
+
 /* The two that cannot say they failed. Use strtol. */
 long atol(const char *text)
 {

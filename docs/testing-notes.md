@@ -1888,3 +1888,85 @@ cd gui && cargo test           # 38 tests, 16 of them the editor's (gui::text)
 ```
 
 Automated: `make test64`
+
+---
+
+## 069 · A C compiler on TheTaaJ
+
+[The entry](journal/069-tcc.md)
+
+**1. The PC: compile a C program on TheTaaJ**
+
+`make run64` now puts tcc, its headers and libc.a on the run disk. Put a C source on it first, with QEMU closed (the disk exists after the first `make run64`):
+
+```
+make run-disk
+tools/tfstool-rs/target/release/tfstool put build/taaj-disk.img chello.c libc/programs/chello.c
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `ls lib` | `libc.a` (about 208,000 bytes) and `tcc/` |
+| `ls lib/tcc` | `include/` and `libtcc1.a` |
+| `tcc chello.c -o mine` | nothing printed; in the log `[registry] shell gave tcc: files` and `"tcc" exited with code 0` |
+| `mine one two` | `Hello from C`, `argc 3`, `argv[1] one`, `argv[2] two` |
+| `mine float` | its lines, then `7.0 / 2 * 4 = 14` |
+| `ls` | `mine`, a new file of about 110 KB |
+| `write bad.c oops` | `bad.c: 5 bytes` (`oops` and a newline) |
+| `tcc bad.c` | `bad.c:2: warning: type defaults to int`, `bad.c:2: error: ';' expected (got '<eof>')`, and `tcc exited with code 1` |
+
+**2. Write a program in the editor and compile it**
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `edit hi.c` | the editor's window |
+| `#include <stdio.h>`, Enter, `int main(void) { printf("%.3f\n", 1.0 / 8); return 0; }`, Ctrl+S, Ctrl+Q | saved, and the shell again |
+| `tcc hi.c -o hi` | nothing printed |
+| `hi` | `0.125` |
+
+**3. AArch64**
+
+Close any AArch64 QEMU first: `build/aarch64/taaj-disk.img` is the disk `make run-aarch64` uses.
+
+```
+make run-aarch64-disk
+tools/tfstool-rs/target/release/tfstool put build/aarch64/taaj-disk.img chello.c libc/programs/chello.c
+make run-aarch64
+```
+
+The same as part 1, typed at the terminal; `ls lib` shows libc.a at about 239,000 bytes, and `mine` is about 125 KB.
+
+**4. On the host**
+
+```
+make libc-test
+build/tcc/x86_64/cross/taaj-tcc libc/programs/chello.c -o build/mine
+```
+
+| Look for | Meaning |
+|---|---|
+| `format: 2127 checks, all the same as the host's printf` | `%f %e %g` agree with glibc |
+| `test result: ok. 3 passed` (third block) | strtod's helpers |
+| `build/mine`, about 110 KB | the cross compiler: put it on a disk and it runs, the same file tcc on TheTaaJ writes |
+
+**5. The tests by themselves**
+
+```
+make tcc64-test
+make aarch64-tcc-test
+make boot64-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `tcc on TheTaaJ wrote hello, chello2, clib.o and clib2 byte for byte as tcc on the host does` | tcc ran on TheTaaJ, and its output is exactly right |
+| `tcc64-test passed`, `aarch64-tcc-test passed` | all of it, on each machine |
+| `library: 53 checks, all passed` in `build/serial64.log` | the new library parts, built by clang |
+| `cfloat 1: 30000000 rounds, 0 wrong` (and 2, 3, 4) | four programs doing floating point at once, each keeping its own registers |
+
+Automated: make test64

@@ -43,6 +43,7 @@ pub const ENOSPC: c_int = 28;
 pub const ESPIPE: c_int = 29;
 pub const EROFS: c_int = 30;
 pub const ERANGE: c_int = 34;
+pub const ENOSYS: c_int = 38;
 pub const ENOTEMPTY: c_int = 39;
 pub const EPIPE: c_int = 32;
 pub const ENOTSOCK: c_int = 88;
@@ -84,6 +85,7 @@ pub const MESSAGES: &[(c_int, &str)] = &[
     (ESPIPE, "a stream has no position to move\0"),
     (EROFS, "the files are read-only here\0"),
     (ERANGE, "a number too big to fit\0"),
+    (ENOSYS, "TheTaaJ does not do that\0"),
     (ENOTEMPTY, "the directory is not empty\0"),
     (EPIPE, "the connection is closed: nothing more can be written\0"),
     (ENOTSOCK, "not a socket\0"),

@@ -375,6 +375,38 @@ FILE *fopen(const char *path, const char *mode)
     return stream;
 }
 
+FILE *fdopen(int descriptor, const char *mode)
+{
+    unsigned flags;
+    if (parse_mode(mode, &flags) < 0) {
+        errno = EINVAL;
+        return NULL;
+    }
+    FILE *stream = malloc(sizeof *stream + BUFSIZ);
+    if (stream == NULL)
+        return NULL;
+    memset(stream, 0, sizeof *stream);
+    stream->descriptor = descriptor;
+    stream->flags = flags | ALLOCATED;
+    stream->own = (unsigned char *)(stream + 1);
+    stream->own_size = BUFSIZ;
+    stream->buffer = stream->own;
+    stream->size = stream->own_size;
+    stream->pushed = EOF;
+    stream->following = opened;
+    opened = stream;
+    return stream;
+}
+
+/* What assert says when its condition is false, before it ends the
+ * program the way abort does. Here, beside fprintf, to say it with. */
+_Noreturn void __taaj_assert_failed(const char *condition, const char *file, int line, const char *function)
+{
+    fprintf(stderr, "%s:%d: %s: assertion failed: %s\n", file, line, function, condition);
+    fflush(stderr);
+    abort();
+}
+
 int fclose(FILE *stream)
 {
     int result = flush_waiting(stream) < 0 ? EOF : 0;

@@ -80,6 +80,11 @@ extern FILE *stderr;
  * (`with files`, or `with readonly` to read). */
 FILE *fopen(const char *path, const char *mode);
 
+/* A stream for a descriptor that is already open, with a mode as
+ * fopen's (which must suit how the descriptor was opened; it is not
+ * checked). fclose closes the descriptor too. */
+FILE *fdopen(int descriptor, const char *mode);
+
 /* Sends what waits, and gives the stream up. 0, or EOF if what waited
  * could not be written: for a file being written, this is the call
  * whose answer says whether the file is whole. */

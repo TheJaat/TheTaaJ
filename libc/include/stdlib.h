@@ -35,6 +35,35 @@ void free(void *block);
  * is, and sets errno to ERANGE. */
 long strtol(const char *text, char **end, int base);
 unsigned long strtoul(const char *text, char **end, int base);
+/* The same for long long, which here is the same size as long. */
+long long strtoll(const char *text, char **end, int base);
+unsigned long long strtoull(const char *text, char **end, int base);
+
+/* Text into a floating-point number: spaces, an optional sign, then
+ * digits with at most one point, then an exponent (e or E, a sign,
+ * digits) if one is there - or inf, infinity, nan, in any case. The
+ * nearest number of the type, correctly rounded. Hexadecimal ("0x1p3")
+ * is not read. *end and ERANGE as for strtol; ERANGE also when the
+ * number is too small and comes out 0. strtold is the nearest double,
+ * made a long double. */
+double strtod(const char *text, char **end);
+float strtof(const char *text, char **end);
+long double strtold(const char *text, char **end);
+double atof(const char *text);
+
+/* A variable of the program's environment. TheTaaJ programs have no
+ * environment - what they are given comes as handles and arguments -
+ * so this is always NULL. */
+char *getenv(const char *name);
+
+/* The whole path from the root that path names, if something is there:
+ * into resolved (PATH_MAX bytes), or - for NULL - into memory from
+ * malloc, for the caller to free. NULL, with errno, if nothing is. */
+char *realpath(const char *path, char *resolved);
+
+/* Ends the program at once, with code 134 (what a shell shows for a
+ * program killed by SIGABRT): nothing waiting in streams is written. */
+_Noreturn void abort(void);
 
 /* The same in base ten, with no way of saying it failed. */
 int atoi(const char *text);

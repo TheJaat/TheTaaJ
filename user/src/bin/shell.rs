@@ -104,8 +104,9 @@ const TYPED_AHEAD_MAX: usize = 256;
 /// that job takes. These read; they get the channel that cannot change
 /// anything.
 const LOOK_PROGRAMS: &[&str] = &["ls", "cat", "wc"];
-/// And these change files.
-const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp"];
+/// And these change files - the C compiler too, which reads sources,
+/// headers and libraries and writes what it makes of them.
+const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp", "tcc"];
 /// The one program given the network card: the check of its driver.
 const CARD_PROGRAMS: &[&str] = &["niccheck"];
 /// And these are given the network.

@@ -45,4 +45,13 @@ int isatty(int fd);
 /* Ends the program at once. */
 _Noreturn void _exit(int code);
 
+/* The directory the program was started in, as a path from the root,
+ * into buffer (size bytes) - or, for NULL, into memory from malloc.
+ * NULL, with errno ERANGE, if it does not fit. */
+char *getcwd(char *buffer, size_t size);
+
+/* Replaces the program with another. TheTaaJ starts programs as new
+ * processes and never replaces one: this always fails (ENOSYS). */
+int execvp(const char *file, char *const argv[]);
+
 #endif
