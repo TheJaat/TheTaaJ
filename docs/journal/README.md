@@ -72,7 +72,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 062 | [A network card: a driver for the virtio card on both machines, Ethernet frames between programs in one or two messages, who waits for whom, and a test with a second computer - a program on the host - on the other end of the cable](062-a-network-card.md) | written | `6b341d7` (TheKernel `7997f4d`) |
 | 063 | [On the network: the protocols (Ethernet, ARP, IPv4, ICMP, UDP) as a crate with no machine in it, a network service that gives programs ping and UDP ports, the card shared by frame type, and tests against a router made by hand and QEMU's own network](063-on-the-network.md) | written | `62c30a2` (TheKernel `04a41ab`) |
 | 064 | [Connections: TCP as a connection with no machine in it, tested over a simulated network that loses, doubles and delays; each connection a channel to its program, with the program's speed carried back as TCP's window; and the Berkeley socket calls for C](064-connections.md) | written | `6c756e4` (TheKernel `b92f307`) |
-| 065 | [A page from TheTaaJ: a web server on the disk, with the HTTP parser as a module of the `net` crate with no machine in it; it is given the network and the files to read only, and serves a page that `curl` and a browser on the host fetch](065-a-page-from-taaj.md) | written | this step |
+| 065 | [A page from TheTaaJ: a web server on the disk, with the HTTP parser as a module of the `net` crate with no machine in it; it is given the network and the files to read only, and serves a page that `curl` and a browser on the host fetch](065-a-page-from-taaj.md) | written | `9b98da9` (TheKernel `205957c`) |
 
 ## How to run what the entries describe
 
