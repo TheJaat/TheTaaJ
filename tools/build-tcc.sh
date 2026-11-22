@@ -85,9 +85,13 @@ ${HOST_CC:-cc} -O2 -w -D$TARGET -I"$OUT/cross" "$SRC/tcc.c" -o "$OUT/cross/taaj-
 
 rm -rf "$OUT/lib/tcc/include" "$OUT/helpers"/*.o
 cp -r "$SRC/include" "$OUT/lib/tcc/include"
+# Each helper is compiled from its own directory, by its bare name: the
+# name given is written into the object (its file symbol), and tcc on
+# TheTaaJ, rebuilding this library from /src/tcc/lib, names them the
+# same way. So the two libraries can be compared byte for byte.
 for helper in $HELPERS; do
     echo "  TCC     ports/tcc/lib/$helper ($ARCH)"
-    "$OUT/cross/taaj-tcc" -c "$SRC/lib/$helper" -o "$OUT/helpers/${helper%.*}.o"
+    (cd "$SRC/lib" && "$OUT/cross/taaj-tcc" -c "$helper" -o "$OUT/helpers/${helper%.*}.o")
 done
 rm -f "$OUT/lib/tcc/libtcc1.a"
 "$OUT/cross/taaj-tcc" -ar rcs "$OUT/lib/tcc/libtcc1.a" "$OUT"/helpers/*.o

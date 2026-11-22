@@ -1,0 +1,26 @@
+# tcc-x86_64.taaj - TCC builds itself on TheTaaJ, on the PC. A script
+# for the shell: tools/put-sources.sh puts it on a disk as
+# /src/tcc/build, with TCC's sources in /src/tcc, and
+#
+#     source /src/tcc/build
+#
+# runs it, stopping at the first line that fails.
+#
+# Three generations. /tcc was compiled by clang on the host; it
+# compiles tcc.c into tcc2, TCC compiled by TCC. tcc2 compiles tcc.c
+# again, into tcc3. If tcc2 is right, tcc3 is the same file as tcc2,
+# byte for byte: the same compiler, given the same source, writes the
+# same program, whoever compiled the compiler. tcc3 then compiles TCC's
+# own library, libtcc1.a, which must be the one in /lib/tcc.
+#
+# config.h is the one /tcc itself was built with (tools/build-tcc.sh),
+# with the CPU added. tcc2 and tcc3 are given the files service by
+# `with files`: a program run by its path gets nothing by itself.
+
+cd /src/tcc
+tcc tcc.c -o tcc2
+with files ./tcc2 tcc.c -o tcc3
+cd lib
+with files ../tcc3 -c libtcc1.c va_list.c alloca.S builtin.c stdatomic.c atomic.S
+with files ../tcc3 -ar rcs libtcc1.a alloca.o atomic.o builtin.o libtcc1.o stdatomic.o va_list.o
+echo built: tcc by tcc, tcc by itself, and its library

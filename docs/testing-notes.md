@@ -2038,3 +2038,58 @@ make aarch64-tcc-test
 | `tcc64-test passed`, `aarch64-tcc-test passed` | all of it, both boots, on each machine |
 
 Automated: make test64
+
+---
+
+## 071 · TCC builds itself on TheTaaJ
+
+[The entry](journal/071-tcc-builds-itself.md)
+
+**1. The PC: TCC builds itself**
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `ls /src/tcc` | `build`, `config.h`, `tcc.c`, `tccgen.c` and the rest: 24 files, `lib/`, about 1,277,000 bytes |
+| `time source /src/tcc/build` | the six commands, each after a `+`, then `built: tcc by tcc, tcc by itself, and its library`, then `took` about 13 to 20 s |
+| `ls ..` | the prompt is `taaj:/src/tcc/lib>`; `tcc2` and `tcc3` are both `502425` bytes: the same size, because they are the same file |
+| `cd /` | the prompt is `taaj:/>` |
+
+**2. Use the compiler TCC compiled, then put the old one back**
+
+| Type | You should see |
+|---|---|
+| `mv tcc tcc.clang` | nothing printed: the compiler clang built is set aside |
+| `cp src/tcc/tcc3 tcc` | `tcc: 502425 bytes` |
+| `tcc src/libc/programs/cprimes.c -o p` | nothing printed, after a second or so |
+| `p 1000` | `cprimes: 168 primes below 1000` |
+| `rm tcc` | nothing printed |
+| `mv tcc.clang tcc` | nothing printed: `/tcc` is the one from the host again |
+
+**3. AArch64**
+
+Close any AArch64 QEMU first: `build/aarch64/taaj-disk.img` is the disk `make run-aarch64` uses.
+
+```
+make run-aarch64
+```
+
+The same as parts 1 and 2, typed at the terminal. The build takes about 26 s. The sources are `arm64-*` instead of `x86_64-*` and `i386-*`, and tcc2 and tcc3 are both `598669` bytes.
+
+**4. The tests by themselves**
+
+```
+make tcc64-test
+make aarch64-tcc-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `built: tcc by tcc, tcc by itself, and its library` in `build/tcc64.log` | all three generations were built on TheTaaJ |
+| `tcc on TheTaaJ wrote all 38 files byte for byte as tcc on the host does: …` (36 on AArch64) | tcc2 and tcc3 are the same file and the cross compiler's, and libtcc1.a is the one TheTaaJ was given |
+| `tcc64-test passed`, `aarch64-tcc-test passed` | all of it, on each machine |
+
+Automated: make test64

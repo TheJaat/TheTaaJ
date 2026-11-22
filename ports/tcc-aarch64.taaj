@@ -1,0 +1,13 @@
+# tcc-aarch64.taaj - TCC builds itself on TheTaaJ, on AArch64. The
+# same as tcc-x86_64.taaj, which says how it works; only TCC's library
+# differs. There is no libtcc1.c or va_list.c on AArch64, and the
+# 128-bit long double helpers (lib-arm64.c) are in libc.a already
+# (libc/c/fp128.c).
+
+cd /src/tcc
+tcc tcc.c -o tcc2
+with files ./tcc2 tcc.c -o tcc3
+cd lib
+with files ../tcc3 -c alloca.S builtin.c stdatomic.c atomic.S
+with files ../tcc3 -ar rcs libtcc1.a alloca.o atomic.o builtin.o stdatomic.o
+echo built: tcc by tcc, tcc by itself, and its library

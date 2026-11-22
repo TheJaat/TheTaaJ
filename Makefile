@@ -476,7 +476,7 @@ run-disk: user64 cprogs64 tcc64 tfstool-rs
 	$(call put-site,$(RUN_DISK))
 ifeq ($(HAVE_CC),yes)
 	@TFSTOOL=$(TFSTOOL_RS) tools/put-tcc.sh $(RUN_DISK) $(TCC_X86_DIR) $(LIBC_A)
-	@TFSTOOL=$(TFSTOOL_RS) tools/put-sources.sh $(RUN_DISK)
+	@TFSTOOL=$(TFSTOOL_RS) tools/put-sources.sh $(RUN_DISK) x86_64 $(TCC_X86_DIR)
 endif
 
 # One C program of your own, built and put on that disk (close QEMU
@@ -862,7 +862,7 @@ run-aarch64-disk: user-aarch64 cprogs-aarch64 tcc-aarch64 tfstool-rs
 	$(call put-site,$(RUN_A64_DISK))
 ifeq ($(HAVE_CC),yes)
 	@TFSTOOL=$(TFSTOOL_RS) tools/put-tcc.sh $(RUN_A64_DISK) $(TCC_A64_DIR) $(C_A64_BIN)/libc.a
-	@TFSTOOL=$(TFSTOOL_RS) tools/put-sources.sh $(RUN_A64_DISK)
+	@TFSTOOL=$(TFSTOOL_RS) tools/put-sources.sh $(RUN_A64_DISK) aarch64 $(TCC_A64_DIR)
 endif
 
 # The serial port is this terminal: what you type goes to the shell.
