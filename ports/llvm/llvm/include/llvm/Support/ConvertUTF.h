@@ -220,6 +220,10 @@ class StringRef;
 bool ConvertUTF8toWide(unsigned WideCharWidth, llvm::StringRef Source,
                        char *&ResultPtr, const UTF8 *&ErrorPtr);
 
+// TheTaaJ: a C++ library without wide characters (libc++ built with
+// _LIBCPP_HAS_NO_WIDE_CHARACTERS) has no std::wstring, and these three
+// are for the systems whose own interfaces take wide strings (Windows).
+#if !defined(_LIBCPP_HAS_NO_WIDE_CHARACTERS)
 /**
 * Converts a UTF-8 StringRef to a std::wstring.
 * \return true on success.
@@ -237,6 +241,7 @@ bool ConvertUTF8toWide(const char *Source, std::wstring &Result);
 * \return true on success.
 */
 bool convertWideToUTF8(const std::wstring &Source, std::string &Result);
+#endif
 
 
 /**

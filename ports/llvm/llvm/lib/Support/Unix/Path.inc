@@ -334,6 +334,11 @@ std::string getMainExecutable(const char *argv0, void *MainAddr) {
   char link_path[PATH_MAX];
   if (realpath(DLInfo.dli_fname, link_path))
     return link_path;
+#elif defined(__TAAJ__)
+  // TheTaaJ does not tell a program which file it was started from yet
+  // (its argv[0] is a placeholder), so there is no answer to give.
+  (void)argv0;
+  (void)MainAddr;
 #else
 #error GetMainExecutable is not implemented on this host yet.
 #endif
@@ -504,6 +509,9 @@ static bool is_local_impl(struct STATVFS &Vfs) {
   return false;
 #elif defined(__Fuchsia__)
   // Fuchsia doesn't yet support remote filesystem mounts.
+  return true;
+#elif defined(__TAAJ__)
+  // TheTaaJ: there is one file system, on a disk of the machine's own.
   return true;
 #elif defined(__EMSCRIPTEN__)
   // Emscripten doesn't currently support remote filesystem mounts.

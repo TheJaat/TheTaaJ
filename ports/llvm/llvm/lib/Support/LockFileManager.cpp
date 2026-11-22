@@ -303,8 +303,17 @@ LockFileManager::waitForUnlock(const unsigned MaxSeconds) {
   unsigned long WaitMultiplier = 1;
   unsigned long ElapsedTimeSeconds = 0;
 
+#if defined(_LIBCPP_HAS_NO_RANDOM_DEVICE)
+  // TheTaaJ: no std::random_device without a source of entropy. The
+  // waits only need to differ between processes, not to be
+  // unpredictable: the time and the process's number do that.
+  std::default_random_engine Engine(
+      std::chrono::steady_clock::now().time_since_epoch().count() ^
+      sys::Process::getProcessId());
+#else
   std::random_device Device;
   std::default_random_engine Engine(Device());
+#endif
 
   auto StartTime = std::chrono::steady_clock::now();
 
