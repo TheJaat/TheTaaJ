@@ -313,7 +313,7 @@ impl Store for RamStore {
 mod tests {
     use super::*;
     use crate::protocol::*;
-    use crate::{serve, Access, Store};
+    use crate::{serve, serve_into, Access, Store};
 
     /// Sends a request through encode, serve and the reply's layout -
     /// the whole path a message takes, minus the channel.
@@ -366,6 +366,99 @@ mod tests {
         assert_eq!(look(&mut files, Request::new(ACCESS, "", 0)), (Status::Ok, vec![1]));
         assert_eq!(call(&mut files, Request::new(STALL, "", STALL_MAX)).0, Status::Ok);
         assert_eq!(call(&mut files, Request::new(STALL, "", STALL_MAX + 1)).0, Status::BadRequest);
+    }
+
+    #[test]
+    fn a_whole_file_is_read_into_memory_in_one_exchange() {
+        let mut files = RamStore::new();
+        // Bigger than many READs' worth.
+        let data: Vec<u8> = (0..10_000u32).map(|i| (i * 7 + i / 256) as u8).collect();
+        for (i, piece) in data.chunks(write_max("big")).enumerate() {
+            let at = (i * write_max("big")) as u64;
+            assert_eq!(write(&mut files, "big", at, piece).0, Status::Ok);
+        }
+        let into_with = |files: &mut RamStore, request: Request, into: &mut [u8]| {
+            let mut message = [0u8; MESSAGE_MAX];
+            let length = request.encode(&mut message).expect("fits");
+            let mut reply = [0u8; MESSAGE_MAX];
+            serve_into(files, &message[..length], into, &mut reply).map(|n| reply[..n].to_vec())
+        };
+        // All of it, with room to spare: the count says where it ends.
+        let mut memory = vec![0xAAu8; 12_000];
+        let reply = into_with(&mut files, Request::new(READ_INTO, "big", 0), &mut memory).unwrap();
+        assert_eq!(reply[0], Status::Ok as u8);
+        assert_eq!(u64::from_le_bytes(reply[1..9].try_into().unwrap()), 10_000);
+        assert_eq!(&memory[..10_000], &data[..]);
+        assert!(memory[10_000..].iter().all(|&b| b == 0xAA));
+        // From an offset, to the same offset in the object; and no
+        // further than the object goes.
+        let mut memory = vec![0u8; 8_000];
+        let reply = into_with(&mut files, Request::new(READ_INTO, "big", 5_000), &mut memory).unwrap();
+        assert_eq!(u64::from_le_bytes(reply[1..9].try_into().unwrap()), 3_000);
+        assert_eq!(&memory[5_000..], &data[5_000..8_000]);
+        assert!(memory[..5_000].iter().all(|&b| b == 0));
+        // An offset past the object reads nothing.
+        let reply = into_with(&mut files, Request::new(READ_INTO, "big", 9_000), &mut memory).unwrap();
+        assert_eq!(u64::from_le_bytes(reply[1..9].try_into().unwrap()), 0);
+        // A file that is not there is said so, with no count.
+        let reply = into_with(&mut files, Request::new(READ_INTO, "nothing", 0), &mut memory).unwrap();
+        assert_eq!(reply, vec![Status::NotFound as u8]);
+        // Only READ_INTO is served this way; and READ_INTO without the
+        // memory, on the ordinary path, is refused.
+        assert_eq!(into_with(&mut files, Request::new(READ, "big", 0), &mut memory), None);
+        assert_eq!(call(&mut files, Request::new(READ_INTO, "big", 0)).0, Status::BadRequest);
+    }
+
+    /// A store of one file, "huge", of sevens: bigger than a RamStore
+    /// may hold, for the READ_INTO limit.
+    struct Sevens(usize);
+
+    impl Store for Sevens {
+        fn list(&mut self, _: &str, _: usize, _: &mut dyn FnMut(&str, Kind, u64) -> bool) -> Result<(), Status> {
+            Err(Status::BadRequest)
+        }
+        fn stat(&mut self, _: &str) -> Result<(Kind, u64), Status> {
+            Ok((Kind::File, self.0 as u64))
+        }
+        fn make_directory(&mut self, _: &str) -> Result<(), Status> {
+            Err(Status::BadRequest)
+        }
+        fn read(&mut self, _: &str, offset: u64, out: &mut [u8]) -> Result<usize, Status> {
+            let n = out.len().min(self.0.saturating_sub(offset as usize));
+            out[..n].fill(7);
+            Ok(n)
+        }
+        fn write(&mut self, _: &str, _: u64, _: &[u8]) -> Result<u64, Status> {
+            Err(Status::BadRequest)
+        }
+        fn truncate(&mut self, _: &str, _: u64) -> Result<(), Status> {
+            Err(Status::BadRequest)
+        }
+        fn remove(&mut self, _: &str) -> Result<(), Status> {
+            Err(Status::BadRequest)
+        }
+        fn rename(&mut self, _: &str, _: &str) -> Result<(), Status> {
+            Err(Status::BadRequest)
+        }
+    }
+
+    #[test]
+    fn one_read_into_reads_no_more_than_its_limit() {
+        let size = READ_INTO_MAX + 100_000;
+        let mut files = Sevens(size);
+        let mut message = [0u8; MESSAGE_MAX];
+        let mut reply = [0u8; MESSAGE_MAX];
+        let mut memory = vec![0u8; size];
+        let mut count = |offset: u64, memory: &mut [u8]| {
+            let length = Request::new(READ_INTO, "huge", offset).encode(&mut message).unwrap();
+            serve_into(&mut files, &message[..length], memory, &mut reply).unwrap();
+            u64::from_le_bytes(reply[1..9].try_into().unwrap())
+        };
+        // The first exchange stops at the limit; the next reads the rest.
+        assert_eq!(count(0, &mut memory), READ_INTO_MAX as u64);
+        assert_eq!(memory[READ_INTO_MAX], 0);
+        assert_eq!(count(READ_INTO_MAX as u64, &mut memory), 100_000);
+        assert!(memory.iter().all(|&b| b == 7));
     }
 
     fn write(files: &mut RamStore, name: &str, offset: u64, data: &[u8]) -> (Status, Vec<u8>) {

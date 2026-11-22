@@ -5,7 +5,7 @@
 #ifndef _EXP_DATA_H
 #define _EXP_DATA_H
 
-#include <features.h>
+#include "libm.h" /* TheTaaJ: for hidden, which musl gets from <features.h> */
 #include <stdint.h>
 
 #define EXP_TABLE_BITS 7

@@ -384,6 +384,51 @@ pub unsafe extern "C" fn gethostname(name: *mut c_char, size: usize) -> c_int {
     0
 }
 
+/// sys/utsname.h's `struct utsname`: five strings of 65 bytes.
+#[repr(C)]
+pub struct Utsname {
+    sysname: [c_char; 65],
+    nodename: [c_char; 65],
+    release: [c_char; 65],
+    version: [c_char; 65],
+    machine: [c_char; 65],
+}
+
+/// The CPU's name, as `uname -m` says it elsewhere.
+#[cfg(target_arch = "aarch64")]
+const MACHINE: &[u8] = b"aarch64";
+#[cfg(not(target_arch = "aarch64"))]
+const MACHINE: &[u8] = b"x86_64";
+
+/// `uname(out)`: what system this is (see sys/utsname.h). LLVM asks it
+/// for the version of the system it runs on.
+///
+/// # Safety
+/// `out` must be null or point to a writable `struct utsname`.
+#[no_mangle]
+pub unsafe extern "C" fn uname(out: *mut Utsname) -> c_int {
+    if out.is_null() {
+        return crate::descriptors::fail(crate::errno::EFAULT);
+    }
+    fn field(text: &[u8]) -> [c_char; 65] {
+        let mut field = [0; 65];
+        for (to, &from) in field.iter_mut().zip(text) {
+            *to = from as c_char;
+        }
+        field
+    }
+    let name = Utsname {
+        sysname: field(b"TheTaaJ"),
+        nodename: field(b"taaj"),
+        release: field(b"0.6"),
+        version: field(b"TheTaaJ"),
+        machine: field(MACHINE),
+    };
+    // SAFETY: the caller's promise: `out` points to a writable utsname.
+    unsafe { out.write(name) };
+    0
+}
+
 /// sys/resource.h's `struct rlimit`.
 #[repr(C)]
 pub struct Rlimit {

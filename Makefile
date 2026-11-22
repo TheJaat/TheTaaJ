@@ -205,7 +205,17 @@ CWORDS_HOST  = $(C_BIN)/host-cwords
 CPRIMES_HOST = $(C_BIN)/host-cprimes
 CPRIMES_LIMIT = 24000000
 LIBC_A       = $(C_BIN)/libc.a
-LIBC_C       = format stdio fcntl ctype stdlib inet float setjmp time abort fp128 math scan locale atexit pthread emutls signal mmap users
+LIBC_C       = format stdio fcntl ctype stdlib inet float setjmp time abort fp128 math scan locale atexit pthread emutls signal mmap users \
+               $(addprefix libm/,$(LIBM))
+# libc/c/libm: musl's sin, exp, log, pow and the rest (journal entry 074),
+# and floats.c, TheTaaJ's float versions of them. Each its own file, as
+# in musl: they share names for their constants. Compiled with
+# -ffp-contract=off (a*b+c stays two roundings, as musl's error bounds
+# assume) and -Wno-shift-op-parentheses (musl writes x>>64-d, and the
+# files stay as musl has them).
+LIBM         = __math_oflow __math_uflow __math_xflow __math_invalid __math_divzero __rem_pio2_large __rem_pio2 \
+               __sin __cos __tan sin cos tan asin acos atan atan2 __expo2 expm1 exp_data exp exp2 sinh cosh tanh \
+               log_data log log2_data log2 log10 log1p pow_data pow cbrt asinh acosh atanh fma floats
 # The Rust half is built for targets without floating-point registers,
 # and its support library's floating-point helpers (__multf3 and the
 # like, for AArch64's 128-bit long double) and the few maths functions
@@ -458,13 +468,16 @@ endef
 # Made on first use; the programs on it are replaced with the ones just
 # built every time.
 RUN_DISK     = $(BUILD_DIR)/taaj-disk.img
+# How many 4 KiB blocks a new run disk has: 4096 is 16 MiB. The LLVM
+# disk (llvm-put) has more.
+RUN_DISK_BLOCKS = 4096
 RUN_DISK_ARGS = -drive file=$(RUN_DISK),format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0
 # And the network card: on QEMU's own little network ("user"), which
 # needs nothing from the host. `make run64 RUN_NET=` for a machine
 # without a card.
 RUN_NET      = -netdev user,id=n0 -device virtio-net-pci,netdev=n0
 run-disk: user64 cprogs64 tcc64 cxx64 tfstool-rs
-	@[ -f $(RUN_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_DISK) 4096 > /dev/null && truncate -s 16M $(RUN_DISK) \
+	@[ -f $(RUN_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_DISK) $(RUN_DISK_BLOCKS) > /dev/null && truncate -s $$(($(RUN_DISK_BLOCKS) * 4096)) $(RUN_DISK) \
 	    && echo "Made a new disk: $(RUN_DISK)"; }
 	@for program in $(DISK_PROGRAMS); do \
 	    $(TFSTOOL_RS) rm $(RUN_DISK) $$program > /dev/null 2>&1; \
@@ -519,10 +532,10 @@ libc64:
 	@echo "Building the C library..."
 	cd $(LIBC_DIR) && cargo build --release
 ifeq ($(HAVE_CC),yes)
-	@mkdir -p $(C_BIN)/lib
+	@mkdir -p $(C_BIN)/lib/libm
 	@for part in $(LIBC_C); do \
 	    echo "  CC      libc/c/$$part.c"; \
-	    clang $(TAAJ_CFLAGS) -c $(LIBC_DIR)/c/$$part.c -o $(C_BIN)/lib/$$part.o || exit 1; \
+	    clang $(TAAJ_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -c $(LIBC_DIR)/c/$$part.c -o $(C_BIN)/lib/$$part.o || exit 1; \
 	done
 	@cp $(LIBC_RUST_A) $(LIBC_A)
 	@$(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(LIBC_A)
@@ -778,6 +791,18 @@ ifeq ($(HAVE_CC),yes)
 	clang -fsanitize=address,undefined $(LIBC_DIR)/target/host/math.o $(LIBC_DIR)/target/host/math_test.o -lm \
 	    -o $(LIBC_DIR)/target/host/math-test
 	$(LIBC_DIR)/target/host/math-test
+	@for part in math $(addprefix libm/,$(LIBM)); do \
+	    clang $(HOST_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -ffreestanding -nostdlibinc -isystem $(LIBC_DIR)/include \
+	        -c $(LIBC_DIR)/c/$$part.c -o $(LIBC_DIR)/target/host/libm-$$(basename $$part).o || exit 1; \
+	done
+	ld -r $(addprefix $(LIBC_DIR)/target/host/libm-,$(addsuffix .o,math $(LIBM))) -o $(LIBC_DIR)/target/host/libm-all.o
+	$(LLVM_NM) --defined-only --extern-only -j $(LIBC_DIR)/target/host/libm-all.o | grep -v '^__\(asan\|ubsan\|odr\)' \
+	    | awk '{print $$1, "taaj_" $$1}' > $(LIBC_DIR)/target/host/libm_names
+	objcopy --redefine-syms=$(LIBC_DIR)/target/host/libm_names $(LIBC_DIR)/target/host/libm-all.o
+	clang $(HOST_CFLAGS) -c $(LIBC_DIR)/c/libm_test.c -o $(LIBC_DIR)/target/host/libm_test.o
+	clang -fsanitize=address,undefined $(LIBC_DIR)/target/host/libm-all.o $(LIBC_DIR)/target/host/libm_test.o -lm \
+	    -o $(LIBC_DIR)/target/host/libm-test
+	$(LIBC_DIR)/target/host/libm-test
 	clang $(HOST_CFLAGS) -ffreestanding -nostdlibinc -isystem $(LIBC_DIR)/include -Dsscanf=taaj_sscanf -Dvsscanf=taaj_vsscanf \
 	    -c $(LIBC_DIR)/c/scan.c -o $(LIBC_DIR)/target/host/scan.o
 	clang $(HOST_CFLAGS) -Wno-format -c $(LIBC_DIR)/c/scan_test.c -o $(LIBC_DIR)/target/host/scan_test.o
@@ -838,9 +863,9 @@ TAAJ_A64_LDFLAGS = $(TAAJ_LDFLAGS) -z max-page-size=4096
 cprogs-aarch64:
 ifeq ($(HAVE_CC),yes)
 	cd $(LIBC_DIR) && cargo build --release --target $(KERNEL_A64_TARGET)
-	@mkdir -p $(C_A64_BIN)/lib
+	@mkdir -p $(C_A64_BIN)/lib/libm
 	@for part in $(LIBC_C); do \
-	    clang $(TAAJ_A64_CFLAGS) -c $(LIBC_DIR)/c/$$part.c -o $(C_A64_BIN)/lib/$$part.o || exit 1; \
+	    clang $(TAAJ_A64_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -c $(LIBC_DIR)/c/$$part.c -o $(C_A64_BIN)/lib/$$part.o || exit 1; \
 	done
 	@cp $(LIBC_A64_RUST) $(C_A64_BIN)/libc.a
 	@$(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(C_A64_BIN)/libc.a
@@ -874,7 +899,7 @@ aarch64-test-disk: user-aarch64 cprogs-aarch64 tfstool-rs
 RUN_A64_DISK = $(BUILD_DIR)/aarch64/taaj-disk.img
 run-aarch64-disk: user-aarch64 cprogs-aarch64 tcc-aarch64 cxx-aarch64 tfstool-rs
 	@mkdir -p $(BUILD_DIR)/aarch64
-	@[ -f $(RUN_A64_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_A64_DISK) 4096 > /dev/null && truncate -s 16M $(RUN_A64_DISK) \
+	@[ -f $(RUN_A64_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_A64_DISK) $(RUN_DISK_BLOCKS) > /dev/null && truncate -s $$(($(RUN_DISK_BLOCKS) * 4096)) $(RUN_A64_DISK) \
 	    && printf 'Hello from the host\n' > $(RUN_A64_DISK).welcome && $(TFSTOOL_RS) put $(RUN_A64_DISK) welcome $(RUN_A64_DISK).welcome > /dev/null \
 	    && echo "Made a new disk: $(RUN_A64_DISK)"; }
 	@for program in $(DISK_PROGRAMS); do \
@@ -1303,7 +1328,7 @@ endif
 # built everywhere; and -w, since the warnings are upstream's to mind.
 LLVM_X86_DIR  = $(BUILD_DIR)/llvm/x86_64
 LLVM_A64_DIR  = $(BUILD_DIR)/llvm/aarch64
-LLVM_TOOLS    = llvm-tblgen
+LLVM_TOOLS    = llvm-tblgen llvm-mc llc
 LLVM_TBLGEN  := $(shell command -v llvm-tblgen || ls /usr/bin/llvm-tblgen-* /usr/lib/llvm-*/bin/llvm-tblgen 2>/dev/null | sort -V | tail -1)
 LLVM64_LOG    = $(BUILD_DIR)/llvm64.log
 LLVM_A64_LOG  = $(BUILD_DIR)/aarch64/llvm.log
@@ -1336,15 +1361,22 @@ else
 	@echo "Clang or lld not found: no LLVM for AArch64 (sudo apt install clang lld)"
 endif
 
-# llvm-tblgen and the .td files it reads, on the disk `make run64` (or
-# `make run-aarch64`) attaches, to try by hand. Not part of run-disk:
-# the first LLVM build takes minutes, and the program and the files
-# take 5.5 MB of the disk's 16 MiB. Close QEMU first.
-llvm-put: llvm64 run-disk
-	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) sh tools/put-llvm.sh $(RUN_DISK) $(LLVM_X86_DIR)/bin
+# LLVM's tools - llvm-tblgen, llc, llvm-mc - and work for them, on a
+# run disk of their own, to try by hand: they take 49 MB, three times
+# the usual run disk. The disk is the usual one in every other way (it
+# is made by run-disk), and big: 32768 blocks, 128 MiB. Boot it with
+#   make run64 RUN_DISK=build/llvm-disk.img
+#   make run-aarch64 RUN_A64_DISK=build/aarch64/llvm-disk.img
+# Not part of run-disk: the first LLVM build takes many minutes.
+LLVM_DISK     = $(BUILD_DIR)/llvm-disk.img
+LLVM_A64_DISK = $(BUILD_DIR)/aarch64/llvm-disk.img
+llvm-put: llvm64
+	@$(MAKE) --no-print-directory run-disk RUN_DISK=$(LLVM_DISK) RUN_DISK_BLOCKS=32768
+	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) sh tools/put-llvm.sh $(LLVM_DISK) $(LLVM_X86_DIR)/bin
 
-llvm-put-aarch64: llvm-aarch64 run-aarch64-disk
-	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) sh tools/put-llvm.sh $(RUN_A64_DISK) $(LLVM_A64_DIR)/bin
+llvm-put-aarch64: llvm-aarch64
+	@$(MAKE) --no-print-directory run-aarch64-disk RUN_A64_DISK=$(LLVM_A64_DISK) RUN_DISK_BLOCKS=32768
+	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) sh tools/put-llvm.sh $(LLVM_A64_DISK) $(LLVM_A64_DIR)/bin
 
 # llvm-tblgen on TheTaaJ, writing what LLVM's own build writes first -
 # the value types and the intrinsics - compared byte for byte with the

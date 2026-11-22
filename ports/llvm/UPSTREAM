@@ -17,9 +17,13 @@ of).
 
 Of LLVM (llvm/): include/, lib/ with only the two targets TheTaaJ runs
 on (lib/Target/X86 and lib/Target/AArch64, and the files common to all
-targets in lib/Target), utils/TableGen (the source of llvm-tblgen) and
-the licence. Not its tests (780 MB), documentation, examples, tools or
-the other targets. Clang would go beside it, as clang/.
+targets in lib/Target), utils/TableGen (the source of llvm-tblgen), the
+two tools built so far (tools/llc and tools/llvm-mc) and the licence.
+Of the other targets only RISC-V's .td files (lib/Target/RISCV, no C++):
+the TargetParser library, which every LLVM program has in it, is
+written by llvm-tblgen from RISCV.td whatever the targets. Not LLVM's
+tests (780 MB), documentation, examples, the other tools or the other
+targets. Clang would go beside it, as clang/.
 
 LLVM is not built with CMake here but by tools/build-llvm.py, which
 reads the same CMakeLists.txt for its lists of sources. The settings

@@ -10,9 +10,13 @@
  *
  * each for double and float (the float ones go through double, which is
  * exact for all of these: a float fits in a double with room to spare)
- * and ldexpl and fabsl for long double. The functions that are
- * approximations - sin, cos, exp, log, pow and the rest - are declared
- * but not written yet: a program that calls one does not link.
+ * and ldexpl and fabsl for long double. The approximations, from musl
+ * (libc/c/libm): sin, cos, tan, asin, acos, atan, atan2, sinh, cosh,
+ * tanh, asinh, acosh, atanh, exp, exp2, expm1, log, log2, log10, log1p,
+ * pow and cbrt, for double and float; each within one unit in the last
+ * place of the true value. erf, erfc, tgamma, lgamma and the long double
+ * versions are declared but not there: a program that calls one does
+ * not link.
  *
  * The classification macros (isnan, fpclassify, signbit, ...) are the
  * compiler's own built-ins with clang; TCC has none, and calls the
@@ -177,7 +181,8 @@ double fma(double x, double y, double z);
 float fmaf(float x, float y, float z);
 long double fmal(long double x, long double y, long double z);
 
-/* Approximations: declared, not written yet. */
+/* Approximations (libc/c/libm). The last four, and every long double
+ * one, are declared only. */
 _TAAJ_MATH1(sin)
 _TAAJ_MATH1(cos)
 _TAAJ_MATH1(tan)

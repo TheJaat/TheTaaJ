@@ -92,12 +92,31 @@ impl Files {
     /// One exchange. Returns the reply's payload length (in `reply`
     /// after the status byte).
     fn call(&self, request: Request, reply: &mut [u8; MESSAGE_MAX]) -> Result<usize, FileError> {
+        self.call_with(request, &[], reply)
+    }
+
+    /// One exchange, with `more` handles (at most one) sent after the
+    /// reply channel. They are the service's once sent; if sending fails
+    /// they are closed here.
+    fn call_with(&self, request: Request, more: &[Handle], reply: &mut [u8; MESSAGE_MAX]) -> Result<usize, FileError> {
         let mut message = [0u8; MESSAGE_MAX];
-        let length = request.encode(&mut message).ok_or(FileError::Refused(Status::BadName))?;
-        let (answer, theirs) = crate::channel_create().map_err(FileError::Unreachable)?;
-        let sent = crate::send(self.requests, &message[..length], &[theirs]);
+        let Some(length) = request.encode(&mut message) else {
+            close_all(more);
+            return Err(FileError::Refused(Status::BadName));
+        };
+        let (answer, theirs) = match crate::channel_create() {
+            Ok(pair) => pair,
+            Err(error) => {
+                close_all(more);
+                return Err(FileError::Unreachable(error));
+            }
+        };
+        let mut handles = [theirs, 0];
+        handles[1..=more.len()].copy_from_slice(more);
+        let sent = crate::send(self.requests, &message[..length], &handles[..=more.len()]);
         if sent.is_err() {
-            let _ = crate::close(theirs); // not sent: still ours
+            // not sent: still ours
+            close_all(&handles[..=more.len()]);
         }
         // Giving up closes our end: an answer that comes later after all
         // finds no one, and the service's send fails - harmlessly.
@@ -145,6 +164,32 @@ impl Files {
             }
             offset += n as u64;
             if n < protocol::READ_MAX {
+                return Ok(offset);
+            }
+        }
+    }
+
+    /// The file, into the memory object `memory`, each byte at its own
+    /// offset: as much as fits, protocol::READ_INTO_MAX bytes an
+    /// exchange (protocol::READ_INTO). The object is lent to the service
+    /// for each: a duplicate goes, and the service closes it. Returns
+    /// how many bytes were read - the file's size, if it fits.
+    pub fn read_into(&self, name: &str, memory: Handle) -> Result<u64, FileError> {
+        let name = &self.path(name);
+        let size = crate::memory_size(memory).map_err(FileError::Unreachable)?;
+        let mut offset = 0u64;
+        loop {
+            let lent = crate::duplicate(memory, crate::rights::READ | crate::rights::WRITE | crate::rights::TRANSFER)
+                .map_err(FileError::Unreachable)?;
+            let mut reply = [0u8; MESSAGE_MAX];
+            let n = self.call_with(Request::new(protocol::READ_INTO, name, offset), &[lent], &mut reply)?;
+            if n < 8 {
+                return Err(FileError::Refused(Status::BadRequest));
+            }
+            let got = u64::from_le_bytes(reply[1..9].try_into().expect("8 bytes"));
+            offset += got;
+            // Less than a whole piece: the file (or the object) ends.
+            if got < protocol::READ_INTO_MAX as u64 || offset >= size {
                 return Ok(offset);
             }
         }
@@ -257,5 +302,13 @@ impl Files {
     pub fn remove(&self, name: &str) -> Result<(), FileError> {
         let mut reply = [0u8; MESSAGE_MAX];
         self.call(Request::new(protocol::REMOVE, &self.path(name), 0), &mut reply).map(|_| ())
+    }
+}
+
+/// Closes each of `handles`, for when they are not wanted any more and
+/// a failure to close would change nothing.
+fn close_all(handles: &[Handle]) {
+    for &handle in handles {
+        let _ = crate::close(handle);
     }
 }

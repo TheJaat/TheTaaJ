@@ -80,6 +80,18 @@ pub mod protocol {
     /// directory with everything in it. Nothing is copied, and nothing
     /// is replaced: a new path that already names something is refused.
     pub const RENAME: u8 = 10;
+    /// Fills the memory object that comes with the request - its second
+    /// handle, after the reply channel - with the file's bytes from
+    /// `number` (an offset) on, at the same offset in the object: up to
+    /// READ_INTO_MAX of them, the end of the object or the end of the
+    /// file. Payload: how many, u64 LE. For reading a big file - a
+    /// program - in a few exchanges instead of one per READ_MAX bytes.
+    pub const READ_INTO: u8 = 11;
+    /// The most one READ_INTO reads: 4 MiB. The service does nothing
+    /// else meanwhile, and init stops a service that does not answer it
+    /// for 4 seconds: llc's 34 MB at once took longer than that, in
+    /// QEMU without hardware help. 4 MiB takes about half a second.
+    pub const READ_INTO_MAX: usize = 4 << 20;
 
     /// The longest STALL: 30 seconds of 100 Hz ticks.
     pub const STALL_MAX: u64 = 3000;
@@ -336,6 +348,30 @@ pub fn serve(store: &mut impl Store, access: Access, message: &[u8], reply: &mut
     };
     reply[0] = status as u8;
     1 + length
+}
+
+/// The answer to a READ_INTO request, whose memory object the service
+/// has mapped as `into` (all of it): the file's bytes, into the part
+/// the request names, and the reply, into `reply`. Returns the reply's length; None if the message is not a
+/// READ_INTO (and so is no business of this function). Reading needs
+/// no permission beyond either channel's.
+pub fn serve_into(store: &mut impl Store, message: &[u8], into: &mut [u8], reply: &mut [u8; MESSAGE_MAX]) -> Option<usize> {
+    let request = Request::decode(message).filter(|request| request.op == protocol::READ_INTO)?;
+    // The window: from the offset, at most READ_INTO_MAX, and none of
+    // it past the object's end.
+    let start = usize::try_from(request.number).unwrap_or(usize::MAX).min(into.len());
+    let end = start + (into.len() - start).min(protocol::READ_INTO_MAX);
+    match store.read(request.name, request.number, &mut into[start..end]) {
+        Ok(n) => {
+            reply[0] = Status::Ok as u8;
+            reply[1..9].copy_from_slice(&(n as u64).to_le_bytes());
+            Some(9)
+        }
+        Err(status) => {
+            reply[0] = status as u8;
+            Some(1)
+        }
+    }
 }
 
 /// What the channel a request came on allows. The service has one

@@ -25,6 +25,11 @@ PHDRS
     text   PT_LOAD FLAGS(5);    /* R-X */
     rodata PT_LOAD FLAGS(4);    /* R-- */
     data   PT_LOAD FLAGS(6);    /* RW- */
+    /* No contents: its size is the stack the program wants, which the
+     * kernel reads (64 KiB if it is 0). lld leaves it 0 when PHDRS is
+     * written out like this, even with -z stack-size; a big program's
+     * build writes the size in afterwards (tools/build-llvm.py). */
+    stack  PT_GNU_STACK FLAGS(6);
 }
 
 SECTIONS

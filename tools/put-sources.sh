@@ -3,7 +3,8 @@
 # build them there:
 #
 #   /src/build             libc/build.taaj: `source /src/build`
-#   /src/libc/c/...        the C half of the C library
+#   /src/libc/c/...        the C half of the C library (libm/: musl's
+#                          sin, exp, pow and the rest)
 #   /src/libc/programs/... the C programs
 #   /src/tcc/build         ports/tcc-ARCH.taaj: `source /src/tcc/build`
 #   /src/tcc/...           TCC's sources, the ones for ARCH
@@ -43,6 +44,8 @@ for f in "$ROOT"/libc/c/*.c "$ROOT"/libc/c/*.h; do
         *) put "src/libc/c/$(basename "$f")" "$f" ;;
     esac
 done
+directory src/libc/c/libm
+for f in "$ROOT"/libc/c/libm/*.c "$ROOT"/libc/c/libm/*.h; do put "src/libc/c/libm/$(basename "$f")" "$f"; done
 for f in "$ROOT"/libc/programs/*.c; do put "src/libc/programs/$(basename "$f")" "$f"; done
 
 # TCC's sources: tcc.c includes the rest (ONE_SOURCE), and of the

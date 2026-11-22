@@ -15,9 +15,20 @@
 #
 # The shell has no wildcards, so every file is named.
 
+# The approximations of math.h (sin, exp, pow, ...): musl's files, in
+# libc/c/libm, joined into one object for libc.a. In steps, because a
+# program's arguments must fit in 512 bytes.
+cd /src/libc/c/libm
+tcc -c __math_oflow.c __math_uflow.c __math_xflow.c __math_invalid.c __math_divzero.c __rem_pio2_large.c __rem_pio2.c __sin.c __cos.c __tan.c sin.c cos.c tan.c
+tcc -c asin.c acos.c atan.c atan2.c __expo2.c expm1.c exp_data.c exp.c exp2.c sinh.c cosh.c tanh.c log_data.c
+tcc -c log.c log2_data.c log2.c log10.c log1p.c pow_data.c pow.c cbrt.c asinh.c acosh.c atanh.c fma.c floats.c
+tcc -r __math_oflow.o __math_uflow.o __math_xflow.o __math_invalid.o __math_divzero.o __rem_pio2_large.o __rem_pio2.o __sin.o __cos.o __tan.o sin.o cos.o tan.o asin.o acos.o atan.o atan2.o __expo2.o expm1.o -o first.o
+tcc -r exp_data.o exp.o exp2.o sinh.o cosh.o tanh.o log_data.o log.o log2_data.o log2.o log10.o log1p.o pow_data.o pow.o cbrt.o asinh.o acosh.o atanh.o fma.o floats.o -o second.o
+tcc -r first.o second.o -o ../libm.o
+
 cd /src/libc/c
 tcc -c format.c stdio.c fcntl.c ctype.c stdlib.c inet.c float.c setjmp.c time.c abort.c fp128.c math.c scan.c locale.c atexit.c pthread.c emutls.c signal.c mmap.c users.c
-tcc -ar rcs ../libc.a /lib/libc-rust.o format.o stdio.o fcntl.o ctype.o stdlib.o inet.o float.o setjmp.o time.o abort.o fp128.o math.o scan.o locale.o atexit.o pthread.o emutls.o signal.o mmap.o users.o
+tcc -ar rcs ../libc.a /lib/libc-rust.o format.o stdio.o fcntl.o ctype.o stdlib.o inet.o float.o setjmp.o time.o abort.o fp128.o math.o scan.o locale.o atexit.o pthread.o emutls.o signal.o mmap.o users.o libm.o
 
 cd /src/libc/programs
 tcc -L.. chello.c -o chello

@@ -9,8 +9,8 @@
 //! Each region is a separate mapping, and the kernel puts a guard page
 //! after every mapping, so regions never touch and never merge. To keep
 //! their number small, each one is at least as big as the heap already
-//! is (doubling it), between 64 KiB and the 16 MiB a memory object may
-//! be.
+//! is (doubling it), between 64 KiB and the 128 MiB a memory object may
+//! be - or, when that much is not free, just what was asked for.
 //!
 //! The memory object's handle is closed straight after mapping: the
 //! mapping keeps the object alive, and the handle would only take a
@@ -60,7 +60,18 @@ fn grow(heap: &mut Heap, bytes: u64) -> bool {
     if bytes > size {
         return false; // bigger than any one memory object can be
     }
-    let Ok(memory) = crate::memory_create(size) else { return false };
+    // Doubling can ask for far more than this request needs: 128 MiB
+    // more for a heap of 128 MiB. When that much is not there, what the
+    // request needs may still be.
+    let exact = bytes.max(REGION_MIN).next_multiple_of(PAGE);
+    let (memory, size) = match crate::memory_create(size) {
+        Ok(memory) => (memory, size),
+        Err(_) if exact < size => match crate::memory_create(exact) {
+            Ok(memory) => (memory, exact),
+            Err(_) => return false,
+        },
+        Err(_) => return false,
+    };
     let mapped = crate::memory_map(memory, true);
     let _ = crate::close(memory); // the mapping keeps it alive
     let Ok(start) = mapped else { return false };

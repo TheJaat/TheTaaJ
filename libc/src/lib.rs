@@ -60,6 +60,10 @@
 //! sends itself), mmap.c (a file "mapped" by reading it into memory) and
 //! users.c (there are no users: everyone is 0).
 //!
+//! And since LLVM's code generators (journal entry 074), the rest of
+//! math.h - sin, exp, log, pow, fma and their kind - as musl writes them
+//! (c/libm), and `uname` here, for the name of the system.
+//!
 //! The headers a C program includes for these are in `include/`.
 //!
 //! Built as a static library (libc.a). The C program's object file and

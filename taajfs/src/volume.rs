@@ -20,9 +20,9 @@ use core::fmt;
 
 use crate::device::{BlockDevice, DeviceError};
 use crate::format::{
-    empty_block, Block, DirBlock, DirEntry, Inode, Superblock, BLOCK_SIZE, DIR_ENTRIES, FIRST_DATA,
-    MAGIC, MAX_BLOCKS, MAX_FILE_SIZE, NAME_MAX, SUPER_A, SUPER_B, TYPE_DIR, TYPE_FILE, VERSION,
-    VERSION_DIRECTORIES,
+    empty_block, get_u32, put_u32, Block, DirBlock, DirEntry, Inode, Superblock, BLOCK_SIZE, DIR_ENTRIES,
+    FIRST_DATA, INDEX_BLOCKS, INODE_BLOCKS, MAGIC, MAX_BLOCKS, MAX_FILE_SIZE, NAME_MAX, SUPER_A, SUPER_B,
+    TYPE_DIR, TYPE_FILE, VERSION_BIG_FILES, VERSION_DIRECTORIES,
 };
 
 /// The most blocks a directory may span. The same limit as the guard in
@@ -177,9 +177,10 @@ pub struct Volume<D: BlockDevice> {
     /// The live superblock, and which slot it came from.
     sb: Superblock,
     slot: u32,
-    /// Whether a superblock slot still says version 1 - so that an
-    /// implementation without directories would mount the volume.
-    old_format: bool,
+    /// The lowest version either valid superblock slot says: what an
+    /// older implementation could still mount the volume as (see
+    /// `raise_version`).
+    lowest: u32,
     /// Which blocks the committed tree uses. Derived, never stored.
     used: Vec<bool>,
     used_count: u32,
@@ -192,7 +193,7 @@ impl<D: BlockDevice> Volume<D> {
     /// nothing else can write to the disk behind the volume's back.
     pub fn mount(mut device: D) -> Result<Volume<D>> {
         let mut best: Option<(u32, Superblock)> = None;
-        let mut old_format = false;
+        let mut lowest = VERSION_BIG_FILES;
         let mut block = empty_block();
 
         for slot in [SUPER_A, SUPER_B] {
@@ -204,7 +205,7 @@ impl<D: BlockDevice> Volume<D> {
             if !sb.is_valid() {
                 continue;
             }
-            old_format |= sb.version == VERSION;
+            lowest = lowest.min(sb.version);
             // Strictly greater: on a tie, slot A wins, as in C.
             let newer = match best {
                 None => true,
@@ -220,7 +221,7 @@ impl<D: BlockDevice> Volume<D> {
             device,
             sb,
             slot,
-            old_format,
+            lowest,
             used: Vec::new(),
             used_count: 0,
         };
@@ -368,7 +369,12 @@ impl<D: BlockDevice> Volume<D> {
                     }
                     self.mark_used(entry.inode)?;
                     let inode = self.read_inode(entry.inode)?;
-                    for &block in inode.blocks.iter().filter(|&&b| b != 0) {
+                    if inode.is_big() {
+                        for &index in &inode.blocks {
+                            self.mark_used(index)?;
+                        }
+                    }
+                    for block in self.file_blocks(&inode)?.into_iter().filter(|&b| b != 0) {
                         self.mark_used(block)?;
                     }
                 }
@@ -437,31 +443,100 @@ impl<D: BlockDevice> Volume<D> {
 
     /// Makes the volume one that may hold directories: version 2 in
     /// both superblock slots, before the first directory exists.
+    fn allow_directories(&mut self) -> Result<()> {
+        self.raise_version(VERSION_DIRECTORIES)
+    }
+
+    /// Makes the volume one that may hold files bigger than an inode's
+    /// own 1020 blocks: version 3 in both slots, before the first one.
+    fn allow_big_files(&mut self) -> Result<()> {
+        self.raise_version(VERSION_BIG_FILES)
+    }
+
+    /// Makes both superblock slots say at least `version`, before the
+    /// first thing that version allows is written.
     ///
     /// Why both, and why first. An implementation that knows only
     /// version 1 - the C one - treats every entry as a file. Shown a
     /// directory it would read the directory's block as an inode, take
     /// whatever numbers are in it for the file's blocks, and build its
-    /// free map from that: its next write could land on live data. What
-    /// stops it is the version number: it mounts only slots that say 1.
-    /// But a commit writes ONE slot. After a single version-2 commit the
-    /// other slot still says 1, still verifies, and to the old code is
-    /// the volume - an older tree, whose "free" blocks the new tree is
-    /// using.
+    /// free map from that: its next write could land on live data. One
+    /// that knows only version 2 would do the same with a big file's
+    /// index blocks. What stops either is the version number: each
+    /// mounts only slots that say a version it knows. But a commit
+    /// writes ONE slot. After a single new commit the other slot still
+    /// says the old version, still verifies, and to the old code is the
+    /// volume - an older tree, whose "free" blocks the new tree is using.
     ///
-    /// So the tree as it is now - no directories yet - is committed
-    /// twice, unchanged, as version 2: once into each slot. A power cut
-    /// between the two leaves one slot of each version, both pointing at
-    /// the same tree, which either implementation may safely use. Only
-    /// when no slot says 1 any more is a directory made.
-    fn allow_directories(&mut self) -> Result<()> {
-        if !self.old_format {
+    /// So the tree as it is now - nothing new in it yet - is committed
+    /// twice, unchanged, as the new version: once into each slot. A
+    /// power cut between the two leaves one slot of each version, both
+    /// pointing at the same tree, which either implementation may safely
+    /// use. Only when no slot says less is the new kind of thing made.
+    fn raise_version(&mut self, version: u32) -> Result<()> {
+        if self.lowest >= version {
             return Ok(());
         }
-        self.commit_as(self.sb.root_dir, VERSION_DIRECTORIES)?;
-        self.commit_as(self.sb.root_dir, VERSION_DIRECTORIES)?;
-        self.old_format = false;
+        let version = version.max(self.sb.version);
+        self.commit_as(self.sb.root_dir, version)?;
+        self.commit_as(self.sb.root_dir, version)?;
+        self.lowest = version;
         Ok(())
+    }
+
+    // ---- a file's blocks --------------------------------------------
+
+    /// Every data block of a file, in order: the inode's own list for a
+    /// small file, or what its index blocks hold for a big one.
+    fn file_blocks(&mut self, inode: &Inode) -> Result<Vec<u32>> {
+        if !inode.is_big() {
+            return Ok(inode.blocks.clone());
+        }
+        let count = inode.block_count as usize;
+        if count > INODE_BLOCKS * INDEX_BLOCKS || inode.blocks.len() != count.div_ceil(INDEX_BLOCKS) {
+            return Err(Error::Corrupt(format!("a file says it has {count} blocks")));
+        }
+        let mut blocks = Vec::with_capacity(count);
+        for &index in &inode.blocks {
+            let block = self.read_index(index)?;
+            let here = (count - blocks.len()).min(INDEX_BLOCKS);
+            blocks.extend((0..here).map(|i| get_u32(&block, i * 4)));
+        }
+        Ok(blocks)
+    }
+
+    /// An index block, checked to be inside the volume.
+    fn read_index(&mut self, number: u32) -> Result<Block> {
+        if number < FIRST_DATA || number >= self.sb.total_blocks {
+            return Err(Error::Corrupt(format!("index block {number} is outside the volume")));
+        }
+        self.read(number)
+    }
+
+    /// Writes a new inode for a file of `size` bytes in `blocks`: the
+    /// blocks named in it, or - more than it holds - index blocks, new
+    /// ones, written first. Returns the inode's block. A big file needs
+    /// a version-3 volume: the caller made sure (`allow_big_files`).
+    fn write_inode(&mut self, size: u32, kind: u32, blocks: Vec<u32>) -> Result<u32> {
+        let inode = if blocks.len() <= INODE_BLOCKS {
+            Inode::new(size, kind, blocks)
+        } else {
+            debug_assert_eq!(self.sb.version, VERSION_BIG_FILES);
+            let mut index = Vec::with_capacity(blocks.len().div_ceil(INDEX_BLOCKS));
+            for chunk in blocks.chunks(INDEX_BLOCKS) {
+                let mut block = empty_block();
+                for (i, &number) in chunk.iter().enumerate() {
+                    put_u32(&mut block, i * 4, number);
+                }
+                let number = self.allocate()?;
+                self.write(number, &block)?;
+                index.push(number);
+            }
+            Inode::big(size, kind, blocks.len() as u32, index)
+        };
+        let number = self.allocate()?;
+        self.write(number, &inode.to_block())?;
+        Ok(number)
     }
 
     /// Runs a change. If it fails partway, the blocks it allocated were
@@ -618,19 +693,36 @@ impl<D: BlockDevice> Volume<D> {
         }
         let length = buffer.len().min((file.size - offset) as usize);
         let inode = self.read_inode(file.inode)?;
+        // A big file's index block, read once for every block it names.
+        let mut index: Option<(usize, Block)> = None;
         let mut done = 0;
 
         while done < length {
             let at = offset as usize + done;
-            let index = at / BLOCK_SIZE;
+            let block_index = at / BLOCK_SIZE;
             let within = at % BLOCK_SIZE;
             let chunk = (BLOCK_SIZE - within).min(length - done);
 
-            // `let ... else`: take the block number if there is one,
-            // otherwise leave the loop. A file shorter than its size
-            // claims ends early rather than reading garbage.
-            let Some(&number) = inode.blocks.get(index) else {
-                break;
+            // A file shorter than its size claims ends early rather
+            // than reading garbage.
+            let number = if inode.is_big() {
+                if block_index >= inode.block_count as usize {
+                    break;
+                }
+                let slot = block_index / INDEX_BLOCKS;
+                if index.as_ref().is_none_or(|(at, _)| *at != slot) {
+                    let Some(&number) = inode.blocks.get(slot) else { break };
+                    index = Some((slot, self.read_index(number)?));
+                }
+                let (_, block) = index.as_ref().expect("just read");
+                get_u32(block, (block_index % INDEX_BLOCKS) * 4)
+            } else {
+                // `let ... else`: take the block number if there is one,
+                // otherwise leave the loop.
+                let Some(&number) = inode.blocks.get(block_index) else {
+                    break;
+                };
+                number
             };
 
             let block = self.read(number)?;
@@ -702,9 +794,13 @@ impl<D: BlockDevice> Volume<D> {
         if file.kind == TYPE_DIR {
             return Err(Error::IsDirectory);
         }
+        if end.div_ceil(BLOCK_SIZE) > INODE_BLOCKS {
+            self.allow_big_files()?;
+        }
 
         self.change(|v| {
-            let mut inode = v.read_inode(file.inode)?;
+            let inode = v.read_inode(file.inode)?;
+            let mut blocks = v.file_blocks(&inode)?;
             let new_size = file.size.max(end as u32);
             let mut done = 0;
 
@@ -716,7 +812,7 @@ impl<D: BlockDevice> Volume<D> {
 
                 // Start from the old contents, so the bytes of the block
                 // this write does not touch survive...
-                let mut block = match inode.blocks.get(index) {
+                let mut block = match blocks.get(index) {
                     Some(&old) if old != 0 => v.read(old)?,
                     _ => empty_block(),
                 };
@@ -727,18 +823,18 @@ impl<D: BlockDevice> Volume<D> {
                 let new = v.allocate()?;
                 v.write(new, &block)?;
 
-                if index < inode.blocks.len() {
-                    inode.blocks[index] = new;
+                if index < blocks.len() {
+                    blocks[index] = new;
                 } else {
                     // A write past the end can leave a gap. Fill it with
                     // real zeroed blocks, never holes: a hole read as a
                     // stale number would return another file's data.
-                    let gap_start = inode.blocks.len();
-                    inode.blocks.resize(index + 1, 0);
-                    inode.blocks[index] = new;
+                    let gap_start = blocks.len();
+                    blocks.resize(index + 1, 0);
+                    blocks[index] = new;
                     // `&mut` over a range of the Vec: each `slot` is a
                     // mutable reference to one entry, written in place.
-                    for slot in &mut inode.blocks[gap_start..index] {
+                    for slot in &mut blocks[gap_start..index] {
                         let fill = v.allocate()?;
                         v.write(fill, &empty_block())?;
                         *slot = fill;
@@ -747,11 +843,7 @@ impl<D: BlockDevice> Volume<D> {
                 done += chunk;
             }
 
-            let new_inode = v.allocate()?;
-            v.write(
-                new_inode,
-                &Inode::new(new_size, inode.kind, inode.blocks).to_block(),
-            )?;
+            let new_inode = v.write_inode(new_size, inode.kind, blocks)?;
 
             // `file.name` came from the disk, so it is already in its
             // stored form. (C passes the caller's name here, and a
@@ -782,6 +874,9 @@ impl<D: BlockDevice> Volume<D> {
         if self.find(&dirs, name)?.is_some_and(|entry| entry.kind == TYPE_DIR) {
             return Err(Error::IsDirectory);
         }
+        if data.len().div_ceil(BLOCK_SIZE) > INODE_BLOCKS {
+            self.allow_big_files()?;
+        }
 
         self.change(|v| {
             let mut blocks = Vec::with_capacity(data.len().div_ceil(BLOCK_SIZE));
@@ -794,8 +889,7 @@ impl<D: BlockDevice> Volume<D> {
             }
 
             let size = data.len() as u32;
-            let inode = v.allocate()?;
-            v.write(inode, &Inode::new(size, TYPE_FILE, blocks).to_block())?;
+            let inode = v.write_inode(size, TYPE_FILE, blocks)?;
             let root =
                 v.rewrite_path(&dirs, name, Some(DirEntry::new(name, inode, size, TYPE_FILE)))?;
             v.commit(root)
@@ -907,6 +1001,7 @@ impl<D: BlockDevice> Volume<D> {
 mod tests {
     use super::*;
     use crate::device::MemDevice;
+    use crate::format::VERSION;
 
     const TOTAL: u32 = 512;
 
@@ -931,6 +1026,158 @@ mod tests {
     fn contents(volume: &mut Volume<MemDevice>, name: &str) -> Vec<u8> {
         let file = volume.lookup(name).unwrap();
         volume.read_all(&file).unwrap()
+    }
+
+    // ---- big files (version 3) ----------------------------------------
+
+    use crate::format::{DIRECT_MAX, VERSION_BIG_FILES};
+
+    /// A volume with room for big files: 16 MiB.
+    const BIG_TOTAL: u32 = 4096;
+
+    fn fresh_big() -> Volume<MemDevice> {
+        let mut device = MemDevice::new(BIG_TOTAL);
+        format(&mut device, BIG_TOTAL).unwrap();
+        Volume::mount(device).unwrap()
+    }
+
+    /// The version each valid superblock slot says.
+    fn slot_versions(device: &MemDevice) -> Vec<u32> {
+        [SUPER_A, SUPER_B]
+            .iter()
+            .map(|&slot| Superblock::parse(&device.blocks[slot as usize]))
+            .filter(|sb| sb.is_valid())
+            .map(|sb| sb.version)
+            .collect()
+    }
+
+    #[test]
+    fn a_file_bigger_than_an_inode_reaches_survives_a_remount() {
+        // Just small; one block too many for the inode; one data block
+        // into a second index block; three index blocks.
+        for blocks in [INODE_BLOCKS, INODE_BLOCKS + 1, INDEX_BLOCKS + 1, 2100] {
+            let mut v = fresh_big();
+            let data = pattern(blocks * BLOCK_SIZE - 7, blocks as u8);
+            v.put("f", &data).unwrap();
+            let mut v = remount(v);
+            assert_eq!(contents(&mut v, "f"), data, "{blocks} blocks");
+            // A few bytes at a time across the end of the first index
+            // block, as the file service reads.
+            let file = v.lookup("f").unwrap();
+            for at in [0, INDEX_BLOCKS * BLOCK_SIZE - 3, (INODE_BLOCKS - 1) * BLOCK_SIZE + 4090] {
+                if at + 10 > data.len() {
+                    continue;
+                }
+                let mut buffer = [0u8; 10];
+                assert_eq!(v.read_at(&file, at as u32, &mut buffer).unwrap(), 10);
+                assert_eq!(&buffer, &data[at..at + 10], "{blocks} blocks, at {at}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_first_big_file_raises_both_slots_to_version_3() {
+        let mut v = fresh_big();
+        v.put("small", &pattern(DIRECT_MAX, 1)).unwrap();
+        let device = v.into_device();
+        assert_eq!(slot_versions(&device), [VERSION, VERSION], "the most an inode holds is not big");
+        let mut v = Volume::mount(device).unwrap();
+        v.put("big", &pattern(DIRECT_MAX + 1, 2)).unwrap();
+        // More changes after it must not bring an older version back.
+        v.delete("big").unwrap();
+        v.put("x", b"x").unwrap();
+        let device = v.into_device();
+        assert_eq!(slot_versions(&device), [VERSION_BIG_FILES, VERSION_BIG_FILES]);
+        // And directories are still allowed, without lowering it.
+        let mut v = Volume::mount(device).unwrap();
+        v.make_directory("d").unwrap();
+        assert_eq!(slot_versions(&v.into_device()), [VERSION_BIG_FILES, VERSION_BIG_FILES]);
+    }
+
+    #[test]
+    fn a_write_can_grow_a_file_into_a_big_one_and_change_its_middle() {
+        let mut v = fresh_big();
+        let mut expected = pattern(1000 * BLOCK_SIZE, 3);
+        v.put("f", &expected).unwrap();
+        // Past the end, beyond what an inode holds: the gap is zeros.
+        let far = 1500 * BLOCK_SIZE + 123;
+        v.write_at("f", far as u32, b"far out").unwrap();
+        expected.resize(far, 0);
+        expected.extend_from_slice(b"far out");
+        // Across the boundary between the first two index blocks.
+        let middle = INDEX_BLOCKS * BLOCK_SIZE - 4;
+        v.write_at("f", middle as u32, b"straddles").unwrap();
+        expected[middle..middle + 9].copy_from_slice(b"straddles");
+        let mut v = remount(v);
+        assert_eq!(contents(&mut v, "f"), expected);
+    }
+
+    #[test]
+    fn deleting_a_big_file_returns_every_block_index_blocks_too() {
+        let mut v = fresh_big();
+        let free = v.free_blocks();
+        let blocks = 2100;
+        v.put("f", &pattern(blocks * BLOCK_SIZE, 4)).unwrap();
+        // The data, three index blocks and the inode (the directory is
+        // rewritten, not grown).
+        assert_eq!(free - v.free_blocks(), blocks as u32 + 3 + 1);
+        v.delete("f").unwrap();
+        assert_eq!(v.free_blocks(), free);
+        assert_eq!(remount(v).free_blocks(), free);
+    }
+
+    #[test]
+    fn a_damaged_big_inode_is_refused_at_mount() {
+        let mut v = fresh_big();
+        v.put("f", &pattern((INODE_BLOCKS + 5) * BLOCK_SIZE, 5)).unwrap();
+        let inode = v.lookup("f").unwrap().inode as usize;
+        let good = v.into_device();
+
+        // More blocks than its index blocks could name.
+        let mut device = MemDevice { blocks: good.blocks.clone(), writes_left: None };
+        put_u32(&mut device.blocks[inode], 12, u32::MAX);
+        assert!(matches!(Volume::mount(device), Err(Error::Corrupt(_))));
+
+        // An index block outside the volume.
+        let mut device = MemDevice { blocks: good.blocks.clone(), writes_left: None };
+        put_u32(&mut device.blocks[inode], 16, BIG_TOTAL + 1);
+        assert!(matches!(Volume::mount(device), Err(Error::Corrupt(_))));
+    }
+
+    #[test]
+    fn a_power_cut_during_a_big_put_leaves_old_or_new_state() {
+        let mut v = fresh_big();
+        v.put("keep", b"safe").unwrap();
+        let base = v.into_device();
+        let data = pattern((INODE_BLOCKS + 80) * BLOCK_SIZE, 6);
+
+        // Every write would be some 1100 boots of a 16 MiB volume: the
+        // first writes (raising the version), every 37th, and the last.
+        let mut tried = 0;
+        let mut writes_allowed = 0;
+        loop {
+            let device = MemDevice { blocks: base.blocks.clone(), writes_left: Some(writes_allowed) };
+            let mut v = Volume::mount(device).unwrap();
+            let finished = v.put("big", &data).is_ok();
+            let mut device = v.into_device();
+            device.writes_left = None;
+            let versions = slot_versions(&device);
+            let mut v = Volume::mount(device).expect("volume must always mount");
+            let at = format!("after {writes_allowed} writes");
+
+            assert_eq!(contents(&mut v, "keep"), b"safe", "{at}");
+            if v.lookup("big").is_ok() {
+                assert_eq!(contents(&mut v, "big"), data, "{at}");
+                assert_eq!(versions, [VERSION_BIG_FILES, VERSION_BIG_FILES], "{at}");
+            }
+            assert_eq!(v.lookup("big").is_ok(), finished, "{at}");
+            if finished {
+                break;
+            }
+            tried += 1;
+            writes_allowed += if (8..=INODE_BLOCKS + 75).contains(&writes_allowed) { 37 } else { 1 };
+        }
+        assert!(tried > 30, "only {tried} cut points were tried");
     }
 
     #[test]

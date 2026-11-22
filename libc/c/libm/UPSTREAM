@@ -1,0 +1,40 @@
+The approximate half of math.h - sin, exp, log, pow, fma and the rest -
+from musl, a C library for Linux, as it is upstream, with TheTaaJ's
+changes on top (see the history of this directory).
+
+  from     https://musl.libc.org
+  release  1.2.5 (musl-1.2.5.tar.gz,
+           sha256 a9a118bbe84d8764da0ea0d28b3ab3fae8477fc7e4085d90102b8596fc7c75e4)
+
+musl because its functions are small, in plain C, each in a file of its
+own, within an ulp of the exact answer (two for the hyperbolic ones),
+and under the MIT licence (COPYRIGHT).
+
+Here are only the double functions LLVM and libc++ call, and what they
+call in turn, all from musl's src/math:
+
+  __math_oflow __math_uflow __math_xflow __math_invalid __math_divzero
+  __rem_pio2_large __rem_pio2 __sin __cos __tan sin cos tan asin acos
+  atan atan2 __expo2 expm1 exp_data exp exp2 sinh cosh tanh log_data log
+  log2_data log2 log10 log1p pow_data pow cbrt asinh acosh atanh fma
+
+and the four tables' headers (exp_data.h, log_data.h, log2_data.h,
+pow_data.h).
+
+TheTaaJ's own, not musl's:
+
+  libm.h    what musl's src/internal/libm.h gives these files (its
+            macros, the bit-twiddling helpers, the private functions'
+            declarations), and nothing else
+  floats.c  the float functions (sinf, powf, ...) as the double ones
+            rounded once more, instead of musl's own float files
+
+TheTaaJ's changes to musl's files:
+
+  acosh.c          for x below 1 the answer is NaN; musl gave a number
+                   for x below -2 (journal entry 074)
+  *_data.h         include libm.h, for `hidden`, instead of <features.h>
+  fma.c            includes libm.h, for a_clz_64, instead of atomic.h
+
+Tested on the host against glibc's long double functions by
+libc/c/libm_test.c (`make libc-test`).

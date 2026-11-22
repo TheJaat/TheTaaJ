@@ -1250,18 +1250,14 @@ impl Shell {
             return Err("is empty, or too big to be a program");
         }
         let memory = taaj::memory_create(size).map_err(|_| "does not fit in memory")?;
-        let filled = taaj::memory_map(memory, true).map_err(|_| "does not fit in memory").and_then(|base| {
-            let mut at = 0usize;
-            let read = files.read(name, |piece| {
-                // Never past the object, even if the file grew meanwhile.
-                let n = piece.len().min(size as usize - at);
-                // SAFETY: inside the mapping, `size` bytes long.
-                unsafe { base.add(at).copy_from_nonoverlapping(piece.as_ptr(), n) };
-                at += n;
-            });
-            let _ = taaj::memory_unmap(base);
-            read.map(|_| ()).map_err(|error| error.describe())
-        });
+        // The file service writes the file into the object itself, 4 MiB
+        // an exchange (READ_INTO). Asked for 1 KiB at a time, llvm-mc's
+        // 10 MB took 10 seconds to arrive.
+        let filled = match files.read_into(name, memory) {
+            Ok(got) if got == size => Ok(()),
+            Ok(_) => Err("changed while it was being read"),
+            Err(error) => Err(error.describe()),
+        };
         match filled {
             Ok(()) => Ok(Some(memory)),
             Err(why) => {

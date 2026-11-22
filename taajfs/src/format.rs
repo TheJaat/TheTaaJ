@@ -23,6 +23,12 @@ pub const VERSION: u32 = 1;
 /// what keeps a version-1 implementation away: it would take a
 /// directory's blocks for a file's, and write over them.
 pub const VERSION_DIRECTORIES: u32 = 2;
+/// Version 3: a file may be bigger than an inode's 1020 blocks reach
+/// (see `Inode`), and there may be directories. A volume becomes this
+/// before its first such file is written, and stays it. As with
+/// version 2, the number is what keeps older code away: it would read
+/// the numbers of index blocks as the file's data.
+pub const VERSION_BIG_FILES: u32 = 3;
 pub const BLOCK_SIZE: usize = 4096;
 pub const NAME_MAX: usize = 28;
 pub const MAX_BLOCKS: u32 = 65536;
@@ -43,10 +49,17 @@ pub const DIR_ENTRY_SIZE: usize = 40;
 pub const DIR_ENTRIES: usize = (BLOCK_SIZE - DIR_HEADER) / DIR_ENTRY_SIZE;
 
 pub const INODE_HEADER: usize = 16;
-/// 1020 direct block pointers fit in one inode block.
+/// 1020 block pointers fit in one inode block.
 pub const INODE_BLOCKS: usize = (BLOCK_SIZE - INODE_HEADER) / 4;
-/// Direct blocks only, so a file tops out just under 4 MB.
-pub const MAX_FILE_SIZE: usize = INODE_BLOCKS * BLOCK_SIZE;
+/// The most a file reaches with its blocks named in the inode itself:
+/// just under 4 MB. Anything bigger is a big file (version 3).
+pub const DIRECT_MAX: usize = INODE_BLOCKS * BLOCK_SIZE;
+/// 1024 block numbers fit in one index block.
+pub const INDEX_BLOCKS: usize = BLOCK_SIZE / 4;
+/// The biggest file: the whole of the biggest volume, 256 MiB. (An
+/// inode of index blocks reaches 1020 * 1024 blocks, 4 GiB, which the
+/// 32-bit size could not say.)
+pub const MAX_FILE_SIZE: usize = MAX_BLOCKS as usize * BLOCK_SIZE;
 
 /// One block, as it sits on disk.
 pub type Block = [u8; BLOCK_SIZE];
@@ -192,7 +205,7 @@ impl Superblock {
     /// The same checks `TfsMount` applies before trusting a slot.
     pub fn is_valid(&self) -> bool {
         self.magic == MAGIC
-            && (self.version == VERSION || self.version == VERSION_DIRECTORIES)
+            && (VERSION..=VERSION_BIG_FILES).contains(&self.version)
             && self.block_size == BLOCK_SIZE as u32
             && self.total_blocks != 0
             && self.total_blocks <= MAX_BLOCKS
@@ -340,6 +353,14 @@ impl DirBlock {
 // ---- inodes ---------------------------------------------------------
 
 /// A file: its size, and the blocks holding its data, in order.
+///
+/// Up to INODE_BLOCKS blocks, the inode names them itself. A bigger
+/// file (only on a version-3 volume) is told apart by its block count,
+/// which is then more than INODE_BLOCKS: its slots name index blocks
+/// instead, each holding the numbers of the next INDEX_BLOCKS of its
+/// data blocks, the last one only as many as are left. So a small file
+/// is laid out exactly as before, and a big one costs one block in
+/// 1025 more.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Inode {
     pub magic: u32,
@@ -348,7 +369,9 @@ pub struct Inode {
     /// The block count as stored, kept for the same reason as
     /// `DirBlock::count`.
     pub block_count: u32,
-    /// Only the slots in use: `min(block_count, INODE_BLOCKS)` of them.
+    /// Only the slots in use: `block_count` data blocks for a small
+    /// file, or `block_count.div_ceil(INDEX_BLOCKS)` index blocks for a
+    /// big one (`is_big`).
     ///
     /// The C struct always carries all 1020 slots. Keeping just the
     /// used ones means `blocks.len()` *is* the count when writing, so
@@ -368,9 +391,27 @@ impl Inode {
         }
     }
 
+    /// A big file's inode: `block_count` data blocks, named by the index
+    /// blocks `index`.
+    pub fn big(size: u32, kind: u32, block_count: u32, index: Vec<u32>) -> Inode {
+        Inode { magic: MAGIC, size, kind, block_count, blocks: index }
+    }
+
+    /// Whether the slots name index blocks, not data blocks.
+    pub fn is_big(&self) -> bool {
+        self.block_count as usize > INODE_BLOCKS
+    }
+
     pub fn parse(block: &Block) -> Inode {
         let block_count = get_u32(block, 12);
-        let usable = (block_count as usize).min(INODE_BLOCKS);
+        let usable = if block_count as usize > INODE_BLOCKS {
+            // A count past what 1020 index blocks reach is damage; the
+            // slots that exist are read, and the volume finds the rest
+            // missing.
+            (block_count as usize).div_ceil(INDEX_BLOCKS).min(INODE_BLOCKS)
+        } else {
+            block_count as usize
+        };
         let blocks = (0..usable)
             .map(|i| get_u32(block, INODE_HEADER + i * 4))
             .collect();
@@ -384,16 +425,23 @@ impl Inode {
         }
     }
 
-    /// Encodes the inode. `block_count` is written from `blocks.len()`,
-    /// so changing the list is enough - there is no count to forget.
+    /// Encodes the inode. For a small file `block_count` is written
+    /// from `blocks.len()`, so changing the list is enough - there is no
+    /// count to forget. A big file's count is its own (`Inode::big`).
     pub fn to_block(&self) -> Block {
         assert!(self.blocks.len() <= INODE_BLOCKS, "inode overfilled");
+        let count = if self.is_big() {
+            assert_eq!(self.blocks.len(), (self.block_count as usize).div_ceil(INDEX_BLOCKS), "index blocks miscounted");
+            self.block_count
+        } else {
+            self.blocks.len() as u32
+        };
 
         let mut block = empty_block();
         put_u32(&mut block, 0, self.magic);
         put_u32(&mut block, 4, self.size);
         put_u32(&mut block, 8, self.kind);
-        put_u32(&mut block, 12, self.blocks.len() as u32);
+        put_u32(&mut block, 12, count);
         for (i, &number) in self.blocks.iter().enumerate() {
             put_u32(&mut block, INODE_HEADER + i * 4, number);
         }
@@ -429,7 +477,8 @@ mod tests {
     fn layout_constants_match_tfs_h() {
         assert_eq!(DIR_ENTRIES, 102);
         assert_eq!(INODE_BLOCKS, 1020);
-        assert_eq!(MAX_FILE_SIZE, 1020 * 4096);
+        assert_eq!(DIRECT_MAX, 1020 * 4096);
+        assert_eq!(MAX_FILE_SIZE, 256 << 20);
     }
 
     #[test]

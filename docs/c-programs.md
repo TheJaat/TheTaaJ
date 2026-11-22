@@ -125,7 +125,7 @@ Code that needs any of these will not compile or link:
 
 - **`scanf` from a stream** (`scanf`, `fscanf`). `sscanf` reads from a string: read a line with `fgets`, then `sscanf` it.
 - **Single keys.** The keyboard arrives a line at a time; a program cannot see a key as it is pressed, the arrow keys, or turn the showing of typed text off (no `termios`). An editor or a game cannot be written yet.
-- **The transcendental functions** of `math.h`: `sin` `cos` `exp` `log` `pow` and their kind are declared but not there yet. `sqrt` `fmod` `floor` `ceil` `round` `trunc` `hypot` `fmin` `fmax` and the classifying macros are.
+- **A few functions of `math.h`**: `erf` `erfc` `tgamma` `lgamma`, and every `long double` one, are declared but not there yet. The rest are: `sqrt` `fmod` `floor` `hypot` and their kind, and `sin` `cos` `tan` `exp` `log` `pow` `cbrt` `fma`, the hyperbolic functions and the inverses of all of them - musl's, in `libc/c/libm` (journal entry 074), within an ulp or two of the exact answer.
 - **An exact `strtold`**: a long double is read through a double, so text with more digits than a double keeps is not rounded to the nearest long double.
 - **Processes**: `fork`, `exec` and `wait` are declared but fail (`ENOSYS`, `ECHILD`); there is no `system` or `pipe`. Signals reach a process only from itself (`raise`, or `kill` of its own number).
 - **Threads**: `pthread_create` fails with `EAGAIN`. The locks are there, and count, so code written for threads runs with one.
@@ -137,7 +137,7 @@ And things that are there but are not what a Unix program expects:
 
 - `rename` onto a file that exists fails with `EEXIST`; it does not replace it.
 - An open file follows its *name*: if another program renames or removes it meanwhile, the descriptor reads whatever has that name now, or fails.
-- No single block of memory can be bigger than 16 MiB.
+- No single block of memory can be bigger than 128 MiB, and a program file no bigger than 128 MiB either.
 - `printf` and `write(1, …)` do not come out in the order they were called: `printf`'s text waits in a buffer (for the end of the line on the screen, for 4096 bytes otherwise). Use one or the other, or `fflush(stdout)` between.
 - Text still in a buffer is lost if the program is stopped with Ctrl+C or ends with `_exit`.
 

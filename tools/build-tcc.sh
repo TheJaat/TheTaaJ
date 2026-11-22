@@ -103,7 +103,7 @@ echo "  LD      libc-rust.o ($ARCH)"
 rm -rf "$OUT/rust"
 mkdir -p "$OUT/rust"
 (cd "$OUT/rust" && ar x "$LIBC_DIR/$(basename "$LIBC_A")")
-C_PARTS=$(cd "$ROOT/libc/c" && ls ./*.c | sed -e 's|^\./||' -e 's/\.c$/.o/')
+C_PARTS=$(cd "$ROOT/libc/c" && ls ./*.c ./libm/*.c | sed -e 's|^.*/||' -e 's/\.c$/.o/')
 RUST_PARTS=$(ar t "$LIBC_A" | grep -vxF "$C_PARTS")
 # shellcheck disable=SC2086 # one word per member
 (cd "$OUT/rust" && ld.lld -r $RUST_PARTS -o "$OUT/libc-rust.o")

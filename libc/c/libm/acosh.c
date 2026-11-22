@@ -13,6 +13,14 @@ double acosh(double x)
 
 	/* x < 1 domain error is handled in the called functions */
 
+	/* TheTaaJ: not for every x below 1. Below -2 the number given to
+	 * log is 2x + 2|x|, zero but for rounding, and it can round to a
+	 * small positive number: acosh(-730000) came out as 2.29. So the
+	 * domain is checked here, as glibc does. (A NaN is not below 1,
+	 * and goes on to come out as NaN.) */
+	if (x < 1)
+		return __math_invalid(x);
+
 	if (e < 0x3ff + 1)
 		/* |x| < 2, up to 2ulp error in [1,1.125] */
 		return log1p(x-1 + sqrt((x-1)*(x-1)+2*(x-1)));

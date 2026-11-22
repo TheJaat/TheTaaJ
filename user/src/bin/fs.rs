@@ -166,6 +166,21 @@ fn main() -> i64 {
     }
 }
 
+/// A READ_INTO: the file's bytes, straight into the memory object the
+/// client sent. The reply, or None if the message was not a READ_INTO
+/// or the object cannot be mapped for writing (then there is no answer
+/// worth sending: the client sees its reply channel closed).
+fn read_into(store: &mut impl Store, message: &[u8], memory: Handle, reply: &mut [u8; MESSAGE_MAX]) -> Option<usize> {
+    let size = usize::try_from(taaj::memory_size(memory).ok()?).ok()?;
+    let base = taaj::memory_map(memory, true).ok()?;
+    // SAFETY: the mapping is `size` bytes long, writable, and ours until
+    // it is unmapped below; nothing else in this program touches it.
+    let into = unsafe { core::slice::from_raw_parts_mut(base, size) };
+    let length = fileserver::serve_into(store, message, into, reply);
+    let _ = taaj::memory_unmap(base);
+    length
+}
+
 fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 {
     let mut message = [0u8; MESSAGE_MAX];
     let mut reply = [0u8; MESSAGE_MAX];
@@ -200,6 +215,19 @@ fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 
                 return 2;
             }
         };
+        // Two handles: a READ_INTO, with the memory object to fill.
+        // The object is let go before the answer goes: a client that
+        // starts a program from it at once must find it its own alone,
+        // or the kernel copies it first (ipc::spawn).
+        if count == 2 {
+            let length = read_into(store, &message[..n], handles[1], &mut reply);
+            let _ = taaj::close(handles[1]);
+            if let Some(length) = length {
+                let _ = taaj::send(handles[0], &reply[..length], &[]);
+            }
+            let _ = taaj::close(handles[0]);
+            continue;
+        }
         // One handle, the reply channel. Anything else: not a request.
         if count != 1 {
             for &handle in &handles[..count] {
