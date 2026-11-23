@@ -2484,3 +2484,50 @@ make aarch64-clang-test
 | `clang64-test passed`, `aarch64-clang-test passed` | each machine |
 
 Automated: make test64
+
+---
+
+## 078 · make on TheTaaJ: files that know when they changed
+
+[The entry](journal/078-make-on-taaj.md)
+
+**1. The PC: make builds the C programs**
+
+```
+make run-disk
+make run64
+```
+
+`make run-disk` now puts `/make` on the disk, and `/src/libc/programs/Makefile` with the programs' sources. Close QEMU before running it. The disk must be one TheTaaJ mounts, for its files to get stamps: any run disk is.
+
+| Type | You should see |
+|---|---|
+| `cd /src/libc/programs` | the prompt says `taaj:/src/libc/programs>` |
+| `time with programs make` | `tcc chello.c -o chello` and ten more lines like it, then `took` about 25 s |
+| `with programs make` | `make: nothing to be done for all` |
+| `with files append cprimes.c /* changed */` | `cprimes.c: 2507 bytes` |
+| `with programs make` | `tcc cprimes.c -o cprimes`, and nothing else |
+| `./cprimes 100` | `cprimes: 25 primes below 100` (the one just built; a bare `cprimes` is the root's) |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1; the first make takes about 43 s.
+
+**3. The tests by themselves**
+
+```
+make make64-test
+make aarch64-make-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `make on TheTaaJ (x86_64) built prog with tcc, then only what each change put out of date; -n, -t, a failure, a refusal; main.o, util.o and prog byte for byte the host's tcc's` | every step, and the comparison (`aarch64` likewise) |
+| `make64-test passed`, `aarch64-make-test passed` | each machine |
+
+Automated: make test64
