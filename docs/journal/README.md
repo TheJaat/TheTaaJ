@@ -87,6 +87,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 077 | [A program starts a program: `posix_spawn` and `waitpid` through init, with a reply channel of the asker's own and handles a child can be given copies of; `with programs`; clang starts ld.lld itself, so `clang x.c -o x` makes the build's chello byte for byte on both machines](077-a-program-starts-a-program.md) | written | `5e5d795` (TheKernel `3e5d3a5`; patch `e679dbc`) |
 | 078 | [make on TheTaaJ: TaajFS change stamps (version 4, the commit's generation), `system` without a shell, getopt, an environment and glob in the C library, and pdpmake, which builds with tcc and then only what each change put out of date, on both machines](078-make-on-taaj.md) | written | `b58cd40` (TheKernel `d79aa54`; port `9042f66`, patch `b70ca44`) |
 | 079 | [Pipes and redirections: `pipe`, posix_spawn's file actions, the file service's streams into and out of files, an environment for a started program, and `system` and `popen` running pipelines with `<`, `>`, `\|` and `2>&1`, which make's recipes use, on both machines](079-pipes-and-redirections.md) | written | `0d5f7fa` (TheKernel `43b80e0`) |
+| 080 | [Fast tests: TaajFS keeps its free map up to date instead of walking the whole disk at every write, the file service reads files in runs of 128 KiB, and the long parts of `make test64` start first and run side by side - over an hour down to a quarter of one](080-fast-tests.md) | written | `125c3b6` (TheKernel `a3323eb`) |
 
 ## How to run what the entries describe
 

@@ -2576,3 +2576,44 @@ make aarch64-pipe-test
 | `pipe64-test passed`, `aarch64-pipe-test passed` | each machine |
 
 Automated: make test64
+
+---
+
+## 080 · Fast tests: TaajFS stops reading the whole disk at every write, programs load in big reads, and the long boots run side by side
+
+[The entry](journal/080-fast-tests.md)
+
+**1. The PC: a build and a big program**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`.
+
+| Type | You should see |
+|---|---|
+| `time source /src/build` | the C library and 11 programs built; `took` well under two minutes (it was over ten) |
+| `time with readonly ls` | `took` a fraction of a second |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `test64: all passed`, in 14 to 16 minutes | every part |
+
+Automated: make test64
