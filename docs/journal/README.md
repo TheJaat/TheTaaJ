@@ -86,6 +86,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 076 | [lld on TheTaaJ: `ld.lld` links the objects clang wrote there into TheTaaJ's eleven C programs, byte for byte the build's own, on both machines, and one runs; build-llvm.py rebuilds when a command changes; a boot slot for QEMU's disk thread](076-lld-on-taaj.md) | written | `df22bb5` (TheKernel `7c10f51`; import `9724df0`, patches `63c70ad`) |
 | 077 | [A program starts a program: `posix_spawn` and `waitpid` through init, with a reply channel of the asker's own and handles a child can be given copies of; `with programs`; clang starts ld.lld itself, so `clang x.c -o x` makes the build's chello byte for byte on both machines](077-a-program-starts-a-program.md) | written | `5e5d795` (TheKernel `3e5d3a5`; patch `e679dbc`) |
 | 078 | [make on TheTaaJ: TaajFS change stamps (version 4, the commit's generation), `system` without a shell, getopt, an environment and glob in the C library, and pdpmake, which builds with tcc and then only what each change put out of date, on both machines](078-make-on-taaj.md) | written | `b58cd40` (TheKernel `d79aa54`; port `9042f66`, patch `b70ca44`) |
+| 079 | [Pipes and redirections](079-pipes-and-redirections.md) | Era 6: `pipe`, posix_spawn's file actions, the file service's streams and an environment for a started program; `system` and `popen` run pipelines with `<`, `>`, `\|` and `2>&1`, and make's recipes use them | 0d5f7fa |
 
 ## How to run what the entries describe
 

@@ -2531,3 +2531,48 @@ make aarch64-make-test
 | `make64-test passed`, `aarch64-make-test passed` | each machine |
 
 Automated: make test64
+
+---
+
+## 079 · Pipes and redirections: a program's input and output, chosen by the program that starts it
+
+[The entry](journal/079-pipes-and-redirections.md)
+
+**1. The PC: a recipe with a redirection**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`. The Makefile on the disk has a new target, `primes.txt`.
+
+| Type | You should see |
+|---|---|
+| `cd /src/libc/programs` | the prompt says `taaj:/src/libc/programs>` |
+| `with programs make primes.txt` | `tcc cprimes.c -o cprimes` (if it was not built yet), then `./cprimes 100 > primes.txt` |
+| `with files cat primes.txt` | `cprimes: 25 primes below 100`: what cprimes printed, in the file |
+| `with programs make primes.txt` | `make: 'primes.txt' is up to date` |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make pipe64-test
+make aarch64-pipe-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `pipes on TheTaaJ (x86_64): 58 checks of pipes, file actions, system, popen and the environment passed; make ran recipes with <, >, \| and 2>&1` | every check, and make's recipes (`aarch64` likewise) |
+| `pipe64-test passed`, `aarch64-pipe-test passed` | each machine |
+
+Automated: make test64
