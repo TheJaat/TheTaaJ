@@ -1,0 +1,12 @@
+pdpmake - Ron Yorston's public-domain POSIX make - as it is upstream,
+with TheTaaJ's changes on top (see the history of this directory).
+
+  from     https://github.com/rmyorston/pdpmake
+  release  2.0.4 (tag 2.0.4, commit 0faaf258c9b3eaa9f5e4f6842e2484cbea6f23f8,
+           "Immediate-mode macros and suffix substitution", 2025-11-27)
+
+Here: the sources (*.c, make.h), the manual (pdpmake.1), the README and
+the licence. Not its Makefile (TheTaaJ's builds it) or its test suite
+(shell scripts, for a system with a shell).
+
+pdpmake is in the public domain (LICENSE).
