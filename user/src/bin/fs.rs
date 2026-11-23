@@ -28,12 +28,24 @@
 //! All the logic - the protocol, both stores, the mapping onto TaajFS -
 //! is in the `fileserver` crate, tested on the host. This program only
 //! connects it to channels: requests in, and disk sectors out.
+//!
+//! Streams (protocol::STREAM_OUT, STREAM_IN): a file as a program's
+//! output or input. The request brings one end of a channel, which this
+//! service then watches with its request channels: what arrives on it is
+//! added to the file, or the file's bytes are sent on it, until it
+//! closes. Before any request is answered, every output stream is
+//! emptied into its file: a program that waited for another to end, and
+//! then reads what it wrote, finds all of it there.
 
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
+use alloc::vec::Vec;
+
 use fileserver::protocol::{self, Request, Status, MESSAGE_MAX};
-use fileserver::{Access, DiskStore, RamStore, Store};
+use fileserver::{Access, DiskStore, RamStore, Store, Stream};
 use taaj::disk::{Disk, Window};
 use taaj::services::{ServiceError, Services};
 use taaj::{println, Error, Handle};
@@ -181,33 +193,67 @@ fn read_into(store: &mut impl Store, message: &[u8], memory: Handle, reply: &mut
     length
 }
 
+/// A stream this service keeps: the channel it travels on, and what it
+/// is.
+struct Open {
+    channel: Handle,
+    stream: Stream,
+    /// An input stream whose next message found no room in the channel.
+    full: bool,
+}
+
+/// Most messages taken from or sent on one stream at a time, so that
+/// one busy stream does not keep the requests waiting.
+const STREAM_TURN: usize = 64;
+
 fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 {
     let mut message = [0u8; MESSAGE_MAX];
     let mut reply = [0u8; MESSAGE_MAX];
     // The channels watched: requests that may change files, then -
-    // while anyone holds its other end - requests that may only look.
-    let channels = [requests, look.unwrap_or(0)];
-    let mut watched = 1 + usize::from(look.is_some());
+    // while anyone holds its other end - requests that may only look,
+    // then the streams.
+    let mut look = look;
+    let mut streams: Vec<Open> = Vec::new();
+    let mut watched: Vec<Handle> = Vec::new();
     loop {
-        let from = match taaj::object_wait(&channels[..watched]) {
-            Ok(from) => from,
+        send_inputs(store, &mut streams, &mut message);
+        watched.clear();
+        watched.push(requests);
+        watched.extend(look);
+        let first_stream = watched.len();
+        watched.extend(streams.iter().map(|open| open.channel));
+        // An input stream waiting for room is tried again a tick later:
+        // the kernel has no "wake me when there is room".
+        let ready = if streams.iter().any(|open| open.full) {
+            taaj::object_wait_until(&watched, taaj::ticks() + 1)
+        } else {
+            taaj::object_wait(&watched).map(Some)
+        };
+        let from = match ready {
+            Ok(Some(from)) => from,
+            Ok(None) => continue,
             Err(error) => {
                 println!("[fs] cannot wait: {error:?}");
                 return 2;
             }
         };
+        if from >= first_stream {
+            take_from(store, &mut streams, from - first_stream, &mut message);
+            continue;
+        }
+        empty_outputs(store, &mut streams, &mut message);
         let access = if from == 0 { Access::ReadWrite } else { Access::ReadOnly };
         // Room for the largest message and the most handles one can
         // carry: a message that did not fit would stay at the head of
         // the queue, and be refused again, forever.
         let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
-        let (n, count) = match taaj::receive(channels[from], &mut message, &mut handles) {
+        let (n, count) = match taaj::receive(watched[from], &mut message, &mut handles) {
             Ok(received) => received,
             // The service lives as long as its first channel has a
             // sender; the second going only means fewer to watch.
             Err(Error::PeerClosed) if from == 0 => return 0,
             Err(Error::PeerClosed) => {
-                watched = 1;
+                look = None;
                 continue;
             }
             Err(error) => {
@@ -215,10 +261,28 @@ fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 
                 return 2;
             }
         };
-        // Two handles: a READ_INTO, with the memory object to fill.
-        // The object is let go before the answer goes: a client that
-        // starts a program from it at once must find it its own alone,
-        // or the kernel copies it first (ipc::spawn).
+        // Two handles: a stream to open, with its channel; or a
+        // READ_INTO, with the memory object to fill. The object is let
+        // go before the answer goes: a client that starts a program
+        // from it at once must find it its own alone, or the kernel
+        // copies it first (ipc::spawn).
+        if count == 2 && Stream::is_opened_by(&message[..n]) {
+            let (length, stream) = if streams.len() >= protocol::STREAMS_MAX {
+                reply[0] = Status::Busy as u8;
+                (1, None)
+            } else {
+                fileserver::open_stream(store, access, &message[..n], &mut reply)
+            };
+            match stream {
+                Some(stream) => streams.push(Open { channel: handles[1], stream, full: false }),
+                None => {
+                    let _ = taaj::close(handles[1]);
+                }
+            }
+            let _ = taaj::send(handles[0], &reply[..length], &[]);
+            let _ = taaj::close(handles[0]);
+            continue;
+        }
         if count == 2 {
             let length = read_into(store, &message[..n], handles[1], &mut reply);
             let _ = taaj::close(handles[1]);
@@ -247,6 +311,104 @@ fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 
                 taaj::sleep(number);
                 println!("[fs] answering again");
             }
+        }
+    }
+}
+
+/// Lets stream `index` go: its channel closed, and no longer watched.
+/// For an output stream the program writing finds nobody reading; for
+/// an input stream the program reading finds the end.
+fn close_stream(streams: &mut Vec<Open>, index: usize) {
+    let open = streams.remove(index);
+    let _ = taaj::close(open.channel);
+}
+
+/// Stream `index`'s channel is ready: a message for an output stream,
+/// or the reader of an input stream gone. Returns whether the stream is
+/// still open.
+fn take_from(store: &mut impl Store, streams: &mut Vec<Open>, index: usize, message: &mut [u8; MESSAGE_MAX]) -> bool {
+    let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
+    match taaj::receive(streams[index].channel, message, &mut handles) {
+        Ok((n, count)) => {
+            for &handle in &handles[..count] {
+                let _ = taaj::close(handle); // not part of a stream
+            }
+            // A file that cannot take more: the writer is told the only
+            // way a stream can tell it, by nobody being there.
+            if streams[index].stream.take(store, &message[..n]).is_err() {
+                close_stream(streams, index);
+                return false;
+            }
+            true
+        }
+        Err(_) => {
+            close_stream(streams, index);
+            false
+        }
+    }
+}
+
+/// Everything already sent on the output streams, into their files.
+fn empty_outputs(store: &mut impl Store, streams: &mut Vec<Open>, message: &mut [u8; MESSAGE_MAX]) {
+    let mut index = 0;
+    while index < streams.len() {
+        if !matches!(streams[index].stream, Stream::Out { .. }) {
+            index += 1;
+            continue;
+        }
+        let mut open = true;
+        let mut taken = 0;
+        while open && taken < STREAM_TURN && matches!(taaj::poll(&[streams[index].channel]), Ok(Some(_))) {
+            open = take_from(store, streams, index, message);
+            taken += 1;
+        }
+        // A stream closed is out of the list: the next is at `index`.
+        if open {
+            index += 1;
+        }
+    }
+}
+
+/// The input streams, sent on as far as their channels have room; one
+/// at its end is closed.
+fn send_inputs(store: &mut impl Store, streams: &mut Vec<Open>, message: &mut [u8; MESSAGE_MAX]) {
+    let mut index = 0;
+    while index < streams.len() {
+        let mut open = true;
+        streams[index].full = false;
+        for _ in 0..STREAM_TURN {
+            let Open { channel, stream, full } = &mut streams[index];
+            if !matches!(stream, Stream::In { .. }) {
+                break;
+            }
+            let length = match stream.next(store, message) {
+                Ok(0) | Err(_) => 0,
+                Ok(length) => length,
+            };
+            if length == 0 {
+                open = false;
+                break;
+            }
+            match taaj::send(*channel, &message[..length], &[]) {
+                Ok(()) => stream.sent(length),
+                Err(Error::QueueFull) => {
+                    *full = true;
+                    break;
+                }
+                Err(_) => {
+                    open = false;
+                    break;
+                }
+            }
+        }
+        // Sent its turn and more to come: tried again soon.
+        if open && matches!(streams[index].stream, Stream::In { .. }) && !streams[index].full {
+            streams[index].full = true;
+        }
+        if open {
+            index += 1;
+        } else {
+            close_stream(streams, index);
         }
     }
 }

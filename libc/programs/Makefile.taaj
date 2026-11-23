@@ -14,5 +14,10 @@ PROGRAMS = chello cmem cprint cfile cstdio cwords cask cprimes cnet cfloat clib
 
 all: $(PROGRAMS)
 
+# A recipe with a redirection (journal entry 079): the primes below 100,
+# in a file. `with programs make primes.txt`
+primes.txt: cprimes
+	./cprimes 100 > primes.txt
+
 .c:
 	$(CC) $< -o $@

@@ -645,6 +645,12 @@ pub fn stdout() -> Option<Handle> {
     flagged_handle(abi::startup::STDOUT)
 }
 
+/// Standard input's channel, if the parent gave one. (To read it, use
+/// `input`; this is the handle, to hand on.)
+pub fn stdin() -> Option<Handle> {
+    flagged_handle(abi::startup::STDIN)
+}
+
 /// Standard error's channel, if the parent gave one.
 pub fn stderr() -> Option<Handle> {
     flagged_handle(abi::startup::STDERR)
@@ -668,6 +674,9 @@ pub struct CommandLine {
     /// the kernel image, or not said.
     pub file: Option<alloc::string::String>,
     pub arguments: alloc::vec::Vec<alloc::string::String>,
+    /// The environment whoever started it gave - `NAME=value` words -
+    /// or none (abi::init::ENVIRONMENT). Only C programs look at it.
+    pub environment: alloc::vec::Vec<alloc::string::String>,
 }
 
 /// The command line, read from its channel. Like `arguments`, which is
@@ -687,8 +696,9 @@ pub fn command_line() -> CommandLine {
     // A channel with only the arguments on it is closed by now, so this
     // does not wait.
     let program = next().unwrap_or_default();
+    let environment = next().unwrap_or_default();
     let mut program = program.into_iter().filter(|word| !word.is_empty());
-    CommandLine { name: program.next(), file: program.next(), arguments }
+    CommandLine { name: program.next(), file: program.next(), arguments, environment }
 }
 
 /// Where this program asks for services by name: its channel to the

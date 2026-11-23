@@ -70,6 +70,10 @@ pub(crate) enum Open {
     /// (Boxed: a connection holds a message's worth of bytes that
     /// arrived and were not read yet.)
     Socket(alloc::boxed::Box<crate::sockets::Socket>),
+    /// One end of a stream channel: a pipe's (pipes.rs). Shared with
+    /// the descriptors `dup` made of it.
+    PipeRead(crate::pipes::ReadEnd),
+    PipeWrite(crate::pipes::WriteEnd),
 }
 
 pub(crate) struct File {
@@ -172,6 +176,7 @@ pub(crate) fn reason(error: FileError) -> c_int {
         FileError::Refused(No::IsDirectory) => EISDIR,
         FileError::Refused(No::NotEmpty) => ENOTEMPTY,
         FileError::Refused(No::Exists) => EEXIST,
+        FileError::Refused(No::Busy) => ENFILE,
         FileError::Refused(No::BadRequest | No::DiskError | No::Ok) => EIO,
         FileError::Unreachable(Error::TimedOut) => ETIMEDOUT,
         FileError::Unreachable(_) => EIO,
@@ -243,7 +248,8 @@ pub unsafe extern "C" fn __taaj_open(path: *const c_char, flags: c_int) -> c_int
 }
 
 /// `close(fd)`: the number is free to be given out again. (A socket's
-/// connection is closed with it: what was written is still sent.)
+/// connection is closed with it: what was written is still sent. A
+/// pipe's end is closed with its last descriptor.)
 #[no_mangle]
 pub extern "C" fn close(fd: c_int) -> c_int {
     with(|state| match usize::try_from(fd).ok().and_then(|fd| state.table.get_mut(fd)).and_then(Option::take) {
@@ -274,6 +280,7 @@ pub unsafe extern "C" fn read(fd: c_int, buffer: *mut c_void, count: usize) -> i
         match open {
             Some(Open::Input) => input.read(out) as isize,
             Some(Open::Socket(socket)) => socket.read(out),
+            Some(Open::PipeRead(end)) => end.borrow_mut().read(out) as isize,
             Some(Open::File(file)) if file.reads() => {
                 // A file can only be in the table if the service was
                 // there to open it.
@@ -320,6 +327,7 @@ pub unsafe extern "C" fn write(fd: c_int, buffer: *const c_void, count: usize) -
             Some(Open::Output) => taaj::write(bytes).map_or_else(|_| fail(EIO), |_| count as isize),
             Some(Open::Error) => taaj::write_error(bytes).map_or_else(|_| fail(EIO), |_| count as isize),
             Some(Open::Socket(socket)) => socket.write(bytes),
+            Some(Open::PipeWrite(end)) => crate::pipes::write(end, bytes),
             Some(Open::File(file)) if file.writes() => {
                 let Some(Some(files)) = files else { return fail(EIO) };
                 let written = if file.flags & O_APPEND != 0 {
@@ -557,6 +565,8 @@ fn copy_of(state: &State, fd: c_int) -> Result<Open, c_int> {
         Some(Open::Error) => Ok(Open::Error),
         Some(Open::File(file)) => Ok(Open::File(File { path: file.path.clone(), offset: file.offset, flags: file.flags })),
         Some(Open::Socket(_)) => Err(EOPNOTSUPP),
+        Some(Open::PipeRead(end)) => Ok(Open::PipeRead(end.clone())),
+        Some(Open::PipeWrite(end)) => Ok(Open::PipeWrite(end.clone())),
         None => Err(EBADF),
     }
 }

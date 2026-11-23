@@ -131,9 +131,9 @@ int execve(const char *path, char *const argv[], char *const environment[]);
  * ENOSYS. */
 pid_t fork(void);
 
-/* The environment, "NAME=value" strings ending in NULL: empty when the
- * program starts (a TheTaaJ program is given handles and arguments,
- * not variables), and what it sets itself (stdlib.h). */
+/* The environment, "NAME=value" strings ending in NULL: what the
+ * program that started it passed (spawn.h), and what it sets itself
+ * (stdlib.h). */
 extern char **environ;
 
 /* The options in argv, one letter per call (POSIX): it stops at the
@@ -164,6 +164,14 @@ int gethostname(char *name, size_t size);
  * one - since the place is kept per descriptor here (fcntl.h). */
 int dup(int fd);
 int dup2(int fd, int to);
+
+/* A pipe: fds[0] reads what fds[1] writes, in this program or - given
+ * to one it starts (posix_spawn_file_actions_adddup2, spawn.h) - in
+ * another. The reader sees the end once every write end is closed, in
+ * every program that has one; a write with no reader left fails with
+ * EPIPE. pipe2's flags mean nothing here. */
+int pipe(int fds[2]);
+int pipe2(int fds[2], int flags);
 
 /* Writing out to the disk: every write already reaches the file
  * service before it returns, so these have nothing left to do. */

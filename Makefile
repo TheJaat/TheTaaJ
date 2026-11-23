@@ -6,7 +6,7 @@ KERNEL_DIR = kernel
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
-        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test \
+        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test pipe64-test aarch64-pipe-test \
         llvm64 llvm-aarch64 clang-tblgen llvm64-test clang64-test aarch64-clang-test aarch64-llvm-test llvm-put llvm-put-aarch64
 
 # Default target
@@ -1287,6 +1287,31 @@ else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 make boot is not run"
 endif
 
+# Pipes and redirections for programs: pipes.c (next to the test
+# script) checks them on TheTaaJ, and make runs recipes that use them
+# (journal entry 079).
+PIPE64_LOG   = $(BUILD_DIR)/pipe64.log
+PIPE_A64_LOG = $(BUILD_DIR)/aarch64/pipe.log
+PIPES_C      = $(KERNEL64_DIR)/scripts/pipes.c
+pipe64-test: iso64 user64 pdpmake64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@clang $(TAAJ_CFLAGS) -c $(PIPES_C) -o $(C_BIN)/pipes.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/pipes.o $(LIBC_A) -o $(C_BIN)/pipes
+	@TFSTOOL=$(TFSTOOL_RS) CAT=$(USER_BIN)/cat $(KERNEL64_DIR)/scripts/pipe-test.sh x86_64 $(ISO64_IMG) $(PIPE64_LOG).disk $(PIPE64_LOG) $(C_BIN)/pipes $(C_BIN)/make
+	@echo "pipe64-test passed"
+else
+	@echo "FAIL: the pipes test needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+
+aarch64-pipe-test: kernel-aarch64 user-aarch64 pdpmake-aarch64 tfstool-rs
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@clang $(TAAJ_A64_CFLAGS) -c $(PIPES_C) -o $(C_A64_BIN)/pipes.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/pipes.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/pipes
+	@TFSTOOL=$(TFSTOOL_RS) CAT=$(A64_USER_BIN)/cat $(KERNEL64_DIR)/scripts/pipe-test.sh aarch64 $(KERNEL_A64_IMAGE) $(PIPE_A64_LOG).disk $(PIPE_A64_LOG) $(C_A64_BIN)/pipes $(C_A64_BIN)/make
+	@echo "aarch64-pipe-test passed"
+else
+	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 pipes boot is not run"
+endif
+
 aarch64-tcc-test: kernel-aarch64 user-aarch64 tcc-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
@@ -1514,7 +1539,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 7
-TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test tcc64-test aarch64-tcc-test cxx64-test aarch64-cxx-test llvm64-test aarch64-llvm-test clang64-test aarch64-clang-test make64-test aarch64-make-test
+TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test tcc64-test aarch64-tcc-test cxx64-test aarch64-cxx-test llvm64-test aarch64-llvm-test clang64-test aarch64-clang-test make64-test aarch64-make-test pipe64-test aarch64-pipe-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared

@@ -80,10 +80,10 @@ float strtof(const char *text, char **end);
 long double strtold(const char *text, char **end);
 double atof(const char *text);
 
-/* The program's environment. A TheTaaJ program starts with none - what
- * it is given comes as handles and arguments - and a program it starts
- * gets none of it (spawn.h); but what it sets with setenv or putenv,
- * getenv finds, and environ lists. */
+/* The program's environment: what the program that started it passed
+ * (posix_spawn's envp; system and popen pass environ), or - started by
+ * the shell, which has none - nothing. What it sets with setenv or
+ * putenv, getenv finds, environ lists, and a program it starts gets. */
 char *getenv(const char *name);
 int setenv(const char *name, const char *value, int overwrite);
 int unsetenv(const char *name);
@@ -91,13 +91,16 @@ int putenv(char *entry);
 
 /* Runs a command and waits for it; its status, as waitpid's. There is
  * no shell here: the command is split into words as sh splits them
- * (quotes and backslashes work) and the first started as posix_spawnp
- * starts a name - a bare name is the file of that name in the root.
- * What needs a shell (a pipe, a redirection, ';', '&&', '$', a
- * wildcard, VAR=x cmd) is not run: -1, ENOSYS, and a line on standard
- * error. A program that cannot be started: status 127, as sh's "not
- * found", with a line saying why. Without the right to start programs
- * (`with programs`): -1, EPERM. system(NULL) is 1. */
+ * (quotes and backslashes work), with pipes (a | b) and redirections
+ * (< f, > f, >> f, 2> f, 2>&1, >&2), and each command's first word
+ * started as posix_spawnp starts a name - a bare name is the file of
+ * that name in the root. A pipeline's status is its last command's.
+ * What needs more of a shell (';', '&&', '&', '$', a wildcard,
+ * VAR=x cmd) is not run: -1, ENOSYS, and a line on standard error. A
+ * program that cannot be started, or a redirection's file that cannot
+ * be opened: status 127, as sh's "not found", with a line saying why.
+ * Without the right to start programs (`with programs`): -1, EPERM.
+ * system(NULL) is 1. */
 int system(const char *command);
 
 /* The whole path from the root that path names, if something is there:

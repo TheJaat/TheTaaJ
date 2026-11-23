@@ -6,9 +6,28 @@
  * shell's `with programs`); otherwise EPERM.
  *
  * The new program gets its arguments and name (argv), its file, this
- * program's current directory, standard output and error, and services.
- * No standard input; no environment (there is none). File actions and
- * attributes cannot be added yet: the add functions return ENOSYS.
+ * program's current directory, standard output and error, and services;
+ * no standard input, unless a file action gives it one.
+ *
+ * File actions are done, in order, on what would be the new program's
+ * descriptors - this program's, but without standard input - and it
+ * gets the 0, 1 and 2 that come out (a program here is given no other
+ * descriptors):
+ *   adddup2(a, fd, to)    `to` is what `fd` is: this program's
+ *                         standard ones, a pipe's end (unistd.h), a
+ *                         file open here, or what an earlier action made
+ *   addopen(a, fd, path, flags, mode)
+ *                         `fd` open on `path`, as a stream the file
+ *                         service keeps: read from the start with
+ *                         O_RDONLY, else written - from empty with
+ *                         O_TRUNC, at the end otherwise; ENOENT without
+ *                         O_CREAT for a file not there. `mode` means
+ *                         nothing (no permissions).
+ *   addclose(a, fd)       the new program does not get `fd`
+ * Attributes cannot be set: posix_spawn fails with ENOSYS if any are.
+ * envp is the new program's environment (its environ); NULL passes this
+ * program's own. It travels in init's request, so it is small: the
+ * arguments and it, with the names, in 1024 bytes (else E2BIG). 
  *
  * Wait for it with waitpid (sys/wait.h). */
 
@@ -23,7 +42,9 @@ extern "C" {
 
 typedef struct {
     int __actions;
-    int __reserved[7];
+    int __pad;
+    void *__list; /* the actions, kept by the library: destroy frees it */
+    int __reserved[4];
 } posix_spawn_file_actions_t;
 
 typedef struct {

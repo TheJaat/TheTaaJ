@@ -41,6 +41,21 @@ int taaj_unsetenv(const char *name);
 int taaj_putenv(char *entry);
 extern char **taaj_environ;
 
+/* popen's other half is spawn.rs, which is not here: popen is not asked
+ * (pipes.c checks it on TheTaaJ), only linked. */
+int __taaj_popen(const char *command, int writing)
+{
+    (void)command;
+    (void)writing;
+    return -1;
+}
+
+int __taaj_pclose(int fd)
+{
+    (void)fd;
+    return -1;
+}
+
 /* TheTaaJ's fnmatch.h values: the host's may differ. */
 #define T_NOESCAPE 0x01
 #define T_PATHNAME 0x02

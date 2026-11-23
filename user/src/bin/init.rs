@@ -914,7 +914,12 @@ fn serve_request(launcher: Handle, requests: Handle) {
         let mut program = [0u8; 2 * 256 + 2];
         let length = abi::arguments::encode([run.name, run.file].into_iter(), &mut program).ok_or(Error::InvalidArgument)?;
         let (tx, rx) = taaj::channel_create()?;
-        let sent = taaj::send(tx, run.arguments, &[]).and_then(|()| taaj::send(tx, &program[..length], &[]));
+        // Then, if the asker gave one, the environment (abi::init::
+        // ENVIRONMENT): a third message.
+        let (arguments, environment) = run.parts();
+        let sent = taaj::send(tx, arguments, &[])
+            .and_then(|()| taaj::send(tx, &program[..length], &[]))
+            .and_then(|()| if environment.is_empty() { Ok(()) } else { taaj::send(tx, environment, &[]) });
         let _ = taaj::close(tx);
         sent.map(|()| Some(rx)).inspect_err(|_| close(&[rx]))
     };
@@ -952,7 +957,10 @@ fn serve_request(launcher: Handle, requests: Handle) {
             // An input that is the keyboard is also sent on: the
             // program asks for each line (abi::stream::WANT).
             STDIN if flags & flag != 0 && flags & KEYBOARD != 0 => passed.next().map(|handle| (handle, RECEIVE | SEND)),
-            STDIN if flags & flag != 0 => passed.next().map(|handle| (handle, RECEIVE)),
+            // Any other input may be handed on, as the outputs are: a
+            // program reading a pipe or a file can give it to one it
+            // starts (spawn.rs in libc).
+            STDIN if flags & flag != 0 => passed.next().map(|handle| (handle, RECEIVE | DELEGABLE)),
             // Outputs and the services: to send on, and to hand on to a
             // program this one starts (spawn.rs in libc) - a copy can do
             // no more than the handle it was made from.

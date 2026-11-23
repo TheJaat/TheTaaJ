@@ -79,6 +79,7 @@ pub mod errno;
 pub mod memory;
 pub mod number;
 pub mod sockets;
+pub mod pipes;
 pub mod spawn;
 pub mod status;
 pub mod string;
@@ -93,6 +94,9 @@ extern "C" {
     /// The C program's own `main`. Declared here, defined there: the
     /// linker joins the two.
     fn main(argc: c_int, argv: *mut *mut c_char) -> c_int;
+
+    /// The environment (libc/c/unix.c): `NAME=value` strings, then null.
+    static mut environ: *mut *mut c_char;
 
     /// Writes out what every stream still holds (libc/c/stdio.c).
     fn __taaj_flush_streams();
@@ -157,6 +161,23 @@ pub extern "C" fn _start(startup_handles: u64, argument: u64) -> ! {
     // And the array: a pointer to each, then null.
     let mut argv: Vec<*mut c_char> = strings.iter_mut().map(|string| string.as_mut_ptr().cast()).collect();
     argv.push(core::ptr::null_mut());
+    // The environment whoever started it gave (spawn.rs), as `environ`:
+    // its own strings and array, kept for as long as the program runs.
+    if !command_line.environment.is_empty() {
+        let mut entries: Vec<*mut c_char> = command_line
+            .environment
+            .into_iter()
+            .map(|entry| {
+                let mut entry = entry.into_bytes();
+                entry.push(0);
+                Vec::leak(entry).as_mut_ptr().cast()
+            })
+            .collect();
+        entries.push(core::ptr::null_mut());
+        // SAFETY: before main, nothing else touches environ; the array
+        // and strings are leaked, so live as long as the program.
+        unsafe { environ = Vec::leak(entries).as_mut_ptr() };
+    }
     // SAFETY: a C function taking and returning nothing; what it calls
     // is the program's own code, compiled to be called exactly here.
     unsafe { __taaj_run_constructors() };

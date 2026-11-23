@@ -1,8 +1,7 @@
 /* unix.c - the parts of a Unix C library that make needs and that are
  * plain C over the rest of this one: basename and dirname (libgen.h),
  * getopt (unistd.h), the environment (stdlib.h), fnmatch (fnmatch.h)
- * and glob (glob.h); and popen, which needs what TheTaaJ does not have
- * yet (stdio.h). */
+ * and glob (glob.h); and popen and pclose (stdio.h), around spawn.rs. */
 
 #include <dirent.h>
 #include <errno.h>
@@ -117,9 +116,11 @@ int getopt(int argc, char *const argv[], const char *optstring)
 
 /* ---- the environment ----------------------------------------------- */
 
-/* A program starts with none: TheTaaJ gives a program handles and
- * arguments, not variables. What it sets itself, it finds again; a
- * program it starts gets none of them (spawn.h). */
+/* A program starts with what the program that started it passed
+ * (posix_spawn's envp, or environ for system and popen: libc/src/
+ * spawn.rs); one the shell started, with none. The library's start
+ * (libc/src/lib.rs) points environ at an array of its own before main.
+ * What a program sets, it finds again, and passes on. */
 static char *empty[] = {NULL};
 char **environ = empty;
 /* Whether environ is this library's own array, made with malloc. */
@@ -493,19 +494,39 @@ void globfree(glob_t *found)
 
 /* ---- popen ----------------------------------------------------------- */
 
-/* A command's output as a stream needs a pipe between two programs,
- * which TheTaaJ does not have yet: NULL, with ENOSYS. */
+/* libc/src/spawn.rs: start the command with a pipe to it, and wait. */
+int __taaj_popen(const char *command, int writing);
+int __taaj_pclose(int fd);
+
 FILE *popen(const char *command, const char *mode)
 {
-    (void)command;
-    (void)mode;
-    errno = ENOSYS;
-    return NULL;
+    if (command == NULL || mode == NULL || (mode[0] != 'r' && mode[0] != 'w')) {
+        errno = EINVAL;
+        return NULL;
+    }
+    int writing = mode[0] == 'w';
+    int fd = __taaj_popen(command, writing);
+    if (fd < 0)
+        return NULL;
+    FILE *stream = fdopen(fd, writing ? "w" : "r");
+    if (stream == NULL) {
+        int saved = errno;
+        close(fd);
+        __taaj_pclose(fd);
+        errno = saved;
+    }
+    return stream;
 }
 
 int pclose(FILE *stream)
 {
-    (void)stream;
-    errno = ECHILD;
-    return -1;
+    if (stream == NULL) {
+        errno = ECHILD;
+        return -1;
+    }
+    /* Closed first: a command reading what this program wrote sees the
+     * end, and can finish. */
+    int fd = fileno(stream);
+    fclose(stream);
+    return __taaj_pclose(fd);
 }

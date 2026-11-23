@@ -21,6 +21,7 @@ use crate::errno::*;
 const S_IFREG: c_uint = 0o100000;
 const S_IFDIR: c_uint = 0o040000;
 const S_IFCHR: c_uint = 0o020000;
+const S_IFIFO: c_uint = 0o010000;
 
 /// sys/stat.h's `struct timespec` fields: seconds and nanoseconds.
 #[repr(C)]
@@ -129,7 +130,8 @@ pub unsafe extern "C" fn lstat(path: *const c_char, out: *mut Stat) -> c_int {
 }
 
 /// `fstat(fd, out)`: what an open descriptor is. A file is asked about
-/// by its path; the three standard ones are character devices.
+/// by its path; the three standard ones are character devices, and a
+/// pipe's end is a FIFO.
 ///
 /// # Safety
 /// `out` must be valid for writing.
@@ -138,6 +140,9 @@ pub unsafe extern "C" fn fstat(fd: c_int, out: *mut Stat) -> c_int {
     let found = with(|state| {
         let path = match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
             Some(Open::File(file)) => file.path.clone(),
+            Some(Open::PipeRead(_) | Open::PipeWrite(_)) => {
+                return Ok(Stat { st_dev: 1, st_ino: 1 + fd as u64, st_nlink: 1, st_mode: S_IFIFO | 0o600, st_blksize: 4096, ..Stat::default() })
+            }
             Some(Open::Input | Open::Output | Open::Error | Open::Socket(_)) => {
                 return Ok(Stat {
                     st_dev: 1,

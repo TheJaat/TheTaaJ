@@ -98,6 +98,20 @@ pub mod protocol {
     /// Marks the file changed now - a new, higher stamp (STAT) - and
     /// changes nothing in it, as `touch` does.
     pub const TOUCH: u8 = 12;
+    /// STREAM_OUT name, number: a file as a program's output. The
+    /// request carries, after its reply channel, one end of a channel:
+    /// every stream DATA message that arrives on it is added to the end
+    /// of the file, until the other end is closed. `number` 0 empties
+    /// the file first (`>`), 1 keeps it (`>>`); either makes it if it is
+    /// not there. A change, so refused on the read-only channel.
+    pub const STREAM_OUT: u8 = 13;
+    /// STREAM_IN name, number: a file as a program's input. As
+    /// STREAM_OUT, but the service sends the file's bytes, from offset
+    /// `number`, as DATA messages on the channel, and closes it at the
+    /// end (`<`). Allowed on either channel.
+    pub const STREAM_IN: u8 = 14;
+    /// Most streams the service keeps open at once.
+    pub const STREAMS_MAX: usize = 16;
 
     /// The longest STALL: 30 seconds of 100 Hz ticks.
     pub const STALL_MAX: u64 = 3000;
@@ -164,6 +178,9 @@ pub mod protocol {
         Exists = 11,
         /// A directory cannot be moved to a place inside itself.
         IntoItself = 12,
+        /// The service has as many streams open as it keeps
+        /// (STREAMS_MAX).
+        Busy = 13,
     }
 
     impl Status {
@@ -181,6 +198,7 @@ pub mod protocol {
                 10 => Status::NotEmpty,
                 11 => Status::Exists,
                 12 => Status::IntoItself,
+                13 => Status::Busy,
                 _ => Status::BadRequest,
             }
         }
@@ -200,6 +218,7 @@ pub mod protocol {
                 Status::NotEmpty => "the directory is not empty",
                 Status::Exists => "there is already something with that name",
                 Status::IntoItself => "a directory cannot be moved into itself",
+                Status::Busy => "the file service has too many streams open",
             }
         }
     }
@@ -390,6 +409,94 @@ pub fn serve_into(store: &mut impl Store, message: &[u8], into: &mut [u8], reply
     }
 }
 
+/// A file being written or read as a stream (protocol::STREAM_OUT,
+/// STREAM_IN): what the service keeps for it between messages. The
+/// channel it travels on is the service's business, not this.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Stream {
+    /// Bytes that arrive are added to the end of `path`.
+    Out { path: alloc::string::String },
+    /// `path`'s bytes go out from `offset` on.
+    In { path: alloc::string::String, offset: u64 },
+}
+
+/// Opens a stream for a STREAM_OUT or STREAM_IN request: the file made
+/// ready (emptied, made), and what to keep. Writes the reply into
+/// `reply` and returns its length, with the stream if the reply is Ok.
+pub fn open_stream(store: &mut impl Store, access: Access, message: &[u8], reply: &mut [u8; MESSAGE_MAX]) -> (usize, Option<Stream>) {
+    let opened = Request::decode(message).ok_or(Status::BadRequest).and_then(|request| {
+        let path = alloc::string::String::from(request.name);
+        match (request.op, request.number) {
+            (protocol::STREAM_OUT, _) if access == Access::ReadOnly => Err(Status::ReadOnly),
+            (protocol::STREAM_OUT, keep @ (0 | 1)) => {
+                match store.stat(request.name) {
+                    Ok((Kind::Directory, _)) => return Err(Status::IsDirectory),
+                    Ok((Kind::File, _)) if keep == 0 => store.truncate(request.name, 0)?,
+                    Ok((Kind::File, _)) => {}
+                    Err(Status::NotFound) => {
+                        store.write(request.name, protocol::APPEND, &[])?;
+                    }
+                    Err(status) => return Err(status),
+                }
+                Ok(Stream::Out { path })
+            }
+            (protocol::STREAM_IN, offset) => match store.stat(request.name)? {
+                (Kind::Directory, _) => Err(Status::IsDirectory),
+                (Kind::File, _) => Ok(Stream::In { path, offset }),
+            },
+            _ => Err(Status::BadRequest),
+        }
+    });
+    match opened {
+        Ok(stream) => {
+            reply[0] = Status::Ok as u8;
+            (1, Some(stream))
+        }
+        Err(status) => {
+            reply[0] = status as u8;
+            (1, None)
+        }
+    }
+}
+
+impl Stream {
+    /// Whether a request message is one that opens a stream.
+    pub fn is_opened_by(message: &[u8]) -> bool {
+        matches!(message.first(), Some(&(protocol::STREAM_OUT | protocol::STREAM_IN)))
+    }
+
+    /// A message that arrived on an output stream: a DATA message's
+    /// bytes are added to the file; anything else is not part of the
+    /// stream and is ignored. An error means the file cannot take
+    /// more, and the stream should be closed.
+    pub fn take(&mut self, store: &mut impl Store, message: &[u8]) -> Result<(), Status> {
+        match (self, message.split_first()) {
+            (Stream::Out { path }, Some((&abi::stream::DATA, bytes))) if !bytes.is_empty() => {
+                store.write(path, protocol::APPEND, bytes).map(|_| ())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// The next DATA message of an input stream, written into `out`:
+    /// its length, or 0 at the end of the file. It counts as sent only
+    /// once `sent` says so, so that a message the channel had no room
+    /// for is made again.
+    pub fn next(&mut self, store: &mut impl Store, out: &mut [u8; MESSAGE_MAX]) -> Result<usize, Status> {
+        let Stream::In { path, offset } = self else { return Ok(0) };
+        out[0] = abi::stream::DATA;
+        let n = store.read(path, *offset, &mut out[1..])?;
+        Ok(if n == 0 { 0 } else { 1 + n })
+    }
+
+    /// The message `next` made was sent.
+    pub fn sent(&mut self, length: usize) {
+        if let Stream::In { offset, .. } = self {
+            *offset += length.saturating_sub(1) as u64;
+        }
+    }
+}
+
 /// What the channel a request came on allows. The service has one
 /// channel for each: which one a client holds is its permission.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -517,5 +624,102 @@ mod tests {
         let before = stamp(&mut store, "a.c");
         let mut store = DiskStore::mount(store.into_device()).unwrap();
         assert_eq!(stamp(&mut store, "a.c"), before);
+    }
+
+    fn open(store: &mut impl Store, access: Access, op: u8, name: &str, number: u64) -> (Status, Option<Stream>) {
+        let mut message = [0u8; MESSAGE_MAX];
+        let length = Request { op, name, number, data: &[] }.encode(&mut message).expect("fits");
+        assert!(Stream::is_opened_by(&message[..length]));
+        let mut reply = [0u8; MESSAGE_MAX];
+        let (n, stream) = open_stream(store, access, &message[..length], &mut reply);
+        assert_eq!(n, 1);
+        (Status::from_u8(reply[0]), stream)
+    }
+
+    fn contents(store: &mut impl Store, name: &str) -> Vec<u8> {
+        let (status, payload) = ask(store, Access::ReadOnly, protocol::READ, name, &[]);
+        assert_eq!(status, Status::Ok, "{name}");
+        payload
+    }
+
+    /// The same for every store: `>` empties and adds, `>>` adds, `<`
+    /// gives the bytes back in pieces and then says the end; what is
+    /// not allowed is refused at the opening.
+    fn streams_write_and_read_files(store: &mut impl Store) {
+        use protocol::{STREAM_IN, STREAM_OUT};
+        assert_eq!(ask(store, Access::ReadWrite, WRITE, "out", b"old contents").0, Status::Ok);
+        let (status, stream) = open(store, Access::ReadWrite, STREAM_OUT, "out", 0);
+        assert_eq!(status, Status::Ok);
+        let mut stream = stream.expect("a stream");
+        assert!(contents(store, "out").is_empty(), "> empties the file at once");
+        let data = |bytes: &[u8]| [&[abi::stream::DATA][..], bytes].concat();
+        for piece in [data(b"hello "), data(b"world\n"), vec![abi::stream::WANT], data(b""), vec![]] {
+            stream.take(store, &piece).unwrap();
+        }
+        assert_eq!(contents(store, "out"), b"hello world\n", "DATA added; WANT, empty and nothing ignored");
+        let (status, stream) = open(store, Access::ReadWrite, STREAM_OUT, "out", 1);
+        assert_eq!(status, Status::Ok);
+        stream.unwrap().take(store, &data(b"more\n")).unwrap();
+        assert_eq!(contents(store, "out"), b"hello world\nmore\n", ">> keeps what was there");
+        let (status, stream) = open(store, Access::ReadWrite, STREAM_OUT, "made", 1);
+        assert!(status == Status::Ok && stream.is_some());
+        assert!(contents(store, "made").is_empty(), "a missing file is made");
+
+        // Reading: big enough for three messages.
+        let big: Vec<u8> = (0..2500u32).map(|n| b'a' + (n % 26) as u8).collect();
+        store.write("big", 0, &big).unwrap();
+        let (status, stream) = open(store, Access::ReadOnly, STREAM_IN, "big", 0);
+        assert_eq!(status, Status::Ok, "reading is allowed on the read-only channel");
+        let mut stream = stream.unwrap();
+        let mut got = Vec::new();
+        let mut message = [0u8; MESSAGE_MAX];
+        let mut messages = 0;
+        loop {
+            let n = stream.next(store, &mut message).unwrap();
+            if n == 0 {
+                break;
+            }
+            assert_eq!(message[0], abi::stream::DATA);
+            // A message not sent is made again, the same.
+            let again = stream.next(store, &mut [0u8; MESSAGE_MAX]).unwrap();
+            assert_eq!(again, n);
+            got.extend_from_slice(&message[1..n]);
+            stream.sent(n);
+            messages += 1;
+        }
+        assert_eq!(got, big);
+        assert_eq!(messages, 3);
+        let (_, stream) = open(store, Access::ReadOnly, STREAM_IN, "big", 2490);
+        let n = stream.unwrap().next(store, &mut message).unwrap();
+        assert_eq!(&message[1..n], &big[2490..], "from an offset");
+
+        assert_eq!(open(store, Access::ReadOnly, STREAM_OUT, "out", 0).0, Status::ReadOnly);
+        assert_eq!(contents(store, "out"), b"hello world\nmore\n", "a refused > empties nothing");
+        assert_eq!(open(store, Access::ReadWrite, STREAM_OUT, "out", 2).0, Status::BadRequest);
+        assert_eq!(open(store, Access::ReadOnly, STREAM_IN, "none", 0).0, Status::NotFound);
+        assert_eq!(ask(store, Access::ReadWrite, protocol::MKDIR, "dir", &[]).0, Status::Ok);
+        assert_eq!(open(store, Access::ReadWrite, STREAM_OUT, "dir", 0).0, Status::IsDirectory);
+        assert_eq!(open(store, Access::ReadOnly, STREAM_IN, "dir", 0).0, Status::IsDirectory);
+        assert_eq!(open(store, Access::ReadWrite, STREAM_OUT, "none/x", 0).0, Status::NotFound);
+        // Not a request that opens a stream: serve's business.
+        assert_eq!(ask(store, Access::ReadWrite, protocol::STREAM_OUT, "out", &[]).0, Status::BadRequest);
+    }
+
+    #[test]
+    fn streams_write_and_read_files_in_memory() {
+        streams_write_and_read_files(&mut RamStore::new());
+    }
+
+    #[test]
+    fn streams_write_and_read_files_on_disk() {
+        let mut device = MemDevice::new(256);
+        format_volume(&mut device, 256).unwrap();
+        streams_write_and_read_files(&mut DiskStore::mount(device).unwrap());
+    }
+
+    #[test]
+    fn busy_is_a_status_of_its_own() {
+        assert_eq!(Status::from_u8(Status::Busy as u8), Status::Busy);
+        assert!(Status::Busy.describe().contains("streams"));
     }
 }

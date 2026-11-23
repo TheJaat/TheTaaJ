@@ -152,6 +152,38 @@ impl Files {
         }
     }
 
+    /// `name` as a stream to write to (protocol::STREAM_OUT): a channel
+    /// on which every stream DATA message sent is added to the file -
+    /// what to give a program as its standard output, to have what it
+    /// prints in the file. `keep` false empties the file first (a
+    /// shell's `>`), true adds to it (`>>`); either makes it if it is
+    /// missing. Closing the channel (every copy of it) ends the stream.
+    pub fn stream_out(&self, name: &str, keep: bool) -> Result<Handle, FileError> {
+        self.stream(Request::new(protocol::STREAM_OUT, &self.path(name), u64::from(keep)))
+    }
+
+    /// `name` as a stream to read from (protocol::STREAM_IN): a channel
+    /// on which the service sends the file's bytes, from the start, as
+    /// stream DATA messages, and which ends with the file - what to give
+    /// a program as its standard input (a shell's `<`).
+    pub fn stream_in(&self, name: &str) -> Result<Handle, FileError> {
+        self.stream(Request::new(protocol::STREAM_IN, &self.path(name), 0))
+    }
+
+    /// A stream opened: our end of a new channel, whose other end the
+    /// service keeps.
+    fn stream(&self, request: Request) -> Result<Handle, FileError> {
+        let (ours, theirs) = crate::channel_create().map_err(FileError::Unreachable)?;
+        let mut reply = [0u8; MESSAGE_MAX];
+        match self.call_with(request, &[theirs], &mut reply) {
+            Ok(_) => Ok(ours),
+            Err(error) => {
+                let _ = crate::close(ours);
+                Err(error)
+            }
+        }
+    }
+
     /// The whole file, a piece at a time. Returns its size.
     pub fn read(&self, name: &str, mut each: impl FnMut(&[u8])) -> Result<u64, FileError> {
         let name = &self.path(name);

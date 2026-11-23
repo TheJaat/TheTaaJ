@@ -84,9 +84,12 @@ extern FILE *stderr;
  * (`with files`, or `with readonly` to read). */
 FILE *fopen(const char *path, const char *mode);
 
-/* A command's output, or input, as a stream: it needs a pipe between
- * two programs, which TheTaaJ does not have yet. popen is NULL, with
- * ENOSYS; pclose -1. */
+/* A command's output ("r"), or input ("w"), as a stream: the command is
+ * run as system() runs one (stdlib.h) - words, pipes and redirections,
+ * no shell - with a pipe to this program (unistd.h). NULL, with errno,
+ * if it was not started. pclose closes the stream, waits for the
+ * command, and gives its status as waitpid does; -1 with ECHILD for a
+ * stream popen did not make. Needs the right to start programs. */
 FILE *popen(const char *command, const char *mode);
 int pclose(FILE *stream);
 
