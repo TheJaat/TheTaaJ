@@ -25,6 +25,9 @@ use crate::format::{
     TYPE_DIR, TYPE_FILE, VERSION_BIG_FILES, VERSION_DIRECTORIES, VERSION_STAMPS, STAMPED_BLOCKS,
 };
 
+/// The most blocks `read_at` asks the device for at once: 256 KiB.
+const READ_RUN_MAX: usize = 64;
+
 /// The most blocks a directory may span. The same limit as the guard in
 /// `TfsRewriteDirectory`: 64 blocks of 102 entries.
 const MAX_DIR_BLOCKS: usize = 64;
@@ -184,6 +187,9 @@ pub struct Volume<D: BlockDevice> {
     /// Which blocks the committed tree uses. Derived, never stored.
     used: Vec<bool>,
     used_count: u32,
+    /// Blocks handed out since the last commit: the ones the new tree
+    /// does not use are free again once it is committed.
+    fresh: Vec<u32>,
 }
 
 impl<D: BlockDevice> Volume<D> {
@@ -224,6 +230,7 @@ impl<D: BlockDevice> Volume<D> {
             lowest,
             used: Vec::new(),
             used_count: 0,
+            fresh: Vec::new(),
         };
         volume.rebuild_free_map()?;
         Ok(volume)
@@ -336,6 +343,7 @@ impl<D: BlockDevice> Volume<D> {
     fn rebuild_free_map(&mut self) -> Result<()> {
         self.used = vec![false; self.sb.total_blocks as usize];
         self.used_count = 0;
+        self.fresh.clear();
         self.mark_used(SUPER_A)?;
         self.mark_used(SUPER_B)?;
 
@@ -396,7 +404,119 @@ impl<D: BlockDevice> Volume<D> {
 
         self.used[index] = true;
         self.used_count += 1;
+        self.fresh.push(index as u32);
         Ok(index as u32)
+    }
+
+    fn mark_free(&mut self, number: u32) {
+        if let Some(slot) = self.used.get_mut(number as usize) {
+            if *slot {
+                *slot = false;
+                self.used_count -= 1;
+            }
+        }
+    }
+
+    /// Brings the free map from the tree at `old_root` to the one at
+    /// `new_root`, just committed - what `rebuild_free_map` would make,
+    /// without walking the whole tree.
+    ///
+    /// Rebuilding after every commit read every directory, inode and
+    /// index block on the volume, for each write: on a disk with a few
+    /// hundred files, a program writing a file in 1 KB pieces spent
+    /// nearly all its time there (journal entry 080). But a block the
+    /// committed tree reaches is never written, so a block number both
+    /// trees reach has the same contents in both, and everything below
+    /// it is the same too. Only what differs needs looking at: the
+    /// directories whose first block changed, down to the entries that
+    /// did. The tests check the result against a rebuild at every
+    /// commit.
+    fn update_free_map(&mut self, old_root: u32, new_root: u32) -> Result<()> {
+        let (gone, came) = self.changed_blocks(old_root, new_root)?;
+        let fresh = core::mem::take(&mut self.fresh);
+        for number in gone.into_iter().chain(fresh) {
+            self.mark_free(number);
+        }
+        for number in came {
+            self.mark_used(number)?;
+        }
+        #[cfg(test)]
+        {
+            let (used, count) = (self.used.clone(), self.used_count);
+            self.rebuild_free_map()?;
+            assert!(used == self.used && count == self.used_count, "the free map kept up to date is not the rebuilt one");
+        }
+        Ok(())
+    }
+
+    /// The blocks only the old tree reaches, and those only the new one
+    /// does, of two trees that share every block they both reach.
+    fn changed_blocks(&mut self, old_root: u32, new_root: u32) -> Result<(Vec<u32>, Vec<u32>)> {
+        let mut gone = Vec::new();
+        let mut came = Vec::new();
+        let mut pairs = vec![(old_root, new_root, 0usize)];
+        while let Some((old, new, depth)) = pairs.pop() {
+            if old == new {
+                continue;
+            }
+            if depth > MAX_DEPTH {
+                return Err(Error::Corrupt(format!("directories nest deeper than {MAX_DEPTH}")));
+            }
+            let mut before = alloc::collections::BTreeMap::new();
+            for (number, dir) in self.directory_chain(old)? {
+                gone.push(number);
+                for entry in dir.entries.into_iter().filter(|e| e.inode != 0) {
+                    before.insert(entry.name, entry);
+                }
+            }
+            let mut after = Vec::new();
+            for (number, dir) in self.directory_chain(new)? {
+                came.push(number);
+                after.extend(dir.entries.into_iter().filter(|e| e.inode != 0));
+            }
+            for entry in after {
+                match before.remove(&entry.name) {
+                    Some(old) if old.inode == entry.inode && old.kind == entry.kind => {}
+                    Some(old) if old.kind == TYPE_DIR && entry.kind == TYPE_DIR => {
+                        pairs.push((old.inode, entry.inode, depth + 1))
+                    }
+                    Some(old) => {
+                        self.subtree_blocks(&old, depth, &mut gone)?;
+                        self.subtree_blocks(&entry, depth, &mut came)?;
+                    }
+                    None => self.subtree_blocks(&entry, depth, &mut came)?,
+                }
+            }
+            for old in before.into_values() {
+                self.subtree_blocks(&old, depth, &mut gone)?;
+            }
+        }
+        Ok((gone, came))
+    }
+
+    /// Every block `entry` reaches - a file's inode, index and data
+    /// blocks; a directory's own, and all below it - onto `out`.
+    fn subtree_blocks(&mut self, entry: &DirEntry, depth: usize, out: &mut Vec<u32>) -> Result<()> {
+        let mut to_visit = vec![(*entry, depth)];
+        while let Some((entry, depth)) = to_visit.pop() {
+            if entry.kind == TYPE_DIR {
+                if depth > MAX_DEPTH {
+                    return Err(Error::Corrupt(format!("directories nest deeper than {MAX_DEPTH}")));
+                }
+                for (number, dir) in self.directory_chain(entry.inode)? {
+                    out.push(number);
+                    to_visit.extend(dir.entries.into_iter().filter(|e| e.inode != 0).map(|e| (e, depth + 1)));
+                }
+                continue;
+            }
+            out.push(entry.inode);
+            let inode = self.read_inode(entry.inode)?;
+            if inode.is_big() {
+                out.extend_from_slice(&inode.blocks);
+            }
+            out.extend(self.file_blocks(&inode)?.into_iter().filter(|&b| b != 0));
+        }
+        Ok(())
     }
 
     // ---- committing -------------------------------------------------
@@ -434,11 +554,17 @@ impl<D: BlockDevice> Volume<D> {
         .sealed();
         self.write(target, &sb.to_block())?;
 
+        let old_root = self.sb.root_dir;
         self.sb = sb;
         self.slot = target;
 
-        // The old tree is unreachable now; rebuilding is what frees it.
-        self.rebuild_free_map()
+        // The old tree is unreachable now: what only it reached is free.
+        // A tree that cannot be compared is rebuilt from, which also
+        // says what is wrong with it.
+        if self.update_free_map(old_root, new_root).is_err() {
+            return self.rebuild_free_map();
+        }
+        Ok(())
     }
 
     /// Makes the volume one that may hold directories: version 2 in
@@ -739,6 +865,10 @@ impl<D: BlockDevice> Volume<D> {
         // A big file's index block, read once for every block it names.
         let mut index: Option<(usize, Block)> = None;
         let mut done = 0;
+        // Which block each piece of the buffer comes from, gathered
+        // first: then a run of neighbouring blocks - a file written in
+        // one go is mostly one - is read from the device in one go.
+        let mut pieces: Vec<(u32, usize, usize)> = Vec::new();
 
         while done < length {
             let at = offset as usize + done;
@@ -768,9 +898,27 @@ impl<D: BlockDevice> Volume<D> {
                 number
             };
 
-            let block = self.read(number)?;
-            buffer[done..done + chunk].copy_from_slice(&block[within..within + chunk]);
+            pieces.push((number, within, chunk));
             done += chunk;
+        }
+
+        let mut at = 0;
+        let mut run = Vec::new();
+        let mut piece = 0;
+        while piece < pieces.len() {
+            let first = pieces[piece].0;
+            let mut end = piece + 1;
+            while end < pieces.len() && end - piece < READ_RUN_MAX && pieces[end].0 == first + (end - piece) as u32 {
+                end += 1;
+            }
+            run.resize((end - piece) * BLOCK_SIZE, 0);
+            self.device.read_blocks(first, &mut run)?;
+            for (n, &(_, within, chunk)) in pieces[piece..end].iter().enumerate() {
+                let from = n * BLOCK_SIZE + within;
+                buffer[at..at + chunk].copy_from_slice(&run[from..from + chunk]);
+                at += chunk;
+            }
+            piece = end;
         }
         Ok(done)
     }

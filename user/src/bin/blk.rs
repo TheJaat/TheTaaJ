@@ -30,7 +30,7 @@
 //!
 //!   0x0000  the virtqueue: descriptors, available ring, used ring
 //!   0x8000  the request header (16 bytes), then its status byte
-//!   0x9000  the data: up to SECTORS_MAX sectors (16 KiB)
+//!   0x9000  the data: up to SECTORS_MAX sectors (128 KiB)
 //!
 //! One request at a time, start to finish: put three buffers - header,
 //! data, status - in the queue, notify the device, wait for the
@@ -40,8 +40,8 @@
 //! A request for one sector carries its data in the messages. A request
 //! for many (READ_MANY, WRITE_MANY) comes with a memory object: the
 //! driver maps it, copies between it and the DMA buffer, and unmaps it
-//! again before replying. One device request and one copy for 16 KiB,
-//! where sector-sized messages would take 32 of each. The driver cannot
+//! again before replying. One device request and one copy for 128 KiB,
+//! where sector-sized messages would take 256 of each. The driver cannot
 //! let the device use the client's memory directly: the device needs
 //! physical addresses, and only DMA memory comes with those.
 //!

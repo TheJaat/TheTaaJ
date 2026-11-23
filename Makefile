@@ -1528,18 +1528,22 @@ endif
 #
 # In two steps. First everything the tests share is built, one thing
 # after another (two builds of one crate at once only wait for each
-# other, and an error is easier to read alone). Then the seven tests
-# run side by side: each writes its own logs and builds whatever only
+# other, and an error is easier to read alone). Then the tests (TEST_JOBS
+# of them) run side by side: each writes its own logs and builds whatever only
 # it needs in a directory of its own. What keeps that honest is not
 # TEST_JOBS but the boot slots (kernel/kernel64/scripts/boot-slots.sh):
 # however many tests are running, no more emulated CPUs run at once
 # than the host has CPUs for - the boots are timed, and an emulator
 # short of CPU fails them for no fault of the kernel's.
 #
+# The parts are listed longest first - make starts them in this order -
+# so the boots that take minutes (the typed sessions, clang) are not
+# left to begin when the short ones are done (journal entry 080).
+#
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
-TEST_JOBS ?= 7
-TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test tcc64-test aarch64-tcc-test cxx64-test aarch64-cxx-test llvm64-test aarch64-llvm-test clang64-test aarch64-clang-test make64-test aarch64-make-test pipe64-test aarch64-pipe-test
+TEST_JOBS ?= 12
+TEST64_PARTS = boot64-test boot64-uefi-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared

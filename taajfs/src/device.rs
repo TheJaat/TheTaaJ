@@ -44,6 +44,18 @@ impl core::error::Error for DeviceError {}
 pub trait BlockDevice {
     fn read_block(&mut self, number: u32, buffer: &mut Block) -> Result<(), DeviceError>;
     fn write_block(&mut self, number: u32, buffer: &Block) -> Result<(), DeviceError>;
+
+    /// Blocks `first`, `first + 1`, ... into `buffer`, whose length is a
+    /// whole number of blocks. One block at a time unless a device can
+    /// do better - a disk, in one request (journal entry 080).
+    fn read_blocks(&mut self, first: u32, buffer: &mut [u8]) -> Result<(), DeviceError> {
+        let mut block = empty_block();
+        for (n, part) in buffer.chunks_exact_mut(block.len()).enumerate() {
+            self.read_block(first + n as u32, &mut block)?;
+            part.copy_from_slice(&block);
+        }
+        Ok(())
+    }
 }
 
 /// A disk held in memory, for tests.

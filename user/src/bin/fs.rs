@@ -61,7 +61,9 @@ const SECTORS_PER_BLOCK: u64 = (BLOCK_SIZE / SECTOR) as u64;
 const CACHE_BLOCKS: usize = 256;
 
 /// The disk as TaajFS sees it: 4 KiB blocks, each one request to the
-/// block driver for eight sectors, through a window of shared memory.
+/// block driver for eight sectors, through a window of shared memory -
+/// or a run of neighbouring blocks, a file's data, as few requests as
+/// the window allows (32 blocks each).
 struct DiskDevice {
     disk: Disk,
     window: Window,
@@ -96,6 +98,21 @@ impl BlockDevice for DiskDevice {
         Ok(())
     }
 
+    fn read_blocks(&mut self, first: u32, buffer: &mut [u8]) -> Result<(), DeviceError> {
+        let per_request = (self.window.sectors() as usize * SECTOR / BLOCK_SIZE).max(1);
+        for (n, part) in buffer.chunks_mut(per_request * BLOCK_SIZE).enumerate() {
+            let blocks = (part.len() / BLOCK_SIZE) as u32;
+            let start = self.first_sector(first + (n * per_request) as u32)?;
+            if start + u64::from(blocks) * SECTORS_PER_BLOCK > self.sectors {
+                return Err(DeviceError::new("block past the end of the disk"));
+            }
+            let sectors = blocks * SECTORS_PER_BLOCK as u32;
+            self.disk.read_many(&mut self.window, start, sectors).map_err(device_error("disk read"))?;
+            part.copy_from_slice(&self.window.bytes()[..part.len()]);
+        }
+        Ok(())
+    }
+
     fn write_block(&mut self, number: u32, buffer: &Block) -> Result<(), DeviceError> {
         let first = self.first_sector(number)?;
         self.window.bytes()[..BLOCK_SIZE].copy_from_slice(buffer);
@@ -117,7 +134,7 @@ fn mount(disk: Handle) -> Option<DiskStore<Cache<DiskDevice>>> {
             return None;
         }
     };
-    let window = match Window::new(SECTORS_PER_BLOCK as u32) {
+    let window = match Window::new(abi::block::SECTORS_MAX) {
         Ok(window) => window,
         Err(error) => {
             println!("[fs] no memory to share with the disk driver ({error:?}): files in memory only");

@@ -103,6 +103,34 @@ impl<D: BlockDevice> BlockDevice for Cache<D> {
         Ok(())
     }
 
+    /// Blocks already here come from memory; each run of the others is
+    /// one read of the device - and is not kept: a run is a file's data,
+    /// read once, and keeping it would push out the blocks every request
+    /// needs (the tree, the directories, the inodes).
+    fn read_blocks(&mut self, first: u32, buffer: &mut [u8]) -> Result<(), DeviceError> {
+        let size = core::mem::size_of::<Block>();
+        let count = buffer.len() / size;
+        let mut n = 0;
+        while n < count {
+            if let Some(entry) = self.blocks.get_mut(&(first + n as u32)) {
+                self.clock += 1;
+                entry.used = self.clock;
+                buffer[n * size..(n + 1) * size].copy_from_slice(&entry.data[..]);
+                self.hits += 1;
+                n += 1;
+                continue;
+            }
+            let mut end = n + 1;
+            while end < count && !self.blocks.contains_key(&(first + end as u32)) {
+                end += 1;
+            }
+            self.device.read_blocks(first + n as u32, &mut buffer[n * size..end * size])?;
+            self.misses += (end - n) as u64;
+            n = end;
+        }
+        Ok(())
+    }
+
     fn write_block(&mut self, number: u32, buffer: &Block) -> Result<(), DeviceError> {
         match self.device.write_block(number, buffer) {
             Ok(()) => {
@@ -132,15 +160,21 @@ mod tests {
         inner: MemDevice,
         reads: usize,
         writes: usize,
+        /// Reads of several blocks at once, each one request.
+        runs: usize,
     }
 
     impl Counting {
         fn new(blocks: u32) -> Counting {
-            Counting { inner: MemDevice::new(blocks), reads: 0, writes: 0 }
+            Counting { inner: MemDevice::new(blocks), reads: 0, writes: 0, runs: 0 }
         }
     }
 
     impl BlockDevice for Counting {
+        fn read_blocks(&mut self, first: u32, buffer: &mut [u8]) -> Result<(), DeviceError> {
+            self.runs += 1;
+            self.inner.read_blocks(first, buffer)
+        }
         fn read_block(&mut self, number: u32, buffer: &mut Block) -> Result<(), DeviceError> {
             self.reads += 1;
             self.inner.read_block(number, buffer)
@@ -153,6 +187,46 @@ mod tests {
 
     fn filled(byte: u8) -> Block {
         [byte; BLOCK_SIZE]
+    }
+
+    #[test]
+    fn a_run_of_blocks_is_one_request_for_each_stretch_the_cache_lacks() {
+        let mut cache = Cache::new(Counting::new(16), 8);
+        for n in 0..16 {
+            cache.write_block(n, &filled(n as u8)).unwrap();
+        }
+        let mut cache = Cache::new(cache.into_device(), 8);
+        let mut block = empty_block();
+        cache.read_block(5, &mut block).unwrap(); // 5 is now kept
+        let before = cache.device().reads;
+
+        let mut run = alloc::vec![0u8; 10 * BLOCK_SIZE];
+        cache.read_blocks(2, &mut run).unwrap(); // 2..12
+        for n in 0..10 {
+            assert!(run[n * BLOCK_SIZE..(n + 1) * BLOCK_SIZE].iter().all(|&b| b == (n + 2) as u8));
+        }
+        // 2..5 and 6..12: two requests, and block 5 from memory.
+        assert_eq!(cache.device().runs, 2);
+        assert_eq!(cache.device().reads, before);
+        assert_eq!(cache.stats(), (1, 10));
+        // A run is not kept: block 3 is read from the device again.
+        cache.read_block(3, &mut block).unwrap();
+        assert_eq!(cache.stats().1, 11);
+    }
+
+    #[test]
+    fn a_file_is_read_in_runs() {
+        let mut device = Counting::new(256);
+        format(&mut device, 256).unwrap();
+        let mut volume = Volume::mount(device).unwrap();
+        let data: alloc::vec::Vec<u8> = (0..100 * BLOCK_SIZE).map(|n| (n % 251) as u8).collect();
+        volume.put("big", &data).unwrap();
+        let mut volume = Volume::mount(Cache::new(volume.into_device(), 16)).unwrap();
+        let file = volume.lookup("big").unwrap();
+        assert_eq!(volume.read_all(&file).unwrap(), data);
+        let device = volume.into_device().into_device();
+        // 100 blocks, written one after another: a few runs, not 100 reads.
+        assert!(device.runs <= 4, "{} runs", device.runs);
     }
 
     #[test]

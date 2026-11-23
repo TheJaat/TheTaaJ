@@ -40,9 +40,10 @@ fn holds(data: &[u8], sector: u64, pattern: fn(u64, usize) -> u8) -> bool {
     data.iter().enumerate().all(|(i, &byte)| byte == pattern(sector, i))
 }
 
-/// One sector written alone, then 32 written at once, right after it.
-const WRITE_ONE: u64 = 100;
-const WRITE_MANY: u64 = 101;
+/// One sector written alone, then SECTORS_MAX (256) written at once,
+/// right after it: 1400 to 1656, past what READ_MANY reads.
+const WRITE_ONE: u64 = 1400;
+const WRITE_MANY: u64 = 1401;
 /// Where reads are checked against the original: never written.
 const READ_RUN: u64 = 200;
 const READ_RUN_LENGTH: u64 = 150;
@@ -96,7 +97,7 @@ fn main() -> i64 {
     one.fill(0xEE);
     check!(look.read(7, &mut one) == Ok(()) && holds(&one, 7, original), "the second channel reads");
 
-    // Reading many at once, through shared memory: all 32, and fewer -
+    // Reading many at once, through shared memory: all SECTORS_MAX, and fewer -
     // what lies past the ones asked for must be left alone.
     let Ok(mut window) = Window::new(SECTORS_MAX) else {
         println!("[blkcheck] FAILED: no memory for a window");
@@ -106,8 +107,8 @@ fn main() -> i64 {
         window.bytes().chunks(SECTOR).take(count).enumerate().all(|(n, sector)| holds(sector, first + n as u64, pattern))
     };
     window.bytes().fill(0xEE);
-    check!(disk.read_many(&mut window, READ_MANY, SECTORS_MAX) == Ok(()), "32 sectors can be read at once");
-    check!(many(&mut window, READ_MANY, SECTORS_MAX as usize, original), "32 sectors read at once are the right ones");
+    check!(disk.read_many(&mut window, READ_MANY, SECTORS_MAX) == Ok(()), "the most sectors can be read at once");
+    check!(many(&mut window, READ_MANY, SECTORS_MAX as usize, original), "the most sectors read at once are the right ones");
     window.bytes().fill(0xEE);
     check!(look.read_many(&mut window, READ_MANY + 5, 3) == Ok(()), "3 sectors can be read at once, on the second channel");
     check!(many(&mut window, READ_MANY + 5, 3, original), "3 sectors read at once are the right ones");
@@ -141,7 +142,7 @@ fn main() -> i64 {
         "a read of many with no memory to put them in is refused"
     );
     if let Ok(small) = taaj::memory_create(4096) {
-        // 8 sectors' worth of memory, 9 asked for; then 0, then 33.
+        // 8 sectors' worth of memory, 9 asked for; then 0, then SECTORS_MAX + 1.
         for (count, what_ok) in [(9, false), (0, false), (SECTORS_MAX + 1, false), (8, true)] {
             let lent = lend(small);
             check!(lent.is_some(), "a handle can be copied");
@@ -199,7 +200,7 @@ fn main() -> i64 {
         );
 
         check!(disk.write(WRITE_ONE, &fresh) == Ok(()), "a sector can be written");
-        check!(disk.write_many(&mut window, WRITE_MANY, SECTORS_MAX) == Ok(()), "32 sectors can be written at once");
+        check!(disk.write_many(&mut window, WRITE_MANY, SECTORS_MAX) == Ok(()), "the most sectors can be written at once");
 
         // Read back the other way round: the many one at a time, the
         // one through the window - through the read-only channel, which
@@ -228,7 +229,7 @@ fn main() -> i64 {
 
     println!(
         "[blkcheck] {checks} checks, all passed: {sectors} sectors, {}",
-        if read_only { "read-only - every write refused" } else { "33 written at 100 and the last one" }
+        if read_only { "read-only - every write refused" } else { "257 written at 1400 and the last one" }
     );
     0
 }
