@@ -1328,7 +1328,7 @@ endif
 # built everywhere; and -w, since the warnings are upstream's to mind.
 LLVM_X86_DIR  = $(BUILD_DIR)/llvm/x86_64
 LLVM_A64_DIR  = $(BUILD_DIR)/llvm/aarch64
-LLVM_TOOLS    = llvm-tblgen llvm-mc llc clang
+LLVM_TOOLS    = llvm-tblgen llvm-mc llc clang lld
 # Clang's tables are written by clang-tblgen, which Ubuntu does not
 # package: it is built for the host from ports/llvm/clang
 # (tools/build-clang-tblgen.sh), against the host's LLVM 18.1.3.
@@ -1368,22 +1368,22 @@ else
 	@echo "Clang or lld not found: no LLVM for AArch64 (sudo apt install clang lld)"
 endif
 
-# LLVM's tools - llvm-tblgen, llc, llvm-mc, clang - and work for them,
-# on a run disk of their own, to try by hand: they take 131 MB, eight
+# LLVM's tools - llvm-tblgen, llc, llvm-mc, clang, ld.lld - and work for
+# them, on a run disk of their own, to try by hand: they take 177 MB, ten
 # times the usual run disk. The disk is the usual one in every other way
-# (it is made by run-disk), and big: 49152 blocks, 192 MiB. Boot it with
+# (it is made by run-disk), and big: 65536 blocks, 256 MiB. Boot it with
 #   make run64 RUN_DISK=build/llvm-disk.img
 #   make run-aarch64 RUN_A64_DISK=build/aarch64/llvm-disk.img
 # Not part of run-disk: the first LLVM build takes many minutes.
 LLVM_DISK     = $(BUILD_DIR)/llvm-disk.img
 LLVM_A64_DISK = $(BUILD_DIR)/aarch64/llvm-disk.img
-llvm-put: llvm64
-	@$(MAKE) --no-print-directory run-disk RUN_DISK=$(LLVM_DISK) RUN_DISK_BLOCKS=49152
-	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) sh tools/put-llvm.sh $(LLVM_DISK) $(LLVM_X86_DIR)/bin
+llvm-put: llvm64 cprogs64
+	@$(MAKE) --no-print-directory run-disk RUN_DISK=$(LLVM_DISK) RUN_DISK_BLOCKS=65536
+	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) sh tools/put-llvm.sh $(LLVM_DISK) $(LLVM_X86_DIR)/bin $(C_BIN)
 
-llvm-put-aarch64: llvm-aarch64
-	@$(MAKE) --no-print-directory run-aarch64-disk RUN_A64_DISK=$(LLVM_A64_DISK) RUN_DISK_BLOCKS=49152
-	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) sh tools/put-llvm.sh $(LLVM_A64_DISK) $(LLVM_A64_DIR)/bin
+llvm-put-aarch64: llvm-aarch64 cprogs-aarch64
+	@$(MAKE) --no-print-directory run-aarch64-disk RUN_A64_DISK=$(LLVM_A64_DISK) RUN_DISK_BLOCKS=65536
+	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) sh tools/put-llvm.sh $(LLVM_A64_DISK) $(LLVM_A64_DIR)/bin $(C_A64_BIN)
 
 # llvm-tblgen on TheTaaJ, writing what LLVM's own build writes first -
 # the value types and the intrinsics - compared byte for byte with the
@@ -1407,21 +1407,23 @@ endif
 
 # clang on TheTaaJ (journal entry 075): it compiles TheTaaJ's eleven C
 # programs, with the options the build gives them, and writes the same
-# objects, assembly and preprocessed C as the host's clang 18.1.3.
+# objects, assembly and preprocessed C as the host's clang 18.1.3. And
+# lld (entry 076) links them there into the very programs the build
+# links here (C_BIN), one of which then runs.
 CLANG64_LOG   = $(BUILD_DIR)/clang64.log
 CLANG_A64_LOG = $(BUILD_DIR)/aarch64/clang.log
-clang64-test: iso64 llvm64 tfstool-rs
+clang64-test: iso64 llvm64 cprogs64 tfstool-rs
 ifeq ($(HAVE_CC),yes)
-	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) $(KERNEL64_DIR)/scripts/clang-test.sh x86_64 $(ISO64_IMG) $(CLANG64_LOG).disk $(CLANG64_LOG) $(LLVM_X86_DIR)/bin
+	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) $(KERNEL64_DIR)/scripts/clang-test.sh x86_64 $(ISO64_IMG) $(CLANG64_LOG).disk $(CLANG64_LOG) $(LLVM_X86_DIR)/bin $(C_BIN)
 	@echo "clang64-test passed"
 else
 	@echo "FAIL: clang needs clang and lld on the host (sudo apt install clang lld)"; exit 1
 endif
 
-aarch64-clang-test: kernel-aarch64 llvm-aarch64 tfstool-rs
+aarch64-clang-test: kernel-aarch64 llvm-aarch64 cprogs-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
-	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) $(KERNEL64_DIR)/scripts/clang-test.sh aarch64 $(KERNEL_A64_IMAGE) $(CLANG_A64_LOG).disk $(CLANG_A64_LOG) $(LLVM_A64_DIR)/bin
+	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) $(KERNEL64_DIR)/scripts/clang-test.sh aarch64 $(KERNEL_A64_IMAGE) $(CLANG_A64_LOG).disk $(CLANG_A64_LOG) $(LLVM_A64_DIR)/bin $(C_A64_BIN)
 	@echo "aarch64-clang-test passed"
 else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 clang boot is not run"

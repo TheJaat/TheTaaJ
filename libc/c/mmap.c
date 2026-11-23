@@ -145,3 +145,16 @@ int posix_madvise(void *address, size_t length, int advice)
 {
     return madvise(address, length, advice);
 }
+
+/* __clear_cache(start, end): makes code just written to memory safe to
+ * run - on AArch64 the instruction cache must be told. Normally the
+ * compiler's runtime library has it; LLVM calls it after changing a
+ * mapping's protection (sys::Memory::protectMappedMemory). On TheTaaJ a
+ * program cannot make memory executable (PROT_EXEC is refused above),
+ * so no code it writes is ever run, and there is nothing to make safe.
+ * Only the kernel loads code, and it keeps the caches right itself. */
+void __clear_cache(void *start, void *end)
+{
+    (void)start;
+    (void)end;
+}
