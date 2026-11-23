@@ -84,6 +84,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 074 | [LLVM code generation on TheTaaJ: `llc` and `llvm-mc` on both machines, byte for byte as the host's LLVM 18.1.3; programs up to 128 MiB loaded from their memory object with their own stack; TaajFS version 3 (files to 256 MiB); READ_INTO; musl's libm](074-llvm-code-generation.md) | written | `dd3e2f4` (TheKernel `6c5cfb5`; import `0cb7d68`) |
 | 075 | [Clang on TheTaaJ: `clang -c` compiles TheTaaJ's eleven C programs on both machines, byte for byte as the host's clang 18.1.3; a program is told its name and its file (`argv[0]`, `__taaj_executable`), and clang finds its headers from it](075-clang-on-taaj.md) | written | `f89b919` (TheKernel `24a02e6`; import `dbbc93e`, patches `de465b5`) |
 | 076 | [lld on TheTaaJ: `ld.lld` links the objects clang wrote there into TheTaaJ's eleven C programs, byte for byte the build's own, on both machines, and one runs; build-llvm.py rebuilds when a command changes; a boot slot for QEMU's disk thread](076-lld-on-taaj.md) | written | `df22bb5` (TheKernel `7c10f51`; import `9724df0`, patches `63c70ad`) |
+| 077 | [A program starts a program: `posix_spawn` and `waitpid` through init, with a reply channel of the asker's own and handles a child can be given copies of; `with programs`; clang starts ld.lld itself, so `clang x.c -o x` makes the build's chello byte for byte on both machines](077-a-program-starts-a-program.md) | written | `5e5d795` (TheKernel `3e5d3a5`; patch `e679dbc`) |
 
 ## How to run what the entries describe
 

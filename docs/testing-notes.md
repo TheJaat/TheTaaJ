@@ -2425,3 +2425,62 @@ make aarch64-clang-test
 | `clang64-test passed`, `aarch64-clang-test passed` | each machine |
 
 Automated: make test64
+
+---
+
+## 077 · A program starts a program: `clang x.c -o x` on TheTaaJ
+
+[The entry](journal/077-a-program-starts-a-program.md)
+
+**1. The PC: compile and link in one**
+
+```
+make llvm-put
+make run64 RUN_DISK=build/llvm-disk.img
+```
+
+`make llvm-put` now also puts `/tmp` and `/lflags` on the disk, and makes the disk again if it is one from before E4 (smaller than 256 MiB). Close QEMU before running it.
+
+| Type | You should see |
+|---|---|
+| `time with programs clang @cflags @lflags libc/programs/chello.c lib/libc.a -o chello3` | `[init] started /ld.lld for a program, from a file`, then `took` about 48 s, no errors |
+| `chello3 one two` | `Hello from C`, `argc 3`, `argv[1] one`, `argv[2] two` |
+| `with files clang @cflags @lflags libc/programs/chello.c lib/libc.a -o x` | `clang: error: unable to execute command: posix_spawn failed: not permitted`, `clang exited with code 1` |
+| `with programs clang @cflags -nostdlib libc/programs/cwords.c -o y` | ld.lld's `undefined symbol` errors, then `clang: error: ld.lld command failed with exit code 1` |
+| `ls tmp` | `empty`: clang removed the objects |
+
+**2. The same program as the build's**
+
+Close QEMU first. On the host:
+
+```
+tools/tfstool-rs/target/release/tfstool get build/llvm-disk.img chello3 > /tmp/chello3
+cmp /tmp/chello3 build/c/chello && echo same
+```
+
+| Look for | Meaning |
+|---|---|
+| `same` | clang on TheTaaJ, starting ld.lld itself, made the build's program |
+
+**3. AArch64**
+
+```
+make llvm-put-aarch64
+make run-aarch64 RUN_A64_DISK=build/aarch64/llvm-disk.img
+```
+
+The same as part 1; the first step takes about 80 s. Compare with `build/c-aarch64/chello`.
+
+**4. The tests by themselves**
+
+```
+make clang64-test
+make aarch64-clang-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `clang on TheTaaJ (x86_64) compiled and linked chello in one, starting ld.lld itself: the build's chello, byte for byte` | the one-step build, compared (`aarch64` likewise) |
+| `clang64-test passed`, `aarch64-clang-test passed` | each machine |
+
+Automated: make test64
