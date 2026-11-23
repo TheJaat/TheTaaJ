@@ -107,7 +107,8 @@ A program that only reads standard input and writes standard output needs neithe
 | `string.h` | `strlen` `strnlen` `strcmp` `strncmp` `strcpy` `strncpy` `strcat` `strncat` `strchr` `strrchr` `strstr` `strspn` `strcspn` `strdup` `strerror` `strerror_r` `strsignal`; `memcpy` `memmove` `memset` `memcmp` `memchr` |
 | `ctype.h` | `isalpha` `isdigit` `isalnum` `isupper` `islower` `isxdigit` `isspace` `isblank` `isprint` `isgraph` `ispunct` `iscntrl`; `toupper` `tolower` |
 | `errno.h` | `errno`, and the numbers Linux uses for the errors that can happen here |
-| `unistd.h` | `read` `write` `close` `lseek` `unlink` `isatty` `_exit`; `dup` `dup2` `fsync`; `getcwd` `chdir` `rmdir` `access` `truncate` `ftruncate` `readlink`; `getpid` `sysconf` `getpagesize` `usleep`; `fork` `execv` `execve` (which fail with `ENOSYS`) |
+| `unistd.h` | `read` `write` `close` `lseek` `unlink` `isatty` `_exit`; `dup` `dup2` `fsync`; `getcwd` `chdir` `rmdir` `access` `truncate` `ftruncate` `readlink`; `getpid` `sysconf` `getpagesize` `usleep`; `fork` `execv` `execve` (which fail with `ENOSYS`); `environ` (empty) |
+| `spawn.h`, `sys/wait.h` | `posix_spawn` `posix_spawnp`; `waitpid` `wait` `wait4` (see "Starting another program") |
 | `fcntl.h` | `open` `fcntl`, and `O_RDONLY` `O_WRONLY` `O_RDWR` `O_CREAT` `O_EXCL` `O_TRUNC` `O_APPEND` and the rest of the `O_` flags |
 | `sys/stat.h` | `stat` `fstat` `lstat` `mkdir` `chmod` `umask`: a file's kind, size and a number for it; no owners, permissions or times are kept |
 | `dirent.h` | `opendir` `readdir` `rewinddir` `closedir` |
@@ -119,6 +120,30 @@ A program that only reads standard input and writes standard output needs neithe
 
 Each header says in its comments what its functions do and where they differ from other systems.
 
+### Starting another program
+
+```c
+#include <spawn.h>
+#include <sys/wait.h>
+
+char *args[] = { "chello", "one", "two", NULL };
+pid_t child;
+int error = posix_spawnp(&child, "chello", NULL, NULL, args, NULL);
+if (error == 0) {
+    int status;
+    waitpid(child, &status, 0);
+    if (WIFEXITED(status)) printf("chello said %d\n", WEXITSTATUS(status));
+}
+```
+
+- The program must be run `with programs` (`with programs mine`): that gives it the files and the right to start programs. Otherwise `posix_spawn` returns `EPERM`.
+- `posix_spawnp` finds a bare name (`chello`) in the root, as the shell does; `posix_spawn` takes the name as a path from the current directory.
+- The new program gets its arguments (`argv[0]` included), its file, this program's current directory, standard output and standard error, and the same services as this one - no more. It gets no standard input.
+- File actions (redirections) cannot be added yet: `posix_spawn_file_actions_addopen` and its kin return `ENOSYS`.
+- `waitpid` gives the exit code (`WEXITSTATUS`), or a signal (`WTERMSIG`): `SIGSEGV` for a program the kernel killed for breaking a rule, `SIGKILL` for one stopped by Ctrl+C or `kill`.
+
+This is how `clang x.c -o x` works on TheTaaJ: clang starts `/ld.lld`.
+
 ## What it does not have
 
 Code that needs any of these will not compile or link:
@@ -127,7 +152,7 @@ Code that needs any of these will not compile or link:
 - **Single keys.** The keyboard arrives a line at a time; a program cannot see a key as it is pressed, the arrow keys, or turn the showing of typed text off (no `termios`). An editor or a game cannot be written yet.
 - **A few functions of `math.h`**: `erf` `erfc` `tgamma` `lgamma`, and every `long double` one, are declared but not there yet. The rest are: `sqrt` `fmod` `floor` `hypot` and their kind, and `sin` `cos` `tan` `exp` `log` `pow` `cbrt` `fma`, the hyperbolic functions and the inverses of all of them - musl's, in `libc/c/libm` (journal entry 074), within an ulp or two of the exact answer.
 - **An exact `strtold`**: a long double is read through a double, so text with more digits than a double keeps is not rounded to the nearest long double.
-- **Processes**: `fork`, `exec` and `wait` are declared but fail (`ENOSYS`, `ECHILD`); there is no `system` or `pipe`. Signals reach a process only from itself (`raise`, or `kill` of its own number).
+- **Processes, the Unix way**: `fork` and `exec` are declared but fail (`ENOSYS`); there is no `system` or `pipe`. A program starts another with `posix_spawn` (above). Signals reach a process only from itself (`raise`, or `kill` of its own number).
 - **Threads**: `pthread_create` fails with `EAGAIN`. The locks are there, and count, so code written for threads runs with one.
 - **Links, owners, permissions and file times**: `link` and `symlink` fail with `EPERM`; `stat` says every time is 0 and every owner 0. `flock` and `fcntl`'s locks fail with `ENOLCK`.
 - **Sleeping by seconds**: `nanosleep` and `usleep` are there, `sleep` is not. (`time`, `clock` and `clock_gettime` count from the moment the system started.)

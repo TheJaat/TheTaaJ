@@ -126,9 +126,14 @@ int execvp(const char *file, char *const argv[]);
 int execv(const char *path, char *const argv[]);
 int execve(const char *path, char *const argv[], char *const environment[]);
 
-/* Copies the running program: not how TheTaaJ starts programs, and a C
- * program cannot start one yet: always -1, ENOSYS. */
+/* Copies the running program: not how TheTaaJ starts programs (a new
+ * one is started from its file: posix_spawn, in spawn.h): always -1,
+ * ENOSYS. */
 pid_t fork(void);
+
+/* The environment: empty. A TheTaaJ program is given handles and
+ * arguments, not variables; getenv never finds one. */
+extern char **environ;
 
 /* The session a process is in: there are no sessions, so each process
  * is its own, and the answer is its number. */

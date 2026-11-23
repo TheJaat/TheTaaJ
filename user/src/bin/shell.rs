@@ -156,7 +156,8 @@ const KEPT_MAX: usize = 1 << 20;
 
 /// What a program is to be given of the files. Everything not on the
 /// lists above gets the screen and its arguments; `with files COMMAND`
-/// and `with readonly COMMAND` add the files, by the user's own
+/// and `with readonly COMMAND` add the files, and `with programs COMMAND`
+/// the files and the right to start programs, by the user's own
 /// decision. The shell holds the authority, so the shell decides who
 /// shares it; a list in a file would let any program that can write
 /// files grant itself more.
@@ -168,6 +169,10 @@ enum Grant {
     Files,
     /// The files, to read.
     ReadOnly,
+    /// The files, and init: the program may start programs of its own
+    /// (posix_spawn), handing them what it was given and no more. clang
+    /// needs it to run ld.lld.
+    Programs,
 }
 
 struct Shell {
@@ -871,8 +876,8 @@ impl Shell {
                   \x20   rm NAME...         remove files, empty directories\n\
                   \x20   (a name is a path from here, ../plan - or /from/the/root)\n\
                   \x20   given              say what it was given\n\
-                  \x20 with files COMMAND      run COMMAND with the files too\n\
-                  \x20 with readonly COMMAND   the same, but only to read (ls to rm have them)\n\
+                  \x20 with files COMMAND      run COMMAND with the files too (readonly: to read)\n\
+                  \x20 with programs COMMAND   the files, and it may start programs (clang x.c -o x)\n\
                   \x20 fs stall SECONDS   a test: the file service goes silent\n\
                   \x20 disk stall SECONDS, display stall SECONDS   the same,\n\
                   \x20              for the disk driver and the display\n\
@@ -948,11 +953,12 @@ impl Shell {
                 let grant = match arguments.first().map(String::as_str) {
                     Some("files") => Some(Grant::Files),
                     Some("readonly") => Some(Grant::ReadOnly),
+                    Some("programs") => Some(Grant::Programs),
                     _ => None,
                 };
                 match (grant, arguments) {
                     (Some(grant), [_, name, arguments @ ..]) => self.run_program(name, arguments, false, grant),
-                    _ => self.write(b"usage: with files COMMAND, with readonly COMMAND\n"),
+                    _ => self.write(b"usage: with files COMMAND, with readonly COMMAND, with programs COMMAND\n"),
                 }
             }
             "fs" => self.fs(rest),
@@ -1275,9 +1281,11 @@ impl Shell {
     }
 
     /// A copy of one of the shell's own handles, to give to a program:
-    /// good for sending on, and for handing over, nothing else.
+    /// good for sending on, and for handing over - to init now, and by
+    /// the program, copied, to a program it starts - nothing else.
     fn delegate(handle: Option<Handle>) -> Option<Handle> {
-        taaj::duplicate(handle?, taaj::rights::SEND | taaj::rights::TRANSFER).ok()
+        use taaj::rights::{DUPLICATE, SEND, TRANSFER};
+        taaj::duplicate(handle?, SEND | DUPLICATE | TRANSFER).ok()
     }
 
     /// The program's end of a channel for its output, and ours - if
@@ -1425,6 +1433,7 @@ impl Shell {
         let on_disk = |list: &[&str]| image.is_some() && list.contains(&name);
         let names: &[(&str, &str)] = match grant {
             Grant::Files => &[("files", "files")],
+            Grant::Programs => &[("files", "files"), ("init", "init")],
             Grant::ReadOnly => &[("files", "files.look")],
             Grant::Usual if on_disk(CHANGE_PROGRAMS) => &[("files", "files")],
             Grant::Usual if on_disk(LOOK_PROGRAMS) => &[("files", "files.look")],

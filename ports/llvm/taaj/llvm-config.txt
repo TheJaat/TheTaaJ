@@ -51,6 +51,11 @@ HAVE_UNISTD_H=1
 HAVE_SYSEXITS_H=1
 HAVE_STRUCT_STAT_ST_MTIM_TV_NSEC=1
 
+# A program starts another with posix_spawn and waits with wait4
+# (libc/src/spawn.rs), as clang starts ld.lld. There is no fork: with
+# HAVE_POSIX_SPAWN LLVM does not try it.
+HAVE_POSIX_SPAWN=1
+
 LLVM_ENABLE_ZLIB=0
 LLVM_ENABLE_ZSTD=0
 LLVM_ENABLE_DIA_SDK=0

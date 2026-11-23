@@ -854,25 +854,42 @@ fn serve_request(launcher: Handle, requests: Handle) {
             let _ = taaj::close(handle);
         }
     };
-    let reply = |text: &[u8], handles: &[Handle]| {
-        let _ = taaj::send(requests, text, handles);
-    };
-
-    // One handle for the image, one for each flag - no more, no fewer.
+    // One handle for the image, one for each flag, one for the reply if
+    // it is to go apart - no more, no fewer.
     let run = Run::decode(&message[..n]).filter(|run| {
         let flags = u64::from(run.flags);
         flags & !(STDOUT | SERVICES | STDIN | STDERR | KEYBOARD | SCREEN) == 0
-            && count == usize::from(run.kind == IMAGE) + (flags & HANDLES).count_ones() as usize
+            && count
+                == usize::from(run.what() == IMAGE)
+                    + (flags & HANDLES).count_ones() as usize
+                    + usize::from(run.replies_apart())
     });
     let Some(run) = run else {
         close(&handles[..count]);
-        return reply(b"error: unknown request", &[]);
+        let _ = taaj::send(requests, b"error: unknown request", &[]);
+        return;
     };
-    let (image, passed) = match run.kind {
+    // Where the reply goes: back on the shared channel, or on the
+    // asker's own (abi::init::REPLY), which init lets go of when done.
+    struct Apart(Option<Handle>);
+    impl Drop for Apart {
+        fn drop(&mut self) {
+            if let Some(channel) = self.0 {
+                let _ = taaj::close(channel);
+            }
+        }
+    }
+    let apart = Apart(run.replies_apart().then(|| handles[count - 1]));
+    let count = count - usize::from(apart.0.is_some());
+    let to = apart.0.unwrap_or(requests);
+    let reply = |text: &[u8], handles: &[Handle]| {
+        let _ = taaj::send(to, text, handles);
+    };
+    let (image, passed) = match run.what() {
         IMAGE => (Some(handles[0]), &handles[1..count]),
         _ => (None, &handles[..count]),
     };
-    if run.kind == BUILT_IN && !RUNNABLE.contains(&run.name) {
+    if run.what() == BUILT_IN && !RUNNABLE.contains(&run.name) {
         close(passed);
         return reply(b"error: no such program, on the disk or built in", &[]);
     }
@@ -936,7 +953,10 @@ fn serve_request(launcher: Handle, requests: Handle) {
             // program asks for each line (abi::stream::WANT).
             STDIN if flags & flag != 0 && flags & KEYBOARD != 0 => passed.next().map(|handle| (handle, RECEIVE | SEND)),
             STDIN if flags & flag != 0 => passed.next().map(|handle| (handle, RECEIVE)),
-            _ if flags & flag != 0 => passed.next().map(|handle| (handle, SEND)),
+            // Outputs and the services: to send on, and to hand on to a
+            // program this one starts (spawn.rs in libc) - a copy can do
+            // no more than the handle it was made from.
+            _ if flags & flag != 0 => passed.next().map(|handle| (handle, SEND | DELEGABLE)),
             _ => None,
         };
         if let Some(entry) = entry {
@@ -957,7 +977,10 @@ fn serve_request(launcher: Handle, requests: Handle) {
     }
     match result {
         Ok(process) => {
-            println!("[init] started {} for the shell{}", run.name, if image.is_some() { ", from a file" } else { "" });
+            // For the shell, or for a program it let start programs
+            // (abi::init::REPLY).
+            let asker = if run.replies_apart() { "a program" } else { "the shell" };
+            println!("[init] started {} for {asker}{}", run.name, if image.is_some() { ", from a file" } else { "" });
             reply(b"ok", &[process]);
         }
         Err(error) => {

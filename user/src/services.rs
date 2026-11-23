@@ -48,6 +48,12 @@ impl Services {
         Services { registry }
     }
 
+    /// The channel itself: to hand down to a program this one starts,
+    /// which then has the same names as this one, and no more.
+    pub fn handle(&self) -> Handle {
+        self.registry
+    }
+
     /// One exchange: the reply's length (status byte included), and
     /// the handle that came with it, if one did.
     fn call(&self, request: Request, reply: &mut [u8]) -> Result<(usize, Option<Handle>), ServiceError> {

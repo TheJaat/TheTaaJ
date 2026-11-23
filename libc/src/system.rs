@@ -314,30 +314,20 @@ pub extern "C" fn getpagesize() -> c_int {
     4096
 }
 
-/// `waitpid(process, status, options)`: a C program here cannot start
-/// another (there is no fork, exec or posix_spawn yet), so it has no
-/// children to wait for: -1 with ECHILD, as POSIX says.
+/// `environ`: the environment, a list of "NAME=value" strings ending in
+/// null - here only the null. (posix_spawn's callers pass it on.)
 #[no_mangle]
-pub extern "C" fn waitpid(_process: c_int, _status: *mut c_int, _options: c_int) -> c_int {
-    crate::descriptors::fail(crate::errno::ECHILD)
-}
+pub static mut environ: *mut *mut c_char = EMPTY_ENVIRONMENT.0.as_ptr().cast_mut();
 
-/// `wait(status)`: waitpid for any child - and there are none.
-#[no_mangle]
-pub extern "C" fn wait(status: *mut c_int) -> c_int {
-    waitpid(-1, status, 0)
-}
-
-/// `wait4(process, status, options, usage)`: waitpid that also says how
-/// much the child used. There are no children: ECHILD.
-#[no_mangle]
-pub extern "C" fn wait4(process: c_int, status: *mut c_int, options: c_int, _usage: *mut u8) -> c_int {
-    waitpid(process, status, options)
-}
+/// What `environ` points to: the null that ends it.
+struct Environment([*mut c_char; 1]);
+// SAFETY: one null pointer, never written.
+unsafe impl Sync for Environment {}
+static EMPTY_ENVIRONMENT: Environment = Environment([core::ptr::null_mut()]);
 
 /// `fork()`: copying a running program is not how TheTaaJ starts
-/// programs (a new one is started from its file, as a new process), and
-/// a C program cannot do that yet either: -1, ENOSYS.
+/// programs: a new one is started from its file, as a new process
+/// (posix_spawn, in spawn.rs). -1, ENOSYS.
 #[no_mangle]
 pub extern "C" fn fork() -> c_int {
     crate::descriptors::fail(ENOSYS)

@@ -20,6 +20,11 @@
 #   /lib/libc.a, /user.ld, /ldflags    the C library, the linker script
 #                                      and the build's linker options:
 #                                        ld.lld @ldflags chello.o lib/libc.a -o chello2
+#   /lflags                            the same, as clang takes them when
+#                                      it links, starting ld.lld itself:
+#                                        with programs clang @cflags @lflags libc/programs/chello.c lib/libc.a -o chello3
+#   /tmp                               where clang puts the object it
+#                                      compiles before it links
 #   /src/llvm/include/llvm/...         the .td files llvm-tblgen's two
 #                                      jobs read
 #   /bad.td                            a file with a mistake in it
@@ -80,7 +85,7 @@ put_tree() { # put_tree FROM TO
         [ "$(basename "$f" | wc -c)" -gt 28 ] || put "$2/$f" "$1/$f"
     done
 }
-for d in lib lib/clang lib/clang/18 lib/clang/18/include include libc libc/programs; do
+for d in lib lib/clang lib/clang/18 lib/clang/18/include include libc libc/programs tmp; do
     directory $d
 done
 put_tree "$BIN_DIR/../lib/clang/18/include" lib/clang/18/include
@@ -100,6 +105,9 @@ put cflags "$WORK/cflags"
 echo "-static -nostdlib --gc-sections -s -T user.ld" > "$WORK/ldflags"
 case $(file -b "$BIN_DIR/clang") in *aarch64*) echo "-z max-page-size=4096" >> "$WORK/ldflags" ;; esac
 put ldflags "$WORK/ldflags"
+echo "-static -nostdlib -Wl,--gc-sections -s -T user.ld" > "$WORK/lflags"
+case $(file -b "$BIN_DIR/clang") in *aarch64*) echo "-Wl,-z,max-page-size=4096" >> "$WORK/lflags" ;; esac
+put lflags "$WORK/lflags"
 
 # The inputs, and what the host's llvm-tblgen says they read.
 for job in "include/llvm/CodeGen/ValueTypes.td -gen-vt" "include/llvm/IR/Intrinsics.td -gen-intrinsic-enums"; do

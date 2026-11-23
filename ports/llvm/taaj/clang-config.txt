@@ -19,9 +19,12 @@ CLANG_RESOURCE_DIR=lib/clang/18
 CLANG_INSTALL_LIBDIR_BASENAME=lib
 
 # No compiler-wide defaults: no system include directories, no
-# sysroot, no linker or runtime chosen for every compile. A program for
+# sysroot, no runtime chosen for every compile. A program for
 # TheTaaJ says what it needs (--target, -isystem), here as on the host.
 C_INCLUDE_DIRS=
+# The linker clang runs to make a program (clang x.c -o x): ld.lld, the
+# linker TheTaaJ's build uses and the one on TheTaaJ's disk.
+CLANG_DEFAULT_LINKER=lld
 DEFAULT_SYSROOT=
 GCC_INSTALL_PREFIX=
 

@@ -79,6 +79,7 @@ pub mod errno;
 pub mod memory;
 pub mod number;
 pub mod sockets;
+pub mod spawn;
 pub mod status;
 pub mod string;
 pub mod system;

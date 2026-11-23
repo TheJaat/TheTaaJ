@@ -1371,17 +1371,22 @@ endif
 # LLVM's tools - llvm-tblgen, llc, llvm-mc, clang, ld.lld - and work for
 # them, on a run disk of their own, to try by hand: they take 177 MB, ten
 # times the usual run disk. The disk is the usual one in every other way
-# (it is made by run-disk), and big: 65536 blocks, 256 MiB. Boot it with
+# (it is made by run-disk), and big: 65536 blocks, 256 MiB (one made
+# smaller, before E4, is made again: a link does not fit). Boot it with
 #   make run64 RUN_DISK=build/llvm-disk.img
 #   make run-aarch64 RUN_A64_DISK=build/aarch64/llvm-disk.img
 # Not part of run-disk: the first LLVM build takes many minutes.
 LLVM_DISK     = $(BUILD_DIR)/llvm-disk.img
 LLVM_A64_DISK = $(BUILD_DIR)/aarch64/llvm-disk.img
 llvm-put: llvm64 cprogs64
+	@[ ! -f $(LLVM_DISK) ] || [ $$(stat -c %s $(LLVM_DISK)) -ge $$((65536 * 4096)) ] \
+	    || { rm -f $(LLVM_DISK) && echo "$(LLVM_DISK) was smaller than the 256 MiB the tools need: making it again"; }
 	@$(MAKE) --no-print-directory run-disk RUN_DISK=$(LLVM_DISK) RUN_DISK_BLOCKS=65536
 	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) sh tools/put-llvm.sh $(LLVM_DISK) $(LLVM_X86_DIR)/bin $(C_BIN)
 
 llvm-put-aarch64: llvm-aarch64 cprogs-aarch64
+	@[ ! -f $(LLVM_A64_DISK) ] || [ $$(stat -c %s $(LLVM_A64_DISK)) -ge $$((65536 * 4096)) ] \
+	    || { rm -f $(LLVM_A64_DISK) && echo "$(LLVM_A64_DISK) was smaller than the 256 MiB the tools need: making it again"; }
 	@$(MAKE) --no-print-directory run-aarch64-disk RUN_A64_DISK=$(LLVM_A64_DISK) RUN_DISK_BLOCKS=65536
 	@TFSTOOL=$(TFSTOOL_RS) LLVM_TBLGEN=$(LLVM_TBLGEN) sh tools/put-llvm.sh $(LLVM_A64_DISK) $(LLVM_A64_DIR)/bin $(C_A64_BIN)
 

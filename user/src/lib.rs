@@ -645,6 +645,11 @@ pub fn stdout() -> Option<Handle> {
     flagged_handle(abi::startup::STDOUT)
 }
 
+/// Standard error's channel, if the parent gave one.
+pub fn stderr() -> Option<Handle> {
+    flagged_handle(abi::startup::STDERR)
+}
+
 /// The program's arguments: what was typed after its name, as whoever
 /// started it divided it - `write "my file" hello` gives "my file" and
 /// "hello". None at all is an empty list. They arrive as one message,
