@@ -2365,3 +2365,63 @@ make llvm64-test
 | `clang64-test passed`, `aarch64-clang-test passed`, `llvm64-test passed` | each machine; llvm64-test now checks `llc: error: llc: bad.ll` |
 
 Automated: make test64
+
+---
+
+## 076 · lld on TheTaaJ: TheTaaJ builds its C programs
+
+[The entry](journal/076-lld-on-taaj.md)
+
+**1. The PC: compile, link, run**
+
+```
+make llvm-put
+make run64 RUN_DISK=build/llvm-disk.img
+```
+
+`make llvm-put` now makes a 256 MiB disk with E3's files and `ld.lld`, `lib/libc.a`, `user.ld` and `ldflags` (the build's linker options); the C programs are in `libc/programs`. Close QEMU before running it.
+
+| Type | You should see |
+|---|---|
+| `with readonly ld.lld --version` | `TheTaaJ LLD 18.1.3 (compatible with GNU linkers)` |
+| `time with files clang @cflags -c libc/programs/chello.c` | `took` about 17 s |
+| `time with files ld.lld @ldflags chello.o lib/libc.a -o chello2` | `took` about 8 s (once 30 s: see "What is still missing"), nothing else printed |
+| `chello2 one two` | `Hello from C`, `argc 3`, `argv[1] one`, `argv[2] two`, then the lines `chello` always prints |
+| `with files ld.lld chello.o -o x` | `ld.lld: error: undefined symbol: write` (and others), each with `>>> referenced by chello.c`, then `ld.lld exited with code 1` |
+| `ls` | `chello2` 62456, the same as `chello` |
+
+**2. The same program as the build's**
+
+Close QEMU first. On the host:
+
+```
+tools/tfstool-rs/target/release/tfstool get build/llvm-disk.img chello2 > /tmp/chello2
+cmp /tmp/chello2 build/c/chello && echo same
+```
+
+| Look for | Meaning |
+|---|---|
+| `same` | the program TheTaaJ compiled and linked is the one the build made |
+
+**3. AArch64**
+
+```
+make llvm-put-aarch64
+make run-aarch64 RUN_A64_DISK=build/aarch64/llvm-disk.img
+```
+
+The same as part 1, but slow: the `clang` step takes about 30 s and the `ld.lld` step a minute or more (see "What is still missing"). `chello2` is 66568 bytes. Compare with `build/c-aarch64/chello`.
+
+**4. The tests by themselves**
+
+```
+make clang64-test
+make aarch64-clang-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `ld.lld on TheTaaJ (x86_64) linked, byte for byte as the build's own programs: chello cmem cprint cfile cstdio cwords cask cprimes cnet cfloat clib` | all eleven programs equal to the build's (`aarch64` likewise) |
+| `clang64-test passed`, `aarch64-clang-test passed` | each machine |
+
+Automated: make test64
