@@ -6,6 +6,7 @@ KERNEL_DIR = kernel
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
+        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test \
         llvm64 llvm-aarch64 clang-tblgen llvm64-test clang64-test aarch64-clang-test aarch64-llvm-test llvm-put llvm-put-aarch64
 
 # Default target
@@ -205,7 +206,7 @@ CWORDS_HOST  = $(C_BIN)/host-cwords
 CPRIMES_HOST = $(C_BIN)/host-cprimes
 CPRIMES_LIMIT = 24000000
 LIBC_A       = $(C_BIN)/libc.a
-LIBC_C       = format stdio fcntl ctype stdlib inet float setjmp time abort fp128 math scan locale atexit pthread emutls signal mmap users \
+LIBC_C       = format stdio fcntl ctype stdlib inet float setjmp time abort fp128 math scan locale atexit pthread emutls signal mmap users unix \
                $(addprefix libm/,$(LIBM))
 # libc/c/libm: musl's sin, exp, log, pow and the rest (journal entry 074),
 # and floats.c, TheTaaJ's float versions of them. Each its own file, as
@@ -476,7 +477,7 @@ RUN_DISK_ARGS = -drive file=$(RUN_DISK),format=raw,if=none,id=disk0 -device virt
 # needs nothing from the host. `make run64 RUN_NET=` for a machine
 # without a card.
 RUN_NET      = -netdev user,id=n0 -device virtio-net-pci,netdev=n0
-run-disk: user64 cprogs64 tcc64 cxx64 tfstool-rs
+run-disk: user64 cprogs64 pdpmake64 tcc64 cxx64 tfstool-rs
 	@[ -f $(RUN_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_DISK) $(RUN_DISK_BLOCKS) > /dev/null && truncate -s $$(($(RUN_DISK_BLOCKS) * 4096)) $(RUN_DISK) \
 	    && echo "Made a new disk: $(RUN_DISK)"; }
 	@for program in $(DISK_PROGRAMS); do \
@@ -495,6 +496,7 @@ ifeq ($(HAVE_CC),yes)
 	    $(TFSTOOL_RS) rm $(RUN_DISK) $$program > /dev/null 2>&1; \
 	    $(TFSTOOL_RS) put $(RUN_DISK) $$program $(CXX_X86_DIR)/bin/$$program > /dev/null || exit 1; \
 	done
+	@$(TFSTOOL_RS) rm $(RUN_DISK) make > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) make $(C_BIN)/make > /dev/null
 endif
 
 # One C program of your own, built and put on that disk (close QEMU
@@ -555,6 +557,21 @@ ifeq ($(HAVE_CC),yes)
 	@$(HOST_CC) -std=c11 -O2 -Wall -Wextra -Werror $(LIBC_DIR)/programs/cprimes.c -o $(CPRIMES_HOST)
 else
 	@echo "Clang or lld not found: no C programs (sudo apt install clang lld)"
+endif
+
+# make: pdpmake, a public-domain POSIX make (ports/pdpmake, journal
+# entry 078), built as the C programs are, as build/c/make. On TheTaaJ:
+#   with programs make        (it starts each command: posix_spawn)
+# Two of its comparisons are of int and size_t, upstream: not warned.
+PDPMAKE_PARTS = check input macro main make modtime rules target utils
+pdpmake64: cprogs64
+ifeq ($(HAVE_CC),yes)
+	@mkdir -p $(C_BIN)/pdpmake
+	@for part in $(PDPMAKE_PARTS); do \
+	    echo "  CC      ports/pdpmake/$$part.c"; \
+	    clang $(TAAJ_CFLAGS) -Wno-sign-compare -c ports/pdpmake/$$part.c -o $(C_BIN)/pdpmake/$$part.o || exit 1; \
+	done
+	@ld.lld $(TAAJ_LDFLAGS) $(addprefix $(C_BIN)/pdpmake/,$(addsuffix .o,$(PDPMAKE_PARTS))) $(LIBC_A) -o $(C_BIN)/make
 endif
 
 kernel64: user64
@@ -740,6 +757,10 @@ kernel64-test:
 HOST_CFLAGS    = -std=c11 -O1 -g -Wall -Wextra -Werror -fsanitize=address,undefined -fno-sanitize-recover=undefined
 FORMAT_RENAMED = -Dvsnprintf=taaj_vsnprintf -Dsnprintf=taaj_snprintf -Dvsprintf=taaj_vsprintf -Dsprintf=taaj_sprintf \
                  -Dvasprintf=taaj_vasprintf -Dasprintf=taaj_asprintf
+# What unix.c defines, renamed taaj_NAME for its test on the host (its
+# calls to malloc, fprintf and the rest go to the host's).
+UNIX_NAMES = basename dirname getopt optarg optind opterr optopt environ getenv setenv unsetenv putenv \
+             fnmatch glob globfree popen pclose errno
 libc-test:
 	@mkdir -p $(LIBC_DIR)/target
 	rustc --edition 2021 --test $(LIBC_DIR)/src/string.rs -o $(LIBC_DIR)/target/string-test
@@ -748,6 +769,8 @@ libc-test:
 	$(LIBC_DIR)/target/errno-test
 	rustc --edition 2021 --test $(LIBC_DIR)/src/number.rs -o $(LIBC_DIR)/target/number-test
 	$(LIBC_DIR)/target/number-test
+	rustc --edition 2021 --test $(LIBC_DIR)/src/words.rs -o $(LIBC_DIR)/target/words-test
+	$(LIBC_DIR)/target/words-test
 ifeq ($(HAVE_CC),yes)
 	@mkdir -p $(LIBC_DIR)/target/host
 	clang $(HOST_CFLAGS) -ffreestanding -nostdlibinc -isystem $(LIBC_DIR)/include $(FORMAT_RENAMED) \
@@ -775,6 +798,15 @@ ifeq ($(HAVE_CC),yes)
 	clang -fsanitize=address,undefined $(LIBC_DIR)/target/host/ctype.o $(LIBC_DIR)/target/host/stdlib.o \
 	    $(LIBC_DIR)/target/host/stdlib_test.o -o $(LIBC_DIR)/target/host/stdlib-test
 	$(LIBC_DIR)/target/host/stdlib-test
+	clang $(HOST_CFLAGS) -ffreestanding -nostdlibinc -isystem $(LIBC_DIR)/include \
+	    -c $(LIBC_DIR)/c/unix.c -o $(LIBC_DIR)/target/host/unix.o
+	objcopy $(foreach name,$(UNIX_NAMES),--redefine-sym $(name)=taaj_$(name)) $(LIBC_DIR)/target/host/unix.o
+	clang $(HOST_CFLAGS) -c $(LIBC_DIR)/c/unix_test.c -o $(LIBC_DIR)/target/host/unix_test.o
+	clang -fsanitize=address,undefined $(LIBC_DIR)/target/host/unix.o $(LIBC_DIR)/target/host/unix_test.o \
+	    -o $(LIBC_DIR)/target/host/unix-test
+	@# setenv never frees an entry it replaces (a string getenv gave out
+	@# stays good, as in glibc): leaks by design, so not looked for.
+	ASAN_OPTIONS=detect_leaks=0 $(LIBC_DIR)/target/host/unix-test
 	clang $(HOST_CFLAGS) -ffreestanding -nostdlibinc -isystem $(LIBC_DIR)/include \
 	    -c $(LIBC_DIR)/c/inet.c -o $(LIBC_DIR)/target/host/inet.o
 	objcopy --redefine-syms=$(LIBC_DIR)/c/host_names $(LIBC_DIR)/target/host/inet.o
@@ -880,6 +912,16 @@ else
 	@echo "Clang or lld not found: no C programs for AArch64 (sudo apt install clang lld)"
 endif
 
+pdpmake-aarch64: cprogs-aarch64
+ifeq ($(HAVE_CC),yes)
+	@mkdir -p $(C_A64_BIN)/pdpmake
+	@for part in $(PDPMAKE_PARTS); do \
+	    echo "  CC      ports/pdpmake/$$part.c (AArch64)"; \
+	    clang $(TAAJ_A64_CFLAGS) -Wno-sign-compare -c ports/pdpmake/$$part.c -o $(C_A64_BIN)/pdpmake/$$part.o || exit 1; \
+	done
+	@ld.lld $(TAAJ_A64_LDFLAGS) $(addprefix $(C_A64_BIN)/pdpmake/,$(addsuffix .o,$(PDPMAKE_PARTS))) $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/make
+endif
+
 kernel-aarch64: user-aarch64 cprogs-aarch64
 	cd $(KERNEL64_DIR) && cargo build --release --target $(KERNEL_A64_TARGET)
 	@mkdir -p $(BUILD_DIR)/aarch64
@@ -897,7 +939,7 @@ aarch64-test-disk: user-aarch64 cprogs-aarch64 tfstool-rs
 # TaajFS volume kept from one run to the next, its programs replaced
 # with the ones just built.
 RUN_A64_DISK = $(BUILD_DIR)/aarch64/taaj-disk.img
-run-aarch64-disk: user-aarch64 cprogs-aarch64 tcc-aarch64 cxx-aarch64 tfstool-rs
+run-aarch64-disk: user-aarch64 cprogs-aarch64 pdpmake-aarch64 tcc-aarch64 cxx-aarch64 tfstool-rs
 	@mkdir -p $(BUILD_DIR)/aarch64
 	@[ -f $(RUN_A64_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_A64_DISK) $(RUN_DISK_BLOCKS) > /dev/null && truncate -s $$(($(RUN_DISK_BLOCKS) * 4096)) $(RUN_A64_DISK) \
 	    && printf 'Hello from the host\n' > $(RUN_A64_DISK).welcome && $(TFSTOOL_RS) put $(RUN_A64_DISK) welcome $(RUN_A64_DISK).welcome > /dev/null \
@@ -918,6 +960,7 @@ ifeq ($(HAVE_CC),yes)
 	    $(TFSTOOL_RS) rm $(RUN_A64_DISK) $$program > /dev/null 2>&1; \
 	    $(TFSTOOL_RS) put $(RUN_A64_DISK) $$program $(CXX_A64_DIR)/bin/$$program > /dev/null || exit 1; \
 	done
+	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) make > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) make $(C_A64_BIN)/make > /dev/null
 endif
 
 # The serial port is this terminal: what you type goes to the shell.
@@ -1223,6 +1266,27 @@ else
 	@echo "FAIL: tcc needs clang and lld (sudo apt install clang lld)"; exit 1
 endif
 
+# make on TheTaaJ: pdpmake builds a program with tcc there, and then
+# only what each change puts out of date (journal entry 078).
+MAKE64_LOG   = $(BUILD_DIR)/make64.log
+MAKE_A64_LOG = $(BUILD_DIR)/aarch64/make.log
+make64-test: iso64 user64 tcc64 pdpmake64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@TFSTOOL=$(TFSTOOL_RS) APPEND=$(USER_BIN)/append $(KERNEL64_DIR)/scripts/make-test.sh x86_64 $(ISO64_IMG) $(MAKE64_LOG).disk $(MAKE64_LOG) $(TCC_X86_DIR) $(LIBC_A) $(C_BIN)/make
+	@echo "make64-test passed"
+else
+	@echo "FAIL: make needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+
+aarch64-make-test: kernel-aarch64 user-aarch64 tcc-aarch64 pdpmake-aarch64 tfstool-rs
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@TFSTOOL=$(TFSTOOL_RS) APPEND=$(A64_USER_BIN)/append $(KERNEL64_DIR)/scripts/make-test.sh aarch64 $(KERNEL_A64_IMAGE) $(MAKE_A64_LOG).disk $(MAKE_A64_LOG) $(TCC_A64_DIR) $(C_A64_BIN)/libc.a $(C_A64_BIN)/make
+	@echo "aarch64-make-test passed"
+else
+	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 make boot is not run"
+endif
+
 aarch64-tcc-test: kernel-aarch64 user-aarch64 tcc-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
@@ -1450,14 +1514,14 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 7
-TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test tcc64-test aarch64-tcc-test cxx64-test aarch64-cxx-test llvm64-test aarch64-llvm-test clang64-test aarch64-clang-test
+TEST64_PARTS = kernel64-test boot64-test boot64-uefi-test smp64-test big64-test fault64-test aarch64-test aarch64-keys-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test tcc64-test aarch64-tcc-test cxx64-test aarch64-cxx-test llvm64-test aarch64-llvm-test clang64-test aarch64-clang-test make64-test aarch64-make-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared
 	@$(MAKE) --no-print-directory -j$(TEST_JOBS) --output-sync=target test64-parts
 	@echo "test64: all passed"
 
-test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64 aarch64-esp tcc64 tcc-aarch64 cxx64 cxx-aarch64 llvm64 llvm-aarch64
+test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64 aarch64-esp tcc64 tcc-aarch64 cxx64 cxx-aarch64 llvm64 llvm-aarch64 pdpmake64 pdpmake-aarch64
 
 test64-parts: $(TEST64_PARTS)
 

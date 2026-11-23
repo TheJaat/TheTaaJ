@@ -11,7 +11,7 @@
 //!   tfstool put   <image> <name> <file>       create or replace, one commit
 //!   tfstool get   <image> <name>              contents to stdout
 //!   tfstool rm    <image> <name>
-//!   tfstool touch <image> <name>              an empty file
+//!   tfstool touch <image> <name>              an empty file, or a newer stamp for one that is there
 //!   tfstool write <image> <name> <offset> <file>
 //!
 //! A name is a path from the root: `docs/notes`. The C tool knows no
@@ -127,9 +127,15 @@ fn run(args: &[&str]) -> Result<ExitCode, String> {
         }
 
         ["touch", image, name] => {
-            open(image)?
-                .create(name)
-                .map_err(|e| format!("touch: {name}: {e}"))?;
+            // As Unix's touch: a file that is there is marked changed (a
+            // new stamp, on a volume that keeps them); one that is not is
+            // made, empty.
+            let mut volume = open(image)?;
+            let done = match volume.lookup(name) {
+                Ok(_) => volume.touch(name),
+                Err(_) => volume.create(name),
+            };
+            done.map_err(|e| format!("touch: {name}: {e}"))?;
             println!("touch: ok");
             Ok(ExitCode::SUCCESS)
         }

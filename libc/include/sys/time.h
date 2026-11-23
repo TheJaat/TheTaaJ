@@ -17,6 +17,10 @@ struct timeval {
  * NULL). Returns 0. */
 int gettimeofday(struct timeval *tv, void *tz);
 
+/* Marks the file changed now, with times null; with times, fails with
+ * EPERM (sys/stat.h says why). */
+int utimes(const char *path, const struct timeval times[2]);
+
 #ifdef __cplusplus
 }
 #endif

@@ -131,9 +131,18 @@ int execve(const char *path, char *const argv[], char *const environment[]);
  * ENOSYS. */
 pid_t fork(void);
 
-/* The environment: empty. A TheTaaJ program is given handles and
- * arguments, not variables; getenv never finds one. */
+/* The environment, "NAME=value" strings ending in NULL: empty when the
+ * program starts (a TheTaaJ program is given handles and arguments,
+ * not variables), and what it sets itself (stdlib.h). */
 extern char **environ;
+
+/* The options in argv, one letter per call (POSIX): it stops at the
+ * first word that is not an option, or "--", and never reorders. A
+ * leading ':' in optstring: a missing argument is ':', and nothing is
+ * printed; a leading '+' is skipped. optind = 0 starts again. */
+extern char *optarg;
+extern int optind, opterr, optopt;
+int getopt(int argc, char *const argv[], const char *optstring);
 
 /* The session a process is in: there are no sessions, so each process
  * is its own, and the answer is its number. */

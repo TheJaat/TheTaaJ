@@ -341,6 +341,26 @@ pub unsafe extern "C" fn realloc(pointer: *mut c_void, size: usize) -> *mut c_vo
     new
 }
 
+/// `strndup(s, n)`: strdup of at most `n` bytes of `s`, and a zero.
+///
+/// # Safety
+/// `s` must be a string, or `n` readable bytes.
+#[no_mangle]
+pub unsafe extern "C" fn strndup(s: *const c_char, n: usize) -> *mut c_char {
+    // SAFETY: the caller's promise.
+    let length = unsafe { crate::string::strnlen(s, n) };
+    let copy = malloc(length + 1).cast::<c_char>();
+    if !copy.is_null() {
+        // SAFETY: `length` bytes are readable at `s`; the new block has
+        // room for them and the zero.
+        unsafe {
+            ptr::copy_nonoverlapping(s, copy, length);
+            copy.add(length).write(0);
+        }
+    }
+    copy
+}
+
 /// `strdup(s)`: a copy of the string in memory from malloc, for the
 /// program to free - or null if there is no memory.
 ///

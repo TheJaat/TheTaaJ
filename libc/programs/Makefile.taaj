@@ -1,0 +1,18 @@
+# Makefile.taaj - the C programs, built with tcc by make on TheTaaJ
+# (journal entry 078). On the disk it is /src/libc/programs/Makefile:
+#
+#   cd /src/libc/programs
+#   with programs make            each program, from its .c
+#   with programs make            again: nothing to do
+#
+# Change one .c file and make builds that program alone again. The
+# build's own Makefile (the top of the source tree) builds these with
+# clang on the host instead.
+
+CC = tcc
+PROGRAMS = chello cmem cprint cfile cstdio cwords cask cprimes cnet cfloat clib
+
+all: $(PROGRAMS)
+
+.c:
+	$(CC) $< -o $@

@@ -22,7 +22,7 @@ use crate::device::{BlockDevice, DeviceError};
 use crate::format::{
     empty_block, get_u32, put_u32, Block, DirBlock, DirEntry, Inode, Superblock, BLOCK_SIZE, DIR_ENTRIES,
     FIRST_DATA, INDEX_BLOCKS, INODE_BLOCKS, MAGIC, MAX_BLOCKS, MAX_FILE_SIZE, NAME_MAX, SUPER_A, SUPER_B,
-    TYPE_DIR, TYPE_FILE, VERSION_BIG_FILES, VERSION_DIRECTORIES,
+    TYPE_DIR, TYPE_FILE, VERSION_BIG_FILES, VERSION_DIRECTORIES, VERSION_STAMPS, STAMPED_BLOCKS,
 };
 
 /// The most blocks a directory may span. The same limit as the guard in
@@ -193,7 +193,7 @@ impl<D: BlockDevice> Volume<D> {
     /// nothing else can write to the disk behind the volume's back.
     pub fn mount(mut device: D) -> Result<Volume<D>> {
         let mut best: Option<(u32, Superblock)> = None;
-        let mut lowest = VERSION_BIG_FILES;
+        let mut lowest = VERSION_STAMPS;
         let mut block = empty_block();
 
         for slot in [SUPER_A, SUPER_B] {
@@ -264,7 +264,7 @@ impl<D: BlockDevice> Volume<D> {
 
     fn read_inode(&mut self, number: u32) -> Result<Inode> {
         let inode = Inode::parse(&self.read(number)?);
-        if inode.magic != MAGIC {
+        if !inode.is_valid() {
             return Err(Error::Magic);
         }
         Ok(inode)
@@ -453,6 +453,36 @@ impl<D: BlockDevice> Volume<D> {
         self.raise_version(VERSION_BIG_FILES)
     }
 
+    /// Makes the volume one whose files carry change stamps: version 4
+    /// in both slots. From then on every inode written is stamped (see
+    /// `Inode`). A volume below it is left as older code can read it -
+    /// the C tool reads only version 1 - so this is asked for, not done
+    /// by every write: TheTaaJ's file server asks when it mounts a disk.
+    pub fn allow_stamps(&mut self) -> Result<()> {
+        self.raise_version(VERSION_STAMPS)
+    }
+
+    /// Whether inodes written now are stamped: only when no slot says
+    /// less than version 4, as with every other version (see
+    /// `raise_version`).
+    fn stamping(&self) -> bool {
+        self.lowest >= VERSION_STAMPS
+    }
+
+    /// How many blocks an inode written now names itself.
+    fn direct_slots(&self) -> usize {
+        if self.stamping() {
+            STAMPED_BLOCKS
+        } else {
+            INODE_BLOCKS
+        }
+    }
+
+    /// The stamp the next commit gives what it changes: its generation.
+    fn next_stamp(&self) -> u64 {
+        u64::from(self.sb.generation) + 1
+    }
+
     /// Makes both superblock slots say at least `version`, before the
     /// first thing that version allows is written.
     ///
@@ -493,7 +523,7 @@ impl<D: BlockDevice> Volume<D> {
             return Ok(inode.blocks.clone());
         }
         let count = inode.block_count as usize;
-        if count > INODE_BLOCKS * INDEX_BLOCKS || inode.blocks.len() != count.div_ceil(INDEX_BLOCKS) {
+        if count > inode.slots() * INDEX_BLOCKS || inode.blocks.len() != count.div_ceil(INDEX_BLOCKS) {
             return Err(Error::Corrupt(format!("a file says it has {count} blocks")));
         }
         let mut blocks = Vec::with_capacity(count);
@@ -516,12 +546,14 @@ impl<D: BlockDevice> Volume<D> {
     /// Writes a new inode for a file of `size` bytes in `blocks`: the
     /// blocks named in it, or - more than it holds - index blocks, new
     /// ones, written first. Returns the inode's block. A big file needs
-    /// a version-3 volume: the caller made sure (`allow_big_files`).
+    /// a version-3 volume: the caller made sure (`allow_big_files`). On a
+    /// version-4 volume the inode is stamped with the coming commit's
+    /// generation, and names two blocks fewer itself.
     fn write_inode(&mut self, size: u32, kind: u32, blocks: Vec<u32>) -> Result<u32> {
-        let inode = if blocks.len() <= INODE_BLOCKS {
+        let inode = if blocks.len() <= self.direct_slots() {
             Inode::new(size, kind, blocks)
         } else {
-            debug_assert_eq!(self.sb.version, VERSION_BIG_FILES);
+            debug_assert!(self.sb.version >= VERSION_BIG_FILES);
             let mut index = Vec::with_capacity(blocks.len().div_ceil(INDEX_BLOCKS));
             for chunk in blocks.chunks(INDEX_BLOCKS) {
                 let mut block = empty_block();
@@ -534,6 +566,7 @@ impl<D: BlockDevice> Volume<D> {
             }
             Inode::big(size, kind, blocks.len() as u32, index)
         };
+        let inode = if self.stamping() { inode.stamped(self.next_stamp()) } else { inode };
         let number = self.allocate()?;
         self.write(number, &inode.to_block())?;
         Ok(number)
@@ -683,6 +716,16 @@ impl<D: BlockDevice> Volume<D> {
         self.find(&dirs, leaf)?.as_ref().map(FileInfo::from).ok_or(Error::NotFound)
     }
 
+    /// When the file last changed: the generation of the commit that
+    /// did it, or 0 for a directory and for a file not changed since
+    /// the volume began stamping (see `Inode`).
+    pub fn stamp(&mut self, file: &FileInfo) -> Result<u64> {
+        if file.kind == TYPE_DIR {
+            return Ok(0);
+        }
+        Ok(self.read_inode(file.inode)?.stamp)
+    }
+
     /// Reads from `offset` into `buffer`; returns how many bytes it got.
     pub fn read_at(&mut self, file: &FileInfo, offset: u32, buffer: &mut [u8]) -> Result<usize> {
         if file.kind == TYPE_DIR {
@@ -753,9 +796,31 @@ impl<D: BlockDevice> Volume<D> {
         }
 
         self.change(|v| {
-            let inode = v.allocate()?;
-            v.write(inode, &Inode::new(0, TYPE_FILE, Vec::new()).to_block())?;
+            let inode = v.write_inode(0, TYPE_FILE, Vec::new())?;
             let root = v.rewrite_path(&dirs, name, Some(DirEntry::new(name, inode, 0, TYPE_FILE)))?;
+            v.commit(root)
+        })
+    }
+
+    /// Marks a file changed now, as `touch` does, without changing what
+    /// is in it: a new inode, with the same blocks and a new stamp, in
+    /// one commit. A file of an inode from before stamping, too big for
+    /// a stamped inode's own list, gets index blocks.
+    pub fn touch(&mut self, path: &str) -> Result<()> {
+        let (dirs, name) = split_leaf(path)?;
+        let file = self.find(&dirs, name)?.as_ref().map(FileInfo::from).ok_or(Error::NotFound)?;
+        if file.kind == TYPE_DIR {
+            return Err(Error::IsDirectory);
+        }
+        let inode = self.read_inode(file.inode)?;
+        let blocks = self.file_blocks(&inode)?;
+        if blocks.len() > self.direct_slots() {
+            self.allow_big_files()?;
+        }
+        self.change(|v| {
+            let new_inode = v.write_inode(file.size, inode.kind, blocks)?;
+            let entry = DirEntry::new(&file.name, new_inode, file.size, TYPE_FILE);
+            let root = v.rewrite_path(&dirs, &file.name, Some(entry))?;
             v.commit(root)
         })
     }
@@ -794,7 +859,7 @@ impl<D: BlockDevice> Volume<D> {
         if file.kind == TYPE_DIR {
             return Err(Error::IsDirectory);
         }
-        if end.div_ceil(BLOCK_SIZE) > INODE_BLOCKS {
+        if end.div_ceil(BLOCK_SIZE) > self.direct_slots() {
             self.allow_big_files()?;
         }
 
@@ -874,7 +939,7 @@ impl<D: BlockDevice> Volume<D> {
         if self.find(&dirs, name)?.is_some_and(|entry| entry.kind == TYPE_DIR) {
             return Err(Error::IsDirectory);
         }
-        if data.len().div_ceil(BLOCK_SIZE) > INODE_BLOCKS {
+        if data.len().div_ceil(BLOCK_SIZE) > self.direct_slots() {
             self.allow_big_files()?;
         }
 
@@ -1026,6 +1091,124 @@ mod tests {
     fn contents(volume: &mut Volume<MemDevice>, name: &str) -> Vec<u8> {
         let file = volume.lookup(name).unwrap();
         volume.read_all(&file).unwrap()
+    }
+
+    // ---- change stamps (version 4) ------------------------------------
+
+    use crate::format::STAMPED_BLOCKS;
+
+    fn stamp_of(volume: &mut Volume<MemDevice>, name: &str) -> u64 {
+        let file = volume.lookup(name).unwrap();
+        volume.stamp(&file).unwrap()
+    }
+
+    #[test]
+    fn a_volume_stamps_only_once_it_is_asked_to() {
+        let mut v = fresh_big();
+        v.put("old", b"before").unwrap();
+        assert_eq!(stamp_of(&mut v, "old"), 0);
+        assert_eq!(v.superblock().version, VERSION, "an unasked volume stays one the C tool reads");
+
+        v.allow_stamps().unwrap();
+        v.put("new", b"after").unwrap();
+        let generation = u64::from(v.superblock().generation);
+        let device = v.into_device();
+        assert_eq!(slot_versions(&device), [VERSION_STAMPS, VERSION_STAMPS]);
+        let mut v = Volume::mount(device).unwrap();
+        assert_eq!(stamp_of(&mut v, "new"), generation, "the stamp is the commit's generation");
+        assert_eq!(stamp_of(&mut v, "old"), 0);
+        assert_eq!(contents(&mut v, "old"), b"before");
+    }
+
+    #[test]
+    fn what_changed_later_has_the_higher_stamp() {
+        let mut v = fresh_big();
+        v.allow_stamps().unwrap();
+        v.put("source.c", b"int x;").unwrap();
+        v.put("source.o", b"object").unwrap();
+        assert!(stamp_of(&mut v, "source.o") > stamp_of(&mut v, "source.c"));
+
+        // Changed in the middle, grown, created: each newer than all before.
+        v.write_at("source.c", 4, b"y;").unwrap();
+        let c = stamp_of(&mut v, "source.c");
+        assert!(c > stamp_of(&mut v, "source.o"));
+        v.create("empty").unwrap();
+        assert!(stamp_of(&mut v, "empty") > c);
+
+        // A new name is no change to the file; a directory has none.
+        v.make_directory("d").unwrap();
+        v.rename("source.c", "d/moved.c").unwrap();
+        assert_eq!(stamp_of(&mut v, "d/moved.c"), c);
+        assert_eq!(stamp_of(&mut v, "d"), 0);
+        let mut v = remount(v);
+        assert_eq!(stamp_of(&mut v, "d/moved.c"), c);
+        assert_eq!(contents(&mut v, "d/moved.c"), b"int y;");
+    }
+
+    #[test]
+    fn touch_gives_a_new_stamp_and_keeps_the_contents() {
+        let mut v = fresh_big();
+        v.allow_stamps().unwrap();
+        let data = pattern(3 * BLOCK_SIZE + 5, 9);
+        v.put("a", &data).unwrap();
+        v.put("b", b"b").unwrap();
+        v.touch("a").unwrap();
+        assert!(stamp_of(&mut v, "a") > stamp_of(&mut v, "b"));
+        let mut v = remount(v);
+        assert_eq!(contents(&mut v, "a"), data);
+        assert!(matches!(v.touch("nothere"), Err(Error::NotFound)));
+        v.make_directory("d").unwrap();
+        assert!(matches!(v.touch("d"), Err(Error::IsDirectory)));
+    }
+
+    #[test]
+    fn a_stamped_inode_holds_two_blocks_fewer_and_a_full_old_one_is_kept_whole() {
+        // 1020 blocks: one inode before stamping, too many for a stamped
+        // one. Touched after stamping begins, it gets an index block.
+        let mut v = fresh_big();
+        let full = pattern(INODE_BLOCKS * BLOCK_SIZE, 4);
+        v.put("full", &full).unwrap();
+        v.allow_stamps().unwrap();
+        v.touch("full").unwrap();
+        // 1019 blocks, written stamped: a big file.
+        let just_over = pattern((STAMPED_BLOCKS + 1) * BLOCK_SIZE - 1, 5);
+        v.put("over", &just_over).unwrap();
+        let mut v = remount(v);
+        assert_eq!(contents(&mut v, "full"), full);
+        assert_eq!(contents(&mut v, "over"), just_over);
+        assert!(stamp_of(&mut v, "over") > stamp_of(&mut v, "full"));
+        assert!(stamp_of(&mut v, "full") > 0);
+        // Every block is accounted for: delete both, and all are free.
+        let free = {
+            let mut fresh = fresh_big();
+            fresh.allow_stamps().unwrap();
+            fresh.free_blocks()
+        };
+        v.delete("full").unwrap();
+        v.delete("over").unwrap();
+        assert_eq!(v.free_blocks(), free);
+    }
+
+    #[test]
+    fn a_power_cut_while_stamping_begins_leaves_a_volume_that_mounts() {
+        // allow_stamps commits twice. Cut after the first: one slot of
+        // each version, the same tree; it mounts, and writes unstamped,
+        // as version-3 code would, until asked again.
+        let mut v = fresh_big();
+        v.put("f", b"data").unwrap();
+        let mut device = v.into_device();
+        device.writes_left = Some(1);
+        let mut v = Volume::mount(device).unwrap();
+        assert!(v.allow_stamps().is_err());
+        let mut device = v.into_device();
+        device.writes_left = None;
+        let mut v = Volume::mount(device).unwrap();
+        v.put("g", b"more").unwrap();
+        assert_eq!(stamp_of(&mut v, "g"), 0);
+        v.allow_stamps().unwrap();
+        v.put("h", b"most").unwrap();
+        assert!(stamp_of(&mut v, "h") > 0);
+        assert_eq!(contents(&mut v, "f"), b"data");
     }
 
     // ---- big files (version 3) ----------------------------------------
@@ -1323,9 +1506,21 @@ mod tests {
     /// new state - never anything in between, never a damaged volume.
     #[test]
     fn a_power_cut_at_any_write_leaves_old_or_new_state() {
+        power_cuts(false);
+    }
+
+    #[test]
+    fn a_power_cut_at_any_write_leaves_old_or_new_state_with_stamps_too() {
+        power_cuts(true);
+    }
+
+    fn power_cuts(stamping: bool) {
         let mut base = MemDevice::new(TOTAL);
         format(&mut base, TOTAL).unwrap();
         let mut v = Volume::mount(base).unwrap();
+        if stamping {
+            v.allow_stamps().unwrap();
+        }
         v.put("old", b"before").unwrap();
         let base = v.into_device();
 
@@ -1359,6 +1554,8 @@ mod tests {
                 // The first change committed, completely.
                 assert_eq!(old, b"after", "after {writes_allowed} writes");
                 assert_eq!(has_new, finished, "after {writes_allowed} writes");
+                let file = v.lookup("old").unwrap();
+                assert_eq!(v.stamp(&file).unwrap() > 0, stamping, "after {writes_allowed} writes");
                 if has_new {
                     assert_eq!(contents(&mut v, "new"), new_data);
                 }

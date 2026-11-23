@@ -67,8 +67,13 @@ int strerror_r(int code, char *buffer, size_t size);
  * access", ... The string is the library's: not to be changed. */
 char *strsignal(int signal);
 
-/* A copy of s in memory from malloc, to be freed; NULL if none. */
+/* A copy of s in memory from malloc, to be freed; NULL if none.
+ * strndup copies at most n bytes of it, and a zero. */
 char *strdup(const char *s);
+char *strndup(const char *s, size_t n);
+
+/* strcpy, returning where the zero went: the end of `to`. */
+char *stpcpy(char *to, const char *from);
 
 /* Comparing as the locale orders letters - in "C", the only locale,
  * as strcmp does (libc/c/locale.c). strxfrm copies `from` into `to` in

@@ -4,7 +4,7 @@
 //!   __taaj_parse_double, __taaj_parse_float
 //!            the work of strtod and strtof (libc/c/stdlib.c)
 //!   time, gettimeofday
-//!   getenv, execvp
+//!   execvp
 //!
 //! Turning "0.1" into the nearest double is harder than it looks: the
 //! decimal 0.1 has no exact binary value, and finding the closest one
@@ -223,13 +223,6 @@ pub extern "C" fn clock() -> c_long {
     (seconds * 1_000_000 + microseconds) as c_long
 }
 
-/// `getenv(name)`: a TheTaaJ program has no environment - what it is
-/// given comes as handles and arguments - so no variable is ever set.
-#[no_mangle]
-pub extern "C" fn getenv(_name: *const c_char) -> *mut c_char {
-    ptr::null_mut()
-}
-
 /// `execvp(file, argv)`: replacing the running program with another is
 /// not something TheTaaJ does - a program asks for a new process
 /// instead - so this always fails, with ENOSYS.
@@ -313,17 +306,6 @@ pub extern "C" fn sysconf(name: c_int) -> c_long {
 pub extern "C" fn getpagesize() -> c_int {
     4096
 }
-
-/// `environ`: the environment, a list of "NAME=value" strings ending in
-/// null - here only the null. (posix_spawn's callers pass it on.)
-#[no_mangle]
-pub static mut environ: *mut *mut c_char = EMPTY_ENVIRONMENT.0.as_ptr().cast_mut();
-
-/// What `environ` points to: the null that ends it.
-struct Environment([*mut c_char; 1]);
-// SAFETY: one null pointer, never written.
-unsafe impl Sync for Environment {}
-static EMPTY_ENVIRONMENT: Environment = Environment([core::ptr::null_mut()]);
 
 /// `fork()`: copying a running program is not how TheTaaJ starts
 /// programs: a new one is started from its file, as a new process

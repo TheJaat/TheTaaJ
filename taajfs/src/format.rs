@@ -29,6 +29,12 @@ pub const VERSION_DIRECTORIES: u32 = 2;
 /// version 2, the number is what keeps older code away: it would read
 /// the numbers of index blocks as the file's data.
 pub const VERSION_BIG_FILES: u32 = 3;
+/// Version 4: a file's inode may carry a change stamp (see `Inode`),
+/// and there may be big files and directories. A volume becomes this
+/// before the first stamped inode is written - which is the first
+/// change made by code that knows it - and stays it. Older code would
+/// take a stamped inode for a damaged one.
+pub const VERSION_STAMPS: u32 = 4;
 pub const BLOCK_SIZE: usize = 4096;
 pub const NAME_MAX: usize = 28;
 pub const MAX_BLOCKS: u32 = 65536;
@@ -54,6 +60,14 @@ pub const INODE_BLOCKS: usize = (BLOCK_SIZE - INODE_HEADER) / 4;
 /// The most a file reaches with its blocks named in the inode itself:
 /// just under 4 MB. Anything bigger is a big file (version 3).
 pub const DIRECT_MAX: usize = INODE_BLOCKS * BLOCK_SIZE;
+/// A stamped inode's magic, "JAFT" when read as bytes on disk.
+pub const MAGIC_STAMPED: u32 = 0x5446_414A;
+/// A stamped inode's header: the four fields, then the stamp, u64.
+pub const STAMPED_HEADER: usize = 24;
+/// 1018 block pointers fit after it.
+pub const STAMPED_BLOCKS: usize = (BLOCK_SIZE - STAMPED_HEADER) / 4;
+/// The most a stamped inode reaches with its own block list.
+pub const STAMPED_DIRECT_MAX: usize = STAMPED_BLOCKS * BLOCK_SIZE;
 /// 1024 block numbers fit in one index block.
 pub const INDEX_BLOCKS: usize = BLOCK_SIZE / 4;
 /// The biggest file: the whole of the biggest volume, 256 MiB. (An
@@ -205,7 +219,7 @@ impl Superblock {
     /// The same checks `TfsMount` applies before trusting a slot.
     pub fn is_valid(&self) -> bool {
         self.magic == MAGIC
-            && (VERSION..=VERSION_BIG_FILES).contains(&self.version)
+            && (VERSION..=VERSION_STAMPS).contains(&self.version)
             && self.block_size == BLOCK_SIZE as u32
             && self.total_blocks != 0
             && self.total_blocks <= MAX_BLOCKS
@@ -361,6 +375,15 @@ impl DirBlock {
 /// data blocks, the last one only as many as are left. So a small file
 /// is laid out exactly as before, and a big one costs one block in
 /// 1025 more.
+///
+/// A stamped inode (magic MAGIC_STAMPED, version 4) also says when the
+/// file last changed: the generation of the commit that made the change
+/// live. Generations only grow, on TheTaaJ and in the host's tools
+/// alike, so of two files the one with the higher stamp was changed
+/// later - which is what `make` asks. Its header is 8 bytes longer, so
+/// it names STAMPED_BLOCKS blocks itself, two fewer. An inode written
+/// before version 4 keeps its layout and has stamp 0: older than
+/// anything changed since.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Inode {
     pub magic: u32,
@@ -378,9 +401,12 @@ pub struct Inode {
     /// the two can never disagree - and the slots past the end, which C
     /// could leave holding stale numbers, simply do not exist.
     pub blocks: Vec<u32>,
+    /// When it last changed (see above); 0 for an unstamped inode.
+    pub stamp: u64,
 }
 
 impl Inode {
+    /// An unstamped inode, as before version 4.
     pub fn new(size: u32, kind: u32, blocks: Vec<u32>) -> Inode {
         Inode {
             magic: MAGIC,
@@ -388,40 +414,88 @@ impl Inode {
             kind,
             block_count: blocks.len() as u32,
             blocks,
+            stamp: 0,
         }
     }
 
     /// A big file's inode: `block_count` data blocks, named by the index
     /// blocks `index`.
     pub fn big(size: u32, kind: u32, block_count: u32, index: Vec<u32>) -> Inode {
-        Inode { magic: MAGIC, size, kind, block_count, blocks: index }
+        Inode { magic: MAGIC, size, kind, block_count, blocks: index, stamp: 0 }
+    }
+
+    /// The same inode, stamped. Its blocks must fit a stamped inode: a
+    /// small file of more than STAMPED_BLOCKS is a big one when stamped.
+    pub fn stamped(self, stamp: u64) -> Inode {
+        Inode { magic: MAGIC_STAMPED, stamp, ..self }
+    }
+
+    /// Whether it carries a stamp (and has the longer header).
+    pub fn is_stamped(&self) -> bool {
+        self.magic == MAGIC_STAMPED
+    }
+
+    /// Whether it is an inode at all: either magic.
+    pub fn is_valid(&self) -> bool {
+        self.magic == MAGIC || self.magic == MAGIC_STAMPED
+    }
+
+    /// How many block numbers it holds itself.
+    pub fn slots(&self) -> usize {
+        Self::slots_for(self.magic)
+    }
+
+    fn slots_for(magic: u32) -> usize {
+        if magic == MAGIC_STAMPED {
+            STAMPED_BLOCKS
+        } else {
+            INODE_BLOCKS
+        }
+    }
+
+    fn header(&self) -> usize {
+        if self.is_stamped() {
+            STAMPED_HEADER
+        } else {
+            INODE_HEADER
+        }
     }
 
     /// Whether the slots name index blocks, not data blocks.
     pub fn is_big(&self) -> bool {
-        self.block_count as usize > INODE_BLOCKS
+        self.block_count as usize > self.slots()
     }
 
     pub fn parse(block: &Block) -> Inode {
+        let magic = get_u32(block, 0);
+        let slots = Self::slots_for(magic);
         let block_count = get_u32(block, 12);
-        let usable = if block_count as usize > INODE_BLOCKS {
-            // A count past what 1020 index blocks reach is damage; the
+        let usable = if block_count as usize > slots {
+            // A count past what its index blocks reach is damage; the
             // slots that exist are read, and the volume finds the rest
             // missing.
-            (block_count as usize).div_ceil(INDEX_BLOCKS).min(INODE_BLOCKS)
+            (block_count as usize).div_ceil(INDEX_BLOCKS).min(slots)
         } else {
             block_count as usize
         };
+        let (header, stamp) = if magic == MAGIC_STAMPED {
+            let low = u64::from(get_u32(block, 16));
+            let high = u64::from(get_u32(block, 20));
+            (STAMPED_HEADER, low | high << 32)
+        } else {
+            (INODE_HEADER, 0)
+        };
         let blocks = (0..usable)
-            .map(|i| get_u32(block, INODE_HEADER + i * 4))
+            .map(|i| get_u32(block, header + i * 4))
             .collect();
 
         Inode {
-            magic: get_u32(block, 0),
+            magic,
             size: get_u32(block, 4),
             kind: get_u32(block, 8),
             block_count,
             blocks,
+            stamp,
         }
     }
 
@@ -429,7 +503,7 @@ impl Inode {
     /// from `blocks.len()`, so changing the list is enough - there is no
     /// count to forget. A big file's count is its own (`Inode::big`).
     pub fn to_block(&self) -> Block {
-        assert!(self.blocks.len() <= INODE_BLOCKS, "inode overfilled");
+        assert!(self.blocks.len() <= self.slots(), "inode overfilled");
         let count = if self.is_big() {
             assert_eq!(self.blocks.len(), (self.block_count as usize).div_ceil(INDEX_BLOCKS), "index blocks miscounted");
             self.block_count
@@ -442,8 +516,13 @@ impl Inode {
         put_u32(&mut block, 4, self.size);
         put_u32(&mut block, 8, self.kind);
         put_u32(&mut block, 12, count);
+        if self.is_stamped() {
+            put_u32(&mut block, 16, self.stamp as u32);
+            put_u32(&mut block, 20, (self.stamp >> 32) as u32);
+        }
+        let header = self.header();
         for (i, &number) in self.blocks.iter().enumerate() {
-            put_u32(&mut block, INODE_HEADER + i * 4, number);
+            put_u32(&mut block, header + i * 4, number);
         }
         block
     }
@@ -562,6 +641,38 @@ mod tests {
         put_u32(&mut block, INODE_HEADER + 2 * 4, 0xDEAD);
 
         assert_eq!(Inode::parse(&block), inode);
+    }
+
+    #[test]
+    fn a_stamped_inode_round_trips_with_its_longer_header() {
+        let inode = Inode::new(9000, TYPE_FILE, vec![10, 11, 12]).stamped(0x1_0000_0007);
+        let block = inode.to_block();
+
+        assert_eq!(&block[0..4], b"JAFT");
+        assert_eq!(&block[16..24], &[7, 0, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(&block[24..28], &[10, 0, 0, 0]);
+        let back = Inode::parse(&block);
+        assert_eq!(back, inode);
+        assert!(back.is_valid() && back.is_stamped() && !back.is_big());
+        assert_eq!(STAMPED_BLOCKS, 1018);
+    }
+
+    #[test]
+    fn an_unstamped_inode_reads_as_stamp_zero_and_keeps_its_slots() {
+        let inode = Inode::new(0, TYPE_FILE, (1..=INODE_BLOCKS as u32).collect());
+        let back = Inode::parse(&inode.to_block());
+
+        assert_eq!((back.stamp, back.slots(), back.is_big()), (0, INODE_BLOCKS, false));
+        assert_eq!(back.blocks.len(), INODE_BLOCKS);
+    }
+
+    #[test]
+    fn a_stamped_inode_past_its_slots_is_a_big_one() {
+        let inode = Inode::big(0, TYPE_FILE, STAMPED_BLOCKS as u32 + 1, vec![40]).stamped(3);
+        let back = Inode::parse(&inode.to_block());
+
+        assert!(back.is_big());
+        assert_eq!(back.blocks, [40]);
     }
 
     #[test]

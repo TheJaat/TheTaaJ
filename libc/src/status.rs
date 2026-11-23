@@ -1,5 +1,6 @@
 //! What files are, and directories: stat, fstat, lstat; mkdir, rmdir,
-//! access; opendir, readdir, closedir, rewinddir. And the calls about
+//! access; opendir, readdir, closedir, rewinddir; utimensat, futimens,
+//! utime, utimes, which mark a file changed. And the calls about
 //! permissions, which TheTaaJ's files do not have (chmod, fchmod,
 //! umask): sys/stat.h says what each field of `struct stat` can and
 //! cannot say here.
@@ -62,9 +63,20 @@ pub fn inode(path: &str) -> u64 {
     hash.max(1)
 }
 
-fn describe(path: &str, kind: Kind, size: u64) -> Stat {
+/// The time a file's change stamp is told as: the stamp in seconds,
+/// and never less than 1 - `make` takes 0 to mean there is no file. A
+/// file not changed since stamping began (stamp 0) is 1, older than any
+/// stamped one: a commit's stamp is at least 2 (sys/stat.h).
+fn time_of(stamp: u64) -> Time {
+    Time { seconds: c_long::try_from(stamp.max(1)).unwrap_or(c_long::MAX), nanoseconds: 0 }
+}
+
+fn describe(path: &str, kind: Kind, size: u64, stamp: u64) -> Stat {
     let size = i64::try_from(size).unwrap_or(i64::MAX);
     Stat {
+        st_atim: time_of(stamp),
+        st_mtim: time_of(stamp),
+        st_ctim: time_of(stamp),
         st_dev: 1,
         st_ino: inode(path),
         st_nlink: 1,
@@ -93,8 +105,8 @@ pub unsafe extern "C" fn stat(path: *const c_char, out: *mut Stat) -> c_int {
     };
     let found = with(|state| {
         let files = state.files().ok_or(EACCES)?;
-        let (kind, size) = files.stat(name).map_err(reason)?;
-        Ok(describe(&format!("/{}", files.resolve(name)), kind, size))
+        let (kind, size, stamp) = files.stat_stamped(name).map_err(reason)?;
+        Ok(describe(&format!("/{}", files.resolve(name)), kind, size, stamp))
     });
     match found {
         Ok(status) => {
@@ -139,8 +151,8 @@ pub unsafe extern "C" fn fstat(fd: c_int, out: *mut Stat) -> c_int {
             None => return Err(EBADF),
         };
         let files = state.files().ok_or(EBADF)?;
-        let (kind, size) = files.stat(&path).map_err(reason)?;
-        Ok(describe(&path, kind, size))
+        let (kind, size, stamp) = files.stat_stamped(&path).map_err(reason)?;
+        Ok(describe(&path, kind, size, stamp))
     });
     match found {
         Ok(status) => {
@@ -374,6 +386,121 @@ pub unsafe extern "C" fn closedir(dir: *mut Dir) -> c_int {
     // SAFETY: the caller's promise: it came from Box::into_raw in opendir.
     drop(unsafe { Box::from_raw(dir) });
     0
+}
+
+// ---- marking a file changed -------------------------------------------
+
+/// `UTIME_NOW` and `UTIME_OMIT` (sys/stat.h), in a timespec's
+/// nanoseconds: now, and leave as it is.
+const UTIME_NOW: c_long = (1 << 30) - 1;
+const UTIME_OMIT: c_long = (1 << 30) - 2;
+/// `AT_FDCWD` (fcntl.h): a path from the current directory.
+const AT_FDCWD: c_int = -100;
+
+/// What to do with a file's times, given `times[0]` (access) and
+/// `times[1]` (change), or none: Ok(true) touch, Ok(false) nothing.
+/// Only the change time is kept, as a stamp, and a stamp can be made
+/// newer but not set to a time: a given one is refused (EPERM).
+///
+/// # Safety
+/// `times` null or valid for reading two.
+unsafe fn what_to_do(times: *const Time) -> Result<bool, c_int> {
+    if times.is_null() {
+        return Ok(true);
+    }
+    // SAFETY: the caller's promise.
+    let change = unsafe { &*times.add(1) };
+    match change.nanoseconds {
+        UTIME_NOW => Ok(true),
+        UTIME_OMIT => Ok(false),
+        _ => Err(EPERM),
+    }
+}
+
+/// Touches the file `name` (from the current directory).
+fn touch(name: &str) -> Result<(), c_int> {
+    with(|state| {
+        let files = state.files().ok_or(EACCES)?;
+        files.touch(name).map_err(reason)
+    })
+}
+
+/// `utimensat(dirfd, path, times, flags)`: marks the file changed now
+/// (times null, or `times[1]` UTIME_NOW). 0, or -1 with errno: EPERM
+/// for a change time given as a time, which TheTaaJ cannot keep;
+/// EINVAL for a `dirfd` other than AT_FDCWD (directories are not opened
+/// as descriptors here) unless the path is from the root. `flags`
+/// (AT_SYMLINK_NOFOLLOW) means nothing: there are no links.
+///
+/// # Safety
+/// `path` null or a string ending in a zero byte; `times` null or valid
+/// for reading two.
+#[no_mangle]
+pub unsafe extern "C" fn utimensat(dirfd: c_int, path: *const c_char, times: *const Time, _flags: c_int) -> c_int {
+    // SAFETY: the caller's promise.
+    let name = match unsafe { text(path) } {
+        Ok(name) => name,
+        Err(code) => return fail(code),
+    };
+    if dirfd != AT_FDCWD && !name.starts_with('/') {
+        return fail(EINVAL);
+    }
+    // SAFETY: the caller's promise.
+    match unsafe { what_to_do(times) }.and_then(|now| if now { touch(name) } else { Ok(()) }) {
+        Ok(()) => 0,
+        Err(code) => fail(code),
+    }
+}
+
+/// `futimens(fd, times)`: as utimensat, for an open file.
+///
+/// # Safety
+/// `times` null or valid for reading two.
+#[no_mangle]
+pub unsafe extern "C" fn futimens(fd: c_int, times: *const Time) -> c_int {
+    let path = with(|state| match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
+        Some(Open::File(file)) => Ok(file.path.clone()),
+        Some(_) => Err(EINVAL),
+        None => Err(EBADF),
+    });
+    // SAFETY: the caller's promise.
+    let done = path.and_then(|path| unsafe { what_to_do(times) }.and_then(|now| if now { touch(&path) } else { Ok(()) }));
+    match done {
+        Ok(()) => 0,
+        Err(code) => fail(code),
+    }
+}
+
+/// `utime(path, times)` (utime.h) and `utimes(path, times)` (sys/time.h):
+/// with no times, marks the file changed now; with times, EPERM, as
+/// utimensat with a time.
+///
+/// # Safety
+/// `path` null or a string ending in a zero byte.
+#[no_mangle]
+pub unsafe extern "C" fn utime(path: *const c_char, times: *const core::ffi::c_void) -> c_int {
+    // SAFETY: the caller's promise.
+    let name = match unsafe { text(path) } {
+        Ok(name) => name,
+        Err(code) => return fail(code),
+    };
+    if !times.is_null() {
+        return fail(EPERM);
+    }
+    match touch(name) {
+        Ok(()) => 0,
+        Err(code) => fail(code),
+    }
+}
+
+/// `utimes(path, times)`: as utime.
+///
+/// # Safety
+/// As for utime.
+#[no_mangle]
+pub unsafe extern "C" fn utimes(path: *const c_char, times: *const core::ffi::c_void) -> c_int {
+    // SAFETY: the caller's promise, passed on.
+    unsafe { utime(path, times) }
 }
 
 fn fail_null<T>(code: c_int) -> *mut T {

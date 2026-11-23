@@ -70,7 +70,12 @@ pub fn dump<D: BlockDevice, W: Write>(device: &mut D, out: &mut W) -> io::Result
     writeln!(out, "\nlive: slot {letter}, generation {}", live.generation)?;
 
     if live.version != VERSION {
-        writeln!(out, "format version {}: may hold directories", live.version)?;
+        let holds = match live.version {
+            2 => "directories",
+            3 => "directories and big files",
+            _ => "directories, big files and change stamps",
+        };
+        writeln!(out, "format version {}: may hold {holds}", live.version)?;
     }
 
     writeln!(out, "\ntree:")?;
@@ -165,12 +170,15 @@ impl Walk {
 
                 writeln!(
                     out,
-                    "{pad}    {:<20} inode {:<5} size {:<7} blocks {}{}",
+                    "{pad}    {:<20} inode {:<5} size {:<7} blocks {}{}{}",
                     entry.name_lossy(),
                     entry.inode,
                     entry.size,
                     inode.block_count,
-                    if inode.magic == MAGIC { "" } else { "   [BAD INODE MAGIC]" }
+                    // Only a stamped inode says more than the C tool's
+                    // dump, which knows none.
+                    if inode.is_stamped() { format!("  stamp {}", inode.stamp) } else { String::new() },
+                    if inode.is_valid() { "" } else { "   [BAD INODE MAGIC]" }
                 )?;
                 if inode.size != entry.size {
                     writeln!(

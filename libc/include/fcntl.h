@@ -27,6 +27,12 @@ extern "C" {
 #define O_CLOEXEC   02000000
 #define O_NOCTTY    0400
 
+/* For the ...at calls (utimensat): a path from the current directory.
+ * Directories are not opened as descriptors here, so it is the one
+ * directory such a call takes. */
+#define AT_FDCWD -100
+#define AT_SYMLINK_NOFOLLOW 0x100
+
 /* Opens the file at path. Returns a descriptor - the lowest number
  * not in use - or -1, with the reason in errno.
  *

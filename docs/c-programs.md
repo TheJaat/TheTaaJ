@@ -103,14 +103,15 @@ A program that only reads standard input and writes standard output needs neithe
 | Header | What is in it |
 |---|---|
 | `stdio.h` | `printf` `fprintf` `snprintf` `sprintf` and their `v` forms; `puts` `fputs` `putchar` `putc` `fputc`; `fopen` `fclose` `fflush` `setvbuf`; `fgetc` `getc` `getchar` `ungetc` `fgets`; `fread` `fwrite`; `fseek` `ftell` `rewind`; `feof` `ferror` `clearerr` `fileno`; `perror`; `remove` `rename`; `stdin` `stdout` `stderr` |
-| `stdlib.h` | `malloc` `calloc` `realloc` `free`; `exit` `_Exit` `atexit`; `getenv` (always NULL: there is no environment); `rand` `srand`; `strtol` `strtoul` `atoi` `atol`; `abs` `labs`; `qsort` `bsearch` |
-| `string.h` | `strlen` `strnlen` `strcmp` `strncmp` `strcpy` `strncpy` `strcat` `strncat` `strchr` `strrchr` `strstr` `strspn` `strcspn` `strdup` `strerror` `strerror_r` `strsignal`; `memcpy` `memmove` `memset` `memcmp` `memchr` |
+| `stdlib.h` | `malloc` `calloc` `realloc` `free`; `exit` `_Exit` `atexit`; `getenv` `setenv` `unsetenv` `putenv` (an environment of the program's own: it starts empty, and a child does not get it); `system` (one command, without a shell: below); `rand` `srand`; `strtol` `strtoul` `atoi` `atol`; `abs` `labs`; `qsort` `bsearch` |
+| `string.h` | `strlen` `strnlen` `strcmp` `strncmp` `strcpy` `strncpy` `strcat` `strncat` `strchr` `strrchr` `strstr` `strspn` `strcspn` `strdup` `strndup` `stpcpy` `strerror` `strerror_r` `strsignal`; `memcpy` `memmove` `memset` `memcmp` `memchr` |
 | `ctype.h` | `isalpha` `isdigit` `isalnum` `isupper` `islower` `isxdigit` `isspace` `isblank` `isprint` `isgraph` `ispunct` `iscntrl`; `toupper` `tolower` |
 | `errno.h` | `errno`, and the numbers Linux uses for the errors that can happen here |
-| `unistd.h` | `read` `write` `close` `lseek` `unlink` `isatty` `_exit`; `dup` `dup2` `fsync`; `getcwd` `chdir` `rmdir` `access` `truncate` `ftruncate` `readlink`; `getpid` `sysconf` `getpagesize` `usleep`; `fork` `execv` `execve` (which fail with `ENOSYS`); `environ` (empty) |
+| `unistd.h` | `read` `write` `close` `lseek` `unlink` `isatty` `_exit`; `dup` `dup2` `fsync`; `getcwd` `chdir` `rmdir` `access` `truncate` `ftruncate` `readlink`; `getpid` `sysconf` `getpagesize` `usleep`; `getopt`; `fork` `execv` `execve` (which fail with `ENOSYS`); `environ` (empty) |
+| `strings.h`, `libgen.h`, `fnmatch.h`, `glob.h` | `strcasecmp` `strncasecmp`; `basename` `dirname`; `fnmatch`; `glob` `globfree` |
 | `spawn.h`, `sys/wait.h` | `posix_spawn` `posix_spawnp`; `waitpid` `wait` `wait4` (see "Starting another program") |
 | `fcntl.h` | `open` `fcntl`, and `O_RDONLY` `O_WRONLY` `O_RDWR` `O_CREAT` `O_EXCL` `O_TRUNC` `O_APPEND` and the rest of the `O_` flags |
-| `sys/stat.h` | `stat` `fstat` `lstat` `mkdir` `chmod` `umask`: a file's kind, size and a number for it; no owners, permissions or times are kept |
+| `sys/stat.h` | `stat` `fstat` `lstat` `mkdir` `chmod` `umask`: a file's kind, size, a number for it and its change stamp (`st_mtime`, below); no owners or permissions are kept. `utimensat` `futimens`, and `utime` (`utime.h`) and `utimes` (`sys/time.h`), mark a file changed |
 | `dirent.h` | `opendir` `readdir` `rewinddir` `closedir` |
 | `sys/mman.h` | `mmap` `munmap`: a file is read into memory, not mapped; changes are not written back |
 | `signal.h` | `signal` `sigaction` `raise` `kill` `sigprocmask`: only signals a process sends itself |
@@ -152,9 +153,9 @@ Code that needs any of these will not compile or link:
 - **Single keys.** The keyboard arrives a line at a time; a program cannot see a key as it is pressed, the arrow keys, or turn the showing of typed text off (no `termios`). An editor or a game cannot be written yet.
 - **A few functions of `math.h`**: `erf` `erfc` `tgamma` `lgamma`, and every `long double` one, are declared but not there yet. The rest are: `sqrt` `fmod` `floor` `hypot` and their kind, and `sin` `cos` `tan` `exp` `log` `pow` `cbrt` `fma`, the hyperbolic functions and the inverses of all of them - musl's, in `libc/c/libm` (journal entry 074), within an ulp or two of the exact answer.
 - **An exact `strtold`**: a long double is read through a double, so text with more digits than a double keeps is not rounded to the nearest long double.
-- **Processes, the Unix way**: `fork` and `exec` are declared but fail (`ENOSYS`); there is no `system` or `pipe`. A program starts another with `posix_spawn` (above). Signals reach a process only from itself (`raise`, or `kill` of its own number).
+- **Processes, the Unix way**: `fork` and `exec` are declared but fail (`ENOSYS`); there is no `pipe`, and `popen` fails (`ENOSYS`). `system` has no shell to hand the command to: it splits it into words as `sh` does (quotes and backslashes too) and starts the program with `posix_spawnp`, and refuses (-1, `ENOSYS`, a line on standard error) a command that needs a shell - `` | & ; < > ( ) $ ` * ? [ ``, a word starting `#` or `~`, or `NAME=value`. A program starts another with `posix_spawn` (above). Signals reach a process only from itself (`raise`, or `kill` of its own number).
 - **Threads**: `pthread_create` fails with `EAGAIN`. The locks are there, and count, so code written for threads runs with one.
-- **Links, owners, permissions and file times**: `link` and `symlink` fail with `EPERM`; `stat` says every time is 0 and every owner 0. `flock` and `fcntl`'s locks fail with `ENOLCK`.
+- **Links, owners, permissions and times of day for files**: `link` and `symlink` fail with `EPERM`; every owner is 0. `flock` and `fcntl`'s locks fail with `ENOLCK`. A file's `st_mtime` (and `st_atime`, `st_ctime`) is its change stamp, not a time of day: a number the file system gives each change, so the file changed later has the higher one - what `make` needs - but it says nothing about when. It is at least 1. A stamp can be made newer (`utimensat` with no times or `UTIME_NOW`) but not set: a time given as a time fails with `EPERM`.
 - **Sleeping by seconds**: `nanosleep` and `usleep` are there, `sleep` is not. (`time`, `clock` and `clock_gettime` count from the moment the system started.)
 - Wide characters (`wchar.h` has only `mbstate_t`), locales other than "C".
 

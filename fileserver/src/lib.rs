@@ -60,7 +60,9 @@ pub mod protocol {
     /// fills with zeros.
     pub const TRUNCATE: u8 = 4;
     pub const REMOVE: u8 = 5;
-    /// Payload: the size, u64 LE, then the kind, u8.
+    /// Payload: the size, u64 LE, then the kind, u8, then the change
+    /// stamp, u64 LE: of two files, the one changed later has the higher
+    /// stamp (0: not since stamping began, and always for a directory).
     pub const STAT: u8 = 6;
     /// A test of what happens when the service stops answering: it
     /// answers this, then does nothing for `number` ticks (at most
@@ -92,6 +94,10 @@ pub mod protocol {
     /// for 4 seconds: llc's 34 MB at once took longer than that, in
     /// QEMU without hardware help. 4 MiB takes about half a second.
     pub const READ_INTO_MAX: usize = 4 << 20;
+
+    /// Marks the file changed now - a new, higher stamp (STAT) - and
+    /// changes nothing in it, as `touch` does.
+    pub const TOUCH: u8 = 12;
 
     /// The longest STALL: 30 seconds of 100 Hz ticks.
     pub const STALL_MAX: u64 = 3000;
@@ -268,6 +274,11 @@ pub mod protocol {
     pub fn stat(payload: &[u8]) -> Option<(Kind, u64)> {
         Some((Kind::from_u8(*payload.get(8)?), number(payload)?))
     }
+
+    /// A STAT payload's change stamp; 0 from a service that sends none.
+    pub fn stamp(payload: &[u8]) -> u64 {
+        payload.get(9..17).map_or(0, |bytes| u64::from_le_bytes(bytes.try_into().expect("8 bytes")))
+    }
 }
 
 
@@ -313,6 +324,11 @@ pub trait Store {
     ) -> Result<(), Status>;
     /// What `path` names, and its size (0 for a directory).
     fn stat(&mut self, path: &str) -> Result<(Kind, u64), Status>;
+    /// When what `path` names last changed: a number that only grows
+    /// (protocol::STAT). 0 for a directory.
+    fn stamp(&mut self, path: &str) -> Result<u64, Status>;
+    /// Marks the file changed now, changing nothing in it.
+    fn touch(&mut self, name: &str) -> Result<(), Status>;
     /// The size of the file `path` names.
     fn size(&mut self, path: &str) -> Result<u64, Status> {
         match self.stat(path)? {
@@ -389,7 +405,13 @@ fn answer(store: &mut impl Store, access: Access, message: &[u8], out: &mut [u8]
     // operation, where a new one could forget.
     let changes = matches!(
         request.op,
-        protocol::WRITE | protocol::TRUNCATE | protocol::REMOVE | protocol::STALL | protocol::MKDIR | protocol::RENAME
+        protocol::WRITE
+            | protocol::TRUNCATE
+            | protocol::REMOVE
+            | protocol::STALL
+            | protocol::MKDIR
+            | protocol::RENAME
+            | protocol::TOUCH
     );
     if changes && access == Access::ReadOnly {
         return Err(Status::ReadOnly);
@@ -423,9 +445,12 @@ fn answer(store: &mut impl Store, access: Access, message: &[u8], out: &mut [u8]
         protocol::REMOVE => store.remove(name).map(|()| 0),
         protocol::STAT => {
             let (kind, size) = store.stat(name)?;
+            let stamp = store.stamp(name)?;
             out[8] = kind as u8;
-            Ok(put_number(out, size) + 1)
+            out[9..17].copy_from_slice(&stamp.to_le_bytes());
+            Ok(put_number(out, size) + 1 + 8)
         }
+        protocol::TOUCH => store.touch(name).map(|()| 0),
         protocol::MKDIR => store.make_directory(name).map(|()| 0),
         protocol::RENAME => {
             // The second path travels where a WRITE's data does.
@@ -438,5 +463,59 @@ fn answer(store: &mut impl Store, access: Access, message: &[u8], out: &mut [u8]
             Ok(1)
         }
         _ => Err(Status::BadRequest),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use protocol::{Request, STAT, TOUCH, WRITE};
+    use taajfs::{format_volume, MemDevice};
+
+    fn ask(store: &mut impl Store, access: Access, op: u8, name: &str, data: &[u8]) -> (Status, Vec<u8>) {
+        let mut message = [0u8; MESSAGE_MAX];
+        let length = Request { op, name, number: 0, data }.encode(&mut message).expect("fits");
+        let mut reply = [0u8; MESSAGE_MAX];
+        let n = serve(store, access, &message[..length], &mut reply);
+        (Status::from_u8(reply[0]), reply[1..n].to_vec())
+    }
+
+    fn stamp(store: &mut impl Store, name: &str) -> u64 {
+        let (status, payload) = ask(store, Access::ReadOnly, STAT, name, &[]);
+        assert_eq!(status, Status::Ok, "{name}");
+        assert_eq!(payload.len(), 17, "size, kind, stamp");
+        protocol::stamp(&payload)
+    }
+
+    /// The same for every store: what changed later has the higher
+    /// stamp, a touch is a change, and a read-only channel cannot touch.
+    fn stamps_order_changes(store: &mut impl Store) {
+        assert_eq!(ask(store, Access::ReadWrite, WRITE, "a.c", b"int a;").0, Status::Ok);
+        assert_eq!(ask(store, Access::ReadWrite, WRITE, "a.o", b"object").0, Status::Ok);
+        let (c, o) = (stamp(store, "a.c"), stamp(store, "a.o"));
+        assert!(c > 0 && o > c, "{c} {o}");
+        assert_eq!(ask(store, Access::ReadWrite, TOUCH, "a.c", &[]).0, Status::Ok);
+        assert!(stamp(store, "a.c") > o);
+        assert_eq!(ask(store, Access::ReadOnly, TOUCH, "a.o", &[]).0, Status::ReadOnly);
+        assert_eq!(ask(store, Access::ReadWrite, TOUCH, "none", &[]).0, Status::NotFound);
+        assert_eq!(stamp(store, ""), 0, "a directory has none");
+        let (_, payload) = ask(store, Access::ReadOnly, STAT, "a.o", &[]);
+        assert_eq!(protocol::stat(&payload), Some((Kind::File, 6)), "the old fields stay where they were");
+    }
+
+    #[test]
+    fn stamps_order_changes_in_memory() {
+        stamps_order_changes(&mut RamStore::new());
+    }
+
+    #[test]
+    fn stamps_order_changes_on_disk_and_survive_a_remount() {
+        let mut device = MemDevice::new(256);
+        format_volume(&mut device, 256).unwrap();
+        let mut store = DiskStore::mount(device).unwrap();
+        stamps_order_changes(&mut store);
+        let before = stamp(&mut store, "a.c");
+        let mut store = DiskStore::mount(store.into_device()).unwrap();
+        assert_eq!(stamp(&mut store, "a.c"), before);
     }
 }

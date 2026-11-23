@@ -7,7 +7,7 @@
  * aligned_alloc, the locale, constructors and atexit - and of what
  * LLVM needs of it: stat and directories, chdir, truncate, dup2 and
  * fcntl, mmap, signals, pthread for one thread, sysconf, nanosleep,
- * rand.
+ * rand - and of what make needs: change stamps, and utimensat.
  *
  *   with files clib     every check; "library: N checks, all passed",
  *                       then, from the atexit handlers, "library: atexit
@@ -36,6 +36,7 @@
 #include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
+#include <utime.h>
 
 static int checks;
 static int failures;
@@ -350,6 +351,36 @@ static void for_llvm(void)
           "truncate kept the start and added zeros");
     if (fd >= 0)
         close(fd);
+
+    /* Change stamps, for make: what changed later is newer, a touch
+     * makes a file newer, and a stamp cannot be set to a given time. */
+    struct stat note, later;
+    made = fopen("later", "w");
+    check(made && fputs("x", made) >= 0 && fclose(made) == 0, "a second file");
+    check(stat("note", &note) == 0 && stat("later", &later) == 0 && later.st_mtime > note.st_mtime && note.st_mtime >= 1,
+          "the file written later has the later st_mtime");
+    check(utimensat(AT_FDCWD, "note", NULL, 0) == 0 && stat("note", &note) == 0 && note.st_mtime > later.st_mtime,
+          "utimensat with no times makes a file newer");
+    struct timespec now[2] = {{0, UTIME_OMIT}, {0, UTIME_NOW}};
+    check(utimensat(AT_FDCWD, "later", now, 0) == 0 && stat("later", &later) == 0 && later.st_mtime > note.st_mtime,
+          "utimensat with UTIME_NOW");
+    struct timespec omit[2] = {{0, UTIME_OMIT}, {0, UTIME_OMIT}};
+    time_t stamped = later.st_mtime;
+    check(utimensat(AT_FDCWD, "later", omit, 0) == 0 && stat("later", &later) == 0 && later.st_mtime == stamped,
+          "UTIME_OMIT changes nothing");
+    struct timespec given[2] = {{5, 0}, {5, 0}};
+    errno = 0;
+    check(utimensat(AT_FDCWD, "later", given, 0) == -1 && errno == EPERM, "a stamp cannot be set to a time: EPERM");
+    errno = 0;
+    check(utimensat(AT_FDCWD, "nothere", NULL, 0) == -1 && errno == ENOENT, "touching nothing: ENOENT");
+    check(utime("note", NULL) == 0 && stat("note", &note) == 0 && note.st_mtime > later.st_mtime, "utime with no times");
+    fd = open("later", O_RDONLY);
+    check(fd >= 0 && futimens(fd, NULL) == 0 && stat("later", &later) == 0 && later.st_mtime > note.st_mtime, "futimens");
+    if (fd >= 0)
+        close(fd);
+    check(stat("note", &note) == 0 && note.st_size == 8, "and a touch changes nothing in the file");
+    check(unlink("later") == 0, "unlink");
+
     check(chdir("..") == 0, "chdir ..");
     DIR *dir = opendir("clibtmp");
     int names = 0, found = 0;

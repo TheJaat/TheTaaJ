@@ -127,6 +127,21 @@ pub unsafe extern "C" fn strcpy(to: *mut c_char, from: *const c_char) -> *mut c_
     to
 }
 
+/// `stpcpy(to, from)`: strcpy, returning where the zero went in `to` -
+/// so the next string can be put on the end without looking for it.
+///
+/// # Safety
+/// As strcpy.
+#[cfg_attr(not(test), no_mangle)]
+pub unsafe extern "C" fn stpcpy(to: *mut c_char, from: *const c_char) -> *mut c_char {
+    // SAFETY: the caller's promise, as for strcpy.
+    unsafe {
+        let n = length(from);
+        ptr::copy_nonoverlapping(from, to, n + 1);
+        to.add(n)
+    }
+}
+
 /// `strncpy(to, from, n)`: writes exactly `n` bytes: the string, then
 /// zeros to make up the count. If the string has `n` bytes or more, no
 /// zero is written, and `to` is then not a string.
@@ -367,6 +382,17 @@ mod tests {
             assert_eq!(strcpy(to.as_mut_ptr(), c(b"fig\0")), to.as_mut_ptr());
         }
         assert_eq!(to.map(|byte| byte as u8), *b"fig\0####");
+    }
+
+    #[test]
+    fn stpcpy_returns_the_end_for_the_next_one() {
+        let mut to = [b'#' as c_char; 10];
+        unsafe {
+            let end = stpcpy(to.as_mut_ptr(), c(b"fig\0"));
+            assert_eq!(end, to.as_mut_ptr().add(3));
+            stpcpy(end, c(b"s!\0"));
+        }
+        assert_eq!(to.map(|byte| byte as u8), *b"figs!\0####");
     }
 
     #[test]

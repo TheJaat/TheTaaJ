@@ -1,8 +1,8 @@
 /* sys/stat.h - what a file is: stat, fstat, lstat; and mkdir.
  *
- * TheTaaJ's file system keeps a name, a kind (file or directory) and a
- * size for each file, and nothing else yet: no owner, permissions,
- * times or links. So of struct stat:
+ * TheTaaJ's file system keeps a name, a kind (file or directory), a
+ * size and a change stamp for each file, and nothing else yet: no
+ * owner, permissions, times of day or links. So of struct stat:
  *
  *   st_mode    S_IFREG or S_IFDIR, and permissions 0644 or 0755 - what
  *              the file service would let a program given the files do
@@ -15,7 +15,13 @@
  *   st_dev     1 for every file: there is one file system
  *   st_nlink   1
  *   st_blksize 4096, and st_blocks the size in 512-byte blocks
- *   the times  0, the start of 1970: no times are kept
+ *   the times  all three the file's change stamp, in seconds: a number
+ *              that only grows, given by the file system to each change
+ *              (the generation of the commit that made it). Not a time
+ *              of day; but of two files the one changed later has the
+ *              higher st_mtime, which is what make asks. Never 0 (make
+ *              would think the file missing): a file not changed since
+ *              its disk began stamping is 1, a directory 1 too.
  *   st_uid, st_gid  0
  *
  * Standard input, output and error are character devices (S_IFCHR). */
@@ -95,6 +101,17 @@ int mkdir(const char *path, mode_t mode);
 
 /* Permissions are not kept: these change nothing and succeed for a
  * file that is there (chmod, fchmod), and umask says 022. */
+/* Marking a file changed (as touch does). Only the change time is
+ * kept, as a stamp, and it can be made newer but not set: times null,
+ * or times[1].tv_nsec UTIME_NOW, gives the file a new, higher stamp;
+ * UTIME_OMIT leaves it; a time given as a time fails with EPERM. The
+ * access time is not kept. utimensat's dirfd must be AT_FDCWD (or the
+ * path from the root); its flags mean nothing (there are no links). */
+#define UTIME_NOW ((1l << 30) - 1l)
+#define UTIME_OMIT ((1l << 30) - 2l)
+int utimensat(int dirfd, const char *path, const struct timespec times[2], int flags);
+int futimens(int fd, const struct timespec times[2]);
+
 int chmod(const char *path, mode_t mode);
 int fchmod(int fd, mode_t mode);
 mode_t umask(mode_t mask);

@@ -84,6 +84,12 @@ extern FILE *stderr;
  * (`with files`, or `with readonly` to read). */
 FILE *fopen(const char *path, const char *mode);
 
+/* A command's output, or input, as a stream: it needs a pipe between
+ * two programs, which TheTaaJ does not have yet. popen is NULL, with
+ * ENOSYS; pclose -1. */
+FILE *popen(const char *command, const char *mode);
+int pclose(FILE *stream);
+
 /* A stream for a descriptor that is already open, with a mode as
  * fopen's (which must suit how the descriptor was opened; it is not
  * checked). fclose closes the descriptor too. */

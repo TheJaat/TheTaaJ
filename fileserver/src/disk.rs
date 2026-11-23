@@ -69,8 +69,16 @@ fn kind(file: &taajfs::FileInfo) -> Kind {
 impl<D: BlockDevice> DiskStore<D> {
     /// Mounts the volume on `device`. The error says why not - most
     /// often, that there is no TaajFS volume there.
+    ///
+    /// The volume is made one whose files carry change stamps (version
+    /// 4, `Volume::allow_stamps`), so that `make` can tell what changed
+    /// last. If that cannot be written the volume is used as it is: the
+    /// disk is then refusing writes anyway, and a cut partway leaves it
+    /// as safe to use as before (see `raise_version`).
     pub fn mount(device: D) -> Result<DiskStore<D>, Error> {
-        Ok(DiskStore { volume: Volume::mount(device)? })
+        let mut volume = Volume::mount(device)?;
+        let _ = volume.allow_stamps();
+        Ok(DiskStore { volume })
     }
 
     pub fn free_blocks(&self) -> u32 {
@@ -119,6 +127,15 @@ impl<D: BlockDevice> Store for DiskStore<D> {
     fn stat(&mut self, path: &str) -> Result<(Kind, u64), Status> {
         let file = self.volume.lookup(check_directory(path)?).map_err(status)?;
         Ok((kind(&file), u64::from(file.size)))
+    }
+
+    fn stamp(&mut self, path: &str) -> Result<u64, Status> {
+        let file = self.volume.lookup(check_directory(path)?).map_err(status)?;
+        self.volume.stamp(&file).map_err(status)
+    }
+
+    fn touch(&mut self, name: &str) -> Result<(), Status> {
+        self.volume.touch(check(name)?).map_err(status)
     }
 
     fn make_directory(&mut self, path: &str) -> Result<(), Status> {

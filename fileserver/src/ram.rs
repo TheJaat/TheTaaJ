@@ -34,6 +34,9 @@ pub struct RamStore {
     nodes: BTreeMap<String, Node>,
     /// The sum of every file's size.
     bytes: usize,
+    /// Each file's change stamp (Store::stamp), and the last one given.
+    stamps: BTreeMap<String, u64>,
+    clock: u64,
 }
 
 /// The one spelling of a path that the map uses: its names, joined by
@@ -126,7 +129,14 @@ impl RamStore {
         }
         file.resize(size, 0);
         self.bytes = total;
+        self.changed(key);
         Ok(())
+    }
+
+    /// The file at `key` changed: a new stamp.
+    fn changed(&mut self, key: String) {
+        self.clock += 1;
+        self.stamps.insert(key, self.clock);
     }
 }
 
@@ -178,6 +188,19 @@ impl Store for RamStore {
             Some(Node::Directory) => Ok((Kind::Directory, 0)),
             Some(Node::File(file)) => Ok((Kind::File, file.len() as u64)),
         }
+    }
+
+    fn stamp(&mut self, path: &str) -> Result<u64, Status> {
+        match self.stat(path)? {
+            (Kind::Directory, _) => Ok(0),
+            (Kind::File, _) => Ok(self.stamps.get(&key(path)).copied().unwrap_or(0)),
+        }
+    }
+
+    fn touch(&mut self, name: &str) -> Result<(), Status> {
+        self.file(name)?;
+        self.changed(key(name));
+        Ok(())
     }
 
     fn make_directory(&mut self, path: &str) -> Result<(), Status> {
@@ -235,6 +258,7 @@ impl Store for RamStore {
         if let Some(Node::File(file)) = self.nodes.remove(&key) {
             self.bytes -= file.len();
         }
+        self.stamps.remove(&key);
         Ok(())
     }
 
@@ -302,6 +326,9 @@ impl Store for RamStore {
             if let Some(node) = self.nodes.remove(&path) {
                 let mut moved = new.clone();
                 moved.push_str(&path[old.len()..]);
+                if let Some(stamp) = self.stamps.remove(&path) {
+                    self.stamps.insert(moved.clone(), stamp);
+                }
                 self.nodes.insert(moved, node);
             }
         }
@@ -419,6 +446,12 @@ mod tests {
         }
         fn stat(&mut self, _: &str) -> Result<(Kind, u64), Status> {
             Ok((Kind::File, self.0 as u64))
+        }
+        fn stamp(&mut self, _: &str) -> Result<u64, Status> {
+            Ok(0)
+        }
+        fn touch(&mut self, _: &str) -> Result<(), Status> {
+            Err(Status::BadRequest)
         }
         fn make_directory(&mut self, _: &str) -> Result<(), Status> {
             Err(Status::BadRequest)

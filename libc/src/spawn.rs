@@ -219,12 +219,15 @@ fn start(path: &str, name: &str, arguments: &[String], command: bool) -> Result<
     let (file, directory, memory) = with(|state| {
         let files = state.files().ok_or(ENOENT)?;
         let file = if command && !path.contains('/') { String::from(path) } else { files.resolve(path) };
-        let size = files.size(&file).map_err(|_| ENOENT)?;
+        // `file` is from the root; the calls below take a path from the
+        // current directory, so it goes to them as one from the root.
+        let from_root = alloc::format!("/{file}");
+        let size = files.size(&from_root).map_err(|_| ENOENT)?;
         if size == 0 || size > abi::PROGRAM_IMAGE_MAX {
             return Err(ENOEXEC);
         }
         let memory = taaj::memory_create(size).map_err(|_| ENOMEM)?;
-        match files.read_into(&file, memory) {
+        match files.read_into(&from_root, memory) {
             Ok(got) if got == size => Ok((file, String::from(files.directory()), memory)),
             _ => {
                 let _ = taaj::close(memory);
@@ -396,4 +399,70 @@ pub unsafe extern "C" fn wait4(process: c_int, status: *mut c_int, options: c_in
         unsafe { usage.write_bytes(0, 2 * 16 + 14 * 8) };
     }
     id
+}
+
+// ---- system -----------------------------------------------------------
+
+/// Writes `text` to standard error (descriptor 2, wherever it now goes).
+fn complain(text: &str) {
+    // SAFETY: the bytes of a live string.
+    let _ = unsafe { crate::descriptors::write(2, text.as_ptr().cast(), text.len()) };
+}
+
+/// `system(command)`: runs a command and waits for it; its status, as
+/// waitpid gives it.
+///
+/// There is no shell for a C program here, so the command is split into
+/// words as sh would split it (quotes and backslashes work), and the
+/// first is started as posix_spawnp starts a name: a bare name is the
+/// file of that name in the root. A command that needs a shell - a pipe,
+/// a redirection, `;`, `&&`, `$`, a wildcard, `VAR=x cmd` (`words_of`) -
+/// is not run: -1, with ENOSYS, and a line on standard error saying
+/// why. A program that cannot be started gives status 127, as sh's "not
+/// found" does, with a line saying why; one that may not be started (no
+/// "init" service) -1 with EPERM. An empty command does nothing, 0.
+/// `system(NULL)` says 1: commands can be run, in this way.
+///
+/// # Safety
+/// `command` null or a string ending in a zero byte.
+#[no_mangle]
+pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
+    if command.is_null() {
+        return 1;
+    }
+    // SAFETY: the caller's promise.
+    let command = unsafe { CStr::from_ptr(command) }.to_string_lossy().into_owned();
+    let words = match crate::words::words_of(&command) {
+        Ok(words) => words,
+        Err(why) => {
+            let why = match why {
+                crate::words::Unshelled::Needs(c) => alloc::format!("'{c}' needs a shell"),
+                crate::words::Unshelled::Unfinished => String::from("a quote or backslash is not finished"),
+                crate::words::Unshelled::Assignment => String::from("setting a variable for a command needs a shell"),
+            };
+            complain(&alloc::format!("system: cannot run \"{command}\": {why}, and there is none here\n"));
+            return crate::descriptors::fail(ENOSYS);
+        }
+    };
+    let Some(name) = words.first() else { return 0 };
+    let process = match start(name, name, &words[1..], true) {
+        Ok(process) => process,
+        Err(EPERM) => return crate::descriptors::fail(EPERM),
+        Err(code) => {
+            let why = match code {
+                ENOENT => "not found",
+                ENOEXEC => "not a program",
+                ENOMEM => "no memory for it",
+                _ => "it could not be read",
+            };
+            complain(&alloc::format!("system: {name}: {why}\n"));
+            return 127 << 8;
+        }
+    };
+    let status = match taaj::wait_any(&[process]) {
+        Ok((_, code)) => status_of(code),
+        Err(_) => 127 << 8,
+    };
+    let _ = taaj::close(process);
+    status
 }

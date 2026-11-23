@@ -46,6 +46,17 @@ fn matches(files: &Files, name: &str, length: usize) -> bool {
     good && read == Ok(length as u64) && at == length
 }
 
+/// Whether the file `name` holds exactly `expected`.
+fn matches_bytes(files: &Files, name: &str, expected: &[u8]) -> bool {
+    let mut at = 0;
+    let mut good = true;
+    let read = files.read(name, |piece| {
+        good &= expected.get(at..at + piece.len()) == Some(piece);
+        at += piece.len();
+    });
+    good && read == Ok(expected.len() as u64)
+}
+
 fn refused<T>(status: Status) -> Result<T, FileError> {
     Err(FileError::Refused(status))
 }
@@ -270,7 +281,21 @@ fn main() -> i64 {
     check!(there.rename("g", "../m/h") == Ok(()) && matches(&files, "m/h", 3000), "by names from a directory");
     check!(files.remove("m/h") == Ok(()) && files.remove("m") == Ok(()) && files.remove("sub") == Ok(()), "and all of it removed");
 
-    // 13. Clean up: an empty file system.
+    // 13. Change stamps, for make: what changed later is newer, a touch
+    //     is a change that leaves the bytes, and a new name is none.
+    let stamp = |name: &str| files.stat_stamped(name).map(|(_, _, stamp)| stamp).unwrap_or(0);
+    check!(files.write("s.c", b"int s;") == Ok(6) && files.write("s.o", b"object") == Ok(6), "two files, one after the other");
+    check!(stamp("s.c") > 0 && stamp("s.o") > stamp("s.c"), "the later one has the higher stamp");
+    check!(files.touch("s.c") == Ok(()) && stamp("s.c") > stamp("s.o"), "a touch makes a file the newer");
+    check!(matches_bytes(&files, "s.c", b"int s;"), "and changes nothing in it");
+    let before = stamp("s.c");
+    check!(files.rename("s.c", "t.c") == Ok(()) && stamp("t.c") == before, "a new name keeps the stamp");
+    check!(look.touch("s.o") == refused(Status::ReadOnly), "not touched through the read-only channel");
+    check!(files.touch("nothere") == refused(Status::NotFound), "nothing to touch");
+    check!(files.stat_stamped("").map(|(_, _, stamp)| stamp) == Ok(0), "a directory has no stamp");
+    check!(files.remove("t.c") == Ok(()) && files.remove("s.o") == Ok(()), "removed");
+
+    // 14. Clean up: an empty file system.
     let mut names = [[0u8; NAME_MAX]; 4];
     let mut lengths = [0usize; 4];
     loop {
@@ -292,6 +317,6 @@ fn main() -> i64 {
     }
     check!(files.list("", |_, _, _| {}) == Ok(0), "nothing left");
 
-    println!("[fscheck] long files, boundaries, appends, 104-file listing, refusals, careless requests, a silent service, read-only, a stall, directories, paths from a directory, renaming: all passed");
+    println!("[fscheck] long files, boundaries, appends, 104-file listing, refusals, careless requests, a silent service, read-only, a stall, directories, paths from a directory, renaming, change stamps: all passed");
     0
 }

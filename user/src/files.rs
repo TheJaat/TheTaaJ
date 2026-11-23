@@ -255,6 +255,22 @@ impl Files {
         protocol::stat(&reply[1..=n]).ok_or(FileError::Refused(Status::BadRequest))
     }
 
+    /// As `stat`, and when it last changed: its change stamp, a number
+    /// that only grows (fileserver's protocol::STAT). 0 for a directory.
+    pub fn stat_stamped(&self, path: &str) -> Result<(Kind, u64, u64), FileError> {
+        let mut reply = [0u8; MESSAGE_MAX];
+        let n = self.call(Request::new(protocol::STAT, &self.path(path), 0), &mut reply)?;
+        let (kind, size) = protocol::stat(&reply[1..=n]).ok_or(FileError::Refused(Status::BadRequest))?;
+        Ok((kind, size, protocol::stamp(&reply[1..=n])))
+    }
+
+    /// Marks the file `name` changed now, as `touch` does: a new, higher
+    /// stamp, and nothing in it changed.
+    pub fn touch(&self, name: &str) -> Result<(), FileError> {
+        let mut reply = [0u8; MESSAGE_MAX];
+        self.call(Request::new(protocol::TOUCH, &self.path(name), 0), &mut reply).map(|_| ())
+    }
+
     /// The size of the file `name`. A directory has none.
     pub fn size(&self, name: &str) -> Result<u64, FileError> {
         match self.stat(name)? {

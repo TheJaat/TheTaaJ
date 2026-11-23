@@ -10,6 +10,7 @@
  * and EOF - falls outside every range, and is nothing. */
 
 #include <ctype.h>
+#include <strings.h>
 
 int isdigit(int c)
 {
@@ -92,4 +93,24 @@ int isascii(int c)
 int toascii(int c)
 {
     return c & 0x7f;
+}
+
+/* strings.h: comparing as if both were lower case. */
+int strcasecmp(const char *a, const char *b)
+{
+    for (;; a++, b++) {
+        int x = tolower((unsigned char)*a), y = tolower((unsigned char)*b);
+        if (x != y || x == 0)
+            return x - y;
+    }
+}
+
+int strncasecmp(const char *a, const char *b, size_t n)
+{
+    for (; n > 0; n--, a++, b++) {
+        int x = tolower((unsigned char)*a), y = tolower((unsigned char)*b);
+        if (x != y || x == 0)
+            return x - y;
+    }
+    return 0;
 }
