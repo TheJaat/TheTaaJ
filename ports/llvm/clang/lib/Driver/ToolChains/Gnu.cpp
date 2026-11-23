@@ -3076,7 +3076,54 @@ Tool *Generic_GCC::buildAssembler() const {
   return new tools::gnutools::Assembler(*this);
 }
 
-Tool *Generic_GCC::buildLinker() const { return new tools::gcc::Linker(*this); }
+#if defined(__TAAJ__)
+namespace {
+// TheTaaJ: a program for a machine with no operating system in its
+// triple (x86_64-unknown-none-elf, TheTaaJ's own x86_64-unknown-taaj) is
+// linked by running the linker itself - ld.lld - not gcc, which TheTaaJ
+// does not have. The same as the bare-metal toolchain's linker
+// (BareMetal.cpp), which the AArch64 triple gets: the inputs, -static,
+// -L, -T, -s; and, unless -nostdlib or -nodefaultlibs, the C library
+// from <sysroot>/lib. This toolchain still compiles as it does on the
+// host, so the objects are the host's.
+class TaajLinker final : public Tool {
+public:
+  TaajLinker(const ToolChain &TC) : Tool("taaj::Linker", "ld.lld", TC) {}
+  bool isLinkJob() const override { return true; }
+  bool hasIntegratedCPP() const override { return false; }
+  void ConstructJob(Compilation &C, const JobAction &JA,
+                    const InputInfo &Output, const InputInfoList &Inputs,
+                    const llvm::opt::ArgList &Args,
+                    const char *LinkingOutput) const override {
+    const ToolChain &TC = getToolChain();
+    ArgStringList CmdArgs;
+    tools::AddLinkerInputs(TC, Inputs, Args, CmdArgs, JA);
+    if (Args.hasArg(options::OPT_static))
+      CmdArgs.push_back("-Bstatic");
+    Args.addAllArgs(CmdArgs, {options::OPT_L, options::OPT_T_Group,
+                              options::OPT_s, options::OPT_t, options::OPT_r});
+    if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
+      CmdArgs.push_back(
+          Args.MakeArgString("-L" + TC.getDriver().SysRoot + "/lib"));
+      CmdArgs.push_back("-lc");
+    }
+    CmdArgs.push_back("-o");
+    CmdArgs.push_back(Output.getFilename());
+    C.addCommand(std::make_unique<Command>(
+        JA, *this, ResponseFileSupport::AtFileCurCP(),
+        Args.MakeArgString(TC.GetLinkerPath()), CmdArgs, Inputs, Output));
+  }
+};
+} // namespace
+#endif
+
+Tool *Generic_GCC::buildLinker() const {
+#if defined(__TAAJ__)
+  if (getTriple().getOS() == llvm::Triple::UnknownOS)
+    return new TaajLinker(*this);
+#endif
+  return new tools::gcc::Linker(*this);
+}
 
 void Generic_GCC::printVerboseInfo(raw_ostream &OS) const {
   // Print the information about how we detected the GCC installation.
