@@ -2617,3 +2617,49 @@ make test64
 | `test64: all passed`, in 14 to 16 minutes | every part |
 
 Automated: make test64
+
+---
+
+## 081 · A small shell: `sh -c`, so that system, popen and make run commands as POSIX says
+
+[The entry](journal/081-a-small-shell.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`.
+
+| Type | You should see |
+|---|---|
+| `with programs sh -c 'echo one && echo two; false \|\| echo three'` | `one`, `two`, `three` |
+| `cd /src/libc/programs` | |
+| `with programs sh -c 'echo c*.c'` | `cask.c cfile.c ... cwords.c`, the C files that start with c |
+| `with programs sh -c 'N=$(cprimes 100); echo "said: $N"'` | `said: cprimes: 25 primes below 100` |
+| `with programs sh -c 'cd /nowhere \|\| echo no such place'` | `sh: cd: /nowhere: no such directory`, then `no such place` |
+| `with programs sh -c 'for f in *; do echo $f; done'` | `sh: for is not in this shell yet`, `sh exited with code 2` |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `pipes on TheTaaJ (x86_64): 74 checks ... passed; sh ran a list and a script` | the shell, on the PC; the same for aarch64 |
+| `test64: all passed` | every part |
+
+Automated: make test64
