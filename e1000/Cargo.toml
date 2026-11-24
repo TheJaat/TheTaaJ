@@ -1,0 +1,8 @@
+[package]
+name = "e1000"
+version = "0.1.0"
+edition = "2021"
+description = "Intel's gigabit Ethernet cards (8254x, 82574): their registers, descriptor rings, and sending and receiving frames"
+publish = false
+
+[dependencies]

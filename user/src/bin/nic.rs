@@ -35,24 +35,10 @@
 //! Each buffer is one frame, with virtio's ten-byte note in front of it
 //! (`virtio::net::HEADER_SIZE`).
 //!
-//! What this driver knows about a frame is its first six bytes - who
-//! it is for - and the two that say what kind of thing is in it. A
-//! frame for another card is dropped here (an emulated card hands over
-//! everything on the wire). The kind decides who gets it: a program
-//! listens for the kinds it names (`abi::nic::Listeners`), so the
-//! network stack takes IPv4 and ARP, and the driver's test its own
-//! kind, without either disturbing the other. Everything else - what
-//! is in a frame, what to answer - is the business of whoever listens.
-//!
-//! No listener is ever waited for. A frame that arrives when no one
-//! listens, or when the listener's queue is full, is dropped and
-//! counted: the next one may be for someone who is keeping up. A
-//! network loses frames anyway, and everything built on one copes.
-//!
-//! The card is waited for: while every transmit buffer is in its
-//! hands, no more requests are read. They stay in the channel, and
-//! when that is full the client is told so (QueueFull) - the client
-//! that sends faster than the wire takes is the one that waits.
+//! What happens to a frame once it is in memory - who listens for it,
+//! the clients' requests, waiting - is the network card service's
+//! (`taaj::nic_service`), shared with `e1000`. This file is the virtio
+//! card: its queues, and getting frames between them and the service.
 //!
 //! On a restart init gives the new driver the same memory and
 //! registers; it resets the card, which forgets the old queues, and
@@ -61,11 +47,12 @@
 #![no_std]
 #![no_main]
 
-use abi::nic::{self, Assembler, Fed, Listeners, Stats};
+use abi::nic;
 use abi::{MmioDeviceInfo, PciDeviceInfo};
 #[cfg(target_arch = "x86_64")]
 use taaj::port::{in16, in32, in8, out16, out32, out8};
-use taaj::{println, Error, Handle};
+use taaj::nic_service::{self, Address};
+use taaj::{println, Handle};
 use virtio::net::{self, HEADER_SIZE, QUEUE_RECEIVE, QUEUE_TRANSMIT};
 use virtio::{legacy, mmio, Buffer, Layout, Queue};
 
@@ -184,14 +171,8 @@ struct Card {
     /// Where the DMA memory is mapped here, and where it is for the card.
     memory: *mut u8,
     physical: u64,
-    interrupt: Option<Handle>,
     address: [u8; nic::ADDRESS],
     link_up: bool,
-    stats: Stats,
-    /// Who gets the frames that arrive: by the type of each.
-    listeners: Listeners<Handle, { nic::LISTENERS_MAX }>,
-    /// The frame a client is sending, as its pieces arrive.
-    outgoing: Assembler,
 }
 
 impl Card {
@@ -203,7 +184,6 @@ impl Card {
         transmit: Queue,
         memory: *mut u8,
         physical: u64,
-        interrupt: Option<Handle>,
         accepted: u32,
     ) -> Card {
         let mut address = [0u8; nic::ADDRESS];
@@ -222,12 +202,8 @@ impl Card {
             transmit_free: (1 << TRANSMIT_BUFFERS) - 1,
             memory,
             physical,
-            interrupt,
             address,
             link_up: net::link_up(accepted, status),
-            stats: Stats::default(),
-            listeners: Listeners::new(),
-            outgoing: Assembler::new(),
         };
         // Sent frames are looked for when a buffer is wanted, not when
         // the card says so: no interrupt needed for them.
@@ -242,7 +218,7 @@ impl Card {
     /// Sets the card up, following the legacy sequence: reset, say
     /// hello, agree on features, give it the queues, say ready.
     #[cfg(target_arch = "x86_64")]
-    fn start(info: &PciDeviceInfo, memory: *mut u8, interrupt: Option<Handle>) -> Result<Card, &'static str> {
+    fn start(info: &PciDeviceInfo, memory: *mut u8) -> Result<Card, &'static str> {
         let ports = info.io_base;
         let register = |offset: u16| ports + offset;
         // SAFETY (each port access below): the device's own registers,
@@ -290,7 +266,7 @@ impl Card {
             out8(register(legacy::STATUS), legacy::ACKNOWLEDGE | legacy::DRIVER | legacy::DRIVER_OK);
 
             let registers = Registers::Ports { base: ports, config: register(legacy::device_config(info.msix)) };
-            Ok(Card::finish(registers, receive, transmit, memory, info.dma_physical, interrupt, accepted))
+            Ok(Card::finish(registers, receive, transmit, memory, info.dma_physical, accepted))
         }
     }
 
@@ -303,7 +279,6 @@ impl Card {
         info: &MmioDeviceInfo,
         registers: *mut u32,
         memory: *mut u8,
-        interrupt: Option<Handle>,
     ) -> Result<Card, &'static str> {
         // SAFETY (each register access below): the caller's promise.
         unsafe {
@@ -353,7 +328,7 @@ impl Card {
             };
             status(legacy::ACKNOWLEDGE | legacy::DRIVER | legacy::DRIVER_OK);
 
-            Ok(Card::finish(Registers::Memory(registers), receive, transmit, memory, info.dma_physical, interrupt, accepted))
+            Ok(Card::finish(Registers::Memory(registers), receive, transmit, memory, info.dma_physical, accepted))
         }
     }
 
@@ -366,77 +341,24 @@ impl Card {
         }
     }
 
-    /// Every frame the card has handed over: passed on, or dropped;
-    /// its buffer offered again.
-    fn take_received(&mut self) {
+    /// Every frame the card has handed over, to `pass`; its buffer
+    /// offered again.
+    fn take_received(&mut self, pass: &mut dyn FnMut(Option<&[u8]>)) {
         let mut offered = false;
         while let Some((descriptor, length)) = self.receive.take_used() {
             let buffer = self.received_in.get(descriptor);
             let length = (length as usize).min(BUFFER);
-            self.stats.received += 1;
             // SAFETY: a receive buffer, inside the DMA memory; the card
             // handed it back and does not touch it until it is offered
             // again, below.
             let filled = unsafe { core::slice::from_raw_parts(self.memory.add(RECEIVE_AREA + buffer * BUFFER), length) };
-            match filled.get(HEADER_SIZE..) {
-                Some(frame) if (nic::FRAME_MIN..=nic::FRAME_MAX).contains(&frame.len()) => {
-                    if nic::for_us(frame, &self.address) {
-                        self.pass_on(buffer, frame.len());
-                    } else {
-                        self.stats.not_ours += 1;
-                    }
-                }
-                // Not a frame at all: nothing to pass on.
-                _ => self.stats.dropped += 1,
-            }
+            // After virtio's note; shorter than the note is no frame.
+            pass(filled.get(HEADER_SIZE..));
             self.offer(buffer);
             offered = true;
         }
         if offered {
             self.registers.notify(QUEUE_RECEIVE);
-        }
-    }
-
-    /// Sends the frame in receive buffer `buffer` to whoever listens
-    /// for frames of its type.
-    fn pass_on(&mut self, buffer: usize, length: usize) {
-        // SAFETY: as in `take_received`, whose buffer this is.
-        let frame = unsafe { core::slice::from_raw_parts(self.memory.add(RECEIVE_AREA + buffer * BUFFER + HEADER_SIZE), length) };
-        let Some(listener) = nic::frame_type(frame).and_then(|kind| self.listeners.find(kind)) else {
-            self.stats.dropped += 1;
-            return;
-        };
-        let to = listener.who;
-        let mut message = [0u8; abi::MESSAGE_MAX as usize];
-        let mut send = |op: u8, piece: &[u8]| {
-            message[0] = op;
-            message[1..=piece.len()].copy_from_slice(piece);
-            taaj::send(to, &message[..=piece.len()], &[])
-        };
-        let mut outcome = Ok(());
-        if listener.torn {
-            outcome = send(nic::DROP, &[]);
-            listener.torn = outcome.is_err();
-        }
-        if outcome.is_ok() {
-            for (n, (op, piece)) in nic::split(frame).enumerate() {
-                outcome = send(op, piece);
-                if outcome.is_err() {
-                    listener.torn = n > 0;
-                    break;
-                }
-            }
-        }
-        match outcome {
-            Ok(()) => self.stats.delivered += 1,
-            Err(Error::QueueFull) => self.stats.dropped += 1,
-            // Gone (or a channel that cannot be sent on): nobody
-            // listens any more.
-            Err(_) => {
-                self.stats.dropped += 1;
-                self.listeners.remove(to);
-                let _ = taaj::close(to);
-            }
         }
     }
 
@@ -468,12 +390,8 @@ impl Card {
         }
     }
 
-    /// Puts `frame` on the wire. False if it is not a frame a card can
-    /// send, or the card has no room.
+    /// Puts `frame` on the wire. False if the card has no room.
     fn send(&mut self, frame: &[u8]) -> bool {
-        if !(nic::FRAME_MIN..=nic::FRAME_MAX).contains(&frame.len()) {
-            return false;
-        }
         self.take_sent();
         if self.transmit_free == 0 {
             return false;
@@ -503,59 +421,36 @@ impl Card {
         self.registers.notify(QUEUE_TRANSMIT);
         true
     }
-
-    /// One message with no handle: a piece of a frame to send.
-    fn piece(&mut self, message: &[u8]) {
-        // The frame is copied out of the assembler: `send` needs the
-        // whole card, and the assembler is a part of it.
-        let mut frame = [0u8; nic::FRAME_MAX];
-        let length = match self.outgoing.feed(message) {
-            Fed::Frame(whole) => {
-                frame[..whole.len()].copy_from_slice(whole);
-                whole.len()
-            }
-            Fed::More => return,
-            Fed::TooLong | Fed::NotAFrame => {
-                self.stats.refused += 1;
-                return;
-            }
-        };
-        if self.send(&frame[..length]) {
-            self.stats.sent += 1;
-        } else {
-            self.stats.refused += 1;
-        }
-    }
-
-    /// Answers one request that came with a reply channel; returns the
-    /// reply's length in `reply`.
-    fn serve(&mut self, request: &[u8], reply: &mut [u8]) -> usize {
-        match request {
-            [nic::INFO] => {
-                reply[0] = nic::OK;
-                reply[1..=nic::ADDRESS].copy_from_slice(&self.address);
-                reply[1 + nic::ADDRESS] = u8::from(self.link_up);
-                1 + nic::INFO_SIZE
-            }
-            [nic::STATS] => {
-                reply[0] = nic::OK;
-                reply[1..=Stats::SIZE].copy_from_slice(&self.stats.to_bytes());
-                1 + Stats::SIZE
-            }
-            _ => {
-                reply[0] = nic::BAD_REQUEST;
-                1
-            }
-        }
-    }
 }
 
-struct Address([u8; nic::ADDRESS]);
+impl nic_service::Card for Card {
+    fn address(&self) -> [u8; nic::ADDRESS] {
+        self.address
+    }
 
-impl core::fmt::Display for Address {
-    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
-        let a = self.0;
-        write!(f, "{:02x}:{:02x}:{:02x}:{:02x}:{:02x}:{:02x}", a[0], a[1], a[2], a[3], a[4], a[5])
+    /// Read once, at start: the card's status is not watched.
+    fn link_up(&mut self) -> bool {
+        self.link_up
+    }
+
+    fn receive(&mut self, pass: &mut dyn FnMut(Option<&[u8]>)) {
+        self.take_received(pass);
+    }
+
+    fn send(&mut self, frame: &[u8]) -> bool {
+        Card::send(self, frame)
+    }
+
+    fn take_sent(&mut self) {
+        Card::take_sent(self);
+    }
+
+    fn transmit_full(&mut self) -> bool {
+        Card::transmit_full(self)
+    }
+
+    fn interrupt_seen(&mut self) {
+        self.registers.interrupt_seen();
     }
 }
 
@@ -577,7 +472,7 @@ fn start_on_pci(info: &PciDeviceInfo, ports: Handle, dma: Handle, interrupt: Opt
         return Err(3);
     }
     let memory = map(dma, "the DMA memory")?;
-    let card = Card::start(info, memory, interrupt).map_err(|why| {
+    let card = Card::start(info, memory).map_err(|why| {
         println!("[nic] the card would not start: {why}");
         5
     })?;
@@ -623,7 +518,7 @@ fn start_in_memory(info: &MmioDeviceInfo, registers: Handle, dma: Handle, interr
             println!("[nic] no usable device description");
             return Err(2);
         }
-        Card::start_mapped(info, registers, memory, interrupt)
+        Card::start_mapped(info, registers, memory)
     }
     .map_err(|why| {
         println!("[nic] the card would not start: {why}");
@@ -668,98 +563,5 @@ fn main() -> i64 {
         Ok(card) => card,
         Err(code) => return code,
     };
-
-    let mut reply = [0u8; abi::MESSAGE_MAX as usize];
-    loop {
-        // What the card has done since the last look, first: frames in,
-        // send buffers back. Before waiting again the queues must have
-        // been looked at *after* the interrupt was answered.
-        card.take_received();
-        card.take_sent();
-
-        // The card, or a client - or the card alone, while it has no
-        // room for another frame to send. Without an interrupt the
-        // card is asked again each tick (it polls): slower, and correct.
-        let full = card.transmit_full();
-        let ready = match card.interrupt {
-            Some(line) if full => taaj::object_wait(&[line, line]).map(|_| Some(0)),
-            Some(line) => taaj::object_wait(&[line, requests]).map(Some),
-            None if full => {
-                taaj::sleep(1);
-                Ok(None)
-            }
-            None => taaj::object_wait_until(&[requests, requests], taaj::ticks() + 1),
-        };
-        match ready {
-            Ok(Some(0)) if card.interrupt.is_some() => {
-                // Taken, so that the next one can come; answered, so
-                // that the card lets go of its line. The queues are
-                // looked at above.
-                if card.interrupt.is_some_and(|line| taaj::interrupt_wait(line).is_err()) {
-                    return 6;
-                }
-                card.registers.interrupt_seen();
-                continue;
-            }
-            Ok(Some(_)) => {}
-            Ok(None) => continue,
-            Err(_) => return 6,
-        }
-
-        let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
-        let (n, count) = match taaj::receive(requests, &mut message, &mut handles) {
-            Ok(received) => received,
-            Err(Error::PeerClosed) => return 0, // no clients left, and none can come
-            Err(error) => {
-                println!("[nic] cannot receive: {error:?}");
-                return 6;
-            }
-        };
-        let request = &message[..n];
-        match (request.first().copied(), count) {
-            // A piece of a frame to send: no handle, no answer.
-            (_, 0) => card.piece(request),
-            // A new listener: for the frame types it names, in place
-            // of whoever listened for them. (Closing a channel is how a
-            // listener is told that it is one no longer.)
-            (Some(nic::LISTEN), 1) => match nic::listen_types(&request[1..]) {
-                Some((types, count)) => {
-                    card.listeners.add(handles[0], &types[..count], |ended| {
-                        let _ = taaj::close(ended);
-                    });
-                }
-                None => {
-                    let _ = taaj::close(handles[0]);
-                }
-            },
-            // A question, with the channel to answer on.
-            (_, 1) => {
-                // The test of a driver that has stopped: answered first.
-                let mut stall = 0;
-                if n == 9 && request[0] == nic::STALL {
-                    stall = u64::from_le_bytes(request[1..9].try_into().unwrap_or([0; 8]));
-                }
-                let length = if (1..=abi::STALL_MAX).contains(&stall) {
-                    reply[0] = nic::OK;
-                    1
-                } else {
-                    stall = 0;
-                    card.serve(request, &mut reply)
-                };
-                let _ = taaj::send(handles[0], &reply[..length], &[]);
-                let _ = taaj::close(handles[0]);
-                if stall > 0 {
-                    println!("[nic] asked to stall: doing nothing for {stall} ticks");
-                    taaj::sleep(stall);
-                    println!("[nic] working again");
-                }
-            }
-            // Anything else: not a request.
-            _ => {
-                for &handle in &handles[..count] {
-                    let _ = taaj::close(handle);
-                }
-            }
-        }
-    }
+    nic_service::serve(&mut card, "nic", requests, interrupt)
 }

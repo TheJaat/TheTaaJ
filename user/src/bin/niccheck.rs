@@ -302,14 +302,22 @@ fn main() -> i64 {
 
     // Frames for others are not passed on: one to another card and one
     // to a group go by, and the one for everyone after them arrives.
-    let strangers_before = card.stats().map_or(0, |stats| stats.not_ours);
+    // Who keeps them back depends on the card: a virtio card hands the
+    // driver everything on the wire, and the driver counts the two as
+    // not ours; an Intel card compares addresses itself, and the
+    // driver never sees them - only the one for everyone.
+    let (strangers_before, received_before) = card.stats().map_or((0, 0), |stats| (stats.not_ours, stats.received));
     frame(&mut out, &ours, STRANGERS, 0, 100);
     check!(card.send(&out[..100]).is_ok(), "the peer can be asked for frames to others");
     sent += 1;
     check!(next(&mut frames, &mut back, AFTER_STRANGERS, taaj::ticks() + WAIT).is_some(), "a frame for everyone arrives");
     check!(back[..6] == nic::BROADCAST, "and is the one for everyone");
-    let strangers = card.stats().map_or(0, |stats| stats.not_ours) - strangers_before;
-    check!(strangers == 2, "two frames for others were seen and kept back");
+    let (strangers, seen) =
+        card.stats().map_or((0, 0), |stats| (stats.not_ours - strangers_before, stats.received - received_before));
+    check!(
+        (strangers, seen) == (2, 3) || (strangers, seen) == (0, 1),
+        "two frames for others were kept back: by the driver (seen, and counted) or by the card (never seen)"
+    );
 
     // Many at once, read as they come: all of them, in order.
     const SMALL: u8 = 20;

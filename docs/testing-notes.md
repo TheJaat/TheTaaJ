@@ -2985,3 +2985,72 @@ make test64
 | `test64: all passed` | every part |
 
 Automated: make power64-test
+
+---
+
+## 087 · Intel Ethernet: an e1000 driver, beside nic
+
+[The entry](journal/087-e1000-intel-ethernet.md)
+
+**1. The 82540EM (QEMU's `e1000`): polled**
+
+```
+make run64 RUN_NIC=e1000 RUN_DISK=build/e1000-disk.img
+```
+
+A new 16 MiB disk is made the first time (your `build/taaj-disk.img` is not touched). In the terminal's log:
+
+| Look for | Meaning |
+|---|---|
+| `[pci] 00:04.0 Intel Ethernet card: registers 0xfeb80000+0x20000, 104 KiB DMA at 0x..., no interrupt (polled) - handed to init` | the kernel found the card and handed it on, without an interrupt (it has no MSI) |
+| `[init] started: registry display fs blk e1000 net shell kbd power; supervising` | init chose `e1000`, not `nic` |
+| `[e1000] Intel 82540EM at 00:04.0: address 52:54:00:12:34:56, link up, rings of 32 and 16, polled` | the driver reset the card and read its address |
+| `[net] this machine is 10.0.2.15/24 on card 52:54:00:12:34:56, with its router at 10.0.2.2` | the network service asked the new driver who it is, as it asks `nic` |
+
+In the QEMU window:
+
+| Type | You should see |
+|---|---|
+| `netinfo` | `address  10.0.2.15/24`, `router   10.0.2.2`, `card     52:54:00:12:34:56` |
+| `ping 10.0.2.2 3` | three lines `56 bytes from 10.0.2.2: seq=N ttl=255 time under 10 ms`, then `3 sent to 10.0.2.2, 3 answered` |
+| `poweroff` | `Switching off...`; in the log `[init] stopped net`, then `[init] stopped e1000` (the card's driver, in nic's place), `fs`, `blk`, ..., and QEMU ends by itself |
+
+**2. The 82574L (QEMU's `e1000e`): MSI**
+
+```
+make run64 RUN_NIC=e1000e RUN_DISK=build/e1000-disk.img
+```
+
+| Look for / Type | You should see |
+|---|---|
+| (the log) | `[pci] 00:04.0 Intel Ethernet card: registers 0xfeb80000+0x20000, 104 KiB DMA at 0x..., MSI - handed to init` |
+| (the log) | `[e1000] Intel 82574L at 00:04.0: address 52:54:00:12:34:56, link up, rings of 32 and 16, MSI interrupts` |
+| `ping 10.0.2.2 3` | `3 sent to 10.0.2.2, 3 answered` |
+
+**3. The virtio card, as before**
+
+```
+make run64 RUN_DISK=build/e1000-disk.img
+```
+
+| Look for / Type | You should see |
+|---|---|
+| (the log) | `[nic] virtio network card at 00:04.0: ...` and `nic` (not e1000) in init's started line |
+| `ping 10.0.2.2 3` | `3 sent to 10.0.2.2, 3 answered` |
+
+**4. The tests by themselves**
+
+```
+make e1000-64-test
+make net64-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `wire: ok: 39 frames from 52:54:00:12:34:56: ...` (twice) | niccheck over the 82540EM and the 82574L, counted by the host's end of the wire |
+| `host: ok: 5 checks; 3 connections from the machine served, 300029 bytes` | TCP over the 82574L |
+| `e1000-64-test passed` | all four |
+| `test64: all passed` | every part |
+
+Automated: make e1000-64-test

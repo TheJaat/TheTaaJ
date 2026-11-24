@@ -485,8 +485,10 @@ RUN_DISK_ARGS = -drive file=$(RUN_DISK),format=raw,if=none,id=disk0 -device virt
 endif
 # And the network card: on QEMU's own little network ("user"), which
 # needs nothing from the host. `make run64 RUN_NET=` for a machine
-# without a card.
-RUN_NET      = -netdev user,id=n0 -device virtio-net-pci,netdev=n0
+# without a card; `make run64 RUN_NIC=e1000` (or e1000e) for an Intel
+# card in place of the virtio one (e1000 drives it).
+RUN_NIC      ?= virtio-net-pci
+RUN_NET      = -netdev user,id=n0 -device $(RUN_NIC),netdev=n0
 run-disk: user64 cprogs64 pdpmake64 tcc64 cxx64 tfstool-rs
 	@[ -f $(RUN_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_DISK) $(RUN_DISK_BLOCKS) > /dev/null && truncate -s $$(($(RUN_DISK_BLOCKS) * 4096)) $(RUN_DISK) \
 	    && echo "Made a new disk: $(RUN_DISK)"; }
@@ -773,6 +775,7 @@ kernel64-test:
 	cd ahci && cargo test
 	cd nvme && cargo test
 	cd acpi && cargo test
+	cd e1000 && cargo test
 	cd net && cargo test
 	cd gfx && cargo test
 	cd gui && cargo test
@@ -1140,6 +1143,18 @@ net64-test: iso64 cprogs64 tfstool-rs
 	$(call make-test-disk,$(NET64_LOG).disk)
 	@$(KERNEL64_DIR)/scripts/net-test.sh x86_64 $(ISO64_IMG) $(NET64_LOG).disk $(NET64_LOG)
 	@echo "net64-test passed"
+
+# The card's test with Intel's cards, driven by `e1000`: the 82540EM
+# (QEMU's `e1000`, no MSI - polled) and the 82574L (`e1000e`, MSI); then
+# the network's tests over them - IP over the first, TCP the second.
+E1000_64_LOG = $(BUILD_DIR)/e1000-64
+e1000-64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(E1000_64_LOG).disk)
+	@NIC=e1000 $(KERNEL64_DIR)/scripts/net-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).disk $(E1000_64_LOG).82540em
+	@NIC=e1000e $(KERNEL64_DIR)/scripts/net-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).disk $(E1000_64_LOG).82574l
+	@NIC=e1000 $(KERNEL64_DIR)/scripts/ip-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).disk $(E1000_64_LOG).ip
+	@NIC=e1000e $(KERNEL64_DIR)/scripts/tcp-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).disk $(E1000_64_LOG).tcp
+	@echo "e1000-64-test passed"
 
 aarch64-net-test: kernel-aarch64 user-aarch64 cprogs-aarch64 tfstool-rs
 ifeq ($(HAVE_A64),yes)
@@ -1626,7 +1641,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 12
-TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test
+TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared

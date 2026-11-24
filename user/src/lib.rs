@@ -15,6 +15,7 @@ pub mod disk;
 pub mod files;
 pub mod net;
 pub mod nic;
+pub mod nic_service;
 pub mod services;
 pub mod window;
 

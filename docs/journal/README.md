@@ -94,6 +94,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 084 | [SATA disks: the kernel hands on any AHCI controller with memory registers and an MSI interrupt, a new `ahci` driver serves its first disk with the same protocol as `blk`, on a PC's added controller and a q35's own](084-sata-disks.md) | written | `9b47e24` (TheKernel `cb01e7d`) |
 | 085 | [NVMe disks: the kernel hands on any NVMe controller, its BAR cut short of the MSI-X table, and a new `nvme` driver sets up its queues and serves its first namespace with the same protocol as `blk` and `ahci`, on a PC and on a q35 with a 16 KiB transfer limit](085-nvme-disks.md) | written | `1c9cd98` (TheKernel `17c2015`) |
 | 086 | [Power-off and reboot: the kernel hands the FADT's ports and the DSDT (read-only) to a new `power` program, which reads `\_S5` from the AML in user space; init stops the services in order first; PSCI on AArch64; and fs no longer waits for ever on a disk driver init gave up on](086-poweroff-and-reboot.md) | written | `16eb595` (TheKernel `e290b8a`) |
+| 087 | [Intel Ethernet: an `e1000` driver for the 82540EM (polled) and the 82574L (MSI), beside the virtio `nic`; both now share one service module (`nic_service`), so `net` cannot tell them apart; and init picks the driver by the card it finds](087-e1000-intel-ethernet.md) | written | (pending) |
 
 ## How to run what the entries describe
 

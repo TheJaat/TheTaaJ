@@ -22,9 +22,11 @@
 //!   5  the system handle
 //!
 //! The services: registry (where the others are found), display (the
-//! window server), fs (files - on the disk, if there is one), blk or
-//! ahci (the disk driver: for a virtio disk, or a SATA one), nic (the network card's driver) and net (the network,
-//! for programs - both only if there is a card), shell, kbd (the PC's
+//! window server), fs (files - on the disk, if there is one), blk,
+//! ahci or nvme (the disk driver: for a virtio disk, a SATA one or an
+//! NVMe one), nic or e1000 (the network card's driver: a virtio card or
+//! an Intel one) and net (the network, for programs - both only if
+//! there is a card), shell, kbd (the PC's
 //! PS/2 keyboard and mouse) and hid (virtio keyboards, mice and
 //! tablets, if there are any).
 //!
@@ -327,7 +329,12 @@ fn main() -> i64 {
                 // or an NVMe one, whichever the bus has first.
                 disk = Some((Device::Pci(info), [handles[0], handles[1], handles[2]], count));
                 used = true;
-            } else if is_virtio && info.device_id == virtio::PCI_DEVICE_NETWORK && card.is_none() && (2..=3).contains(&count) {
+            } else if ((is_virtio && info.device_id == virtio::PCI_DEVICE_NETWORK)
+                || (e1000::model(info.vendor_id, info.device_id).is_some() && info.registers_in_memory()))
+                && card.is_none()
+                && (2..=3).contains(&count)
+            {
+                // The first card wins: a virtio one or an Intel one.
                 card = Some((Device::Pci(info), [handles[0], handles[1], handles[2]], count));
                 used = true;
             } else {
@@ -443,7 +450,15 @@ fn main() -> i64 {
     let Ok((shell_names_tx, shell_names_rx)) = taaj::channel_create() else { return 2 };
     let Ok((fs_names_tx, fs_names_rx)) = taaj::channel_create() else { return 2 };
 
+    // Whether a device's registers are memory, to be mapped (a
+    // virtio-mmio device's, an AHCI or NVMe controller's, an Intel
+    // card's), or I/O ports.
     let disk_registers_in_memory = match disk {
+        Some((Device::Mmio(_), ..)) => true,
+        Some((Device::Pci(info), ..)) => info.registers_in_memory(),
+        None => false,
+    };
+    let card_registers_in_memory = match card {
         Some((Device::Mmio(_), ..)) => true,
         Some((Device::Pci(info), ..)) => info.registers_in_memory(),
         None => false,
@@ -481,11 +496,12 @@ fn main() -> i64 {
         Grant { handle: shell_names_tx, rights: SEND },       // 26: lookups, from the shell
         Grant { handle: fs_names_tx, rights: SEND },          // 27: lookups, from fs
         // 28: the network card's registers - ports, or memory to be mapped
-        Grant { handle: card_registers, rights: if matches!(card, Some((Device::Mmio(_), ..))) { READ | WRITE } else { 0 } },
+        // (a virtio-mmio card's, or an Intel card's BAR 0)
+        Grant { handle: card_registers, rights: if card_registers_in_memory { READ | WRITE } else { 0 } },
         Grant { handle: card_dma, rights: READ | WRITE },     // 29: its DMA memory
         Grant { handle: card_info_rx, rights: RECEIVE },      // 30: its description
-        Grant { handle: card_in, rights: RECEIVE },           // 31: requests, for nic
-        Grant { handle: card_out, rights: SEND },             // 32: requests, to nic
+        Grant { handle: card_in, rights: RECEIVE },           // 31: requests, for nic or e1000
+        Grant { handle: card_out, rights: SEND },             // 32: requests, to nic or e1000
         Grant { handle: card_interrupt, rights: RECEIVE },    // 33: its interrupt
         Grant { handle: net_in, rights: RECEIVE },            // 34: requests, for net
         Grant { handle: net_out, rights: SEND },              // 35: requests, to net
@@ -517,6 +533,12 @@ fn main() -> i64 {
         Some((Device::Pci(info), _, _)) if (info.class, info.subclass) == (nvme::CLASS, nvme::SUBCLASS) => "nvme",
         Some((Device::Pci(info), _, _)) if info.registers_in_memory() => "ahci",
         _ => "blk",
+    };
+    // Which program drives the network card: the virtio one or the
+    // Intel one. Both speak abi::nic, on the same channel.
+    let card_driver = match card {
+        Some((Device::Pci(info), _, _)) if e1000::model(info.vendor_id, info.device_id).is_some() => "e1000",
+        _ => "nic",
     };
     // The network card's driver: "what card is this?".
     let nic_watch = card.and_then(|_| Watch::new(card_out, &[abi::nic::INFO], 200));
@@ -610,7 +632,7 @@ fn main() -> i64 {
             watch: blk_watch,
         },
         Service {
-            name: "nic",
+            name: card_driver,
             grants: match card {
                 Some((_, _, 3)) => &[28, 29, 30, 31, 33],
                 _ => &[28, 29, 30, 31], // no interrupt: the driver polls
@@ -763,7 +785,7 @@ fn main() -> i64 {
             }
         }
         // And each new network card's driver.
-        if let (Some((info, _, _)), "nic") = (card, service.name) {
+        if let (Some((info, _, _)), true) = (card, service.name == card_driver) {
             match info {
                 Device::Pci(info) => taaj::send(card_info_tx, &info.to_bytes(), &[])?,
                 Device::Mmio(info) => taaj::send(card_info_tx, &info.to_bytes(), &[])?,
@@ -838,7 +860,7 @@ fn main() -> i64 {
         if index == processes {
             let power_ready = services.iter().any(|s| s.name == "power" && !s.given_up);
             if let Some(action) = serve_request(launcher, requests, power_ready) {
-                shut_down(&mut services, action, power_ask, files_look_out, disk_driver);
+                shut_down(&mut services, action, power_ask, files_look_out, [disk_driver, card_driver]);
             }
             continue;
         }
@@ -1112,10 +1134,10 @@ fn serve_request(launcher: Handle, requests: Handle, power_ready: bool) -> Optio
 /// stop slips a request in after that, TaajFS's commits are whole or
 /// not at all. Then the disk driver, with nothing left to do; then the
 /// rest. `power` last: it is the one that does the switching.
-fn shut_down(services: &mut [Service], action: u8, power: Handle, files_look: Handle, disk_driver: &str) {
+fn shut_down(services: &mut [Service], action: u8, power: Handle, files_look: Handle, [disk_driver, card_driver]: [&str; 2]) {
     let what = if action == abi::power::OFF { "switching off" } else { "resetting" };
     println!("[init] {what}: stopping the services");
-    let order = ["shell", "hid", "kbd", "serial", "net", "nic", "fs", disk_driver, "display", "registry"];
+    let order = ["shell", "hid", "kbd", "serial", "net", card_driver, "fs", disk_driver, "display", "registry"];
     for name in order {
         let Some(service) = services.iter_mut().find(|s| s.name == name && !s.given_up) else { continue };
         let between = name != "fs" || between_requests(files_look);
