@@ -3246,3 +3246,91 @@ make test64
 | `test result: ok. 64 passed` | TaajFS, including the partition table |
 | `Booting from a USB stick worked: the MBR, stage1 and stage2 through int 13h (BIOS), the EFI system partition (UEFI), TaajFS in the stick's partition; and the loader read a SATA CD` | the three machines of `stick64-test` |
 | `test64: all passed` | every part |
+
+---
+
+## 091 · First boot outside QEMU: VMware
+
+[The entry](journal/091-first-boot-in-vmware.md)
+
+**1. In VMware Workstation** (or any VMware)
+
+```
+make stick64
+qemu-img convert -f raw -O vmdk build/stick64.img build/stick64.vmdk
+```
+
+Copy `build/stick64.vmdk` to the host. If VMware's shared folder is set up: `sudo vmhgfs-fuse .host:/ /mnt/hgfs -o allow_other`, then `cp build/stick64.vmdk /mnt/hgfs/<share>/`.
+
+Make a new VM: "Other 64-bit", 1–2 GB of memory, an existing disk (`stick64.vmdk`) attached as **SATA** (not SCSI: TheTaaJ has no driver for VMware's SCSI controllers), BIOS firmware. To see the log, add a serial port that writes to a file.
+
+| Look for | Meaning |
+|---|---|
+| `framebuffer    1024x768, 32 bpp, ...` in the boot info | the loader found the video BIOS's mode list (bug 1) |
+| `[irq] APIC timer at 100 Hz (bus clock 4 MHz), TSC ... MHz: stated by the hypervisor (the PIT measured ...)` | the clock frequencies came from CPUID leaf 0x40000010 (bug 2) |
+| `[selftest] timer: 10 ticks in ... ms (expected 100)` | about 100 on boots 3 and 4; 200–220 on others (see "Not explained"). The test passes up to 300 |
+| `[ahci] ... disk on port 0: VMware Virtual SATA Hard Drive, 53848 sectors` | VMware's AHCI controller works with our driver |
+| `[fs] TaajFS partition: sectors 20480 to 53247` | the stick's TaajFS partition |
+
+On the screen, a terminal window opens. Type `ls`: 39 files and 4 directories.
+
+**2. The same VM under UEFI, with USB**
+
+Power the VM off, then:
+- Settings → Options → Advanced: firmware **UEFI**, Secure Boot off;
+- Settings → Add… → USB Controller → **USB 3.2** (1.1 and 2.0 are UHCI and EHCI, which TheTaaJ does not drive);
+- in the VM's `.vmx` file: `keyboard.vusb.enable = "TRUE"` and `mouse.vusb.enable = "TRUE"`.
+
+| Look for | Meaning |
+|---|---|
+| `  loader         TheTaaJBoot (UEFI)` | VMware's UEFI ran our loader from the EFI system partition |
+| `[usb] xHCI 1.20 controller at 03:00.0: 8 ports, 0 scratchpad pages, MSI interrupts` | VMware's xHCI controller |
+| `[usb] port 6: keyboard (0e0f:0006, full speed) ready` | VMware's USB keyboard: typing goes through it |
+| `[usb] port 5: 0e0f:0003, ..., an input device without the boot protocol (class 0x03) - not driven` | the absolute mouse, which needs a report parser - **once**, not three times |
+| `[usb] port 7: 0e0f:0002, ..., a hub (class 0x09) - not driven` (and port 8) | VMware's hubs, once each |
+
+Type `ls`: the keys come through USB now.
+
+**3. Four CPUs and power off**
+
+Settings → Processors: 4 (or 2). Boot, then type `write hello kept across a reboot`, `cat hello`, `poweroff`.
+
+| Look for | Meaning |
+|---|---|
+| `[smp] 4 CPUs awake: CPU 1, 2, 3 started through the page at 0x2000` | INIT/SIPI woke VMware's CPUs |
+| `[selftest] wake-ups: ... ran on an idle one ... us later` | interrupts between CPUs; about 60 µs in VMware |
+| `[init] stopped shell`, ..., `[init] stopped fs`, `[init] stopped ahci`, ... | services stopped in order, fs before the disk's driver |
+| `[power] switching off: sleep type 0/0 into PM1 control (ACPI S5)` | and the VM switches itself off |
+
+Boot again and type `cat hello`: `kept across a reboot`.
+
+**4. In QEMU**
+
+```
+make run64
+```
+
+The log says `TSC ... MHz: measured against the PIT` (QEMU without KVM gives no timing leaf), `10 ticks in 99 ms` or `100 ms`, and the screen is 1024x768 as before.
+
+**5. Undriven USB devices, in QEMU**
+
+```
+make run64 RUN_USB=yes RUN_USB_ARGS="-device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-tablet,bus=xhci.0 -device usb-hub,bus=xhci.0"
+```
+
+The log names the tablet (`an input device without the boot protocol`) and the hub once each, and the USB keyboard types.
+
+**6. The tests by themselves**
+
+```
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu hypervisor
+make boot64-test stick64-test usb64-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `test result: ok. 3 passed` | CPUID answers decoded: VMware believed, Hyper-V and nonsense refused |
+| `boot64-test passed`, `stick64-test passed` | the VESA change still finds QEMU's mode |
+| `usb64-test passed` | among the rest, the tablet and the hub are named once each |
+| `test64: all passed` | every part |

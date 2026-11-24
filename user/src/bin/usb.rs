@@ -116,6 +116,28 @@ struct Driver {
     pointer_out: Handle,
     /// The slot of the stick that is the disk.
     disk: Option<u8>,
+    /// Ports whose device was looked at and is not driven (a hub, a
+    /// pointer without the boot protocol, ...), one bit each: left
+    /// alone until it is unplugged. Enumerating a device resets its
+    /// port, and the reset raises another port event; without this,
+    /// each such device was enumerated again on every event (seen
+    /// in VMware: three times each).
+    not_driven: [u64; 4],
+}
+
+impl Driver {
+    fn is_not_driven(&self, port: u8) -> bool {
+        self.not_driven[usize::from(port / 64)] & (1 << (port % 64)) != 0
+    }
+
+    fn set_not_driven(&mut self, port: u8, not_driven: bool) {
+        let (word, bit) = (usize::from(port / 64), 1u64 << (port % 64));
+        if not_driven {
+            self.not_driven[word] |= bit;
+        } else {
+            self.not_driven[word] &= !bit;
+        }
+    }
 }
 
 /// A name as INQUIRY gives it: ASCII, padded with spaces.
@@ -141,7 +163,7 @@ fn class_name(class: u8) -> &'static str {
 impl Driver {
     /// Enumerates the device on `port`, and says what it is.
     fn attach(&mut self, port: u8) {
-        if self.devices.iter().flatten().any(|d| d.attached.port == port) {
+        if self.is_not_driven(port) || self.devices.iter().flatten().any(|d| d.attached.port == port) {
             return;
         }
         let attached = match device::attach(&mut self.controller, port, self.disk.is_none()) {
@@ -172,6 +194,7 @@ impl Driver {
                 ),
             }
             self.controller.disable_slot(attached.slot);
+            self.set_not_driven(port, true);
             return;
         }
         for function in attached.functions.iter().flatten() {
@@ -206,6 +229,9 @@ impl Driver {
             Event::Port { port } => {
                 let status = self.controller.port_status(port);
                 self.controller.port_seen(port);
+                if !status.connected {
+                    self.set_not_driven(port, false);
+                }
                 match (status.connected, self.devices.iter().flatten().any(|d| d.attached.port == port)) {
                     (true, false) => self.attach(port),
                     (false, true) => self.detach(port),
@@ -417,7 +443,7 @@ fn main() -> i64 {
         Ok(controller) => controller,
         Err(code) => return code,
     };
-    let mut driver = Driver { controller, devices: [const { None }; xhci::SLOTS as usize], keys_out, pointer_out, disk: None };
+    let mut driver = Driver { controller, devices: [const { None }; xhci::SLOTS as usize], keys_out, pointer_out, disk: None, not_driven: [0; 4] };
 
     // What is plugged in already. A controller may say so with a port
     // event for each once it runs, or may not (QEMU's drops the events
