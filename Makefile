@@ -669,6 +669,17 @@ endif
 	@TFSTOOL=$(TFSTOOL_RS) OVMF=$(OVMF) $(KERNEL64_DIR)/scripts/nvme-test.sh $(ISO64_IMG) $(NVME64_LOG).disk $(NVME64_LOG)
 	@echo "nvme64-test passed"
 
+# poweroff and reboot: a PC and a q35 (ACPI), and a PC without ACPI
+# (scripts/power-test.sh).
+POWER64_LOG = $(BUILD_DIR)/power64.log
+power64-test: iso64 cprogs64 tfstool-rs
+ifneq ($(HAVE_CLANG),yes)
+	@echo "FAIL: the q35 boot needs the UEFI loader, which needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+	$(call make-test-disk,$(POWER64_LOG).disk)
+	@TFSTOOL=$(TFSTOOL_RS) OVMF=$(OVMF) $(KERNEL64_DIR)/scripts/power-test.sh x86 $(ISO64_IMG) $(POWER64_LOG).disk $(POWER64_LOG)
+	@echo "power64-test passed"
+
 # The same ISO, the same kernel, booted by UEFI firmware instead.
 boot64-uefi-test: iso64 cprogs64 tfstool-rs
 ifneq ($(HAVE_CLANG),yes)
@@ -697,7 +708,7 @@ smp64-test: iso64
 	    || { echo "FAIL: 20 CPUs: the kernel did not say it left 4 asleep"; exit 1; }
 	@echo "smp64-test passed"
 
-# A kernel made too big on purpose: 768 KiB of ballast put its end well
+# A kernel made too big on purpose: 512 KiB of ballast put its end well
 # above 2 MiB, where the BIOS loader used to refuse it. Booted both
 # ways, it checks every byte of the ballast. The BIOS image also carries
 # a ramdisk, which for a 64-bit kernel must now land above the kernel -
@@ -707,7 +718,7 @@ BIG64_DIR = $(BUILD_DIR)/big64
 BIG64_ISO = $(BUILD_DIR)/big64.iso
 BIG64_ELF = $(KERNEL64_DIR)/target/big-image/x86_64-unknown-none/release/kernel64
 BIG64_LOG = $(BUILD_DIR)/big64
-BIG64_SAID = \[test\] big image: the kernel ends at 0x[0-9a-f]+, above 2 MiB; 768 KiB of it at 0x[0-9a-f]+-0x[0-9a-f]+ is byte for byte what was built
+BIG64_SAID = \[test\] big image: the kernel ends at 0x[0-9a-f]+, above 2 MiB; 512 KiB of it at 0x[0-9a-f]+-0x[0-9a-f]+ is byte for byte what was built
 big64-test: build-bootloader user64 uefi-loader
 	@echo "Building a kernel that ends above 2 MiB..."
 	cd $(KERNEL64_DIR) && cargo build --release --quiet --features big-image --target-dir target/big-image
@@ -761,6 +772,7 @@ kernel64-test:
 	cd virtio && cargo test
 	cd ahci && cargo test
 	cd nvme && cargo test
+	cd acpi && cargo test
 	cd net && cargo test
 	cd gfx && cargo test
 	cd gui && cargo test
@@ -1135,6 +1147,18 @@ ifeq ($(HAVE_A64),yes)
 	$(call make-test-disk-from,$(NET_A64_LOG).disk,$(A64_USER_BIN),$(C_A64_BIN))
 	@$(KERNEL64_DIR)/scripts/net-test.sh aarch64 $(KERNEL_A64_IMAGE) $(NET_A64_LOG).disk $(NET_A64_LOG)
 	@echo "aarch64-net-test passed"
+else
+	@echo "qemu-system-aarch64 or llvm-objcopy not found: the AArch64 boots are not run"
+endif
+
+# poweroff and reboot on AArch64: PSCI, through the power handle
+# (scripts/power-test.sh).
+POWER_A64_LOG = $(BUILD_DIR)/aarch64/power.log
+aarch64-power-test: kernel-aarch64
+ifeq ($(HAVE_A64),yes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@$(KERNEL64_DIR)/scripts/power-test.sh aarch64 $(KERNEL_A64_IMAGE) $(POWER_A64_LOG)
+	@echo "aarch64-power-test passed"
 else
 	@echo "qemu-system-aarch64 or llvm-objcopy not found: the AArch64 boots are not run"
 endif
@@ -1602,7 +1626,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 12
-TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test
+TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared

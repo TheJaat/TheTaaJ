@@ -89,7 +89,7 @@
 
 extern crate alloc;
 
-use abi::{FramebufferInfo, MmioDeviceInfo, PciDeviceInfo};
+use abi::{FramebufferInfo, MmioDeviceInfo, PciDeviceInfo, PowerInfo};
 use registry::protocol::Admin;
 use taaj::rights::{DUPLICATE, READ, RECEIVE, SEND, TRANSFER, WRITE};
 use core::fmt::Write;
@@ -302,6 +302,9 @@ fn main() -> i64 {
     // Keyboards, mice, tablets - virtio ones: each with its handles,
     // kept here and copied to each `hid` that is started.
     let mut inputs: [Option<(MmioDeviceInfo, [Handle; 3], usize)>; INPUTS_MAX] = [None; INPUTS_MAX];
+    // How the machine is switched off: its description and handles
+    // (abi::power), for `power`.
+    let mut power: Option<(PowerInfo, [Handle; 5], usize)> = None;
     loop {
         let mut message = [0u8; 64];
         let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
@@ -329,6 +332,13 @@ fn main() -> i64 {
                 used = true;
             } else {
                 println!("[init] no driver for PCI device {:04x}:{:04x}", info.vendor_id, info.device_id);
+            }
+        } else if let Some(info) = message.strip_prefix(b"power").and_then(PowerInfo::from_bytes) {
+            if power.is_none() && count == info.handles() && count <= 5 {
+                let mut kept = [0; 5];
+                kept[..count].copy_from_slice(&handles[..count]);
+                power = Some((info, kept, count));
+                used = true;
             }
         } else if let Some(info) = message.strip_prefix(b"mmio").and_then(MmioDeviceInfo::from_bytes) {
             if info.device == virtio::mmio::DEVICE_BLOCK && info.version == 1 && disk.is_none() && (2..=3).contains(&count) {
@@ -418,6 +428,10 @@ fn main() -> i64 {
     // the disk's). No card, no network: its clients are told at once.
     let Ok((net_in, net_out)) = taaj::channel_create() else { return 2 };
     let Ok((net_names_tx, net_names_rx)) = taaj::channel_create() else { return 2 };
+    // power's: the only channel that can ask it anything - init's end
+    // stays here, and nobody is given a copy - and its description.
+    let Ok((power_asked, power_ask)) = taaj::channel_create() else { return 2 };
+    let Ok((power_info_tx, power_info_rx)) = taaj::channel_create() else { return 2 };
     if card.is_none() {
         let _ = taaj::close(net_in);
     }
@@ -483,6 +497,8 @@ fn main() -> i64 {
         Grant { handle: shell_keys_out, rights: SEND },       // 41: keys, from display to the shell
         Grant { handle: windows_in, rights: RECEIVE },        // 42: windows to open, for display
         Grant { handle: windows_out, rights: SEND },          // 43: windows to open, from programs
+        Grant { handle: power_asked, rights: RECEIVE | SEND }, // 44: requests, for power (and its answers)
+        Grant { handle: power_info_rx, rights: RECEIVE },     // 45: how to switch off, for power
     ];
     // Only the shell's screen and files can be copied and passed on.
     debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21)));
@@ -639,6 +655,16 @@ fn main() -> i64 {
             given_up: serial_terminal || !has_inputs,
             watch: hid_watch,
         },
+        // Switching off and resetting, when init asks: nobody else can.
+        Service {
+            name: "power",
+            grants: &[44, 45],
+            process: 0,
+            restarts: [0; MAX_RESTARTS],
+            restart_count: 0,
+            given_up: power.is_none(),
+            watch: None,
+        },
     ];
     let launch = |service: &Service| {
         // The input devices, before their driver starts: it takes what
@@ -720,6 +746,22 @@ fn main() -> i64 {
                 Device::Mmio(info) => taaj::send(disk_info_tx, &info.to_bytes(), &[])?,
             }
         }
+        // And each new power: its description, with fresh copies of the
+        // handles - the ports, the DSDT to read (never write), or the
+        // power handle - that it keeps for as long as it runs.
+        if let (Some((info, handles, count)), "power") = (power, service.name) {
+            let mut copies = [0u64; 5];
+            for (n, &handle) in handles[..count].iter().enumerate() {
+                let rights = if info.kind == abi::power::ACPI && n == 0 { READ } else { 0 };
+                copies[n] = taaj::duplicate(handle, rights | TRANSFER)?;
+            }
+            if let Err(error) = taaj::send(power_info_tx, &info.to_bytes(), &copies[..count]) {
+                for &copy in &copies[..count] {
+                    let _ = taaj::close(copy);
+                }
+                return Err(error);
+            }
+        }
         // And each new network card's driver.
         if let (Some((info, _, _)), "nic") = (card, service.name) {
             match info {
@@ -794,7 +836,10 @@ fn main() -> i64 {
             }
         };
         if index == processes {
-            serve_request(launcher, requests);
+            let power_ready = services.iter().any(|s| s.name == "power" && !s.given_up);
+            if let Some(action) = serve_request(launcher, requests, power_ready) {
+                shut_down(&mut services, action, power_ask, files_look_out, disk_driver);
+            }
             continue;
         }
         if index > processes {
@@ -814,6 +859,16 @@ fn main() -> i64 {
         if recent >= MAX_RESTARTS {
             println!("[init] {} ended (code {code}) {recent} times in 30 s - giving up on it", service.name);
             service.given_up = true;
+            // No disk driver will come: say so to whoever waits on one.
+            // The requests' channels lose their reading end, every
+            // request in them is dropped with its reply channel, and fs
+            // - waiting for an answer - hears "peer closed" and goes on
+            // with files in memory, as it does with no disk at all. (A
+            // controller with no disk on it, say: an AHCI controller
+            // whose only drive is the CD.)
+            if service.name == disk_driver {
+                let _ = (taaj::close(disk_in), taaj::close(disk_look_in));
+            }
             continue;
         }
         if service.restart_count == MAX_RESTARTS {
@@ -862,7 +917,7 @@ fn main() -> i64 {
 /// The shell reads the file, not init. init restarts the file service
 /// when it crashes; if init itself waited on the file service, a hung
 /// one would stop the only process able to fix it.
-fn serve_request(launcher: Handle, requests: Handle) {
+fn serve_request(launcher: Handle, requests: Handle, power_ready: bool) -> Option<u8> {
     use abi::init::{Run, BUILT_IN, IMAGE};
     use abi::startup::{ARGUMENTS, DIRECTORY, HANDLES, KEYBOARD, SCREEN, SERVICES, STDERR, STDIN, STDOUT};
 
@@ -870,12 +925,23 @@ fn serve_request(launcher: Handle, requests: Handle) {
     // did not fit would stay at the head of the queue forever.
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
     let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
-    let Ok((n, count)) = taaj::receive(requests, &mut message, &mut handles) else { return };
+    let Ok((n, count)) = taaj::receive(requests, &mut message, &mut handles) else { return None };
     let close = |handles: &[Handle]| {
         for &handle in handles {
             let _ = taaj::close(handle);
         }
     };
+    // Switching off, or resetting: init's to do (shut_down), once the
+    // services are stopped - if this machine can be switched off at all.
+    let asked = &message[..n];
+    if asked == abi::power::ASK_OFF || asked == abi::power::ASK_RESET {
+        close(&handles[..count]);
+        if !power_ready {
+            let _ = taaj::send(requests, b"error: this machine cannot be switched off or reset from here", &[]);
+            return None;
+        }
+        return Some(if asked == abi::power::ASK_OFF { abi::power::OFF } else { abi::power::RESET });
+    }
     // One handle for the image, one for each flag, one for the reply if
     // it is to go apart - no more, no fewer.
     let run = Run::decode(&message[..n]).filter(|run| {
@@ -889,7 +955,7 @@ fn serve_request(launcher: Handle, requests: Handle) {
     let Some(run) = run else {
         close(&handles[..count]);
         let _ = taaj::send(requests, b"error: unknown request", &[]);
-        return;
+        return None;
     };
     // Where the reply goes: back on the shared channel, or on the
     // asker's own (abi::init::REPLY), which init lets go of when done.
@@ -913,7 +979,8 @@ fn serve_request(launcher: Handle, requests: Handle) {
     };
     if run.what() == BUILT_IN && !RUNNABLE.contains(&run.name) {
         close(passed);
-        return reply(b"error: no such program, on the disk or built in", &[]);
+        reply(b"error: no such program, on the disk or built in", &[]);
+        return None;
     }
 
     // The arguments, waiting in a channel of their own - and the
@@ -960,7 +1027,8 @@ fn serve_request(launcher: Handle, requests: Handle) {
             let error = arguments.err().or(directory.err()).unwrap_or(Error::InvalidArgument);
             let mut text = Buffer::<64>::new();
             let _ = write!(text, "error: {error:?}");
-            return reply(text.as_bytes(), &[]);
+            reply(text.as_bytes(), &[]);
+            return None;
         }
     };
 
@@ -1026,4 +1094,68 @@ fn serve_request(launcher: Handle, requests: Handle) {
             reply(text.as_bytes(), &[]);
         }
     }
+    None
+}
+
+/// Switches the machine off, or resets it (abi::power::OFF, RESET):
+/// first the services are stopped, in an order that leaves the disk
+/// whole, then `power` is asked. Returns only if that did not work -
+/// and then with the services stopped, which is what was wanted anyway:
+/// it says it is safe to switch off by hand, and does nothing more.
+///
+/// The order: first whoever could ask for more work - the shell (and,
+/// with it, nobody types any more), the input drivers, the network.
+/// Then the file service, but only once it has answered a request: it
+/// serves one at a time, and answering means it is between two, with
+/// every change it has answered for on the disk (fs.rs: each request
+/// is one copy-on-write commit). Even if a program it was not told to
+/// stop slips a request in after that, TaajFS's commits are whole or
+/// not at all. Then the disk driver, with nothing left to do; then the
+/// rest. `power` last: it is the one that does the switching.
+fn shut_down(services: &mut [Service], action: u8, power: Handle, files_look: Handle, disk_driver: &str) {
+    let what = if action == abi::power::OFF { "switching off" } else { "resetting" };
+    println!("[init] {what}: stopping the services");
+    let order = ["shell", "hid", "kbd", "serial", "net", "nic", "fs", disk_driver, "display", "registry"];
+    for name in order {
+        let Some(service) = services.iter_mut().find(|s| s.name == name && !s.given_up) else { continue };
+        let between = name != "fs" || between_requests(files_look);
+        let _ = taaj::kill(service.process);
+        let ended = matches!(taaj::object_wait_until(&[service.process], taaj::ticks() + 200), Ok(Some(_)));
+        let _ = taaj::close(service.process);
+        service.given_up = true; // never restarted: nothing watches any more
+        println!(
+            "[init] stopped {name}{}{}",
+            if between { "" } else { " (it did not answer first)" },
+            if ended { "" } else { " (it did not end within 2 s)" }
+        );
+    }
+    let mut answer = [0u8; 128];
+    let mut said = 0;
+    if taaj::send(power, &[action], &[]).is_ok() {
+        // power answers only if it could not: after its own waits
+        // (ACPI mode, then the machine's stopping) - 5 s at most.
+        if let Ok(Some(_)) = taaj::object_wait_until(&[power], taaj::ticks() + 800) {
+            said = taaj::receive(power, &mut answer, &mut []).map_or(0, |(n, _)| n);
+        }
+    }
+    let why = core::str::from_utf8(&answer[..said]).ok().filter(|why| !why.is_empty()).unwrap_or("no answer from power");
+    println!("[init] could not finish {what}: {why}. The services are stopped: it is safe to switch the machine off by hand");
+    loop {
+        taaj::sleep(60 * 100);
+    }
+}
+
+/// Asks the file service something any client may, and waits up to
+/// 4 s for its answer: true once it has answered - it is then between
+/// two requests.
+fn between_requests(files_look: Handle) -> bool {
+    let ping = [fileserver::protocol::ACCESS, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    let Ok((answers_tx, answers_rx)) = taaj::channel_create() else { return false };
+    let asked = taaj::send(files_look, &ping, &[answers_tx]).is_ok();
+    if !asked {
+        let _ = taaj::close(answers_tx);
+    }
+    let answered = asked && matches!(taaj::object_wait_until(&[answers_rx], taaj::ticks() + 400), Ok(Some(_)));
+    let _ = taaj::close(answers_rx);
+    answered
 }

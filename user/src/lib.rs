@@ -622,6 +622,13 @@ pub fn memory_map(memory: Handle, writable: bool) -> Result<*mut u8, Error> {
     abi::decode(syscall(call::MEMORY_MAP, memory, u64::from(writable), 0)).map(|a| a as *mut u8)
 }
 
+/// Asks the firmware, through a power handle (only `power` is given
+/// one, on AArch64), to switch the machine off (abi::power::OFF) or
+/// reset it (abi::power::RESET). Returns only if the firmware refused.
+pub fn power(handle: Handle, action: u8) -> Result<(), Error> {
+    abi::decode(syscall(call::POWER, handle, u64::from(action), 0)).map(|_| ())
+}
+
 /// The size of a memory object, in bytes.
 pub fn memory_size(memory: Handle) -> Result<u64, Error> {
     abi::decode(syscall(call::MEMORY_SIZE, memory, 0, 0))

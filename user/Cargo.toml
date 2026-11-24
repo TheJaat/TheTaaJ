@@ -23,6 +23,7 @@ taajfs = { path = "../taajfs" }
 virtio = { path = "../virtio" }
 ahci = { path = "../ahci" }
 nvme = { path = "../nvme" }
+acpi = { path = "../acpi" }
 net = { path = "../net" }
 
 [profile.dev]

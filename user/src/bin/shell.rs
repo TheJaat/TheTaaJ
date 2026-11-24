@@ -126,7 +126,7 @@ const EDIT_PROGRAMS: &[&str] = &["edit"];
 /// kept the same as. They read no input, so in a pipeline one may only
 /// stand first.
 const OWN_COMMANDS: &[&str] =
-    &["help", "echo", "cd", "pwd", "clear", "uptime", "mem", "ps", "time", "run", "with", "fs", "display", "disk", "jobs", "kill", "wait", "services", "registry", "source"];
+    &["help", "echo", "cd", "pwd", "clear", "uptime", "mem", "ps", "time", "run", "with", "fs", "display", "disk", "jobs", "kill", "wait", "services", "registry", "source", "poweroff", "reboot"];
 /// The largest script `source` reads.
 const SCRIPT_MAX: u64 = 64 * 1024;
 /// How deep scripts may run scripts: deep enough for any real use, and
@@ -884,7 +884,8 @@ impl Shell {
                   \x20 (F11 hangs the keyboard driver, F12 crashes it)\n\
                   \x20 services [NAME]   the services the shell can ask for; ask for one\n\
                   \x20 disk, disk read N, disk write N TEXT   size; show sector N; set it\n\
-                  \x20 disk check        test the disk driver\n",
+                  \x20 disk check        test the disk driver\n\
+                  \x20 poweroff, reboot  stop the services, then switch the machine off or reset it\n",
             ),
             "echo" => say!(self, "{rest}\n"),
             // Slice patterns: no argument, exactly one, or anything else.
@@ -974,6 +975,7 @@ impl Shell {
                 _ => self.write(b"usage: display stall SECONDS (1 to 30)\n"),
             },
             "disk" => self.disk(rest),
+            "poweroff" | "reboot" => self.power(command == "poweroff"),
             "services" => match arguments {
                 [] => match self.services.list() {
                     Ok(names) => say!(self, "{}\n", names.join(" ")),
@@ -1066,6 +1068,25 @@ impl Shell {
         }
         if let Some(info) = self.system_info() {
             say!(self, "{} processes, {} threads, {} channels\n", info.processes, info.threads, info.channels);
+        }
+    }
+
+    /// `poweroff`, `reboot`: asks init, which stops every service - this
+    /// shell first - and then switches the machine off or resets it. So
+    /// this returns only if init says it cannot.
+    fn power(&self, off: bool) {
+        self.write(if off { b"Switching off...\n" } else { b"Resetting...\n" });
+        let Some(init) = self.init else {
+            return self.write(b"cannot reach init\n");
+        };
+        let ask = if off { abi::power::ASK_OFF } else { abi::power::ASK_RESET };
+        if taaj::send(init, ask, &[]).is_err() {
+            return self.write(b"cannot reach init\n");
+        }
+        let mut reply = [0u8; 128];
+        if let Ok((n, _)) = taaj::receive(init, &mut reply, &mut []) {
+            self.write(&reply[..n]);
+            self.write(b"\n");
         }
     }
 

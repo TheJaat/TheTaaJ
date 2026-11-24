@@ -1,0 +1,8 @@
+[package]
+name = "acpi"
+version = "0.1.0"
+edition = "2021"
+description = "ACPI power control in user space: \\_S5 read from the DSDT's AML, and the PM1 sequence that switches a PC off"
+publish = false
+
+[dependencies]

@@ -2897,3 +2897,91 @@ make test64
 | `test64: all passed` | every part |
 
 Automated: make nvme64-test
+
+---
+
+## 086 · Power-off and reboot: ACPI in user space, and an orderly shutdown
+
+[The entry](journal/086-poweroff-and-reboot.md)
+
+**1. Switch off, with a file written just before**
+
+```
+make run64 RUN_DISK=build/power-disk.img
+```
+
+A new 16 MiB disk is made the first time (your `build/taaj-disk.img` is not touched). In the terminal's log:
+
+| Look for | Meaning |
+|---|---|
+| `[acpi] power: PM1a control 0x604, reset 0xcf9 <- 0x6 (the PC's; the FADT names none), DSDT ... bytes at 0x... - handed to init` | the kernel read the FADT and handed on the controls |
+| `[init] started: registry display fs blk nic net shell kbd power; supervising` | init started `power` |
+| `[power] ACPI: off is sleep type 0/0 (\_S5); reset is 0x6 into port 0xcf9; ready` | `power` read `\_S5` from the DSDT |
+
+In the QEMU window:
+
+| Type | You should see |
+|---|---|
+| `write note before-off` | `note: 11 bytes` |
+| `cat note` | `before-off` |
+| `poweroff` | `Switching off...`; in the log, `[init] switching off: stopping the services`, then `[init] stopped shell`, `kbd`, `net`, `nic`, `fs`, `blk`, `display`, `registry`, and last `[power] switching off: sleep type 0/0 into PM1 control (ACPI S5)`. The QEMU window closes by itself, and `make` returns |
+
+Then on the host:
+
+| Type | You should see |
+|---|---|
+| `tools/tfstool-rs/target/release/tfstool get build/power-disk.img note` | `before-off` |
+
+**2. Reboot**
+
+```
+make run64 RUN_DISK=build/power-disk.img
+```
+
+| Type | You should see |
+|---|---|
+| `reboot` | `Resetting...`; in the log, `[init] resetting: stopping the services`, the services stopped, `[power] resetting: 0x6 into port 0xcf9`, then `Hello from TheTaaJ!` again: the machine starts over, in the same window |
+| `cat note` (once the shell is back) | `before-off` |
+
+**3. A q35 under UEFI: the FADT's own reset register**
+
+```
+qemu-system-x86_64 -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -cdrom build/image64.iso -serial stdio \
+    -drive file=build/power-disk.img,format=raw,if=none,id=d0 -device virtio-blk-pci,drive=d0
+```
+
+| Look for / Type | You should see |
+|---|---|
+| (the log) | `[acpi] power: PM1a control 0x604, reset 0xcf9 <- 0xf, DSDT ... - handed to init` (no "the PC's": this FADT names its reset register) |
+| `cat note` | `before-off` |
+| `poweroff` | the services stopped, `[power] switching off: ...`, and QEMU ends by itself |
+
+**4. AArch64: PSCI**
+
+```
+make run-aarch64 RUN_A64_DISK=build/aarch64/power-disk.img
+```
+
+(A new disk of its own; your `build/aarch64/taaj-disk.img` is not touched.)
+
+| Look for / Type | You should see |
+|---|---|
+| (the log) | `[psci] power: SYSTEM_OFF and SYSTEM_RESET - handed to init` and `[power] PSCI: SYSTEM_OFF and SYSTEM_RESET; ready` |
+| `write note arm` | `note: 4 bytes` |
+| `poweroff` | `Switching off...`, the services stopped, `[power] switching off (PSCI)`, `[psci] SYSTEM_OFF`, and QEMU ends by itself (no Ctrl+A X needed) |
+
+**5. The tests by themselves**
+
+```
+make power64-test
+make aarch64-power-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `poweroff and reboot worked on a PC and a q35: ...` | the five x86 machines |
+| `poweroff and reboot worked on AArch64: ...` | the two AArch64 machines |
+| `test64: all passed` | every part |
+
+Automated: make power64-test
