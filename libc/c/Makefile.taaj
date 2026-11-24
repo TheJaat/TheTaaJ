@@ -1,0 +1,60 @@
+# Makefile.taaj - TheTaaJ's C library and its C programs, built with
+# tcc by make on TheTaaJ (journal entry 083). On a disk made by
+# tools/put-sources.sh it is /src/libc/c/Makefile:
+#
+#   cd /src/libc/c
+#   with programs make        the C half compiled, libc.a, every program
+#   with programs make        again: nothing to do
+#
+# Change one .c file and make compiles it alone again, then libc.a and
+# the programs, which are linked with it. The same commands as
+# libc/build.taaj (`source /src/build`), each run in the directory of
+# its file, so what they write is the same, byte for byte.
+#
+# The Rust half of the library cannot be built here - there is no Rust
+# compiler on TheTaaJ - so it comes ready-made, as /lib/libc-rust.o.
+# Every recipe is kept short: a command and its environment must fit
+# in one Run request, 1024 bytes.
+
+CC = tcc
+
+# The C half, in this directory.
+OBJECTS = format.o stdio.o fcntl.o ctype.o stdlib.o inet.o float.o setjmp.o time.o abort.o fp128.o math.o scan.o locale.o atexit.o pthread.o emutls.o signal.o mmap.o users.o unix.o
+
+# musl's approximations of math.h, in libm, joined into libm.o in two
+# halves.
+LIBM1 = __math_oflow.o __math_uflow.o __math_xflow.o __math_invalid.o __math_divzero.o __rem_pio2_large.o __rem_pio2.o __sin.o __cos.o __tan.o sin.o cos.o tan.o asin.o acos.o atan.o atan2.o __expo2.o expm1.o
+LIBM2 = exp_data.o exp.o exp2.o sinh.o cosh.o tanh.o log_data.o log.o log2_data.o log2.o log10.o log1p.o pow_data.o pow.o cbrt.o asinh.o acosh.o atanh.o fma.o floats.o
+
+# The programs, in ../programs, each from its .c and this libc.a.
+PROGRAMS = chello cmem cprint cfile cstdio cwords cask cprimes cnet cfloat clib sh
+
+.PHONY: all programs
+
+all: ../libc.a programs
+
+programs: $(PROGRAMS:%=../programs/%)
+
+../libc.a: $(OBJECTS) libm.o
+	$(CC) -ar rcs ../libc.a /lib/libc-rust.o $(OBJECTS) libm.o
+
+libm.o: libm/first.o libm/second.o
+	cd libm && $(CC) -r first.o second.o -o ../libm.o
+
+libm/first.o: $(LIBM1:%=libm/%)
+	cd libm && $(CC) -r $(LIBM1) -o first.o
+
+libm/second.o: $(LIBM2:%=libm/%)
+	cd libm && $(CC) -r $(LIBM2) -o second.o
+
+format.o stdio.o: format.h
+$(LIBM1:%=libm/%) $(LIBM2:%=libm/%): libm/libm.h libm/exp_data.h libm/log_data.h libm/log2_data.h libm/pow_data.h
+
+$(PROGRAMS:%=../programs/%): ../libc.a
+
+# Each file compiled in its own directory, as build.taaj does.
+.c.o:
+	cd $(<D) && $(CC) -c $(<F)
+
+.c:
+	cd $(<D) && $(CC) -L.. $(<F) -o $(@F)

@@ -410,7 +410,8 @@ impl Lexer {
             if longest {
                 self.at += 1;
             }
-            let pattern = self.word_to_brace(quoted)?;
+            // A pattern is one inside double quotes too: "${f##*/}".
+            let pattern = self.word_to_brace(false)?;
             return Ok(Part::Parameter { name, op: Op::Remove { prefix: c == '#', longest, pattern }, quoted });
         }
         let colon = self.peek() == Some(':');
@@ -2945,6 +2946,8 @@ mod tests {
         assert_eq!(shell.system.out, "dir/sub/main.tar dir/sub/main sub/main.tar.gz main.tar.gz dir/sub/main.tar.gz .\n");
         let shell = run("f='a*b'; echo ${f#'a*'} ${f#a*}");
         assert_eq!(shell.system.out, "b *b\n");
+        let shell = run("f='../d/x y.c'; echo \"[${f##*/}]\" \"[${f%.?}]\" \"[${f#'../'}]\"");
+        assert_eq!(shell.system.out, "[x y.c] [../d/x y] [d/x y.c]\n", "inside double quotes, a pattern still matches");
     }
 
     #[test]

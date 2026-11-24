@@ -4,7 +4,9 @@
 #
 #   /src/build             libc/build.taaj: `source /src/build`
 #   /src/libc/c/...        the C half of the C library (libm/: musl's
-#                          sin, exp, pow and the rest)
+#                          sin, exp, pow and the rest), and its Makefile
+#                          for make on TheTaaJ (libc/c/Makefile.taaj),
+#                          which builds the programs too
 #   /src/libc/programs/... the C programs, and their Makefile for make
 #                          on TheTaaJ (libc/programs/Makefile.taaj)
 #   /src/tcc/build         ports/tcc-ARCH.taaj: `source /src/tcc/build`
@@ -49,6 +51,7 @@ directory src/libc/c/libm
 for f in "$ROOT"/libc/c/libm/*.c "$ROOT"/libc/c/libm/*.h; do put "src/libc/c/libm/$(basename "$f")" "$f"; done
 for f in "$ROOT"/libc/programs/*.c; do put "src/libc/programs/$(basename "$f")" "$f"; done
 put src/libc/programs/Makefile "$ROOT/libc/programs/Makefile.taaj"
+put src/libc/c/Makefile "$ROOT/libc/c/Makefile.taaj"
 
 # TCC's sources: tcc.c includes the rest (ONE_SOURCE), and of the
 # CPU-specific files only those for ARCH.
