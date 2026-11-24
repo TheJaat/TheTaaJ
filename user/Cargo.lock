@@ -49,6 +49,10 @@ name = "net"
 version = "0.1.0"
 
 [[package]]
+name = "nvme"
+version = "0.1.0"
+
+[[package]]
 name = "registry"
 version = "0.1.0"
 dependencies = [
@@ -72,6 +76,7 @@ dependencies = [
  "heap",
  "input",
  "net",
+ "nvme",
  "registry",
  "taajfs",
  "virtio",

@@ -2830,3 +2830,70 @@ make test64
 | `test64: all passed` | every part |
 
 Automated: make ahci64-test
+
+---
+
+## 085 · NVMe disks: a driver for the other disk a modern PC has
+
+[The entry](journal/085-nvme-disks.md)
+
+**1. The PC, with the disk on NVMe**
+
+```
+make run64 RUN_DISK_BUS=nvme RUN_DISK=build/nvme-disk.img
+```
+
+A new 16 MiB disk is made the first time (your `build/taaj-disk.img` is not touched). In the terminal's log:
+
+| Look for | Meaning |
+|---|---|
+| `[pci] 00:03.0 NVMe controller: registers 0x...+0x2000, 148 KiB DMA at 0x..., MSI-X - handed to init` | the kernel found the controller; +0x2000 is BAR 0 cut short of its MSI-X table |
+| `[init] started: registry display fs nvme nic net shell kbd; supervising` | init started `nvme`, not `blk` |
+| `[nvme] NVMe 1.4 controller at 00:03.0: QEMU NVMe Ctrl; namespace 1, 32768 sectors (16 MiB), 128 KiB a command, MSI-X interrupts` | the controller's and the namespace's IDENTIFY answers |
+
+In the QEMU window:
+
+| Type | You should see |
+|---|---|
+| `disk` | `disk: 32768 sectors of 512 bytes (16384 KiB)` |
+| `disk check` | `disk check: all 9 checks passed` |
+| `write nvme hello` | `nvme: 6 bytes` |
+| `cat nvme` | `hello` |
+| `wc nvme` | `nvme: 1 line, 1 word, 6 bytes` |
+| `disk stall 3` | `disk: the driver will answer nothing for 3 s`; in the log, `[init] nvme has not answered for 2 s - stopping it`, `[init] nvme ended with code -1001 - restarting it`, and the `[nvme] NVMe 1.4 controller ...` line again |
+| `disk read 0` | `0000  4a 41 46 53 04 00 00 00 00 10 00 00 00 10 00 00  JAFS............` |
+| `cat nvme` | `hello` |
+
+Close QEMU, then on the host:
+
+| Type | You should see |
+|---|---|
+| `tools/tfstool-rs/target/release/tfstool get build/nvme-disk.img nvme` | `hello` |
+
+**2. A q35 under UEFI, with a controller that moves 16 KiB a command**
+
+```
+qemu-system-x86_64 -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -cdrom build/image64.iso -serial stdio \
+    -drive file=build/nvme-disk.img,format=raw,if=none,id=n0 -device nvme,serial=taaj0002,drive=n0,mdts=2
+```
+
+| Look for / Type | You should see |
+|---|---|
+| (the log) | `[pci] 00:03.0 NVMe controller: registers 0xc000000000+0x2000, ...` (a 64-bit BAR above 4 GiB) and `[nvme] NVMe 1.4 controller at 00:03.0: QEMU NVMe Ctrl; namespace 1, 32768 sectors (16 MiB), 16 KiB a command, MSI-X interrupts` |
+| `cat nvme` | `hello`, written in part 1 |
+| `disk` | `disk: 32768 sectors of 512 bytes (16384 KiB)` |
+| `disk check` | `disk check: all 9 checks passed` (each 256-sector read is eight commands) |
+
+**3. The tests by themselves**
+
+```
+make nvme64-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `nvme drove the disk on a PC's added NVMe controller (a request a command) and on a q35's (16 KiB a command): ...` | both machines |
+| `test64: all passed` | every part |
+
+Automated: make nvme64-test

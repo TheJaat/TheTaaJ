@@ -472,11 +472,14 @@ RUN_DISK     = $(BUILD_DIR)/taaj-disk.img
 # How many 4 KiB blocks a new run disk has: 4096 is 16 MiB. The LLVM
 # disk (llvm-put) has more.
 RUN_DISK_BLOCKS = 4096
-# How the disk is attached: a virtio disk (blk drives it), or `make run64
-# RUN_DISK_BUS=sata` - a SATA disk on an AHCI controller (ahci drives it).
+# How the disk is attached: a virtio disk (blk drives it), `make run64
+# RUN_DISK_BUS=sata` - a SATA disk on an AHCI controller (ahci drives
+# it) - or RUN_DISK_BUS=nvme, an NVMe one (nvme drives it).
 RUN_DISK_BUS ?= virtio
 ifeq ($(RUN_DISK_BUS),sata)
 RUN_DISK_ARGS = -drive file=$(RUN_DISK),format=raw,if=none,id=disk0 -device ahci,id=sata -device ide-hd,drive=disk0,bus=sata.0
+else ifeq ($(RUN_DISK_BUS),nvme)
+RUN_DISK_ARGS = -drive file=$(RUN_DISK),format=raw,if=none,id=disk0 -device nvme,serial=taaj0001,drive=disk0
 else
 RUN_DISK_ARGS = -drive file=$(RUN_DISK),format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0
 endif
@@ -654,6 +657,18 @@ endif
 	@TFSTOOL=$(TFSTOOL_RS) OVMF=$(OVMF) $(KERNEL64_DIR)/scripts/ahci-test.sh $(ISO64_IMG) $(AHCI64_LOG).disk $(AHCI64_LOG)
 	@echo "ahci64-test passed"
 
+# The disk on an NVMe controller: a PC (BIOS) with one added, and a q35
+# (UEFI) with one that moves at most 16 KiB a command, both booted at
+# once (scripts/nvme-test.sh).
+NVME64_LOG = $(BUILD_DIR)/nvme64.log
+nvme64-test: iso64 cprogs64 tfstool-rs
+ifneq ($(HAVE_CLANG),yes)
+	@echo "FAIL: the q35 boot needs the UEFI loader, which needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+	$(call make-test-disk,$(NVME64_LOG).disk)
+	@TFSTOOL=$(TFSTOOL_RS) OVMF=$(OVMF) $(KERNEL64_DIR)/scripts/nvme-test.sh $(ISO64_IMG) $(NVME64_LOG).disk $(NVME64_LOG)
+	@echo "nvme64-test passed"
+
 # The same ISO, the same kernel, booted by UEFI firmware instead.
 boot64-uefi-test: iso64 cprogs64 tfstool-rs
 ifneq ($(HAVE_CLANG),yes)
@@ -745,6 +760,7 @@ kernel64-test:
 	cd taajfs && cargo test
 	cd virtio && cargo test
 	cd ahci && cargo test
+	cd nvme && cargo test
 	cd net && cargo test
 	cd gfx && cargo test
 	cd gui && cargo test
@@ -1586,7 +1602,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 12
-TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test
+TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared

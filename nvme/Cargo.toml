@@ -1,0 +1,8 @@
+[package]
+name = "nvme"
+version = "0.1.0"
+edition = "2021"
+description = "NVM Express: the PCIe SSD's interface - its registers, queues and commands, and driving one namespace"
+publish = false
+
+[dependencies]

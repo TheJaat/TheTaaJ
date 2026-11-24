@@ -314,13 +314,14 @@ fn main() -> i64 {
             used = true;
         } else if let Some(info) = message.strip_prefix(b"pci").and_then(PciDeviceInfo::from_bytes) {
             let is_ahci = (info.class, info.subclass, info.interface) == (ahci::CLASS, ahci::SUBCLASS, ahci::INTERFACE);
+            let is_nvme = (info.class, info.subclass, info.interface) == (nvme::CLASS, nvme::SUBCLASS, nvme::INTERFACE);
             let is_virtio = info.vendor_id == virtio::PCI_VENDOR && !info.registers_in_memory();
             if is_virtio && info.device_id == virtio::PCI_DEVICE_BLOCK && disk.is_none() && (2..=3).contains(&count) {
                 disk = Some((Device::Pci(info), [handles[0], handles[1], handles[2]], count));
                 used = true;
-            } else if is_ahci && info.registers_in_memory() && disk.is_none() && (2..=3).contains(&count) {
-                // The first disk wins: a virtio one or a SATA
-                // controller, whichever the bus has first.
+            } else if (is_ahci || is_nvme) && info.registers_in_memory() && disk.is_none() && (2..=3).contains(&count) {
+                // The first disk wins: a virtio one, a SATA controller
+                // or an NVMe one, whichever the bus has first.
                 disk = Some((Device::Pci(info), [handles[0], handles[1], handles[2]], count));
                 used = true;
             } else if is_virtio && info.device_id == virtio::PCI_DEVICE_NETWORK && card.is_none() && (2..=3).contains(&count) {
@@ -493,9 +494,11 @@ fn main() -> i64 {
     let fs_ping = [fileserver::protocol::ACCESS, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let fs_watch = Watch::new(files_look_out, &fs_ping, 400);
     let blk_watch = disk.and_then(|_| Watch::new(disk_look_out, &[abi::block::INFO], 200));
-    // Which program drives the disk: the virtio one, or the SATA one.
-    // Both speak abi::block, on the same channels; nobody else knows.
+    // Which program drives the disk: the virtio one, the SATA one or
+    // the NVMe one. All speak abi::block, on the same channels; nobody
+    // else knows.
     let disk_driver = match disk {
+        Some((Device::Pci(info), _, _)) if (info.class, info.subclass) == (nvme::CLASS, nvme::SUBCLASS) => "nvme",
         Some((Device::Pci(info), _, _)) if info.registers_in_memory() => "ahci",
         _ => "blk",
     };
