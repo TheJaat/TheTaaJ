@@ -92,7 +92,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 082 | [Control flow in sh: `if`, `while`, `until`, `for`, `case`, `{ }`, `( )`, functions, `${X%.c}` and `$((...))`, a compound command in a pipeline or redirected run by a copy of sh](082-control-flow-in-sh.md) | written | `aed6f3d` (TheKernel `b2eccff`) |
 | 083 | [The C library by make: TheTaaJ's C library and its 12 C programs, `sh` among them, built by make on TheTaaJ with tcc, again only what a change puts out of date, byte for byte what the host's tcc writes](083-the-c-library-by-make.md) | written | `ef5c184` (TheKernel `b421b9e`) |
 | 084 | [SATA disks: the kernel hands on any AHCI controller with memory registers and an MSI interrupt, a new `ahci` driver serves its first disk with the same protocol as `blk`, on a PC's added controller and a q35's own](084-sata-disks.md) | written | `9b47e24` (TheKernel `cb01e7d`) |
-| 085 | [NVMe disks: the kernel hands on any NVMe controller, its BAR cut short of the MSI-X table, and a new `nvme` driver sets up its queues and serves its first namespace with the same protocol as `blk` and `ahci`, on a PC and on a q35 with a 16 KiB transfer limit](085-nvme-disks.md) | written | |
+| 085 | [NVMe disks: the kernel hands on any NVMe controller, its BAR cut short of the MSI-X table, and a new `nvme` driver sets up its queues and serves its first namespace with the same protocol as `blk` and `ahci`, on a PC and on a q35 with a 16 KiB transfer limit](085-nvme-disks.md) | written | `1c9cd98` (TheKernel `17c2015`) |
 
 ## How to run what the entries describe
 
