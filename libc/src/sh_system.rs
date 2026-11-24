@@ -7,11 +7,13 @@
 //!   sh [-ex] -c COMMAND [NAME [ARGUMENT...]]    runs COMMAND; $0 NAME
 //!   sh [-ex] FILE [ARGUMENT...]                 runs the script in FILE
 //!
-//! A builtin in a pipeline, or with redirections (`echo hi > f`), and a
-//! command substitution are run by another copy of this program - the
-//! file it was started from (`__taaj_executable`) - as a Unix shell
-//! forks one: `sh -c '"$@"' sh echo hi`. Its output goes where the
-//! redirections say, with nobody here to copy it.
+//! A builtin or function in a pipeline, or with redirections
+//! (`echo hi > f`), a compound command that is (`for ...; done | wc`),
+//! a subshell and a command substitution are run by another copy of
+//! this program - the file it was started from (`__taaj_executable`) -
+//! as a Unix shell forks one: `sh -c '"$@"' sh echo hi`, the functions
+//! defined first. Its output goes where the redirections say, with
+//! nobody here to copy it.
 
 use crate::sh::{Command, Kind, Redirection, Shell, System};
 use crate::spawn::{close_fd, output_flags, reap, start_jobs, Action, Failed, Job, INPUT_FLAGS};
@@ -61,8 +63,9 @@ impl TheTaaJ {
             })
             .collect();
         let environment = environment_bytes(&command.environment);
-        if command.builtin {
-            let mut words: Vec<String> = ["sh", "-c", "\"$@\"", "sh"].map(String::from).to_vec();
+        if let Some(copy) = &command.shell {
+            let script = format!("{}{}", copy.functions, copy.script);
+            let mut words: Vec<String> = alloc::vec![String::from("sh"), String::from("-c"), script, copy.zero.clone()];
             words.extend(command.words.iter().cloned());
             Job { path: self.myself.clone(), words, actions, environment }
         } else {
@@ -84,15 +87,14 @@ impl System for TheTaaJ {
         }
     }
 
-    fn capture(&mut self, script: &str, environment: &[String]) -> (String, i32) {
+    fn capture(&mut self, command: &Command) -> (String, i32) {
         let mut ends = [0; 2];
         // SAFETY: room for two.
         if unsafe { crate::pipes::pipe(ends.as_mut_ptr()) } != 0 {
             self.write(2, "sh: no descriptor for a command substitution's pipe\n");
             return (String::new(), 126);
         }
-        let words = ["sh", "-c", script].map(String::from).to_vec();
-        let job = Job { path: self.myself.clone(), words, actions: Vec::new(), environment: environment_bytes(environment) };
+        let job = self.job(command);
         let started = start_jobs(core::slice::from_ref(&job), None, Some(ends[1]), "sh");
         let mut output = Vec::new();
         if started.is_ok() {
@@ -179,6 +181,23 @@ impl System for TheTaaJ {
                 return;
             }
             rest = &rest[wrote as usize..];
+        }
+    }
+
+    fn read_line(&mut self) -> Option<String> {
+        // A byte at a time: what follows the line is the next command's.
+        let mut line = Vec::new();
+        loop {
+            let mut byte = 0u8;
+            // SAFETY: one byte of our own.
+            let got = unsafe { crate::descriptors::read(0, (&mut byte as *mut u8).cast(), 1) };
+            if got <= 0 {
+                return (!line.is_empty()).then(|| String::from_utf8_lossy(&line).into_owned());
+            }
+            if byte == b'\n' {
+                return Some(String::from_utf8_lossy(&line).into_owned());
+            }
+            line.push(byte);
         }
     }
 
