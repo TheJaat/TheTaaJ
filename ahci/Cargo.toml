@@ -1,0 +1,8 @@
+[package]
+name = "ahci"
+version = "0.1.0"
+edition = "2021"
+description = "AHCI: the standard SATA controller - its registers, commands, and driving one disk on it"
+publish = false
+
+[dependencies]

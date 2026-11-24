@@ -22,8 +22,8 @@
 //!   5  the system handle
 //!
 //! The services: registry (where the others are found), display (the
-//! window server), fs (files - on the disk, if there is one), blk (the
-//! disk driver), nic (the network card's driver) and net (the network,
+//! window server), fs (files - on the disk, if there is one), blk or
+//! ahci (the disk driver: for a virtio disk, or a SATA one), nic (the network card's driver) and net (the network,
 //! for programs - both only if there is a card), shell, kbd (the PC's
 //! PS/2 keyboard and mouse) and hid (virtio keyboards, mice and
 //! tablets, if there are any).
@@ -313,10 +313,17 @@ fn main() -> i64 {
             fb_memory = handles[0];
             used = true;
         } else if let Some(info) = message.strip_prefix(b"pci").and_then(PciDeviceInfo::from_bytes) {
-            if info.device_id == virtio::PCI_DEVICE_BLOCK && disk.is_none() && (2..=3).contains(&count) {
+            let is_ahci = (info.class, info.subclass, info.interface) == (ahci::CLASS, ahci::SUBCLASS, ahci::INTERFACE);
+            let is_virtio = info.vendor_id == virtio::PCI_VENDOR && !info.registers_in_memory();
+            if is_virtio && info.device_id == virtio::PCI_DEVICE_BLOCK && disk.is_none() && (2..=3).contains(&count) {
                 disk = Some((Device::Pci(info), [handles[0], handles[1], handles[2]], count));
                 used = true;
-            } else if info.device_id == virtio::PCI_DEVICE_NETWORK && card.is_none() && (2..=3).contains(&count) {
+            } else if is_ahci && info.registers_in_memory() && disk.is_none() && (2..=3).contains(&count) {
+                // The first disk wins: a virtio one or a SATA
+                // controller, whichever the bus has first.
+                disk = Some((Device::Pci(info), [handles[0], handles[1], handles[2]], count));
+                used = true;
+            } else if is_virtio && info.device_id == virtio::PCI_DEVICE_NETWORK && card.is_none() && (2..=3).contains(&count) {
                 card = Some((Device::Pci(info), [handles[0], handles[1], handles[2]], count));
                 used = true;
             } else {
@@ -421,6 +428,11 @@ fn main() -> i64 {
     let Ok((shell_names_tx, shell_names_rx)) = taaj::channel_create() else { return 2 };
     let Ok((fs_names_tx, fs_names_rx)) = taaj::channel_create() else { return 2 };
 
+    let disk_registers_in_memory = match disk {
+        Some((Device::Mmio(_), ..)) => true,
+        Some((Device::Pci(info), ..)) => info.registers_in_memory(),
+        None => false,
+    };
     // Everything a service may be given, and the rights it gets.
     let grants = [
         Grant { handle: interrupt, rights: RECEIVE },    // 0
@@ -435,8 +447,9 @@ fn main() -> i64 {
         Grant { handle: system, rights: 0 },             // 9: looking, not touching
         Grant { handle: files_in, rights: RECEIVE },     // 10: requests, for fs
         Grant { handle: files_out, rights: SEND | DELEGABLE }, // 11: requests, to fs
-        // 12: the disk's registers - ports, or memory to be mapped
-        Grant { handle: disk_ports, rights: if matches!(disk, Some((Device::Mmio(_), ..))) { READ | WRITE } else { 0 } },
+        // 12: the disk's registers - ports, or memory to be mapped (a
+        // virtio-mmio disk's, or an AHCI controller's)
+        Grant { handle: disk_ports, rights: if disk_registers_in_memory { READ | WRITE } else { 0 } },
         Grant { handle: disk_dma, rights: READ | WRITE }, // 13: its DMA memory
         Grant { handle: disk_info_rx, rights: RECEIVE },  // 14: its description
         Grant { handle: disk_in, rights: RECEIVE },       // 15: requests, for blk
@@ -480,6 +493,12 @@ fn main() -> i64 {
     let fs_ping = [fileserver::protocol::ACCESS, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let fs_watch = Watch::new(files_look_out, &fs_ping, 400);
     let blk_watch = disk.and_then(|_| Watch::new(disk_look_out, &[abi::block::INFO], 200));
+    // Which program drives the disk: the virtio one, or the SATA one.
+    // Both speak abi::block, on the same channels; nobody else knows.
+    let disk_driver = match disk {
+        Some((Device::Pci(info), _, _)) if info.registers_in_memory() => "ahci",
+        _ => "blk",
+    };
     // The network card's driver: "what card is this?".
     let nic_watch = card.and_then(|_| Watch::new(card_out, &[abi::nic::INFO], 200));
     // The network service: "who is this machine?". The longer patience,
@@ -560,7 +579,7 @@ fn main() -> i64 {
         },
         Service { name: "fs", grants: &[10, 20, 27], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: fs_watch },
         Service {
-            name: "blk",
+            name: disk_driver,
             grants: match disk {
                 Some((_, _, 3)) => &[12, 13, 14, 15, 18, 17],
                 _ => &[12, 13, 14, 15, 18], // no MSI-X: the driver polls
@@ -692,7 +711,7 @@ fn main() -> i64 {
             }
         }
         // And each new disk driver, what its device is.
-        if let (Some((info, _, _)), "blk") = (disk, service.name) {
+        if let (Some((info, _, _)), true) = (disk, service.name == disk_driver) {
             match info {
                 Device::Pci(info) => taaj::send(disk_info_tx, &info.to_bytes(), &[])?,
                 Device::Mmio(info) => taaj::send(disk_info_tx, &info.to_bytes(), &[])?,

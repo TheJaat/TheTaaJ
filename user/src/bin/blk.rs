@@ -37,18 +37,9 @@
 //! interrupt, take them back. Many requests in flight at once is how a
 //! disk gets faster still, later.
 //!
-//! A request for one sector carries its data in the messages. A request
-//! for many (READ_MANY, WRITE_MANY) comes with a memory object: the
-//! driver maps it, copies between it and the DMA buffer, and unmaps it
-//! again before replying. One device request and one copy for 128 KiB,
-//! where sector-sized messages would take 256 of each. The driver cannot
-//! let the device use the client's memory directly: the device needs
-//! physical addresses, and only DMA memory comes with those.
-//!
-//! A client's memory object is the client's: it may be smaller than the
-//! request claims, or not a memory object at all. Its size is asked of
-//! the kernel before anything is mapped or touched, so a wrong one
-//! costs the client its request and the driver nothing.
+//! The requests themselves - checking them, the clients' memory, the
+//! two channels - are `taaj::block_service`'s, shared with the AHCI
+//! driver: this program is only the virtio half.
 //!
 //! On a restart init gives the new driver the same memory and ports; it
 //! resets the device, which forgets the old queue, and starts over.
@@ -57,9 +48,10 @@
 #![no_main]
 
 use abi::{block, MmioDeviceInfo, PciDeviceInfo};
+use taaj::block_service::{self, Device};
 #[cfg(target_arch = "x86_64")]
 use taaj::port::{in16, in32, out16, out32, out8};
-use taaj::{println, Error, Handle};
+use taaj::{println, Handle};
 use virtio::{legacy, mmio, Buffer, Layout, Queue};
 
 taaj::program!(main);
@@ -270,18 +262,20 @@ impl Disk {
         }
     }
 
-    /// `count` sectors (1 to SECTORS_MAX), in or out of the DATA
-    /// buffer, as one request to the device. Returns a block status.
+}
+
+impl Device for Disk {
+    fn sectors(&self) -> u64 {
+        self.sectors
+    }
+
+    fn read_only(&self) -> bool {
+        self.read_only
+    }
+
+    /// `count` sectors (1 to SECTORS_MAX, checked by the service), in or
+    /// out of the DATA buffer, as one request to the device.
     fn transfer(&mut self, write: bool, sector: u64, count: u32) -> u8 {
-        if count == 0 || count > block::SECTORS_MAX {
-            return block::BAD_REQUEST;
-        }
-        if !sector.checked_add(u64::from(count)).is_some_and(|end| end <= self.sectors) {
-            return block::OUT_OF_RANGE;
-        }
-        if write && self.read_only {
-            return block::READ_ONLY;
-        }
         let kind = if write { virtio::block::WRITE } else { virtio::block::READ };
         let header = virtio::block::header(kind, sector);
         // SAFETY: inside the DMA memory, which this process mapped; the
@@ -331,92 +325,14 @@ impl Disk {
         // not in the device's hands between requests.
         unsafe { core::slice::from_raw_parts_mut(self.memory.add(DATA), length.min(DATA_MAX)) }
     }
-
-    /// READ_MANY or WRITE_MANY: `count` sectors between the disk and
-    /// the client's memory object `lent`. Returns a block status.
-    fn transfer_many(&mut self, write: bool, sector: u64, count: u32, lent: Handle) -> u8 {
-        if count == 0 || count > block::SECTORS_MAX {
-            return block::BAD_REQUEST;
-        }
-        let length = count as usize * block::SECTOR;
-        // Is it a memory object, and big enough? Asked before mapping:
-        // copying past the end of a smaller one would be a fault - in
-        // this process, the driver.
-        if !taaj::memory_size(lent).is_ok_and(|size| size >= length as u64) {
-            return block::BAD_REQUEST;
-        }
-        // Writable only to fill it; refused if the handle lacks the right.
-        let Ok(theirs) = taaj::memory_map(lent, !write) else {
-            return block::BAD_REQUEST;
-        };
-        // SAFETY (both copies): `theirs` is a mapping of at least
-        // `length` bytes, checked above, and stays mapped until the
-        // unmap below. The client may change the bytes meanwhile; then
-        // it reads or writes its own garbage, and nothing else.
-        let status = if write {
-            unsafe { theirs.copy_to_nonoverlapping(self.data(length).as_mut_ptr(), length) };
-            self.transfer(true, sector, count)
-        } else {
-            let status = self.transfer(false, sector, count);
-            if status == block::OK {
-                unsafe { theirs.copy_from_nonoverlapping(self.data(length).as_ptr(), length) };
-            }
-            status
-        };
-        let _ = taaj::memory_unmap(theirs);
-        status
-    }
-
-    /// Answers one request; returns the reply's length in `reply`.
-    /// `lent` is the memory object that came with it, if one did.
-    fn serve(&mut self, request: &[u8], reply: &mut [u8], may_write: bool, lent: Option<Handle>) -> usize {
-        let op = request.first().copied();
-        if matches!(op, Some(block::WRITE | block::WRITE_MANY)) && !may_write {
-            reply[0] = block::READ_ONLY;
-            return 1;
-        }
-        if let (Some(op @ (block::READ_MANY | block::WRITE_MANY)), Some(lent)) = (op, lent) {
-            let count = request.get(9..13).and_then(|b| b.try_into().ok()).map(u32::from_le_bytes);
-            let sector = request.get(1..9).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes);
-            reply[0] = match (sector, count) {
-                (Some(sector), Some(count)) if request.len() == block::MANY_REQUEST_SIZE => {
-                    self.transfer_many(op == block::WRITE_MANY, sector, count, lent)
-                }
-                _ => block::BAD_REQUEST,
-            };
-            return 1;
-        }
-        let sector = request.get(1..9).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes);
-        let (status, length) = match (request.first().copied(), sector) {
-            (Some(block::INFO), _) => {
-                reply[1..9].copy_from_slice(&self.sectors.to_le_bytes());
-                reply[9] = u8::from(self.read_only);
-                (block::OK, 9)
-            }
-            (Some(block::READ), Some(sector)) if request.len() == block::REQUEST_SIZE => {
-                match self.transfer(false, sector, 1) {
-                    block::OK => {
-                        reply[1..=block::SECTOR].copy_from_slice(self.data(block::SECTOR));
-                        (block::OK, block::SECTOR)
-                    }
-                    status => (status, 0),
-                }
-            }
-            (Some(block::WRITE), Some(sector)) if request.len() == block::REQUEST_SIZE + block::SECTOR => {
-                self.data(block::SECTOR).copy_from_slice(&request[block::REQUEST_SIZE..]);
-                (self.transfer(true, sector, 1), 0)
-            }
-            _ => (block::BAD_REQUEST, 0),
-        };
-        reply[0] = status;
-        1 + length
-    }
 }
 
 /// The description is a PCI device's: its registers are I/O ports.
 #[cfg(target_arch = "x86_64")]
 fn start_on_pci(info: &PciDeviceInfo, ports: Handle, dma: Handle, interrupt: Option<Handle>) -> Result<Disk, i64> {
-    if info.dma_size < DMA_NEEDED {
+    // A PCI disk whose registers are in memory is some other kind (an
+    // AHCI controller's): not this driver's.
+    if info.dma_size < DMA_NEEDED || info.registers_in_memory() {
         println!("[blk] no usable device description");
         return Err(2);
     }
@@ -527,67 +443,5 @@ fn main() -> i64 {
         Err(code) => return code,
     };
 
-    let mut reply = [0u8; abi::MESSAGE_MAX as usize];
-    let channels = [writers, readers];
-    let mut open = [true, true];
-    loop {
-        // Whichever channel has a request - both, in turn, if both do.
-        let live: [Handle; 2] = match open {
-            [true, true] => channels,
-            [true, false] => [writers; 2],
-            [false, true] => [readers; 2],
-            [false, false] => return 0,
-        };
-        let which = match taaj::object_wait(&live) {
-            Ok(n) => n,
-            Err(_) => return 6,
-        };
-        let requests = live[which];
-        let may_write = requests == writers;
-        // As in fs: room for any message, so none can get stuck.
-        let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
-        let (n, count) = match taaj::receive(requests, &mut message, &mut handles) {
-            Ok(received) => received,
-            Err(Error::PeerClosed) => {
-                open[usize::from(!may_write)] = false; // no clients left on it
-                continue;
-            }
-            Err(error) => {
-                println!("[blk] cannot receive: {error:?}");
-                return 6;
-            }
-        };
-        // The reply channel, and for the "many" requests the client's
-        // memory. Anything else: not a request.
-        if !(1..=2).contains(&count) {
-            for &handle in &handles[..count] {
-                let _ = taaj::close(handle);
-            }
-            continue;
-        }
-        let lent = (count == 2).then_some(handles[1]);
-        // The test of a driver that has stopped: answered first.
-        let mut stall = 0;
-        if n == block::REQUEST_SIZE && message[0] == block::STALL {
-            let mut ticks = [0u8; 8];
-            ticks.copy_from_slice(&message[1..9]);
-            stall = u64::from_le_bytes(ticks);
-        }
-        let length = if (1..=abi::STALL_MAX).contains(&stall) {
-            reply[0] = block::OK;
-            1
-        } else {
-            stall = 0;
-            disk.serve(&message[..n], &mut reply, may_write, lent)
-        };
-        let _ = taaj::send(handles[0], &reply[..length], &[]);
-        for &handle in &handles[..count] {
-            let _ = taaj::close(handle);
-        }
-        if stall > 0 {
-            println!("[blk] asked to stall: answering nothing for {stall} ticks");
-            taaj::sleep(stall);
-            println!("[blk] answering again");
-        }
-    }
+    block_service::serve(&mut disk, "blk", writers, readers)
 }

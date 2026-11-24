@@ -2756,3 +2756,77 @@ make test64
 | `test64: all passed` | every part |
 
 Automated: make libmake64-test aarch64-libmake-test
+
+---
+
+## 084 · SATA disks: an AHCI driver, so TheTaaJ's disk can be the kind every PC has
+
+[The entry](journal/084-sata-disks.md)
+
+**1. The PC, with the disk on SATA**
+
+```
+make run64 RUN_DISK_BUS=sata RUN_DISK=build/sata-disk.img
+```
+
+A new 16 MiB disk is made the first time (your `build/taaj-disk.img` is not touched). In the terminal's log:
+
+| Look for | Meaning |
+|---|---|
+| `[pci] 00:03.0 AHCI controller: registers 0x...+0x1000, 132 KiB DMA at 0x..., MSI - handed to init` | the kernel found the controller and set up its MSI |
+| `[init] started: registry display fs ahci nic net shell kbd; supervising` | init started `ahci`, not `blk` |
+| `[ahci] AHCI 1.0 controller at 00:03.0, 6 ports; disk on port 0: QEMU HARDDISK, 32768 sectors (16 MiB), MSI interrupts` | the disk's IDENTIFY answer |
+
+In the QEMU window:
+
+| Type | You should see |
+|---|---|
+| `disk` | `disk: 32768 sectors of 512 bytes (16384 KiB)` |
+| `disk check` | `disk check: all 9 checks passed` |
+| `write sata hello` | `sata: 6 bytes` |
+| `cat sata` | `hello` |
+| `wc sata` | `sata: 1 line, 1 word, 6 bytes` |
+| `disk stall 3` | `disk: the driver will answer nothing for 3 s`; in the log, `[init] ahci has not answered for 2 s - stopping it`, `[init] ahci ended with code -1001 - restarting it`, and the `[ahci] AHCI 1.0 controller ...` line again |
+| `disk read 0` | `0000  4a 41 46 53 04 00 00 00 ...  JAFS............` |
+| `cat sata` | `hello` |
+
+Close QEMU, then on the host:
+
+| Type | You should see |
+|---|---|
+| `tools/tfstool-rs/target/release/tfstool get build/sata-disk.img sata` | `hello` |
+
+**2. A q35: the chipset's own AHCI controller, under UEFI**
+
+```
+qemu-system-x86_64 -machine q35 -m 512M -bios /usr/share/ovmf/OVMF.fd -cdrom build/image64.iso -serial stdio \
+    -drive file=build/sata-disk.img,format=raw,if=none,id=d0 -device ide-hd,drive=d0,bus=ide.3
+```
+
+| Look for / Type | You should see |
+|---|---|
+| (the log) | `[pci] 00:1f.2 AHCI controller: ...` and `[ahci] AHCI 1.0 controller at 00:1f.2, 6 ports; disk on port 3: QEMU HARDDISK, 32768 sectors (16 MiB), MSI interrupts` (the boot CD is on port 2) |
+| `cat sata` | `hello`, written in part 1 |
+| `disk` | `disk: 32768 sectors of 512 bytes (16384 KiB)` |
+
+**3. VMware (not tested by me)**
+
+```
+qemu-img convert -O vmdk build/sata-disk.img build/sata-disk.vmdk
+```
+
+A new VMware VM: firmware **UEFI** (the BIOS loader cannot read a SATA CD, see "What is still missing"), `build/image64.iso` as its CD, and `sata-disk.vmdk` as an existing disk on its **SATA** controller. Then the same steps as part 1. Its log goes to the VM's serial port, if one is added and sent to a file.
+
+**4. The tests by themselves**
+
+```
+make ahci64-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `ahci drove the disk on a PC's added AHCI controller (port 2, past a CD drive) and on a q35's own (port 3, past the boot CD): ...` | both machines |
+| `test64: all passed` | every part |
+
+Automated: make ahci64-test

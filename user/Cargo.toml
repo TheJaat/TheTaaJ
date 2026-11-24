@@ -21,6 +21,7 @@ fileserver = { path = "../fileserver" }
 registry = { path = "../registry" }
 taajfs = { path = "../taajfs" }
 virtio = { path = "../virtio" }
+ahci = { path = "../ahci" }
 net = { path = "../net" }
 
 [profile.dev]
