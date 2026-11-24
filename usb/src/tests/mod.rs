@@ -1,6 +1,7 @@
 //! The xHCI driver and enumeration, against `sim`.
 
 mod sim;
+mod storage;
 
 use crate::descriptor;
 use crate::device::{self, Kind};
@@ -89,7 +90,7 @@ fn a_keyboard_on_a_usb2_port_is_enumerated_and_reports() {
     let kbd = sim.plug(1, make::keyboard(1));
     let mut controller = start(&sim).unwrap();
     assert_eq!(events(&mut controller), [Event::Port { port: 1 }]);
-    let attached = device::attach(&mut controller, 1).expect("the keyboard attaches");
+    let attached = device::attach(&mut controller, 1, true).expect("the keyboard attaches");
     assert_eq!((attached.slot, attached.port, attached.speed), (1, 1, Speed::Full));
     assert_eq!((attached.vendor, attached.product), (0x0627, 0x0001));
     let f = attached.functions[0].expect("a keyboard");
@@ -120,7 +121,7 @@ fn hundreds_of_reports_go_round_every_ring() {
     let kbd = sim.plug(2, make::keyboard(1));
     let mut controller = start(&sim).unwrap();
     events(&mut controller);
-    let attached = device::attach(&mut controller, 2).unwrap();
+    let attached = device::attach(&mut controller, 2, true).unwrap();
     // 300: the endpoint's 32-TRB ring nine times, the event ring once.
     let mut got = Vec::new();
     for n in 0..300u32 {
@@ -138,7 +139,7 @@ fn a_device_with_bigger_packets_gets_endpoint_0_resized() {
     let sim = Sim::new(2, 2);
     let mouse = sim.plug(1, make::mouse(1, 64));
     let mut controller = start(&sim).unwrap();
-    let attached = device::attach(&mut controller, 1).expect("the mouse attaches");
+    let attached = device::attach(&mut controller, 1, true).expect("the mouse attaches");
     assert_eq!(attached.functions[0].map(|f| (f.kind, f.packet)), Some((Kind::Mouse, 4)));
     assert!(sim.0.borrow().commands.iter().any(|&(kind, _)| kind == trb::EVALUATE_CONTEXT));
     // A three-byte report into a four-byte request: a short packet.
@@ -152,7 +153,7 @@ fn usb3_ports_and_64_byte_contexts() {
     sim.0.borrow_mut().context_size = 64;
     let kbd = sim.plug(3, make::keyboard(4));
     let mut controller = start(&sim).unwrap();
-    let attached = device::attach(&mut controller, 3).unwrap();
+    let attached = device::attach(&mut controller, 3, true).unwrap();
     assert_eq!(attached.speed, Speed::Super);
     assert_eq!(sim.0.borrow().ports[2].resets, 0, "a USB 3 port is not reset");
     sim.report(kbd, 0x81, &[0, 0, 0x05, 0, 0, 0, 0, 0]);
@@ -171,7 +172,7 @@ fn a_keyboard_and_mouse_in_one_device_are_both_used() {
     };
     let d = sim.plug(1, combo);
     let mut controller = start(&sim).unwrap();
-    let attached = device::attach(&mut controller, 1).unwrap();
+    let attached = device::attach(&mut controller, 1, true).unwrap();
     let kinds: Vec<(Kind, u8)> = attached.functions.iter().flatten().map(|f| (f.kind, f.dci)).collect();
     assert_eq!(kinds, [(Kind::Keyboard, 3), (Kind::Mouse, 5)]);
     let configures = sim.0.borrow().commands.iter().filter(|&&(kind, _)| kind == trb::CONFIGURE_ENDPOINT).count();
@@ -194,7 +195,7 @@ fn a_device_that_is_not_a_keyboard_or_mouse_is_left_alone() {
     };
     let d = sim.plug(1, disk);
     let mut controller = start(&sim).unwrap();
-    let attached = device::attach(&mut controller, 1).unwrap();
+    let attached = device::attach(&mut controller, 1, true).unwrap();
     assert_eq!(attached.class, descriptor::CLASS_STORAGE);
     assert!(attached.functions.iter().all(Option::is_none));
     assert_eq!(sim.0.borrow().devices[d].configured, None, "not configured");
@@ -209,7 +210,7 @@ fn a_refused_request_halts_endpoint_0_and_it_is_recovered() {
     kbd.idle_stall = true;
     let d = sim.plug(1, kbd);
     let mut controller = start(&sim).unwrap();
-    let attached = device::attach(&mut controller, 1).expect("SET_IDLE refused is not fatal");
+    let attached = device::attach(&mut controller, 1, true).expect("SET_IDLE refused is not fatal");
     let commands = sim.0.borrow().commands.clone();
     assert!(commands.contains(&(trb::RESET_ENDPOINT, attached.slot)) && commands.contains(&(trb::SET_DEQUEUE, attached.slot)));
     // Endpoint 0 works again.
@@ -226,7 +227,7 @@ fn devices_come_and_go() {
     assert!(events(&mut controller).is_empty());
     let kbd = sim.plug(2, make::keyboard(2)); // low speed
     assert_eq!(events(&mut controller), [Event::Port { port: 2 }]);
-    let attached = device::attach(&mut controller, 2).unwrap();
+    let attached = device::attach(&mut controller, 2, true).unwrap();
     assert_eq!(attached.speed, Speed::Low);
     sim.report(kbd, 0x81, &[0, 0, 0x08, 0, 0, 0, 0, 0]);
     assert_eq!(reports(&mut controller, &attached).len(), 1);
@@ -238,7 +239,7 @@ fn devices_come_and_go() {
     // Plugged in again: a slot again (the same number, free once more).
     sim.plug(2, make::keyboard(1));
     events(&mut controller);
-    let again = device::attach(&mut controller, 2).unwrap();
+    let again = device::attach(&mut controller, 2, true).unwrap();
     assert_eq!(again.slot, attached.slot);
 }
 
@@ -247,12 +248,12 @@ fn events_that_come_while_waiting_are_kept() {
     let sim = Sim::new(2, 2);
     let kbd = sim.plug(1, make::keyboard(1));
     let mut controller = start(&sim).unwrap();
-    let attached = device::attach(&mut controller, 1).unwrap();
+    let attached = device::attach(&mut controller, 1, true).unwrap();
     // A report arrives, then a second device is plugged in: its
     // enumeration's commands wait past the report's event.
     sim.report(kbd, 0x81, &[0, 0, 0x09, 0, 0, 0, 0, 0]);
     sim.plug(2, make::mouse(1, 8));
-    let second = device::attach(&mut controller, 2).unwrap();
+    let second = device::attach(&mut controller, 2, true).unwrap();
     assert_eq!(second.slot, 2);
     let kept: Vec<Event> = events(&mut controller);
     assert!(kept.iter().any(|e| matches!(e, Event::Transfer { slot: 1, endpoint: 3, .. })), "the report's event was kept: {kept:?}");

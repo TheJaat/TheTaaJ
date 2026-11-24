@@ -136,6 +136,7 @@ pub mod trb {
     pub const CONFIGURE_ENDPOINT: u32 = 12;
     pub const EVALUATE_CONTEXT: u32 = 13;
     pub const RESET_ENDPOINT: u32 = 14;
+    pub const STOP_ENDPOINT: u32 = 15;
     pub const SET_DEQUEUE: u32 = 16;
     pub const NOOP_COMMAND: u32 = 23;
     pub const TRANSFER_EVENT: u32 = 32;
@@ -211,6 +212,15 @@ pub mod layout {
     pub const fn needed(slots: u8, pages: usize) -> usize {
         scratchpads(slots) + pages * PAGE
     }
+    /// Mass storage, after the most scratchpad pages there can be: a page
+    /// for the command (CBW) and the status (CSW), then the data - 128
+    /// KiB, abi::block::SECTORS_MAX sectors. Without this much DMA memory
+    /// a stick is named, not driven.
+    pub const STORAGE_CBW: usize = needed(super::SLOTS, super::SCRATCHPADS_MAX);
+    pub const STORAGE_CSW: usize = STORAGE_CBW + 0x100;
+    pub const STORAGE_DATA: usize = STORAGE_CBW + PAGE;
+    pub const STORAGE_DATA_SIZE: usize = 128 * 1024;
+    pub const STORAGE_END: usize = STORAGE_DATA + STORAGE_DATA_SIZE;
 }
 
 /// The most devices driven at once: slots 1 to SLOTS.
@@ -223,6 +233,11 @@ const RING_PAGE: usize = 256;
 const ENDPOINT_RING_TRBS: usize = 32;
 /// How long a command or a transfer may take: 1 s. A reset, 1 s too.
 pub const WAIT: u64 = 100;
+/// How long a bulk transfer may take: 10 s. A stick may stop to tidy
+/// its flash in the middle of a write.
+pub const BULK_WAIT: u64 = 1000;
+/// The most one TRB moves, and the boundary none may cross: 64 KiB.
+const TRB_MAX: usize = 0x10000;
 
 /// The controller as the driver reaches it: its registers (offsets from
 /// BAR 0), and a way to wait.
@@ -300,6 +315,13 @@ impl Dma {
         // done with these bytes until the driver hands them over again,
         // which needs `&mut self`.
         unsafe { core::slice::from_raw_parts(self.base.add(offset), length) }
+    }
+
+    pub fn bytes_mut(&mut self, offset: usize, length: usize) -> &mut [u8] {
+        assert!(offset + length <= self.size, "DMA bytes {offset:#x}+{length:#x} past the memory");
+        // SAFETY: inside the memory (checked above), which this owns;
+        // the &mut self borrow keeps any other view away while it lives.
+        unsafe { core::slice::from_raw_parts_mut(self.base.add(offset), length) }
     }
 
     pub fn write_bytes(&mut self, offset: usize, bytes: &[u8]) {
@@ -500,6 +522,9 @@ struct Slot {
     endpoints: [Option<(u8, Ring)>; 2],
     /// The highest DCI configured.
     last_dci: u8,
+    /// Endpoints the controller has halted after an error (bit n: DCI
+    /// n), until Reset Endpoint.
+    halted: u32,
 }
 
 /// Events taken while waiting for another, kept for later.
@@ -750,7 +775,11 @@ impl<B: Bus> Controller<B> {
 
     /// Waits for the event `wanted` picks; keeps the others for later.
     fn wait_for(&mut self, wanted: impl Fn(&Event) -> bool) -> Result<Event, Failure> {
-        let deadline = self.bus.ticks() + WAIT;
+        self.wait_for_within(WAIT, wanted)
+    }
+
+    fn wait_for_within(&mut self, ticks: u64, wanted: impl Fn(&Event) -> bool) -> Result<Event, Failure> {
+        let deadline = self.bus.ticks() + ticks;
         loop {
             // Said seen before looking: an event that comes after the
             // look interrupts again, instead of waiting unseen.
@@ -848,7 +877,7 @@ impl<B: Bus> Controller<B> {
         let index = usize::from(slot) - 1;
         let control = Ring::new(layout::device(slot) + 2 * layout::PAGE, RING_PAGE);
         self.slots[index] =
-            Some(Slot { port, speed, ep0_packet: speed.default_packet(), control, endpoints: [None; 2], last_dci: 1 });
+            Some(Slot { port, speed, ep0_packet: speed.default_packet(), control, endpoints: [None; 2], last_dci: 1, halted: 0 });
         self.dma.zero(layout::device(slot), layout::DEVICE_PAGES * layout::PAGE);
         let output = self.dma.physical(layout::device(slot));
         self.dma.write64(layout::DCBAA + 8 * usize::from(slot), output);
@@ -927,7 +956,18 @@ impl<B: Bus> Controller<B> {
     /// After an error (a stall, say) an endpoint is halted: reset it,
     /// and point it past what it did not do.
     fn recover(&mut self, slot: u8, dci: u8) {
-        let _ = self.command(0, trb::RESET_ENDPOINT << 10 | u32::from(dci) << 16 | u32::from(slot) << 24);
+        self.recover_as(slot, dci, true);
+    }
+
+    /// As `recover`; `halted` false for an endpoint that is running (a
+    /// transfer timed out): it is stopped instead of reset, and then
+    /// pointed past what it did not do.
+    fn recover_as(&mut self, slot: u8, dci: u8, halted: bool) {
+        let kind = if halted { trb::RESET_ENDPOINT } else { trb::STOP_ENDPOINT };
+        let _ = self.command(0, kind << 10 | u32::from(dci) << 16 | u32::from(slot) << 24);
+        if let Some(s) = self.slots.get_mut(usize::from(slot).wrapping_sub(1)).and_then(Option::as_mut) {
+            s.halted &= !(1 << dci);
+        }
         let ring = match self.slot(slot) {
             Some(s) if dci == 1 => s.control,
             Some(s) => match s.endpoints.iter().flatten().find(|(n, _)| *n == dci) {
@@ -1005,6 +1045,117 @@ impl<B: Bus> Controller<B> {
     /// After a failed transfer on an endpoint: make it usable again.
     pub fn recover_endpoint(&mut self, slot: u8, dci: u8) {
         self.recover(slot, dci);
+    }
+
+    /// Whether the controller halted endpoint `dci` after a failed bulk
+    /// transfer (and it has not been recovered since).
+    pub fn endpoint_halted(&self, slot: u8, dci: u8) -> bool {
+        self.slot(slot).is_some_and(|s| s.halted & (1 << dci) != 0)
+    }
+
+    /// Whether there is DMA memory for a mass storage device's buffers.
+    pub fn has_storage_memory(&self) -> bool {
+        self.dma.size >= layout::STORAGE_END
+    }
+
+    /// The storage data buffer's first `length` bytes.
+    pub fn storage_data(&self, length: usize) -> &[u8] {
+        self.dma.bytes(layout::STORAGE_DATA, length.min(layout::STORAGE_DATA_SIZE))
+    }
+
+    pub fn storage_data_mut(&mut self, length: usize) -> &mut [u8] {
+        self.dma.bytes_mut(layout::STORAGE_DATA, length.min(layout::STORAGE_DATA_SIZE))
+    }
+
+    pub(crate) fn dma_write(&mut self, offset: usize, bytes: &[u8]) {
+        self.dma.write_bytes(offset, bytes);
+    }
+
+    pub(crate) fn dma_read(&self, offset: usize, length: usize) -> &[u8] {
+        self.dma.bytes(offset, length)
+    }
+
+    /// Sets up a bulk OUT and a bulk IN endpoint (address and packet
+    /// size each), with one Configure Endpoint command. Returns their
+    /// DCIs, OUT first.
+    pub fn configure_bulk(&mut self, slot: u8, out: (u8, u16), inward: (u8, u16)) -> Result<(u8, u8), &'static str> {
+        let Some(mut s) = self.slot(slot).copied() else { return Err("no such slot") };
+        let out_dci = 2 * (out.0 & 0x0F);
+        let in_dci = 2 * (inward.0 & 0x0F) + 1;
+        if out_dci == 0 || in_dci == 1 {
+            return Err("a bulk endpoint numbered 0");
+        }
+        let page = layout::device(slot) + 3 * layout::PAGE;
+        let rings = [
+            (out_dci, Ring::new(page + layout::ENDPOINT_RING, ENDPOINT_RING_TRBS), ep::BULK_OUT, out.1),
+            (in_dci, Ring::new(page + layout::ENDPOINT_RING + layout::ENDPOINT_SPAN, ENDPOINT_RING_TRBS), ep::BULK_IN, inward.1),
+        ];
+        let mut add = 0b1;
+        for (n, &(dci, ring, _, _)) in rings.iter().enumerate() {
+            s.endpoints[n] = Some((dci, ring));
+            s.last_dci = s.last_dci.max(dci);
+            add |= 1 << dci;
+        }
+        self.slots[usize::from(slot) - 1] = Some(s);
+        self.input_slot_and_ep0(slot, add);
+        for &(dci, ring, kind, packet) in &rings {
+            let ctx = self.input(slot, 1 + usize::from(dci));
+            // Three retries on error; the type; no bursts; the packet size.
+            self.dma.write32(ctx + 4, 3 << 1 | kind << 3 | u32::from(packet & 0x7FF) << 16);
+            let dequeue = ring.dequeue_for_controller(&self.dma);
+            self.dma.write64(ctx + 8, dequeue);
+            // The average TRB length the spec suggests for bulk.
+            self.dma.write32(ctx + 16, 3072);
+        }
+        let input = self.dma.physical(self.input(slot, 0));
+        self.command(input, trb::CONFIGURE_ENDPOINT << 10 | u32::from(slot) << 24)
+            .map_err(|_| "the controller would not configure the endpoints")?;
+        Ok((out_dci, in_dci))
+    }
+
+    /// Moves `length` bytes at `offset` in the DMA memory over bulk
+    /// endpoint `dci` (odd: in, even: out), and waits until they have
+    /// moved. Returns how many did: fewer when the device sent a short
+    /// packet, which ends a transfer in.
+    ///
+    /// Each piece is one TRB, at most 64 KiB and not crossing a 64 KiB
+    /// boundary, and waited for before the next is given: after a short
+    /// packet nothing more is given, so the next thing the device sends
+    /// (a status, say) is not taken for data.
+    pub fn bulk(&mut self, slot: u8, dci: u8, offset: usize, length: usize) -> Result<usize, Failure> {
+        let mut moved = 0;
+        while moved < length {
+            let physical = self.dma.physical(offset + moved);
+            let piece = (length - moved).min(TRB_MAX - (physical as usize & (TRB_MAX - 1)));
+            let Some(mut s) = self.slot(slot).copied() else { return Err(Failure::Code(0)) };
+            let Some((_, ring)) = s.endpoints.iter_mut().flatten().find(|(d, _)| *d == dci) else {
+                return Err(Failure::Code(0));
+            };
+            let at = ring.push(&mut self.dma, physical, piece as u32, trb::NORMAL << 10 | trb::SHORT_EVENT | trb::DONE_EVENT);
+            self.slots[usize::from(slot) - 1] = Some(s);
+            self.ring_doorbell(slot, dci);
+            let event = match self.wait_for_within(BULK_WAIT, |e| matches!(e, Event::Transfer { trb, .. } if *trb == at)) {
+                Ok(event) => event,
+                Err(failure) => {
+                    // The TRB is still the controller's: stop the
+                    // endpoint and point it past.
+                    self.recover_as(slot, dci, false);
+                    return Err(failure);
+                }
+            };
+            let Event::Transfer { code, remaining, .. } = event else { return Err(Failure::TimedOut) };
+            match code {
+                code::SUCCESS => moved += piece,
+                code::SHORT_PACKET => return Ok(moved + piece - (remaining as usize).min(piece)),
+                other => {
+                    if let Some(s) = self.slots.get_mut(usize::from(slot) - 1).and_then(Option::as_mut) {
+                        s.halted |= 1 << dci;
+                    }
+                    return Err(Failure::Code(other));
+                }
+            }
+        }
+        Ok(moved)
     }
 }
 

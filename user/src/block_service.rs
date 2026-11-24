@@ -37,6 +37,11 @@ pub trait Device {
     /// The first `length` bytes of the data buffer, which holds at
     /// least block::SECTORS_MAX sectors.
     fn data(&mut self, length: usize) -> &mut [u8];
+    /// Whether there is a disk at all: a driver for removable ones may
+    /// have none. Every request is then answered NO_MEDIUM.
+    fn present(&self) -> bool {
+        true
+    }
 }
 
 /// Checks a transfer against the disk, then does it.
@@ -91,6 +96,10 @@ fn transfer_many(device: &mut impl Device, write: bool, sector: u64, count: u32,
 /// Answers one request; returns the reply's length in `reply`. `lent`
 /// is the memory object that came with it, if one did.
 fn answer(device: &mut impl Device, request: &[u8], reply: &mut [u8], may_write: bool, lent: Option<Handle>) -> usize {
+    if !device.present() {
+        reply[0] = block::NO_MEDIUM;
+        return 1;
+    }
     let op = request.first().copied();
     if matches!(op, Some(block::WRITE | block::WRITE_MANY)) && !may_write {
         reply[0] = block::READ_ONLY;
@@ -133,11 +142,72 @@ fn answer(device: &mut impl Device, request: &[u8], reply: &mut [u8], may_write:
     1 + length
 }
 
+/// What `serve_one` did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Served {
+    /// A request answered (or something that was not one, dropped).
+    Answered,
+    /// The channel has no clients left.
+    Closed,
+    /// The channel failed.
+    Failed,
+}
+
+/// Receives one request from `requests` and answers it. For a driver
+/// with more to do than serve the disk (usb, which also has keyboards):
+/// it waits on the channel with everything else, and calls this when
+/// the channel has something.
+pub fn serve_one(device: &mut impl Device, name: &str, requests: Handle, may_write: bool) -> Served {
+    let mut message = [0u8; abi::MESSAGE_MAX as usize];
+    let mut reply = [0u8; abi::MESSAGE_MAX as usize];
+    // As in fs: room for any message, so none can get stuck.
+    let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
+    let (n, count) = match crate::receive(requests, &mut message, &mut handles) {
+        Ok(received) => received,
+        Err(Error::PeerClosed) => return Served::Closed,
+        Err(error) => {
+            println!("[{name}] cannot receive: {error:?}");
+            return Served::Failed;
+        }
+    };
+    // The reply channel, and for the "many" requests the client's
+    // memory. Anything else: not a request.
+    if !(1..=2).contains(&count) {
+        for &handle in &handles[..count] {
+            let _ = crate::close(handle);
+        }
+        return Served::Answered;
+    }
+    let lent = (count == 2).then_some(handles[1]);
+    // The test of a driver that has stopped: answered first.
+    let mut stall = 0;
+    if n == block::REQUEST_SIZE && message[0] == block::STALL {
+        let mut ticks = [0u8; 8];
+        ticks.copy_from_slice(&message[1..9]);
+        stall = u64::from_le_bytes(ticks);
+    }
+    let length = if (1..=abi::STALL_MAX).contains(&stall) {
+        reply[0] = block::OK;
+        1
+    } else {
+        stall = 0;
+        answer(device, &message[..n], &mut reply, may_write, lent)
+    };
+    let _ = crate::send(handles[0], &reply[..length], &[]);
+    for &handle in &handles[..count] {
+        let _ = crate::close(handle);
+    }
+    if stall > 0 {
+        println!("[{name}] asked to stall: answering nothing for {stall} ticks");
+        crate::sleep(stall);
+        println!("[{name}] answering again");
+    }
+    Served::Answered
+}
+
 /// Serves `device` until both channels have no clients left (0), or a
 /// channel fails (6). `name` is the driver's, for its log lines.
 pub fn serve(device: &mut impl Device, name: &str, writers: Handle, readers: Handle) -> i64 {
-    let mut message = [0u8; abi::MESSAGE_MAX as usize];
-    let mut reply = [0u8; abi::MESSAGE_MAX as usize];
     let channels = [writers, readers];
     let mut open = [true, true];
     loop {
@@ -154,50 +224,10 @@ pub fn serve(device: &mut impl Device, name: &str, writers: Handle, readers: Han
         };
         let requests = live[which];
         let may_write = requests == writers;
-        // As in fs: room for any message, so none can get stuck.
-        let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
-        let (n, count) = match crate::receive(requests, &mut message, &mut handles) {
-            Ok(received) => received,
-            Err(Error::PeerClosed) => {
-                open[usize::from(!may_write)] = false; // no clients left on it
-                continue;
-            }
-            Err(error) => {
-                println!("[{name}] cannot receive: {error:?}");
-                return 6;
-            }
-        };
-        // The reply channel, and for the "many" requests the client's
-        // memory. Anything else: not a request.
-        if !(1..=2).contains(&count) {
-            for &handle in &handles[..count] {
-                let _ = crate::close(handle);
-            }
-            continue;
-        }
-        let lent = (count == 2).then_some(handles[1]);
-        // The test of a driver that has stopped: answered first.
-        let mut stall = 0;
-        if n == block::REQUEST_SIZE && message[0] == block::STALL {
-            let mut ticks = [0u8; 8];
-            ticks.copy_from_slice(&message[1..9]);
-            stall = u64::from_le_bytes(ticks);
-        }
-        let length = if (1..=abi::STALL_MAX).contains(&stall) {
-            reply[0] = block::OK;
-            1
-        } else {
-            stall = 0;
-            answer(device, &message[..n], &mut reply, may_write, lent)
-        };
-        let _ = crate::send(handles[0], &reply[..length], &[]);
-        for &handle in &handles[..count] {
-            let _ = crate::close(handle);
-        }
-        if stall > 0 {
-            println!("[{name}] asked to stall: answering nothing for {stall} ticks");
-            crate::sleep(stall);
-            println!("[{name}] answering again");
+        match serve_one(device, name, requests, may_write) {
+            Served::Answered => {}
+            Served::Closed => open[usize::from(!may_write)] = false, // no clients left on it
+            Served::Failed => return 6,
         }
     }
 }

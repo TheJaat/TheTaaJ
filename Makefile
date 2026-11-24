@@ -474,12 +474,15 @@ RUN_DISK     = $(BUILD_DIR)/taaj-disk.img
 RUN_DISK_BLOCKS = 4096
 # How the disk is attached: a virtio disk (blk drives it), `make run64
 # RUN_DISK_BUS=sata` - a SATA disk on an AHCI controller (ahci drives
-# it) - or RUN_DISK_BUS=nvme, an NVMe one (nvme drives it).
+# it) - RUN_DISK_BUS=nvme, an NVMe one (nvme drives it), or
+# RUN_DISK_BUS=usb, a USB stick on an xHCI controller (usb drives it).
 RUN_DISK_BUS ?= virtio
 ifeq ($(RUN_DISK_BUS),sata)
 RUN_DISK_ARGS = -drive file=$(RUN_DISK),format=raw,if=none,id=disk0 -device ahci,id=sata -device ide-hd,drive=disk0,bus=sata.0
 else ifeq ($(RUN_DISK_BUS),nvme)
 RUN_DISK_ARGS = -drive file=$(RUN_DISK),format=raw,if=none,id=disk0 -device nvme,serial=taaj0001,drive=disk0
+else ifeq ($(RUN_DISK_BUS),usb)
+RUN_DISK_ARGS = -device qemu-xhci,id=xhci -drive file=$(RUN_DISK),format=raw,if=none,id=disk0 -device usb-storage,bus=xhci.0,drive=disk0
 else
 RUN_DISK_ARGS = -drive file=$(RUN_DISK),format=raw,if=none,id=disk0 -device virtio-blk-pci,drive=disk0
 endif
@@ -494,8 +497,9 @@ RUN_NET      = -netdev user,id=n0 -device $(RUN_NIC),netdev=n0
 # and click in it to give it the mouse). Or RUN_USB_ARGS for other
 # devices: `RUN_USB_ARGS="-device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0"`.
 RUN_USB      ?= no
+# (With RUN_DISK_BUS=usb the controller is there already.)
 ifeq ($(RUN_USB),yes)
-RUN_USB_ARGS ?= -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-mouse,bus=xhci.0
+RUN_USB_ARGS ?= $(if $(filter usb,$(RUN_DISK_BUS)),,-device qemu-xhci,id=xhci) -device usb-kbd,bus=xhci.0 -device usb-mouse,bus=xhci.0
 endif
 run-disk: user64 cprogs64 pdpmake64 tcc64 cxx64 tfstool-rs
 	@[ -f $(RUN_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_DISK) $(RUN_DISK_BLOCKS) > /dev/null && truncate -s $$(($(RUN_DISK_BLOCKS) * 4096)) $(RUN_DISK) \

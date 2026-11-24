@@ -17,11 +17,18 @@
 //!      put in the boot protocol and told to report only changes;
 //!   7. each endpoint asked for its first report.
 //!
-//! A device that has no keyboard or mouse keeps its slot and address
-//! (it answers, and can be told about), but nothing more: the caller
-//! may give the slot back.
+//! A device with neither but with a mass storage interface (SCSI over
+//! the Bulk-Only Transport: every USB stick) is configured instead with
+//! its two bulk endpoints, and `storage::Storage::start` asks it what
+//! it is - when the caller wants a disk and the controller has the DMA
+//! memory for one.
+//!
+//! A device that has none of these keeps its slot and address (it
+//! answers, and can be told about), but nothing more: the caller may
+//! give the slot back.
 
-use crate::descriptor::{self, Configuration};
+use crate::descriptor::{self, Configuration, Interface};
+use crate::storage::Storage;
 use crate::xhci::{Bus, Controller, Speed};
 
 /// What a function of a device is, as this driver uses it.
@@ -53,6 +60,10 @@ pub struct Attached {
     /// not driven.
     pub class: u8,
     pub functions: [Option<Function>; 2],
+    /// A USB stick, ready for READ and WRITE.
+    pub storage: Option<Storage>,
+    /// A mass storage device that is not driven: why.
+    pub storage_problem: Option<&'static str>,
 }
 
 impl Attached {
@@ -65,8 +76,10 @@ impl Attached {
 /// mouse's 3 or 4; a device may say its endpoint moves more.
 pub const REPORT_MAX: usize = 64;
 
-/// Enumerates the device on `port`; see the module comment.
-pub fn attach<B: Bus>(controller: &mut Controller<B>, port: u8) -> Result<Attached, &'static str> {
+/// Enumerates the device on `port`; see the module comment. A stick is
+/// driven only when `storage_wanted`: the controller has one buffer for
+/// one disk.
+pub fn attach<B: Bus>(controller: &mut Controller<B>, port: u8, storage_wanted: bool) -> Result<Attached, &'static str> {
     let status = controller.port_status(port);
     if !status.connected {
         return Err("nothing on the port");
@@ -74,7 +87,7 @@ pub fn attach<B: Bus>(controller: &mut Controller<B>, port: u8) -> Result<Attach
     let speed = if status.enabled { status.speed } else { controller.reset_port(port)? };
     controller.port_seen(port);
     let slot = controller.enable_slot()?;
-    match set_up(controller, slot, port, speed) {
+    match set_up(controller, slot, port, speed, storage_wanted) {
         Ok(attached) => Ok(attached),
         Err(why) => {
             controller.disable_slot(slot);
@@ -83,7 +96,7 @@ pub fn attach<B: Bus>(controller: &mut Controller<B>, port: u8) -> Result<Attach
     }
 }
 
-fn set_up<B: Bus>(controller: &mut Controller<B>, slot: u8, port: u8, speed: Speed) -> Result<Attached, &'static str> {
+fn set_up<B: Bus>(controller: &mut Controller<B>, slot: u8, port: u8, speed: Speed, storage_wanted: bool) -> Result<Attached, &'static str> {
     controller.address_device(slot, port, speed)?;
 
     let read = |controller: &mut Controller<B>, kind: u8, length: u16| -> Result<usize, &'static str> {
@@ -116,10 +129,18 @@ fn set_up<B: Bus>(controller: &mut Controller<B>, slot: u8, port: u8, speed: Spe
         product: device.product,
         class: config.interfaces[0].map_or(device.class, |i| i.class),
         functions: [None; 2],
+        storage: None,
+        storage_problem: None,
     };
     let wanted = boot_functions(&config);
     if wanted.iter().all(Option::is_none) {
-        return Ok(attached); // nothing here this driver uses
+        if let Some(interface) = storage_interface(&config) {
+            match set_up_storage(controller, slot, config.value, &interface, storage_wanted) {
+                Ok(storage) => attached.storage = Some(storage),
+                Err(why) => attached.storage_problem = Some(why),
+            }
+        }
+        return Ok(attached); // nothing else here this driver uses
     }
 
     controller
@@ -167,4 +188,39 @@ pub fn boot_functions(config: &Configuration) -> [Option<(Kind, descriptor::Inte
         }
     }
     found
+}
+
+/// The first interface that is a USB stick: mass storage, SCSI commands,
+/// the Bulk-Only Transport, with a bulk endpoint each way.
+pub fn storage_interface(config: &Configuration) -> Option<Interface> {
+    config.interfaces.iter().flatten().copied().find(|i| {
+        i.class == descriptor::CLASS_STORAGE
+            && i.subclass == descriptor::STORAGE_SCSI
+            && i.protocol == descriptor::STORAGE_BULK_ONLY
+            && i.bulk_in.is_some()
+            && i.bulk_out.is_some()
+    })
+}
+
+fn set_up_storage<B: Bus>(
+    controller: &mut Controller<B>,
+    slot: u8,
+    configuration: u8,
+    interface: &Interface,
+    wanted: bool,
+) -> Result<Storage, &'static str> {
+    if !wanted {
+        return Err("a disk is driven already");
+    }
+    if !controller.has_storage_memory() {
+        return Err("no DMA memory for a disk's buffers");
+    }
+    let (Some(inward), Some(out)) = (interface.bulk_in, interface.bulk_out) else {
+        return Err("no bulk endpoints");
+    };
+    controller
+        .control(slot, descriptor::set_configuration(configuration), &[])
+        .map_err(|_| "the device would not take its configuration")?;
+    let (out_dci, in_dci) = controller.configure_bulk(slot, out, inward)?;
+    Storage::start(controller, slot, interface.number, (out_dci, out.0), (in_dci, inward.0))
 }

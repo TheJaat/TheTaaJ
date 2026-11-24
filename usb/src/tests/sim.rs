@@ -22,6 +22,10 @@
 //! a test gives them one (`report`). A keyboard not switched to the boot
 //! protocol sends report-protocol reports (with a report ID in front), so
 //! a driver that forgets SET_PROTOCOL reads garbage.
+//!
+//! A device with a `disk` is a USB stick: its bulk endpoints carry the
+//! Bulk-Only Transport to a simulated SCSI disk (`Disk`), which checks
+//! each CBW, can stall a data step, garble a CSW, or have no medium.
 
 use crate::xhci::{trb, Bus, Setup};
 use std::cell::RefCell;
@@ -51,6 +55,8 @@ pub struct Device {
     pub reports: Vec<(u8, Vec<u8>)>,
     /// Every request, in order.
     pub requests: Vec<Setup>,
+    /// A USB stick's insides.
+    pub disk: Option<Disk>,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -113,6 +119,7 @@ pub struct State {
     slots: HashMap<u8, SlotState>,
     /// Commands run: (type, slot).
     pub commands: Vec<(u32, u8)>,
+    pub stops: u32,
 }
 
 #[derive(Clone)]
@@ -121,7 +128,7 @@ pub struct Sim(pub Rc<RefCell<State>>);
 impl Sim {
     pub fn new(ports: usize, usb3_from: usize) -> Sim {
         let mut state = State {
-            memory: std::vec![0u8; crate::xhci::layout::needed(crate::xhci::SLOTS, crate::xhci::SCRATCHPADS_MAX)],
+            memory: std::vec![0u8; crate::xhci::layout::STORAGE_END],
             context_size: 32,
             registers_size: 0x4000,
             halted: true,
@@ -384,8 +391,11 @@ impl State {
                     let ctx = self.input(parameter, 1 + usize::from(dci));
                     let (e1, dequeue) = (self.word(ctx + 4), self.quad(ctx + 8));
                     let kind = (e1 >> 3) & 7;
-                    assert_eq!(kind, 7, "an interrupt IN endpoint");
-                    assert_eq!(dci % 2, 1, "an IN endpoint has an odd DCI");
+                    match kind {
+                        7 | 6 => assert_eq!(dci % 2, 1, "an IN endpoint has an odd DCI"),
+                        2 => assert_eq!(dci % 2, 0, "an OUT endpoint has an even DCI"),
+                        other => panic!("an endpoint of type {other}"),
+                    }
                     assert!(dequeue & 1 == 1, "a ring starting with cycle 1");
                     let endpoint = Endpoint { dequeue: dequeue & !0xF, cycle: true, packet: e1 >> 16, halted: false };
                     self.slots.get_mut(&slot).unwrap().endpoints.insert(dci, endpoint);
@@ -397,6 +407,13 @@ impl State {
                 let ep = self.slots.get_mut(&slot).and_then(|s| s.endpoints.get_mut(&dci)).expect("an endpoint");
                 assert!(ep.halted, "Reset Endpoint on one that is not halted");
                 ep.halted = false;
+                (1, slot)
+            }
+            trb::STOP_ENDPOINT => {
+                let dci = ((control >> 16) & 0x1F) as u8;
+                let ep = self.slots.get_mut(&slot).and_then(|s| s.endpoints.get_mut(&dci)).expect("an endpoint");
+                assert!(!ep.halted, "Stop Endpoint on a halted one (Reset Endpoint is for those)");
+                self.stops += 1;
                 (1, slot)
             }
             trb::SET_DEQUEUE => {
@@ -516,6 +533,19 @@ impl State {
                 d.idles += 1;
                 (!d.idle_stall).then(Vec::new)
             }
+            (0x02, 1) if setup.value == 0 => {
+                let disk = d.disk.as_mut()?;
+                if setup.index & 0x80 != 0 {
+                    disk.halt_cleared();
+                } else {
+                    disk.clear_halts += 1;
+                }
+                Some(Vec::new())
+            }
+            (0x21, 0xFF) => {
+                d.disk.as_mut()?.reset();
+                Some(Vec::new())
+            }
             _ => None,
         }
     }
@@ -545,6 +575,49 @@ impl State {
                     let n = bytes.len().min(length);
                     self.at(buffer, n).copy_from_slice(&bytes[..n]);
                     let remaining = (length - n) as u32;
+                    let code = if remaining > 0 && control & trb::SHORT_EVENT != 0 { 13 } else { 1 };
+                    if code == 13 || control & trb::DONE_EVENT != 0 {
+                        self.complete_transfer(at, code, remaining, slot, dci);
+                    }
+                }
+            }
+        }
+    }
+
+    /// A stick's bulk endpoint: OUT TRBs carry a CBW or a write's data
+    /// to the disk; IN TRBs take what the disk has to send, as long as
+    /// it has some. (An IN TRB the disk has nothing for waits.)
+    fn bulk(&mut self, slot: u8, dci: u8) {
+        let device = self.slots[&slot].device;
+        loop {
+            let saved = self.slots[&slot].endpoints[&dci].clone();
+            let Some((at, buffer, status, control)) = self.next_trb(slot, dci) else { return };
+            assert_eq!(trb::kind(control), trb::NORMAL, "a bulk endpoint is used with Normal TRBs");
+            let length = (status & 0x1FFFF) as usize;
+            assert!(length <= 0x10000, "a TRB of more than 64 KiB");
+            assert!(buffer / 0x10000 == (buffer + length as u64 - 1) / 0x10000, "a TRB crossing a 64 KiB boundary");
+            if dci.is_multiple_of(2) {
+                let bytes = self.at(buffer, length).to_vec();
+                self.devices[device].disk.as_mut().unwrap().receive(&bytes);
+                if control & trb::DONE_EVENT != 0 {
+                    self.complete_transfer(at, 1, 0, slot, dci);
+                }
+                continue;
+            }
+            match self.devices[device].disk.as_mut().unwrap().send(length) {
+                None => {
+                    // Nothing yet: the TRB stays the controller's.
+                    *self.slots.get_mut(&slot).unwrap().endpoints.get_mut(&dci).unwrap() = saved;
+                    return;
+                }
+                Some(Err(())) => {
+                    self.complete_transfer(at, 6, length as u32, slot, dci);
+                    self.halt(slot, dci);
+                    return;
+                }
+                Some(Ok(bytes)) => {
+                    self.at(buffer, bytes.len()).copy_from_slice(&bytes);
+                    let remaining = (length - bytes.len()) as u32;
                     let code = if remaining > 0 && control & trb::SHORT_EVENT != 0 { 13 } else { 1 };
                     if code == 13 || control & trb::DONE_EVENT != 0 {
                         self.complete_transfer(at, code, remaining, slot, dci);
@@ -589,6 +662,8 @@ impl State {
                     let dci = value as u8;
                     if dci == 1 {
                         self.control(slot);
+                    } else if self.devices[self.slots[&slot].device].disk.is_some() {
+                        self.bulk(slot, dci);
                     } else {
                         self.pump();
                     }
@@ -679,6 +754,254 @@ impl Sim {
     }
 }
 
+/// A simulated USB stick's insides: a SCSI disk behind the Bulk-Only
+/// Transport.
+#[derive(Clone, Default)]
+pub struct Disk {
+    /// Sectors written so far; the rest read as zeroes.
+    pub sectors: HashMap<u64, Vec<u8>>,
+    /// How many sectors it says it has, and how big each is.
+    pub count: u64,
+    pub sector_size: u32,
+    pub write_protected: bool,
+    pub no_medium: bool,
+    /// TEST UNIT READY fails ("unit attention") this many more times.
+    pub unit_attention: u32,
+    /// The next data-in step stalls, and the command fails.
+    pub stall_next_data: bool,
+    /// The next CSW is not one (a wrong signature).
+    pub garble_next_status: bool,
+    /// The next data-in step never comes: the device has gone quiet.
+    pub hang_next_data: bool,
+    /// What it was asked: each command's opcode, in order.
+    pub commands: Vec<u8>,
+    pub bulk_resets: u32,
+    pub clear_halts: u32,
+    phase: Phase,
+    /// (key, code, qualifier) for the next REQUEST SENSE.
+    sense: (u8, u8, u8),
+}
+
+#[derive(Clone, Default)]
+enum Phase {
+    /// Waiting for a CBW.
+    #[default]
+    Command,
+    /// Bytes to send in, then the CSW (tag, status, and the length the
+    /// host asked for - for the residue).
+    DataIn { bytes: Vec<u8>, sent: usize, asked: usize, tag: u32, status: u8 },
+    /// Bytes expected out; what to do with them when all have come.
+    DataOut { bytes: Vec<u8>, asked: usize, tag: u32, write: Option<u64> },
+    /// The CSW, waiting for an IN TRB.
+    Status(Vec<u8>),
+    /// The data-in endpoint stalled; the CSW follows once it is cleared.
+    Stalled { tag: u32, asked: usize },
+    /// Silent until a Bulk-Only reset.
+    Hung,
+}
+
+impl Disk {
+    pub fn new(count: u64) -> Disk {
+        Disk { count, sector_size: 512, unit_attention: 1, ..Disk::default() }
+    }
+
+    fn csw(tag: u32, residue: usize, status: u8) -> Vec<u8> {
+        let mut c = Vec::new();
+        c.extend_from_slice(&0x5342_5355u32.to_le_bytes());
+        c.extend_from_slice(&tag.to_le_bytes());
+        c.extend_from_slice(&(residue as u32).to_le_bytes());
+        c.push(status);
+        c
+    }
+
+    fn fail(&mut self, key: u8, code: u8) -> u8 {
+        self.sense = (key, code, 0);
+        1
+    }
+
+    fn sector(&self, n: u64) -> Vec<u8> {
+        self.sectors.get(&n).cloned().unwrap_or_else(|| std::vec![0; self.sector_size as usize])
+    }
+
+    /// A CBW arrived: what happens next.
+    fn command(&mut self, cbw: &[u8]) {
+        assert_eq!(cbw.len(), 31, "a CBW is 31 bytes");
+        assert_eq!(&cbw[0..4], b"USBC", "a CBW starts with USBC");
+        let tag = u32::from_le_bytes(cbw[4..8].try_into().unwrap());
+        let asked = u32::from_le_bytes(cbw[8..12].try_into().unwrap()) as usize;
+        let inward = cbw[12] & 0x80 != 0;
+        let cdb = &cbw[15..15 + usize::from(cbw[14])];
+        self.commands.push(cdb[0]);
+        let be32 = |b: &[u8]| u32::from_be_bytes(b.try_into().unwrap());
+        let be64 = |b: &[u8]| u64::from_be_bytes(b.try_into().unwrap());
+        // (data to send in, status), or a write's (first sector, count).
+        let mut data_in: Option<(Vec<u8>, u8)> = None;
+        let mut write: Option<(u64, u64)> = None;
+        let mut status = 0;
+        match cdb[0] {
+            0x12 => {
+                let mut a = std::vec![0x00, 0x80, 0x04, 0x02, 31, 0, 0, 0];
+                a.extend_from_slice(b"TaajSim Simulated stick 1.00");
+                data_in = Some((a, 0));
+            }
+            0x00 => {
+                if self.no_medium {
+                    status = self.fail(0x2, 0x3A);
+                } else if self.unit_attention > 0 {
+                    self.unit_attention -= 1;
+                    status = self.fail(0x6, 0x28);
+                }
+            }
+            0x03 => {
+                let (key, code, qualifier) = core::mem::take(&mut self.sense);
+                let mut s = std::vec![0u8; 18];
+                s[0] = 0x70;
+                s[2] = key;
+                s[7] = 10;
+                s[12] = code;
+                s[13] = qualifier;
+                data_in = Some((s, 0));
+            }
+            0x25 => {
+                let last = (self.count - 1).min(u64::from(u32::MAX)) as u32;
+                let mut a = last.to_be_bytes().to_vec();
+                a.extend_from_slice(&self.sector_size.to_be_bytes());
+                data_in = Some((a, 0));
+            }
+            0x9E if cdb[1] & 0x1F == 0x10 => {
+                let mut a = (self.count - 1).to_be_bytes().to_vec();
+                a.extend_from_slice(&self.sector_size.to_be_bytes());
+                a.resize(32, 0);
+                data_in = Some((a, 0));
+            }
+            0x1A => data_in = Some((std::vec![3, 0, if self.write_protected { 0x80 } else { 0 }, 0], 0)),
+            0x28 | 0x88 => {
+                let (first, count) = if cdb[0] == 0x28 {
+                    (u64::from(be32(&cdb[2..6])), u64::from(u16::from_be_bytes([cdb[7], cdb[8]])))
+                } else {
+                    (be64(&cdb[2..10]), u64::from(be32(&cdb[10..14])))
+                };
+                if first + count > self.count {
+                    data_in = Some((Vec::new(), self.fail(0x5, 0x21)));
+                } else {
+                    let bytes = (first..first + count).flat_map(|n| self.sector(n)).collect();
+                    data_in = Some((bytes, 0));
+                }
+            }
+            0x2A | 0x8A => {
+                let (first, count) = if cdb[0] == 0x2A {
+                    (u64::from(be32(&cdb[2..6])), u64::from(u16::from_be_bytes([cdb[7], cdb[8]])))
+                } else {
+                    (be64(&cdb[2..10]), u64::from(be32(&cdb[10..14])))
+                };
+                write = Some((first, count));
+            }
+            _ => {
+                status = self.fail(0x5, 0x20); // invalid command
+            }
+        }
+        if let Some((first, count)) = write {
+            assert!(!inward, "a WRITE with its data going in");
+            assert_eq!(asked, (count * u64::from(self.sector_size)) as usize, "a WRITE's CBW length");
+            let ok = !self.write_protected && first + count <= self.count;
+            self.phase = Phase::DataOut { bytes: Vec::new(), asked, tag, write: ok.then_some(first) };
+            if !ok {
+                self.sense = if self.write_protected { (0x7, 0x27, 0) } else { (0x5, 0x21, 0) };
+            }
+            return;
+        }
+        match data_in {
+            Some((bytes, status)) if asked > 0 => {
+                assert!(inward, "a command that sends data in, with its CBW saying out");
+                if self.stall_next_data {
+                    self.stall_next_data = false;
+                    self.sense = (0x3, 0x11, 0); // unrecovered read error
+                    self.phase = Phase::Stalled { tag, asked };
+                    return;
+                }
+                if self.hang_next_data {
+                    self.hang_next_data = false;
+                    self.phase = Phase::Hung;
+                    return;
+                }
+                self.phase = Phase::DataIn { bytes, sent: 0, asked, tag, status };
+            }
+            _ => {
+                assert_eq!(asked, 0, "a command without data, with a CBW asking for some");
+                self.phase = Phase::Status(Disk::csw(tag, 0, status));
+            }
+        }
+    }
+
+    /// Bytes for an IN TRB of `room` bytes: data, or the CSW. None: nothing
+    /// to send yet; Err: the endpoint stalls.
+    fn send(&mut self, room: usize) -> Option<Result<Vec<u8>, ()>> {
+        match &mut self.phase {
+            Phase::Command | Phase::DataOut { .. } | Phase::Hung => None,
+            Phase::Stalled { .. } => Some(Err(())),
+            Phase::DataIn { bytes, sent, asked, tag, status } => {
+                let limit = (*asked).min(bytes.len());
+                let n = room.min(limit - *sent);
+                let out = bytes[*sent..*sent + n].to_vec();
+                *sent += n;
+                if *sent == limit {
+                    let mut csw = Disk::csw(*tag, *asked - *sent, *status);
+                    if self.garble_next_status {
+                        self.garble_next_status = false;
+                        csw[0] = b'X';
+                    }
+                    self.phase = Phase::Status(csw);
+                }
+                Some(Ok(out))
+            }
+            Phase::Status(csw) => {
+                assert!(room >= 13, "the CSW read into fewer than 13 bytes");
+                let out = core::mem::take(csw);
+                self.phase = Phase::Command;
+                Some(Ok(out))
+            }
+        }
+    }
+
+    /// Bytes from an OUT TRB: a CBW, or a write's data.
+    fn receive(&mut self, bytes: &[u8]) {
+        match &mut self.phase {
+            Phase::Command => self.command(bytes),
+            Phase::DataOut { bytes: got, asked, tag, write } => {
+                got.extend_from_slice(bytes);
+                assert!(got.len() <= *asked, "more data out than the CBW said");
+                if got.len() == *asked {
+                    let (tag, data, write) = (*tag, core::mem::take(got), *write);
+                    let status = match write {
+                        Some(first) => {
+                            for (n, sector) in data.chunks(self.sector_size as usize).enumerate() {
+                                self.sectors.insert(first + n as u64, sector.to_vec());
+                            }
+                            0
+                        }
+                        None => 1,
+                    };
+                    self.phase = Phase::Status(Disk::csw(tag, 0, status));
+                }
+            }
+            _ => panic!("bytes out while the device waits to send its status"),
+        }
+    }
+
+    /// The host cleared the stalled endpoint: the CSW comes next.
+    fn halt_cleared(&mut self) {
+        self.clear_halts += 1;
+        if let Phase::Stalled { tag, asked } = self.phase {
+            self.phase = Phase::Status(Disk::csw(tag, asked, 1));
+        }
+    }
+
+    fn reset(&mut self) {
+        self.bulk_resets += 1;
+        self.phase = Phase::Command;
+    }
+}
+
 /// Descriptors for the simulated devices.
 pub mod make {
     use std::vec::Vec;
@@ -720,6 +1043,25 @@ pub mod make {
             speed,
             descriptor: device(8, 0x0627, 0x0001),
             config: config(1, &[(3, 1, 1, Some((0x81, 8)))]),
+            ..super::Device::default()
+        }
+    }
+
+    /// A USB stick of `sectors` sectors: one interface, mass storage /
+    /// SCSI / Bulk-Only, bulk IN 0x81 and bulk OUT 0x02, 512-byte packets.
+    pub fn stick(sectors: u64) -> super::Device {
+        let mut c = std::vec![9, 2, 0, 0, 1, 1, 0, 0x80, 100];
+        c.extend_from_slice(&[9, 4, 0, 0, 2, 8, 6, 0x50, 0]);
+        c.extend_from_slice(&[7, 5, 0x81, 2, 0x00, 0x02, 0]);
+        c.extend_from_slice(&[7, 5, 0x02, 2, 0x00, 0x02, 0]);
+        let total = (c.len() as u16).to_le_bytes();
+        c[2] = total[0];
+        c[3] = total[1];
+        super::Device {
+            speed: 3,
+            descriptor: device(64, 0x46F4, 0x0001),
+            config: c,
+            disk: Some(super::Disk::new(sectors)),
             ..super::Device::default()
         }
     }

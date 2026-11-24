@@ -30,7 +30,9 @@
 //!     control transfers and reading from an endpoint;
 //!   - `descriptor`: reading what a device says about itself;
 //!   - `device`: enumeration, from a port to a configured keyboard or
-//!     mouse (the HID "boot protocol", which every one of them speaks).
+//!     mouse (the HID "boot protocol", which every one of them speaks),
+//!     or a USB stick;
+//!   - `storage`: a stick's SCSI commands over the Bulk-Only Transport.
 //!
 //! All of it is written against `xhci::Bus` and tested on the host
 //! against a simulated controller with simulated devices (`tests/`).
@@ -40,6 +42,7 @@
 
 pub mod descriptor;
 pub mod device;
+pub mod storage;
 pub mod xhci;
 
 #[cfg(test)]

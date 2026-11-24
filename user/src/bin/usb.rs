@@ -12,7 +12,13 @@
 //!     Shift and Ctrl are the PS/2 keyboard's - and the terminal bytes go
 //!     to the keys' channel, as kbd's and hid's do. A held key repeats
 //!     here (a USB keyboard does not repeat by itself);
-//!   - a mouse's reports go to the display as pointer reports.
+//!   - a mouse's reports go to the display as pointer reports;
+//!   - a USB stick (the first one) is a disk: the disk protocol's
+//!     requests (`taaj::block_service`, as blk, ahci and nvme serve
+//!     them) become SCSI READs and WRITEs (`usb::storage`). When init
+//!     has no other disk, it gives this program the disk's channels, and
+//!     fs reads TaajFS from the stick. With no stick in, every request
+//!     is answered "nothing in the drive".
 //!
 //! Devices may come and go: a port change is an event, and a device
 //! plugged in later is enumerated then; one pulled out loses its slot.
@@ -26,6 +32,10 @@
 //!   5  pings from init (abi::PING)
 //!   6  the controller's interrupt (MSI or MSI-X), if it has one - else
 //!      polled
+//!
+//! The description on 2 comes with two handles when the stick is the
+//! system's disk: the disk's request channels, the one that may write
+//! and the read-only one (receive only).
 
 #![no_std]
 #![no_main]
@@ -35,9 +45,11 @@ use abi::PciDeviceInfo;
 use input::pointer::Report;
 use input::usb::{boot_mouse, BootKeyboard, Repeat};
 use input::{evdev, terminal_bytes, Decoder};
+use taaj::block_service::{self, Served};
 use taaj::{println, Error, Handle};
 use usb::descriptor;
 use usb::device::{self, Attached, Kind};
+use usb::storage::Storage;
 use usb::xhci::{self, layout, Bus, Controller, Dma, Event};
 
 taaj::program!(main);
@@ -102,6 +114,14 @@ struct Driver {
     devices: [Option<InUse>; xhci::SLOTS as usize],
     keys_out: Handle,
     pointer_out: Handle,
+    /// The slot of the stick that is the disk.
+    disk: Option<u8>,
+}
+
+/// A name as INQUIRY gives it: ASCII, padded with spaces.
+fn trimmed(name: &[u8]) -> &str {
+    let name = core::str::from_utf8(name).unwrap_or("?");
+    name.trim_end_matches([' ', '\0'])
 }
 
 /// Classes worth a word in the log, for devices not driven.
@@ -124,7 +144,7 @@ impl Driver {
         if self.devices.iter().flatten().any(|d| d.attached.port == port) {
             return;
         }
-        let attached = match device::attach(&mut self.controller, port) {
+        let attached = match device::attach(&mut self.controller, port, self.disk.is_none()) {
             Ok(attached) => attached,
             Err(why) => {
                 println!("[usb] port {port}: {why}");
@@ -132,12 +152,25 @@ impl Driver {
             }
         };
         let (vendor, product, speed) = (attached.vendor, attached.product, attached.speed.name());
-        if attached.functions.iter().all(Option::is_none) {
+        if let Some(storage) = attached.storage {
             println!(
-                "[usb] port {port}: {vendor:04x}:{product:04x}, {speed}, {} (class {:#04x}) - not driven",
-                class_name(attached.class),
-                attached.class
+                "[usb] port {port}: disk \"{} {}\" ({vendor:04x}:{product:04x}, {speed}), {} sectors ({} MiB){} ready",
+                trimmed(&storage.vendor),
+                trimmed(&storage.product),
+                storage.sectors,
+                storage.sectors / 2048,
+                if storage.read_only { ", read-only" } else { "" }
             );
+            self.disk = Some(attached.slot);
+        } else if attached.functions.iter().all(Option::is_none) {
+            match attached.storage_problem {
+                Some(why) => println!("[usb] port {port}: {vendor:04x}:{product:04x}, {speed}, mass storage - not driven: {why}"),
+                None => println!(
+                    "[usb] port {port}: {vendor:04x}:{product:04x}, {speed}, {} (class {:#04x}) - not driven",
+                    class_name(attached.class),
+                    attached.class
+                ),
+            }
             self.controller.disable_slot(attached.slot);
             return;
         }
@@ -160,7 +193,12 @@ impl Driver {
         };
         self.devices[usize::from(slot) - 1] = None;
         self.controller.disable_slot(slot);
-        println!("[usb] port {port}: unplugged");
+        if self.disk == Some(slot) {
+            self.disk = None;
+            println!("[usb] port {port}: unplugged - the disk is gone");
+        } else {
+            println!("[usb] port {port}: unplugged");
+        }
     }
 
     fn event(&mut self, event: Event) {
@@ -234,6 +272,49 @@ impl Driver {
             }
         }
         next
+    }
+}
+
+/// The stick, as the block service sees a disk.
+impl block_service::Device for Driver {
+    fn sectors(&self) -> u64 {
+        self.storage().map_or(0, |s| s.sectors)
+    }
+
+    fn read_only(&self) -> bool {
+        self.storage().is_none_or(|s| s.read_only)
+    }
+
+    fn present(&self) -> bool {
+        self.storage().is_some()
+    }
+
+    fn transfer(&mut self, write: bool, sector: u64, count: u32) -> u8 {
+        let Some(slot) = self.disk else { return abi::block::NO_MEDIUM };
+        let Some(storage) = self.devices[usize::from(slot) - 1].as_mut().and_then(|d| d.attached.storage.as_mut()) else {
+            return abi::block::NO_MEDIUM;
+        };
+        match storage.transfer(&mut self.controller, write, sector, count) {
+            Ok(()) => abi::block::OK,
+            Err(error) => {
+                println!("[usb] the disk: {} sectors at {sector}: {}", if write { "writing" } else { "reading" }, error.describe());
+                match error {
+                    usb::storage::Error::Failed { key: 0x7, .. } => abi::block::READ_ONLY,
+                    _ => abi::block::IO_ERROR,
+                }
+            }
+        }
+    }
+
+    fn data(&mut self, length: usize) -> &mut [u8] {
+        self.controller.storage_data_mut(length)
+    }
+}
+
+impl Driver {
+    fn storage(&self) -> Option<&Storage> {
+        let slot = self.disk?;
+        self.devices[usize::from(slot) - 1].as_ref()?.attached.storage.as_ref()
     }
 }
 
@@ -313,9 +394,20 @@ fn main() -> i64 {
     let interrupt = taaj::startup_handle(6);
 
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
-    let description = match taaj::receive(described, &mut message, &mut []) {
-        Ok((n, _)) => &message[..n],
-        Err(_) => &[],
+    let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
+    let (description, given) = match taaj::receive(described, &mut message, &mut handles) {
+        Ok((n, count)) => (&message[..n], count),
+        Err(_) => (&[][..], 0),
+    };
+    // The disk's two channels, while they have clients.
+    let mut disk_channels = match given {
+        2 => [Some(handles[0]), Some(handles[1])],
+        _ => {
+            for &handle in &handles[..given] {
+                let _ = taaj::close(handle);
+            }
+            [None, None]
+        }
     };
     let Some(info) = PciDeviceInfo::from_bytes(description) else {
         println!("[usb] no usable device description");
@@ -325,7 +417,7 @@ fn main() -> i64 {
         Ok(controller) => controller,
         Err(code) => return code,
     };
-    let mut driver = Driver { controller, devices: [const { None }; xhci::SLOTS as usize], keys_out, pointer_out };
+    let mut driver = Driver { controller, devices: [const { None }; xhci::SLOTS as usize], keys_out, pointer_out, disk: None };
 
     // What is plugged in already. A controller may say so with a port
     // event for each once it runs, or may not (QEMU's drops the events
@@ -344,9 +436,9 @@ fn main() -> i64 {
         }
         let repeat_at = driver.repeat();
 
-        // The controller, or init's pings; a polled controller every
-        // tick, a held key when it repeats.
-        let mut waiting = [0u64; 2];
+        // The controller, init's pings, or the disk's requests; a
+        // polled controller every tick, a held key when it repeats.
+        let mut waiting = [0u64; 4];
         let mut length = 0;
         if let Some(line) = interrupt {
             waiting[length] = line;
@@ -356,6 +448,15 @@ fn main() -> i64 {
         if let Some(channel) = pings {
             waiting[length] = channel;
             length += 1;
+        }
+        let disk_at = length;
+        let mut disk_which = [0usize; 2];
+        for (n, channel) in disk_channels.iter().enumerate() {
+            if let Some(channel) = *channel {
+                disk_which[length - disk_at] = n;
+                waiting[length] = channel;
+                length += 1;
+            }
         }
         let until = match (interrupt, repeat_at) {
             (None, _) => Some(taaj::ticks() + 1),
@@ -370,6 +471,19 @@ fn main() -> i64 {
             (_, None) => taaj::object_wait(&waiting[..length]).map(Some),
         };
         match ready {
+            Ok(Some(n)) if n >= disk_at => {
+                let which = disk_which[n - disk_at];
+                let Some(channel) = disk_channels[which] else { continue };
+                // 6 may write; 7 only reads.
+                match block_service::serve_one(&mut driver, "usb", channel, which == 0) {
+                    Served::Answered => {}
+                    Served::Closed => {
+                        let _ = taaj::close(channel);
+                        disk_channels[which] = None;
+                    }
+                    Served::Failed => return 6,
+                }
+            }
             Ok(Some(n)) if n == ping_at && pings.is_some() => {
                 if let Some(channel) = pings {
                     if !taaj::answer_pings(channel) {

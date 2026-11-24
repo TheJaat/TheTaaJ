@@ -3106,3 +3106,74 @@ make test64
 |---|---|
 | `USB worked: a keyboard typed (MSI-X, MSI under UEFI, polled), a held key repeated, a mouse clicked where it was, a disk was named, and a keyboard came and went` | the four machines of `usb64-test` |
 | `test64: all passed` | every part |
+
+---
+
+## 089 · USB sticks: mass storage, and a stick as the system's disk
+
+[The entry](journal/089-usb-sticks.md)
+
+**1. A USB stick as the system's disk**
+
+```
+make run64 RUN_DISK_BUS=usb RUN_USB=yes RUN_DISK=build/usb-disk.img
+```
+
+A new 16 MiB disk is made the first time (your `build/taaj-disk.img` is not touched); here it is plugged in as a USB stick, with a USB keyboard and mouse beside it. In the terminal's log:
+
+| Look for | Meaning |
+|---|---|
+| `[pci] 00:04.0 USB controller: registers 0xfebb0000+0x3000, 408 KiB DMA at 0x..., MSI-X - handed to init` | the controller, with room for the stick's buffers (408 KiB) |
+| `[usb] port 1: disk "QEMU QEMU HARDDISK" (46f4:0001, SuperSpeed), 32768 sectors (16 MiB) ready` | the stick answered INQUIRY, TEST UNIT READY, READ CAPACITY |
+| `[fs] ready: TaajFS on the disk, ... blocks free` | fs found the volume on the stick, through `usb` |
+| no `[blk]`, `[ahci]` or `[nvme]` lines | there is no other disk |
+
+In the QEMU window:
+
+| Type | You should see |
+|---|---|
+| `disk` | `disk: 32768 sectors of 512 bytes (16384 KiB)` |
+| `disk check` | `disk check: all 9 checks passed` |
+| `write hello on the stick`, then `cat hello` | `on the stick` |
+| `disk stall 3` | `[init] usb has not answered for 2 s - stopping it`, a second `[usb] xHCI ...` line and the stick `ready` again; then `cat hello` still works |
+| `poweroff` | `[init] stopped shell`, `kbd`, ..., `[init] stopped fs`, then `[init] stopped usb` (after fs: it is the disk's driver) |
+
+After QEMU ends, on the host:
+
+```
+tools/tfstool-rs/target/release/tfstool get build/usb-disk.img hello
+```
+
+prints `on the stick`.
+
+**2. No stick, no disk**
+
+```
+make run64 RUN_DISK_BUS=usb RUN_USB=yes RUN_DISK=build/usb-disk.img RUN_DISK_ARGS="-device qemu-xhci,id=xhci"
+```
+
+(`RUN_DISK` still names the disk the programs are copied to; `RUN_DISK_ARGS` leaves it out of the machine.) The log shows `[fs] no disk (nothing in the drive): files in memory only`.
+
+**3. A stick beside another disk**
+
+```
+make run64 RUN_USB=yes RUN_USB_ARGS="-device qemu-xhci,id=xhci -drive if=none,id=s,format=raw,file=build/usb-disk.img -device usb-storage,bus=xhci.0,drive=s" RUN_DISK=build/other-disk.img
+```
+
+(`build/usb-disk.img` from 1 is the stick; a second new disk, `build/other-disk.img`, is the system's.) The stick is started (`[usb] port ...: disk "QEMU QEMU HARDDISK" ... ready`), but `[blk]` serves the system's disk.
+
+2 and 3 are the `polled` and `pc` machines of `usb64-test`.
+
+**4. The tests by themselves**
+
+```
+cd usb && cargo test
+make usb64-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `test result: ok. 24 passed` | the controller, enumeration and the stick against the simulator |
+| `USB worked: ... and a stick was the system's disk - across a restart of its driver` | the five machines of `usb64-test` |
+| `test64: all passed` | every part |

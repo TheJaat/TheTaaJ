@@ -423,7 +423,10 @@ fn main() -> i64 {
     // on the disk; reads only for the shell, which may look.
     let Ok((disk_in, disk_out)) = taaj::channel_create() else { return 2 };
     let Ok((disk_look_in, disk_look_out)) = taaj::channel_create() else { return 2 };
-    if disk.is_none() {
+    // No other disk, and a USB controller: usb serves the disk's
+    // channels - from the first stick plugged in, if there is one.
+    let usb_disk = disk.is_none() && usb_controller.is_some();
+    if disk.is_none() && !usb_disk {
         // No disk: no one will ever answer, so say so at once - a
         // client's send fails with PeerClosed instead of waiting forever.
         let _ = (taaj::close(disk_in), taaj::close(disk_look_in));
@@ -543,11 +546,12 @@ fn main() -> i64 {
     // replacement.
     let fs_ping = [fileserver::protocol::ACCESS, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     let fs_watch = Watch::new(files_look_out, &fs_ping, 400);
-    let blk_watch = disk.and_then(|_| Watch::new(disk_look_out, &[abi::block::INFO], 200));
+    let blk_watch = (disk.is_some() || usb_disk).then(|| Watch::new(disk_look_out, &[abi::block::INFO], 200)).flatten();
     // Which program drives the disk: the virtio one, the SATA one or
     // the NVMe one. All speak abi::block, on the same channels; nobody
     // else knows.
     let disk_driver = match disk {
+        None if usb_disk => "usb",
         Some((Device::Pci(info), _, _)) if (info.class, info.subclass) == (nvme::CLASS, nvme::SUBCLASS) => "nvme",
         Some((Device::Pci(info), _, _)) if info.registers_in_memory() => "ahci",
         _ => "blk",
@@ -567,7 +571,10 @@ fn main() -> i64 {
     let display_watch = framebuffer.filter(|_| !serial_terminal).and_then(|_| Watch::new(display_ping_tx, &[abi::PING], 200));
     let kbd_watch = Watch::new(kbd_ping_tx, &[abi::PING], 200);
     let hid_watch = (!serial_terminal && has_inputs).then(|| Watch::new(hid_ping_tx, &[abi::PING], 200)).flatten();
-    let usb_watch = usb_controller.and_then(|_| Watch::new(usb_ping_tx, &[abi::PING], 200));
+    // usb is watched as a disk driver when it is one (blk_watch, on the
+    // service entry below), else with pings.
+    let usb_watch = usb_controller.filter(|_| !usb_disk).and_then(|_| Watch::new(usb_ping_tx, &[abi::PING], 200));
+    let (blk_watch, usb_watch) = if usb_disk { (None, blk_watch) } else { (blk_watch, usb_watch) };
 
     // What the registry is told, each time one is started. The
     // services: a name, and which grant it means - the handle, and the
@@ -697,7 +704,10 @@ fn main() -> i64 {
             watch: hid_watch,
         },
         // The USB controller, and its keyboards and mice: keys to the
-        // shell (3), movements to the display (37), as hid's.
+        // shell (3), movements to the display (37), as hid's. (The
+        // disk's requests, when a stick is the disk, come with the
+        // controller's description: a process starts with 8 handles at
+        // most.)
         Service {
             name: "usb",
             grants: match usb_controller {
@@ -817,9 +827,21 @@ fn main() -> i64 {
                 return Err(error);
             }
         }
-        // And each new USB driver, what its controller is.
+        // And each new USB driver, what its controller is - and, when a
+        // stick is the disk, fresh copies of the disk's two request
+        // channels' receiving ends (which may write, which only read).
         if let (Some((info, _, _)), "usb") = (usb_controller, service.name) {
-            taaj::send(usb_info_tx, &info.to_bytes(), &[])?;
+            let mut copies = [0u64; 2];
+            let count = if usb_disk { 2 } else { 0 };
+            for (n, &channel) in [disk_in, disk_look_in].iter().take(count).enumerate() {
+                copies[n] = taaj::duplicate(channel, RECEIVE | TRANSFER)?;
+            }
+            if let Err(error) = taaj::send(usb_info_tx, &info.to_bytes(), &copies[..count]) {
+                for &copy in &copies[..count] {
+                    let _ = taaj::close(copy);
+                }
+                return Err(error);
+            }
         }
         // And each new network card's driver.
         if let (Some((info, _, _)), true) = (card, service.name == card_driver) {
@@ -1174,7 +1196,10 @@ fn serve_request(launcher: Handle, requests: Handle, power_ready: bool) -> Optio
 fn shut_down(services: &mut [Service], action: u8, power: Handle, files_look: Handle, [disk_driver, card_driver]: [&str; 2]) {
     let what = if action == abi::power::OFF { "switching off" } else { "resetting" };
     println!("[init] {what}: stopping the services");
-    let order = ["shell", "hid", "usb", "kbd", "serial", "net", card_driver, "fs", disk_driver, "display", "registry"];
+    // usb stops with the keyboards - unless it is the disk's driver,
+    // which waits for fs.
+    let usb = if disk_driver == "usb" { "" } else { "usb" };
+    let order = ["shell", "hid", usb, "kbd", "serial", "net", card_driver, "fs", disk_driver, "display", "registry"];
     for name in order {
         let Some(service) = services.iter_mut().find(|s| s.name == name && !s.given_up) else { continue };
         let between = name != "fs" || between_requests(files_look);

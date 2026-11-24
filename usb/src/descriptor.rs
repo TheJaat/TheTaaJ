@@ -25,6 +25,11 @@ pub const ENDPOINT: u8 = 5;
 /// Standard requests.
 pub const GET_DESCRIPTOR: u8 = 6;
 pub const SET_CONFIGURATION: u8 = 9;
+pub const CLEAR_FEATURE: u8 = 1;
+/// CLEAR_FEATURE's feature for an endpoint: its halt (stall).
+pub const ENDPOINT_HALT: u16 = 0;
+/// Mass storage class request: the Bulk-Only Mass Storage Reset.
+pub const BULK_ONLY_RESET: u8 = 0xFF;
 /// HID class requests.
 pub const HID_SET_IDLE: u8 = 0x0A;
 pub const HID_SET_PROTOCOL: u8 = 0x0B;
@@ -37,6 +42,10 @@ pub const CLASS_STORAGE: u8 = 8;
 pub const HID_BOOT: u8 = 1;
 pub const HID_KEYBOARD: u8 = 1;
 pub const HID_MOUSE: u8 = 2;
+/// Mass storage: SCSI commands (the subclass), carried by the Bulk-Only
+/// Transport (the protocol) - what every USB stick says it is.
+pub const STORAGE_SCSI: u8 = 0x06;
+pub const STORAGE_BULK_ONLY: u8 = 0x50;
 
 /// "Give me descriptor `kind`, `length` bytes of it."
 pub const fn get_descriptor(kind: u8, length: u16) -> Setup {
@@ -55,6 +64,18 @@ pub const fn set_boot_protocol(interface: u8) -> Setup {
 /// HID: report only when something changes (idle rate 0).
 pub const fn set_idle(interface: u8) -> Setup {
     Setup { request_type: 0x21, request: HID_SET_IDLE, value: 0, index: interface as u16, length: 0 }
+}
+
+/// "Endpoint `address` is no longer stalled": to the endpoint itself
+/// (recipient 2), which also starts its packet sequence (DATA0/DATA1)
+/// again.
+pub const fn clear_halt(address: u8) -> Setup {
+    Setup { request_type: 0x02, request: CLEAR_FEATURE, value: ENDPOINT_HALT, index: address as u16, length: 0 }
+}
+
+/// Mass storage: "forget the command you were in", to the interface.
+pub const fn bulk_only_reset(interface: u8) -> Setup {
+    Setup { request_type: 0x21, request: BULK_ONLY_RESET, value: 0, index: interface as u16, length: 0 }
 }
 
 /// The device descriptor's fields used here.
@@ -78,7 +99,7 @@ pub fn device(bytes: &[u8]) -> Option<Device> {
 }
 
 /// One interface of a configuration, and its first interrupt IN
-/// endpoint if it has one.
+/// endpoint and first bulk IN and OUT endpoints, if it has them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Interface {
     pub number: u8,
@@ -87,6 +108,9 @@ pub struct Interface {
     pub protocol: u8,
     /// (address, packet size, bInterval)
     pub interrupt_in: Option<(u8, u16, u8)>,
+    /// (address, packet size)
+    pub bulk_in: Option<(u8, u16)>,
+    pub bulk_out: Option<(u8, u16)>,
 }
 
 /// A configuration: its number, and its interfaces (the first eight).
@@ -124,7 +148,7 @@ pub fn configuration(bytes: &[u8]) -> Option<Configuration> {
                 // interface as configured: skipped.
                 if d[3] == 0 {
                     config.interfaces[count] =
-                        Some(Interface { number: d[2], class: d[5], subclass: d[6], protocol: d[7], interrupt_in: None });
+                        Some(Interface { number: d[2], class: d[5], subclass: d[6], protocol: d[7], interrupt_in: None, bulk_in: None, bulk_out: None });
                     current = Some(count);
                     count += 1;
                 } else {
@@ -133,10 +157,16 @@ pub fn configuration(bytes: &[u8]) -> Option<Configuration> {
             }
             ENDPOINT if length >= 7 => {
                 let interrupt = d[3] & 0x3 == 3;
+                let bulk = d[3] & 0x3 == 2;
                 let inward = d[2] & 0x80 != 0;
+                let packet = u16::from_le_bytes([d[4], d[5]]);
                 if let Some(Some(interface)) = current.map(|n| &mut config.interfaces[n]) {
                     if interrupt && inward && interface.interrupt_in.is_none() {
-                        interface.interrupt_in = Some((d[2], u16::from_le_bytes([d[4], d[5]]), d[6]));
+                        interface.interrupt_in = Some((d[2], packet, d[6]));
+                    } else if bulk && inward && interface.bulk_in.is_none() {
+                        interface.bulk_in = Some((d[2], packet));
+                    } else if bulk && !inward && interface.bulk_out.is_none() {
+                        interface.bulk_out = Some((d[2], packet));
                     }
                 }
             }
