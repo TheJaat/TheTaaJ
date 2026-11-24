@@ -1,0 +1,8 @@
+[package]
+name = "usb"
+version = "0.1.0"
+edition = "2021"
+description = "USB: the xHCI host controller, device enumeration, and the boot-protocol keyboard and mouse"
+publish = false
+
+[dependencies]

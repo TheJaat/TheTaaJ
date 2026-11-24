@@ -25,6 +25,7 @@ pub mod evdev;
 pub mod line;
 pub mod pointer;
 pub mod serial;
+pub mod usb;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {

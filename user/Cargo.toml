@@ -24,6 +24,7 @@ virtio = { path = "../virtio" }
 ahci = { path = "../ahci" }
 nvme = { path = "../nvme" }
 e1000 = { path = "../e1000" }
+usb = { path = "../usb" }
 acpi = { path = "../acpi" }
 net = { path = "../net" }
 

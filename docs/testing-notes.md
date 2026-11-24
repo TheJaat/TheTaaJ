@@ -3054,3 +3054,55 @@ make test64
 | `test64: all passed` | every part |
 
 Automated: make e1000-64-test
+
+---
+
+## 088 · USB: an xHCI driver, with keyboards and mice
+
+[The entry](journal/088-usb-xhci-keyboard-mouse.md)
+
+**1. A USB keyboard and mouse**
+
+```
+make run64 RUN_USB=yes RUN_DISK=build/usb-disk.img
+```
+
+A new 16 MiB disk is made the first time (your `build/taaj-disk.img` is not touched). In the terminal's log:
+
+| Look for | Meaning |
+|---|---|
+| `[pci] 00:05.0 USB controller: registers 0xfeb90000+0x3000, 276 KiB DMA at 0x..., MSI-X - handed to init` | the kernel found QEMU's xHCI controller and handed it on, cut short at its MSI-X table |
+| `[init] started: registry display fs blk nic net shell kbd usb power; supervising` | init started `usb` |
+| `[usb] xHCI 1.0 controller at 00:05.0: 8 ports, 0 scratchpad pages, MSI-X interrupts` | the driver reset and started the controller |
+| `[usb] port 5: keyboard (0627:0001, high speed) ready` | the keyboard was enumerated and switched to the boot protocol |
+| `[usb] port 6: mouse (0627:0001, high speed) ready` | the mouse too |
+
+In the QEMU window (QEMU sends what you type to the keyboard that came last: the USB one):
+
+| Do | You should see |
+|---|---|
+| type `echo hello from usb` and Enter | `hello from usb` |
+| hold a letter key down for a second | the letter once, then repeating after half a second |
+| click in the window (QEMU then gives it the mouse; Ctrl+Alt+G gives it back), move the mouse | the pointer moves |
+| `poweroff` | in the log, `[init] stopped shell`, then `[init] stopped usb`, `kbd`, ..., and QEMU ends by itself |
+
+**2. Plugging in and pulling out**
+
+In the same machine, open QEMU's monitor with Ctrl+Alt+2 (Ctrl+Alt+1 goes back):
+
+| Type in the monitor | In the log |
+|---|---|
+| `device_add usb-kbd,id=k2,bus=xhci.0` | `[usb] port 7: keyboard (0627:0001, high speed) ready` |
+| `device_del k2` | `[usb] port 7: unplugged` |
+
+**3. The tests by themselves**
+
+```
+make usb64-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `USB worked: a keyboard typed (MSI-X, MSI under UEFI, polled), a held key repeated, a mouse clicked where it was, a disk was named, and a keyboard came and went` | the four machines of `usb64-test` |
+| `test64: all passed` | every part |

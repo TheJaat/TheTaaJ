@@ -72,6 +72,10 @@ name = "taajfs"
 version = "0.1.0"
 
 [[package]]
+name = "usb"
+version = "0.1.0"
+
+[[package]]
 name = "user"
 version = "0.1.0"
 dependencies = [
@@ -89,6 +93,7 @@ dependencies = [
  "nvme",
  "registry",
  "taajfs",
+ "usb",
  "virtio",
 ]
 

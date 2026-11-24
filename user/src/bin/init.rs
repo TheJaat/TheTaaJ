@@ -27,8 +27,9 @@
 //! NVMe one), nic or e1000 (the network card's driver: a virtio card or
 //! an Intel one) and net (the network, for programs - both only if
 //! there is a card), shell, kbd (the PC's
-//! PS/2 keyboard and mouse) and hid (virtio keyboards, mice and
-//! tablets, if there are any).
+//! PS/2 keyboard and mouse), hid (virtio keyboards, mice and
+//! tablets, if there are any) and usb (an xHCI controller, and the USB
+//! keyboards and mice on it, if there is one).
 //!
 //! The terminal is a window on the screen when the machine has a screen
 //! and a keyboard. A PC always does; an AArch64 machine does when QEMU
@@ -301,6 +302,9 @@ fn main() -> i64 {
     let mut fb_memory = 0;
     let mut disk: Option<(Device, [Handle; 3], usize)> = None;
     let mut card: Option<(Device, [Handle; 3], usize)> = None;
+    // A USB (xHCI) controller: its description, registers, DMA memory
+    // and interrupt - the first one only.
+    let mut usb_controller: Option<(PciDeviceInfo, [Handle; 3], usize)> = None;
     // Keyboards, mice, tablets - virtio ones: each with its handles,
     // kept here and copied to each `hid` that is started.
     let mut inputs: [Option<(MmioDeviceInfo, [Handle; 3], usize)>; INPUTS_MAX] = [None; INPUTS_MAX];
@@ -321,6 +325,7 @@ fn main() -> i64 {
             let is_ahci = (info.class, info.subclass, info.interface) == (ahci::CLASS, ahci::SUBCLASS, ahci::INTERFACE);
             let is_nvme = (info.class, info.subclass, info.interface) == (nvme::CLASS, nvme::SUBCLASS, nvme::INTERFACE);
             let is_virtio = info.vendor_id == virtio::PCI_VENDOR && !info.registers_in_memory();
+            let is_xhci = (info.class, info.subclass, info.interface) == (usb::xhci::CLASS, usb::xhci::SUBCLASS, usb::xhci::INTERFACE);
             if is_virtio && info.device_id == virtio::PCI_DEVICE_BLOCK && disk.is_none() && (2..=3).contains(&count) {
                 disk = Some((Device::Pci(info), [handles[0], handles[1], handles[2]], count));
                 used = true;
@@ -336,6 +341,9 @@ fn main() -> i64 {
             {
                 // The first card wins: a virtio one or an Intel one.
                 card = Some((Device::Pci(info), [handles[0], handles[1], handles[2]], count));
+                used = true;
+            } else if is_xhci && info.registers_in_memory() && usb_controller.is_none() && (2..=3).contains(&count) {
+                usb_controller = Some((info, [handles[0], handles[1], handles[2]], count));
                 used = true;
             } else {
                 println!("[init] no driver for PCI device {:04x}:{:04x}", info.vendor_id, info.device_id);
@@ -439,6 +447,11 @@ fn main() -> i64 {
     // stays here, and nobody is given a copy - and its description.
     let Ok((power_asked, power_ask)) = taaj::channel_create() else { return 2 };
     let Ok((power_info_tx, power_info_rx)) = taaj::channel_create() else { return 2 };
+    // usb's: the controller's description for each new driver, and the
+    // watchdog's pings (it answers no requests).
+    let Ok((usb_info_tx, usb_info_rx)) = taaj::channel_create() else { return 2 };
+    let Ok((usb_ping_tx, usb_ping_rx)) = taaj::channel_create() else { return 2 };
+    let [usb_registers, usb_dma, usb_interrupt] = usb_controller.map_or([0; 3], |(_, handles, _)| handles);
     if card.is_none() {
         let _ = taaj::close(net_in);
     }
@@ -515,6 +528,11 @@ fn main() -> i64 {
         Grant { handle: windows_out, rights: SEND },          // 43: windows to open, from programs
         Grant { handle: power_asked, rights: RECEIVE | SEND }, // 44: requests, for power (and its answers)
         Grant { handle: power_info_rx, rights: RECEIVE },     // 45: how to switch off, for power
+        Grant { handle: usb_registers, rights: READ | WRITE }, // 46: the USB controller's registers (BAR 0)
+        Grant { handle: usb_dma, rights: READ | WRITE },      // 47: its DMA memory
+        Grant { handle: usb_info_rx, rights: RECEIVE },       // 48: its description, for usb
+        Grant { handle: usb_ping_rx, rights: RECEIVE },       // 49: pings, for usb
+        Grant { handle: usb_interrupt, rights: RECEIVE },     // 50: its interrupt
     ];
     // Only the shell's screen and files can be copied and passed on.
     debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21)));
@@ -549,6 +567,7 @@ fn main() -> i64 {
     let display_watch = framebuffer.filter(|_| !serial_terminal).and_then(|_| Watch::new(display_ping_tx, &[abi::PING], 200));
     let kbd_watch = Watch::new(kbd_ping_tx, &[abi::PING], 200);
     let hid_watch = (!serial_terminal && has_inputs).then(|| Watch::new(hid_ping_tx, &[abi::PING], 200)).flatten();
+    let usb_watch = usb_controller.and_then(|_| Watch::new(usb_ping_tx, &[abi::PING], 200));
 
     // What the registry is told, each time one is started. The
     // services: a name, and which grant it means - the handle, and the
@@ -677,6 +696,20 @@ fn main() -> i64 {
             given_up: serial_terminal || !has_inputs,
             watch: hid_watch,
         },
+        // The USB controller, and its keyboards and mice: keys to the
+        // shell (3), movements to the display (37), as hid's.
+        Service {
+            name: "usb",
+            grants: match usb_controller {
+                Some((_, _, 3)) => &[46, 47, 48, 3, 37, 49, 50],
+                _ => &[46, 47, 48, 3, 37, 49], // no MSI: the driver polls
+            },
+            process: 0,
+            restarts: [0; MAX_RESTARTS],
+            restart_count: 0,
+            given_up: usb_controller.is_none(),
+            watch: usb_watch,
+        },
         // Switching off and resetting, when init asks: nobody else can.
         Service {
             name: "power",
@@ -783,6 +816,10 @@ fn main() -> i64 {
                 }
                 return Err(error);
             }
+        }
+        // And each new USB driver, what its controller is.
+        if let (Some((info, _, _)), "usb") = (usb_controller, service.name) {
+            taaj::send(usb_info_tx, &info.to_bytes(), &[])?;
         }
         // And each new network card's driver.
         if let (Some((info, _, _)), true) = (card, service.name == card_driver) {
@@ -1137,7 +1174,7 @@ fn serve_request(launcher: Handle, requests: Handle, power_ready: bool) -> Optio
 fn shut_down(services: &mut [Service], action: u8, power: Handle, files_look: Handle, [disk_driver, card_driver]: [&str; 2]) {
     let what = if action == abi::power::OFF { "switching off" } else { "resetting" };
     println!("[init] {what}: stopping the services");
-    let order = ["shell", "hid", "kbd", "serial", "net", card_driver, "fs", disk_driver, "display", "registry"];
+    let order = ["shell", "hid", "usb", "kbd", "serial", "net", card_driver, "fs", disk_driver, "display", "registry"];
     for name in order {
         let Some(service) = services.iter_mut().find(|s| s.name == name && !s.given_up) else { continue };
         let between = name != "fs" || between_requests(files_look);

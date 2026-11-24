@@ -489,6 +489,14 @@ endif
 # card in place of the virtio one (e1000 drives it).
 RUN_NIC      ?= virtio-net-pci
 RUN_NET      = -netdev user,id=n0 -device $(RUN_NIC),netdev=n0
+# And USB: `make run64 RUN_USB=yes` adds an xHCI controller with a
+# keyboard and a mouse on it (usb drives them; type in QEMU's window,
+# and click in it to give it the mouse). Or RUN_USB_ARGS for other
+# devices: `RUN_USB_ARGS="-device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0"`.
+RUN_USB      ?= no
+ifeq ($(RUN_USB),yes)
+RUN_USB_ARGS ?= -device qemu-xhci,id=xhci -device usb-kbd,bus=xhci.0 -device usb-mouse,bus=xhci.0
+endif
 run-disk: user64 cprogs64 pdpmake64 tcc64 cxx64 tfstool-rs
 	@[ -f $(RUN_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_DISK) $(RUN_DISK_BLOCKS) > /dev/null && truncate -s $$(($(RUN_DISK_BLOCKS) * 4096)) $(RUN_DISK) \
 	    && echo "Made a new disk: $(RUN_DISK)"; }
@@ -630,13 +638,13 @@ endif
 RUN_CPUS ?= 4
 
 run64: iso64 run-disk
-	qemu-system-x86_64 -m 512M -smp $(RUN_CPUS) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS) $(RUN_NET)
+	qemu-system-x86_64 -m 512M -smp $(RUN_CPUS) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS) $(RUN_NET) $(RUN_USB_ARGS)
 
 run64-uefi: iso64 run-disk
 ifneq ($(HAVE_CLANG),yes)
 	@echo "ERROR: no UEFI loader in the ISO - it needs clang and lld (sudo apt install clang lld)"; exit 1
 endif
-	qemu-system-x86_64 -m 512M -smp $(RUN_CPUS) -bios $(OVMF) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS) $(RUN_NET)
+	qemu-system-x86_64 -m 512M -smp $(RUN_CPUS) -bios $(OVMF) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS) $(RUN_NET) $(RUN_USB_ARGS)
 
 # Boots the 64-bit kernel headless and checks what it printed. A start on
 # the "boot every architecture on every commit" rule from the roadmap.
@@ -776,6 +784,7 @@ kernel64-test:
 	cd nvme && cargo test
 	cd acpi && cargo test
 	cd e1000 && cargo test
+	cd usb && cargo test
 	cd net && cargo test
 	cd gfx && cargo test
 	cd gui && cargo test
@@ -1143,6 +1152,15 @@ net64-test: iso64 cprogs64 tfstool-rs
 	$(call make-test-disk,$(NET64_LOG).disk)
 	@$(KERNEL64_DIR)/scripts/net-test.sh x86_64 $(ISO64_IMG) $(NET64_LOG).disk $(NET64_LOG)
 	@echo "net64-test passed"
+
+# USB: an xHCI controller, a keyboard typed on and a mouse clicked
+# through QEMU's monitor, a key held, a keyboard plugged in and out;
+# under BIOS, UEFI, and with the controller polled.
+USB64_LOG = $(BUILD_DIR)/usb-64
+usb64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(USB64_LOG).disk)
+	@OVMF=$(OVMF) $(KERNEL64_DIR)/scripts/usb-test.sh $(ISO64_IMG) $(USB64_LOG).disk $(USB64_LOG)
+	@echo "usb64-test passed"
 
 # The card's test with Intel's cards, driven by `e1000`: the 82540EM
 # (QEMU's `e1000`, no MSI - polled) and the 82574L (`e1000e`, MSI); then
@@ -1641,7 +1659,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 12
-TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test
+TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared
