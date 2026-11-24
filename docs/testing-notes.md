@@ -3177,3 +3177,72 @@ make test64
 | `test result: ok. 24 passed` | the controller, enumeration and the stick against the simulator |
 | `USB worked: ... and a stick was the system's disk - across a restart of its driver` | the five machines of `usb64-test` |
 | `test64: all passed` | every part |
+
+---
+
+## 090 · Booting from a USB stick
+
+[The entry](journal/090-booting-from-a-usb-stick.md)
+
+**1. Booting from a USB stick, in QEMU**
+
+```
+make run64-stick
+```
+
+This makes `build/stick64.img`: the boot image, plus a 16 MiB TaajFS partition from `build/stick-disk.img` (made the first time, with the programs on it; your `build/taaj-disk.img` is not touched). It then boots it as a USB stick, with no CD and no other disk, and a USB keyboard and mouse. In the terminal's log:
+
+| Look for | Meaning |
+|---|---|
+| `  loader         TheTaaJBoot (BIOS)` | SeaBIOS ran the stick's MBR, which loaded stage1, and stage2 read the kernel through int 13h |
+| `[usb] port 1: disk "QEMU QEMU HARDDISK" (46f4:0001, SuperSpeed), 53848 sectors (26 MiB) ready` | the kernel's usb driver found the same stick |
+| `[fs] TaajFS partition: sectors 20480 to 53247` | fs found partition 3 in the stick's MBR |
+| `[fs] ready: TaajFS on the disk, ... blocks free` | and mounted it |
+
+In the QEMU window (typing goes to the USB keyboard):
+
+| Type | You should see |
+|---|---|
+| `ls` | the programs, `welcome`, ... |
+| `write hello from the stick`, then `cat hello` | `from the stick` |
+| `poweroff` | `[init] stopped fs`, then `[init] stopped usb` |
+
+Then, on the host:
+
+```
+tools/tfstool-rs/target/release/tfstool get build/stick64.img hello
+```
+
+prints `from the stick`: tfstool finds the TaajFS partition in the image too.
+
+**2. The same stick under UEFI**
+
+```
+make run64-stick-uefi
+```
+
+The log shows `  loader         TheTaaJBoot (UEFI)`, and the rest as in 1. (`make run64-stick-uefi` makes the image again from `build/stick-disk.img`; see What is still missing.)
+
+**3. On a real USB stick** (all data on the stick is lost; check the device name twice)
+
+```
+make stick64
+lsblk                                   # find the stick, say /dev/sdX
+sudo dd if=build/stick64.img of=/dev/sdX bs=4M conv=fsync
+```
+
+Then boot the PC from the stick (its boot menu: often F12, F11 or Esc). This is R7. Nothing here has run on real hardware yet.
+
+**4. The tests by themselves**
+
+```
+cd taajfs && cargo test
+make stick64-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `test result: ok. 64 passed` | TaajFS, including the partition table |
+| `Booting from a USB stick worked: the MBR, stage1 and stage2 through int 13h (BIOS), the EFI system partition (UEFI), TaajFS in the stick's partition; and the loader read a SATA CD` | the three machines of `stick64-test` |
+| `test64: all passed` | every part |

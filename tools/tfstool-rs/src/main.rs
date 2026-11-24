@@ -206,5 +206,7 @@ fn open(image: &str) -> Result<Volume<FileDevice>, String> {
         .write(true)
         .open(image)
         .map_err(|e| format!("cannot open {image}: {e}"))?;
-    Volume::mount(FileDevice::new(file)).map_err(|e| format!("mount: {e}"))
+    // A USB stick's image holds the volume in a partition.
+    let (device, _) = FileDevice::find(file).map_err(|e| format!("cannot read {image}: {e}"))?;
+    Volume::mount(device).map_err(|e| format!("mount: {e}"))
 }

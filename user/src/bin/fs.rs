@@ -67,6 +67,9 @@ const CACHE_BLOCKS: usize = 256;
 struct DiskDevice {
     disk: Disk,
     window: Window,
+    /// Where the volume is: from sector `start`, `sectors` long - the
+    /// whole disk, or a partition (a USB stick made to boot from).
+    start: u64,
     sectors: u64,
 }
 
@@ -86,7 +89,7 @@ impl DiskDevice {
         if first + SECTORS_PER_BLOCK > self.sectors {
             return Err(DeviceError::new("block past the end of the disk"));
         }
-        Ok(first)
+        Ok(self.start + first)
     }
 }
 
@@ -103,7 +106,7 @@ impl BlockDevice for DiskDevice {
         for (n, part) in buffer.chunks_mut(per_request * BLOCK_SIZE).enumerate() {
             let blocks = (part.len() / BLOCK_SIZE) as u32;
             let start = self.first_sector(first + (n * per_request) as u32)?;
-            if start + u64::from(blocks) * SECTORS_PER_BLOCK > self.sectors {
+            if start + u64::from(blocks) * SECTORS_PER_BLOCK > self.start + self.sectors {
                 return Err(DeviceError::new("block past the end of the disk"));
             }
             let sectors = blocks * SECTORS_PER_BLOCK as u32;
@@ -134,6 +137,22 @@ fn mount(disk: Handle) -> Option<DiskStore<Cache<DiskDevice>>> {
             return None;
         }
     };
+    // The volume: in a TaajFS partition if sector 0 is a partition table
+    // that lists one (taajfs::partition), else the whole disk.
+    let mut sector0 = [0u8; abi::block::SECTOR];
+    let (start, sectors) = match disk.read(0, &mut sector0) {
+        Ok(()) => match taajfs::partition::find_taajfs(&sector0, sectors) {
+            Some((first, count)) => {
+                println!("[fs] TaajFS partition: sectors {first} to {}", first + count - 1);
+                (first, count)
+            }
+            None => (0, sectors),
+        },
+        Err(error) => {
+            println!("[fs] cannot read the disk ({}): files in memory only", error.describe());
+            return None;
+        }
+    };
     let window = match Window::new(abi::block::SECTORS_MAX) {
         Ok(window) => window,
         Err(error) => {
@@ -141,7 +160,7 @@ fn mount(disk: Handle) -> Option<DiskStore<Cache<DiskDevice>>> {
             return None;
         }
     };
-    match DiskStore::mount(Cache::new(DiskDevice { disk, window, sectors }, CACHE_BLOCKS)) {
+    match DiskStore::mount(Cache::new(DiskDevice { disk, window, start, sectors }, CACHE_BLOCKS)) {
         Ok(store) if u64::from(store.total_blocks()) * SECTORS_PER_BLOCK <= sectors => Some(store),
         Ok(store) => {
             println!("[fs] the volume says it has {} blocks; the disk is smaller - not using it", store.total_blocks());

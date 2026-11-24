@@ -5,6 +5,8 @@
 //!   device  - where blocks come from: the BlockDevice trait, and a disk
 //!             in memory for tests (which can pretend to lose power)
 //!   volume  - mount, read, and copy-on-write changes
+//!   partition - where the volume is on a disk: from sector 0, or in an
+//!             MBR partition of type 0x7F (a USB stick to boot from)
 //!
 //! Only `core` and `alloc`, so one implementation serves two places:
 //! the host tool (tools/tfstool-rs, which adds an image-file device, a
@@ -19,6 +21,7 @@ extern crate alloc;
 pub mod cache;
 pub mod device;
 pub mod format;
+pub mod partition;
 pub mod volume;
 
 pub use cache::Cache;

@@ -24,6 +24,8 @@ BOOTLOADER_BUILD_DIR = bootloader/$(BUILD_DIR)
 STAGE1_BUILD_DIR = $(BOOTLOADER_BUILD_DIR)/stage1
 STAGE2_BUILD_DIR = $(BOOTLOADER_BUILD_DIR)/stage2
 STAGE1_BIN = $(STAGE1_BUILD_DIR)/stage1.bin
+# The master boot record of an image written to a USB stick.
+MBR_BIN    = $(STAGE1_BUILD_DIR)/mbr.bin
 STAGE2_BIN = $(STAGE2_BUILD_DIR)/stage2.bin
 
 KERNEL_BUILD = kernel/$(BUILD_DIR)
@@ -618,6 +620,24 @@ endif
 #
 # The kernel is a copy without debug info: stage2 reads the whole file
 # through a 1 MiB staging window, and the symbols stay in the original.
+#
+# The ISO is also a disk image (a "hybrid"): written to a USB stick, it
+# boots from it. Its first sector is a master boot record (mbr.bin, the
+# bootloader's), whose partition table xorriso fills in: partition 1 the
+# ISO 9660 file system (from 32 KiB on: -partition_offset 16), marked
+# active for the BIOS; partition 2 the same FAT image the UEFI El Torito
+# entry has, typed 0xEF - the EFI system partition UEFI firmware looks
+# for on a disk. hybrid64 OUT EXTRA: EXTRA, more xorriso options (the
+# stick's TaajFS partition).
+define hybrid64
+	xorriso -as mkisofs -R -J -iso-level 3 \
+		-isohybrid-mbr $(MBR_BIN) -partition_offset 16 \
+		-b stage1.bin -no-emul-boot -boot-load-size 4 \
+		-eltorito-alt-boot -e efiboot.img -no-emul-boot \
+		-append_partition 2 0xef $(ESP64_IMG) $(2) \
+		-o $(1) $(ISO64_DIR) 2>/dev/null
+endef
+
 iso64: build-bootloader kernel64 uefi-loader
 	@echo "Creating the 64-bit ISO image..."
 	rm -rf $(ISO64_DIR)
@@ -629,14 +649,30 @@ ifeq ($(HAVE_CLANG),yes)
 	mmd -i $(ESP64_IMG) ::/EFI ::/EFI/BOOT ::/kernel
 	mcopy -i $(ESP64_IMG) $(UEFI_EFI) ::/EFI/BOOT/BOOTX64.EFI
 	mcopy -i $(ESP64_IMG) $(ISO64_DIR)/kernel/kernel.elf ::/kernel/kernel.elf
-	xorriso -as mkisofs -R -J -iso-level 3 \
-		-b stage1.bin -no-emul-boot -boot-load-size 4 \
-		-eltorito-alt-boot -e efiboot.img -no-emul-boot \
-		-o $(ISO64_IMG) $(ISO64_DIR) 2>/dev/null
+	$(call hybrid64,$(ISO64_IMG),)
 else
 	xorriso -as mkisofs -R -J -b stage1.bin -iso-level 3 -no-emul-boot \
+		-isohybrid-mbr $(MBR_BIN) -partition_offset 16 \
 		-boot-load-size 4 -o $(ISO64_IMG) $(ISO64_DIR) 2>/dev/null
 endif
+
+# A USB stick to boot from and keep files on: the hybrid ISO, and after
+# it a third partition (type 0x7F, "for experimental operating
+# systems") holding a TaajFS volume - fs finds it there. STICK_DISK is
+# that volume, made and kept up to date as the run disk is:
+#   make stick64
+#   sudo dd if=build/stick64.img of=/dev/sdX bs=4M conv=fsync
+# (sdX: the stick - everything on it is lost.) Or in QEMU, booted from
+# a USB stick with no CD: make run64-stick (BIOS), run64-stick-uefi.
+STICK64_IMG = $(BUILD_DIR)/stick64.img
+STICK_DISK ?= $(BUILD_DIR)/stick-disk.img
+stick64: iso64
+ifneq ($(HAVE_CLANG),yes)
+	@echo "ERROR: no UEFI loader - it needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+	@$(MAKE) --no-print-directory run-disk RUN_DISK=$(STICK_DISK)
+	$(call hybrid64,$(STICK64_IMG),-append_partition 3 0x7f $(STICK_DISK))
+	@echo "Made $(STICK64_IMG): write it to a USB stick (see the Makefile) or boot it with make run64-stick"
 
 # How many CPUs `make run64` gives the machine: `make run64 RUN_CPUS=1`.
 RUN_CPUS ?= 4
@@ -649,6 +685,17 @@ ifneq ($(HAVE_CLANG),yes)
 	@echo "ERROR: no UEFI loader in the ISO - it needs clang and lld (sudo apt install clang lld)"; exit 1
 endif
 	qemu-system-x86_64 -m 512M -smp $(RUN_CPUS) -bios $(OVMF) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS) $(RUN_NET) $(RUN_USB_ARGS)
+
+# Booted from the USB stick (make stick64), with no CD and no other
+# disk: a USB keyboard and mouse beside it. The files written land in
+# build/stick64.img.
+RUN_STICK_ARGS = -device qemu-xhci,id=xhci -drive file=$(STICK64_IMG),format=raw,if=none,id=stick \
+	-device usb-storage,bus=xhci.0,drive=stick,bootindex=0 -device usb-kbd,bus=xhci.0 -device usb-mouse,bus=xhci.0
+run64-stick: stick64
+	qemu-system-x86_64 -m 512M -smp $(RUN_CPUS) -serial stdio $(RUN_STICK_ARGS) $(RUN_NET)
+
+run64-stick-uefi: stick64
+	qemu-system-x86_64 -m 512M -smp $(RUN_CPUS) -bios $(OVMF) -serial stdio $(RUN_STICK_ARGS) $(RUN_NET)
 
 # Boots the 64-bit kernel headless and checks what it printed. A start on
 # the "boot every architecture on every commit" rule from the roadmap.
@@ -1169,6 +1216,15 @@ usb64-test: iso64 cprogs64 tfstool-rs
 # The card's test with Intel's cards, driven by `e1000`: the 82540EM
 # (QEMU's `e1000`, no MSI - polled) and the 82574L (`e1000e`, MSI); then
 # the network's tests over them - IP over the first, TCP the second.
+# Booting from a USB stick (BIOS and UEFI) made of the test disk, and
+# the loader reading a SATA CD.
+STICK64_LOG = $(BUILD_DIR)/stick-64
+stick64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(STICK64_LOG).disk)
+	$(call hybrid64,$(STICK64_LOG).img,-append_partition 3 0x7f $(STICK64_LOG).disk)
+	@OVMF=$(OVMF) $(KERNEL64_DIR)/scripts/stick-test.sh $(ISO64_IMG) $(STICK64_LOG).img $(STICK64_LOG).disk $(STICK64_LOG)
+	@echo "stick64-test passed"
+
 E1000_64_LOG = $(BUILD_DIR)/e1000-64
 e1000-64-test: iso64 cprogs64 tfstool-rs
 	$(call make-test-disk,$(E1000_64_LOG).disk)
@@ -1663,7 +1719,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 12
-TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test
+TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared
