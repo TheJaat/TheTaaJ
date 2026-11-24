@@ -89,6 +89,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 079 | [Pipes and redirections: `pipe`, posix_spawn's file actions, the file service's streams into and out of files, an environment for a started program, and `system` and `popen` running pipelines with `<`, `>`, `\|` and `2>&1`, which make's recipes use, on both machines](079-pipes-and-redirections.md) | written | `0d5f7fa` (TheKernel `43b80e0`) |
 | 080 | [Fast tests: TaajFS keeps its free map up to date instead of walking the whole disk at every write, the file service reads files in runs of 128 KiB, and the long parts of `make test64` start first and run side by side - over an hour down to a quarter of one](080-fast-tests.md) | written | `125c3b6` (TheKernel `a3323eb`) |
 | 081 | [A small shell: `sh -c`, with lists, variables, `$(...)`, quoting, wildcards and the builtins a recipe uses, so that `system`, `popen` and make run commands as POSIX says](081-a-small-shell.md) | written | `1ed43ab` (TheKernel `2c68306`) |
+| 082 | [Control flow in sh: `if`, `while`, `until`, `for`, `case`, `{ }`, `( )`, functions, `${X%.c}` and `$((...))`, a compound command in a pipeline or redirected run by a copy of sh](082-control-flow-in-sh.md) | written | `aed6f3d` (TheKernel `b2eccff`) |
 
 ## How to run what the entries describe
 

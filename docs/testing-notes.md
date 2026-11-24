@@ -2663,3 +2663,51 @@ make test64
 | `test64: all passed` | every part |
 
 Automated: make test64
+
+---
+
+## 082 · Control flow in sh: if, loops, case, functions, `${X%.c}` and `$((...))`
+
+[The entry](journal/082-control-flow-in-sh.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`.
+
+| Type | You should see |
+|---|---|
+| `cd /src/libc/programs` | |
+| `with programs sh -c 'for f in c*.c; do echo "C: $f"; done'` | `C: cask.c` ... `C: cwords.c`, one line for each |
+| `with programs sh -c 'n=0; while [ $n -lt 3 ]; do n=$((n + 1)); echo "round $n"; done'` | `round 1`, `round 2`, `round 3` |
+| `with programs sh -c 'f() { echo "f got $# arguments: $*"; }; f a "b c"'` | `f got 2 arguments: a b c` |
+| `with programs sh -c 'for f in cask.c notes; do case $f in *.c) echo "$f: C";; *) echo "$f: other";; esac; done'` | `cask.c: C`, `notes: other` |
+| `with programs sh -c 'f=/src/libc/programs/cask.c; echo ${f##*/} ${f%.c}'` | `cask.c /src/libc/programs/cask` |
+| `with programs sh -c 'cprimes 20 \| while read a b c; do echo "[$c] [$a]"; done'` | `[primes below 20] [cprimes:]` |
+| `with programs sh -c 'cat << END'` | `sh: a here-document, <<, is not in this shell yet`, `sh exited with code 2` |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `pipes on TheTaaJ (x86_64): 82 checks ... passed; sh ran a list and a script with if, for, while read, case and a function` | the shell, on the PC; the same for aarch64 |
+| `test64: all passed` | every part |
+
+Automated: make test64
