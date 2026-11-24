@@ -96,17 +96,8 @@ docmds(struct name *np, struct cmd *cp)
 		if (sdomake && *q != '\0') {	// Ignore empty commands
 			// Get the shell to execute it
 			int status;
-#if defined(__TAAJ__)
-			// TheTaaJ: there is no shell, and system() runs one
-			// command, so "set -e;" - for a shell running several -
-			// means nothing, and its ';' would be refused. One
-			// command's failure already stops make.
-			char *cmd = !signore IF_FEATURE_MAKE_EXTENSIONS(&& posix) ?
-							xconcat3("", q, "") : q;
-#else
 			char *cmd = !signore IF_FEATURE_MAKE_EXTENSIONS(&& posix) ?
 							xconcat3("set -e;", q, "") : q;
-#endif
 
 			target = np;
 			status = system(cmd);

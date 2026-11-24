@@ -241,8 +241,8 @@ TAAJ_CFLAGS  = --target=x86_64-unknown-none-elf -std=c11 -O2 -Wall -Wextra -Werr
                -nostdlibinc -isystem $(LIBC_DIR)/include
 TAAJ_LDFLAGS = -static -nostdlib --gc-sections -s -T user/user.ld
 ifeq ($(HAVE_CC),yes)
-C_PROGRAMS   = chello cmem cprint cfile cstdio cwords cask cprimes cnet cfloat clib
-ROOT_FILES   = 38
+C_PROGRAMS   = chello cmem cprint cfile cstdio cwords cask cprimes cnet cfloat clib sh
+ROOT_FILES   = 39
 C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret w i t h spc f i l e s spc c f i l e spc c h e c k ret c f i l e spc c a t spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc n o f i l e spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc w r i t e spc c n o spc x ret w i t h spc f i l e s spc c f i l e spc w r i t e spc c n o t e spc m a d e spc b y spc c ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc l o n g spc shift-dot spc c l o n g ret c f i l e spc c a t spc shift-comma spc l o n g spc shift-dot spc c l o n g 2 ret c f i l e ret c a s k ret a d a ret 4 0 ret x ret 2 ret ctrl-d c a s k spc o n e ret f i r s t ret e c h o spc a f t e r ret e c h o spc a d a spc shift-dot spc w h o ret c a s k spc o n e spc shift-comma spc w h o ret c a t spc l o n g spc shift-backslash spc c w o r d s spc minus n spc 3 ret w i t h spc r e a d o n l y spc c w o r d s spc minus n spc 2 5 spc c w o r d s spc l o n g spc shift-dot spc c w 1 ret c w o r d s spc minus n spc 5 spc shift-comma spc l o n g spc shift-dot spc c w 2 ret c w o r d s spc l o n g ret c w o r d s spc minus n spc n o n e ret c w o r d s spc minus x ret w i t h spc f i l e s spc c s t d i o spc c h e c k ret c s t d i o spc l i n e s spc w e l c o m e ret c s t d i o spc l i n e s spc shift-comma spc w e l c o m e ret w i t h spc r e a d o n l y spc c s t d i o spc l i n e s spc l o n g spc shift-dot spc c n u m ret w i t h spc f i l e s spc c s t d i o spc c o p y spc l o n g spc c c o p y ret c s t d i o spc o r d e r ret c s t d i o spc e n d spc shift-dot spc c e n d ret c s t d i o spc l o s t spc shift-dot spc c l o s t ret c s t d i o spc e n d ret c s t d i o ret c p r i n t spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c p r i n t spc l o n g spc shift-backslash spc w c ret c p r i n t spc shift-dot spc p o u t ret c m e m ret c m e m spc s o r t spc p e a r spc a p p l e spc f i g spc a p p l e ret c m e m spc h u g e ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret w i t h spc f i l e s spc c l i b ret c l i b spc a s s e r t ret c p r i m e s spc 1 0 0 ret ~ c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c f l o a t spc 1 spc shift-7 ret c f l o a t spc 2 spc shift-7 ret c f l o a t spc 3 spc shift-7 ret c f l o a t spc 4 spc shift-7 ret t i m e spc w a i t ret ~~
 EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^files: 48 checks, all passed;^cfile: welcome: this program was not given the files;^cfile: nofile: no such file or directory;^cno: the files are read-only here;^cnote: 10 bytes;^usage: cfile cat;^hello, ada \(typed\);^cask: not a number: x;^total: 42;^one line: first \(typed\);^after\s*$$;^one line: ada \(from a file or another program\);^ +301  300\s*$$;^ +300  line\s*$$;^1200 words, 302 different;^cwords: long: this program was not given the files;^0 words, 0 different;^cwords: -n needs a number from 1 up, not .none.;^usage: cwords \[-n COUNT\];^streams: 52 checks, all passed;^cstdio: welcome: this program was not given the files;^   1  Hello from the host;^ccopy: 4692 bytes;^write was called second - printf was called first\s*$$;^no new line, and still here;^usage: cstdio lines;^printf: 42 -7 ff 0X2A \[   hi\] \[hi   \] \[00042\] x 100.\s*$$;^sizes: 18446744073709551615 -9223372036854775808\s*$$;^printf returned 6\s*$$;^snprintf: wanted 12, kept <hello, >;^argument 2 of 2: two words\s*$$;^puts: a line of its own\s*$$;^fputs and putchar\s*$$;^cprint: 9 lines went to standard output;^cprint: 7 lines went to standard output;^1 line, 1 word, 601 bytes;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes;^library: [0-9]+ checks, all passed;^library: atexit ran its handlers, newest first;^libc/programs/clib.c:[0-9]+: main: assertion failed: number == 2;^clib exited with code 134;^cprimes: 25 primes below 100\s*$$;^\[4\] cprimes 24000000;^cfloat 1: 30000000 rounds, 0 wrong;^cfloat 2: 30000000 rounds, 0 wrong;^cfloat 3: 30000000 rounds, 0 wrong;^cfloat 4: 30000000 rounds, 0 wrong;^took [0-9]+\.[0-9][0-9] s; the 4 CPUs worked for [0-9]+\.[0-9][0-9] s in all
 else
@@ -771,6 +771,8 @@ libc-test:
 	$(LIBC_DIR)/target/number-test
 	rustc --edition 2021 --test $(LIBC_DIR)/src/words.rs -o $(LIBC_DIR)/target/words-test
 	$(LIBC_DIR)/target/words-test
+	rustc --edition 2021 --test $(LIBC_DIR)/src/sh.rs -o $(LIBC_DIR)/target/sh-test
+	$(LIBC_DIR)/target/sh-test
 ifeq ($(HAVE_CC),yes)
 	@mkdir -p $(LIBC_DIR)/target/host
 	clang $(HOST_CFLAGS) -ffreestanding -nostdlibinc -isystem $(LIBC_DIR)/include $(FORMAT_RENAMED) \
@@ -1272,7 +1274,7 @@ MAKE64_LOG   = $(BUILD_DIR)/make64.log
 MAKE_A64_LOG = $(BUILD_DIR)/aarch64/make.log
 make64-test: iso64 user64 tcc64 pdpmake64 tfstool-rs
 ifeq ($(HAVE_CC),yes)
-	@TFSTOOL=$(TFSTOOL_RS) APPEND=$(USER_BIN)/append $(KERNEL64_DIR)/scripts/make-test.sh x86_64 $(ISO64_IMG) $(MAKE64_LOG).disk $(MAKE64_LOG) $(TCC_X86_DIR) $(LIBC_A) $(C_BIN)/make
+	@TFSTOOL=$(TFSTOOL_RS) APPEND=$(USER_BIN)/append SH=$(C_BIN)/sh $(KERNEL64_DIR)/scripts/make-test.sh x86_64 $(ISO64_IMG) $(MAKE64_LOG).disk $(MAKE64_LOG) $(TCC_X86_DIR) $(LIBC_A) $(C_BIN)/make
 	@echo "make64-test passed"
 else
 	@echo "FAIL: make needs clang and lld (sudo apt install clang lld)"; exit 1
@@ -1281,7 +1283,7 @@ endif
 aarch64-make-test: kernel-aarch64 user-aarch64 tcc-aarch64 pdpmake-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
-	@TFSTOOL=$(TFSTOOL_RS) APPEND=$(A64_USER_BIN)/append $(KERNEL64_DIR)/scripts/make-test.sh aarch64 $(KERNEL_A64_IMAGE) $(MAKE_A64_LOG).disk $(MAKE_A64_LOG) $(TCC_A64_DIR) $(C_A64_BIN)/libc.a $(C_A64_BIN)/make
+	@TFSTOOL=$(TFSTOOL_RS) APPEND=$(A64_USER_BIN)/append SH=$(C_A64_BIN)/sh $(KERNEL64_DIR)/scripts/make-test.sh aarch64 $(KERNEL_A64_IMAGE) $(MAKE_A64_LOG).disk $(MAKE_A64_LOG) $(TCC_A64_DIR) $(C_A64_BIN)/libc.a $(C_A64_BIN)/make
 	@echo "aarch64-make-test passed"
 else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 make boot is not run"
@@ -1296,7 +1298,7 @@ PIPES_C      = $(KERNEL64_DIR)/scripts/pipes.c
 pipe64-test: iso64 user64 pdpmake64 tfstool-rs
 ifeq ($(HAVE_CC),yes)
 	@clang $(TAAJ_CFLAGS) -c $(PIPES_C) -o $(C_BIN)/pipes.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/pipes.o $(LIBC_A) -o $(C_BIN)/pipes
-	@TFSTOOL=$(TFSTOOL_RS) CAT=$(USER_BIN)/cat $(KERNEL64_DIR)/scripts/pipe-test.sh x86_64 $(ISO64_IMG) $(PIPE64_LOG).disk $(PIPE64_LOG) $(C_BIN)/pipes $(C_BIN)/make
+	@TFSTOOL=$(TFSTOOL_RS) CAT=$(USER_BIN)/cat SH=$(C_BIN)/sh $(KERNEL64_DIR)/scripts/pipe-test.sh x86_64 $(ISO64_IMG) $(PIPE64_LOG).disk $(PIPE64_LOG) $(C_BIN)/pipes $(C_BIN)/make
 	@echo "pipe64-test passed"
 else
 	@echo "FAIL: the pipes test needs clang and lld (sudo apt install clang lld)"; exit 1
@@ -1306,7 +1308,7 @@ aarch64-pipe-test: kernel-aarch64 user-aarch64 pdpmake-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
 	@clang $(TAAJ_A64_CFLAGS) -c $(PIPES_C) -o $(C_A64_BIN)/pipes.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/pipes.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/pipes
-	@TFSTOOL=$(TFSTOOL_RS) CAT=$(A64_USER_BIN)/cat $(KERNEL64_DIR)/scripts/pipe-test.sh aarch64 $(KERNEL_A64_IMAGE) $(PIPE_A64_LOG).disk $(PIPE_A64_LOG) $(C_A64_BIN)/pipes $(C_A64_BIN)/make
+	@TFSTOOL=$(TFSTOOL_RS) CAT=$(A64_USER_BIN)/cat SH=$(C_A64_BIN)/sh $(KERNEL64_DIR)/scripts/pipe-test.sh aarch64 $(KERNEL_A64_IMAGE) $(PIPE_A64_LOG).disk $(PIPE_A64_LOG) $(C_A64_BIN)/pipes $(C_A64_BIN)/make
 	@echo "aarch64-pipe-test passed"
 else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 pipes boot is not run"

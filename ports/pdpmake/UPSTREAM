@@ -1,5 +1,6 @@
-pdpmake - Ron Yorston's public-domain POSIX make - as it is upstream,
-with TheTaaJ's changes on top (see the history of this directory).
+pdpmake - Ron Yorston's public-domain POSIX make - as it is upstream.
+(TheTaaJ's one change, which ran recipes without "set -e;" while there
+was no shell, was taken out again once there was: journal entry 081.)
 
   from     https://github.com/rmyorston/pdpmake
   release  2.0.4 (tag 2.0.4, commit 0faaf258c9b3eaa9f5e4f6842e2484cbea6f23f8,

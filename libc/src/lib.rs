@@ -84,6 +84,8 @@ pub mod spawn;
 pub mod status;
 pub mod string;
 pub mod words;
+pub mod sh;
+pub mod sh_system;
 pub mod system;
 
 use alloc::string::String;

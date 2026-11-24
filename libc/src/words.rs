@@ -1,14 +1,14 @@
 //! A command's words, as sh splits them - for `system` (spawn.rs),
-//! which has no shell to hand the command to. No system in it: it is
-//! tested on the host, alone (`rustc --test libc/src/words.rs`, in
-//! `make libc-test`).
+//! which starts a simple command itself, and hands anything more to sh
+//! (sh.rs). No system in it: it is tested on the host, alone (`rustc
+//! --test libc/src/words.rs`, in `make libc-test`).
 
 extern crate alloc;
 
 use alloc::string::String;
 use alloc::vec::Vec;
 
-/// Why a command cannot be run without a shell.
+/// Why a command needs a shell to run.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Unshelled {
     /// A character only a shell gives meaning to, outside quotes.
@@ -20,6 +20,9 @@ pub enum Unshelled {
     /// A pipe with no command on one side of it, or a redirection with
     /// no file after it.
     Malformed,
+    /// A command that is a shell's own (spawn.rs says which): `echo`,
+    /// `cd`, `exit`.
+    Builtin(String),
 }
 
 /// Where one of a command's descriptors goes instead, said after it.
@@ -46,8 +49,8 @@ pub struct Stage {
 /// as sh takes them - if nothing in it needs a shell to mean what it
 /// says: no pipes or redirections, no `;`, `&&` or `&`, no `$` or
 /// backquotes, no wildcards, no `(`, `#` or `~` starting a word, no
-/// variables set for the command. There is no shell for a C program on
-/// TheTaaJ, and a command half understood is worse than one refused.
+/// variables set for the command. Those are for a shell: a command half
+/// understood is worse than one handed on.
 pub fn words_of(command: &str) -> Result<Vec<String>, Unshelled> {
     Ok(split(command, false)?.pop().map(|stage| stage.words).unwrap_or_default())
 }

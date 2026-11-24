@@ -30,7 +30,10 @@
 //! attributes: posix_spawn fails with ENOSYS if any were asked for.
 //!
 //! `system` and `popen` run a command line through the same: a
-//! pipeline of programs with redirections (words.rs), no shell.
+//! pipeline of programs with redirections (words.rs) is started from
+//! here; anything more - `;`, `&&`, `$VAR`, wildcards - is handed to
+//! the shell, `/sh -c command` (sh.rs, sh_system.rs), which starts its
+//! commands through the same again.
 //!
 //! A process ID here is this program's own number for a child, from 2
 //! up, good for waitpid: TheTaaJ names a process by a handle, not by a
@@ -336,7 +339,7 @@ extern "C" {
 ///
 /// # Safety
 /// `list` null or an array of strings ending in null.
-unsafe fn environment_of(list: *const *const c_char) -> Vec<u8> {
+pub(crate) unsafe fn environment_of(list: *const *const c_char) -> Vec<u8> {
     // SAFETY: environ is always such an array (unix.c).
     let mut at = if list.is_null() { unsafe { environ } } else { list };
     let mut out = Vec::new();
@@ -715,21 +718,23 @@ fn complain(text: &str) {
 /// `system(command)`: runs a command and waits for it; its status, as
 /// waitpid gives it.
 ///
-/// There is no shell for a C program here, so `system` does the part of
-/// a shell's work simple commands need (words.rs, `pipeline_of`): the
-/// command is split into words as sh would split it (quotes and
-/// backslashes work), with pipes (`a | b`) and redirections (`<`, `>`,
-/// `>>`, `2>`, `2>&1`, `>&2`), and each command's first word is started
-/// as posix_spawnp starts a name: a bare name is the file of that name
-/// in the root. A pipeline's status is its last command's, as in sh.
+/// A simple command - words as sh would split them (quotes and
+/// backslashes work), pipes (`a | b`) and redirections (`<`, `>`,
+/// `>>`, `2>`, `2>&1`, `>&2`) - is started from here (words.rs,
+/// `pipeline_of`), each command's first word as posix_spawnp starts a
+/// name: a bare name is the file of that name in the root. That is
+/// what sh would do with it, without starting sh. A pipeline's status
+/// is its last command's, as in sh.
 ///
-/// A command that needs more of a shell - `;`, `&&`, `&`, `$`, a
-/// wildcard, `VAR=x cmd` - is not run: -1, with ENOSYS, and a line on
-/// standard error saying why. A program that cannot be started gives
-/// status 127, as sh's "not found" does, with a line saying why, and so
-/// does a redirection's file that cannot be opened; one that may not be
-/// started (no "init" service) -1 with EPERM. An empty command does
-/// nothing, 0. `system(NULL)` says 1: commands can be run, in this way.
+/// A command that needs more of a shell - `;`, `&&`, `$`, a wildcard,
+/// `VAR=x cmd` - is run by `/sh -c command`, as POSIX says system runs
+/// every command. If there is no /sh, it is not run: -1, with ENOSYS,
+/// and a line on standard error saying why. A program that cannot be
+/// started gives status 127, as sh's "not found" does, with a line
+/// saying why, and so does a redirection's file that cannot be opened;
+/// one that may not be started (no "init" service) -1 with EPERM. An
+/// empty command does nothing, 0. `system(NULL)` says 1: commands can
+/// be run.
 ///
 /// # Safety
 /// `command` null or a string ending in a zero byte.
@@ -743,20 +748,39 @@ pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
     match pipeline(&command, None, None) {
         Ok(ids) => ids.into_iter().fold(0, |_, id| reap(id)),
         Err(Failed::Refused(code)) => crate::descriptors::fail(code),
-        Err(Failed::NotStarted) => 127 << 8,
+        Err(Failed::NotStarted(_)) => 127 << 8,
     }
 }
 
 /// Why a pipeline did not run.
-enum Failed {
+pub(crate) enum Failed {
     /// -1 and this errno: not run at all.
     Refused(c_int),
-    /// A command could not be started, and the reason was said: 127.
-    NotStarted,
+    /// A command could not be started, for this reason, and the reason
+    /// was said: 127.
+    NotStarted(c_int),
 }
 
+/// One program of a pipeline to start: its file (as posix_spawnp takes
+/// a name), its words (its name first), what to do to its descriptors,
+/// and its environment as a Run request has it.
+pub(crate) struct Job {
+    pub path: String,
+    pub words: Vec<String>,
+    pub actions: Vec<Action>,
+    pub environment: Vec<u8>,
+}
+
+/// open's flags for a redirection to a file.
+pub(crate) fn output_flags(append: bool) -> c_int {
+    O_WRONLY | O_CREAT | if append { O_APPEND } else { O_TRUNC }
+}
+
+/// open's flags for reading a file.
+pub(crate) const INPUT_FLAGS: c_int = O_RDONLY;
+
 /// Waits for child `id`; its status.
-fn reap(id: c_int) -> c_int {
+pub(crate) fn reap(id: c_int) -> c_int {
     let mut status = 127 << 8;
     // SAFETY: a pointer to our own int.
     unsafe { waitpid(id, &mut status, 0) };
@@ -764,7 +788,7 @@ fn reap(id: c_int) -> c_int {
 }
 
 /// Closes one of this program's descriptors, quietly.
-fn close_fd(fd: Option<c_int>) {
+pub(crate) fn close_fd(fd: Option<c_int>) {
     if let Some(fd) = fd {
         crate::descriptors::close(fd);
     }
@@ -775,28 +799,67 @@ fn close_fd(fd: Option<c_int>) {
 /// this program the first command reads, and `output` one the last
 /// writes; both are closed here, whatever happens. A command that
 /// cannot be started stops the rest; those already running are waited
-/// for.
-fn pipeline(command: &str, input: Option<c_int>, mut output: Option<c_int>) -> Result<Vec<c_int>, Failed> {
+/// for. What needs a shell is started as one command: `sh -c command`.
+fn pipeline(command: &str, input: Option<c_int>, output: Option<c_int>) -> Result<Vec<c_int>, Failed> {
     use crate::words::{Redirection, Unshelled};
-    let stages = match crate::words::pipeline_of(command) {
-        Ok(stages) => stages,
+    // SAFETY: environ is always an array of strings.
+    let environment = unsafe { environment_of(core::ptr::null()) };
+    // A builtin of sh's (echo, cd, exit...) is no program: sh runs it.
+    let parsed = crate::words::pipeline_of(command).and_then(|stages| {
+        match stages.iter().find(|stage| crate::sh::is_builtin(&stage.words[0])) {
+            Some(stage) => Err(Unshelled::Builtin(stage.words[0].clone())),
+            None => Ok(stages),
+        }
+    });
+    let jobs: Vec<Job> = match parsed {
+        Ok(stages) => stages
+            .into_iter()
+            .map(|stage| Job {
+                path: stage.words[0].clone(),
+                actions: stage
+                    .redirections
+                    .iter()
+                    .map(|redirection| match redirection {
+                        Redirection::In { fd, path } => Action::Open { descriptor: *fd as c_int, path: path.clone(), flags: INPUT_FLAGS },
+                        Redirection::Out { fd, path, append } => {
+                            Action::Open { descriptor: *fd as c_int, path: path.clone(), flags: output_flags(*append) }
+                        }
+                        Redirection::Copy { fd, to } => Action::Dup2 { from: *to as c_int, to: *fd as c_int },
+                    })
+                    .collect(),
+                words: stage.words,
+                environment: environment.clone(),
+            })
+            .collect(),
         Err(why) => {
-            close_fd(input);
-            close_fd(output);
-            let why = match why {
-                Unshelled::Needs(c) => alloc::format!("'{c}' needs a shell"),
-                Unshelled::Unfinished => String::from("a quote or backslash is not finished"),
-                Unshelled::Assignment => String::from("setting a variable for a command needs a shell"),
-                Unshelled::Malformed => String::from("a pipe or a redirection has nothing on one side"),
-            };
-            complain(&alloc::format!("system: cannot run \"{command}\": {why}, and there is none here\n"));
-            return Err(Failed::Refused(ENOSYS));
+            let there = with(|state| state.files().is_some_and(|files| files.size("/sh").is_ok_and(|size| size > 0)));
+            if !there {
+                close_fd(input);
+                close_fd(output);
+                let why = match why {
+                    Unshelled::Needs(c) => alloc::format!("'{c}' needs a shell"),
+                    Unshelled::Unfinished => String::from("a quote or backslash is not finished"),
+                    Unshelled::Assignment => String::from("setting a variable for a command needs a shell"),
+                    Unshelled::Malformed => String::from("a pipe or a redirection has nothing on one side"),
+                    Unshelled::Builtin(name) => alloc::format!("{name} is a shell's"),
+                };
+                complain(&alloc::format!("system: cannot run \"{command}\": {why}, and there is no /sh\n"));
+                return Err(Failed::Refused(ENOSYS));
+            }
+            let words = ["sh", "-c", command].map(String::from).to_vec();
+            alloc::vec![Job { path: String::from("sh"), words, actions: Vec::new(), environment }]
         }
     };
+    start_jobs(&jobs, input, output, "system")
+}
+
+/// Starts `jobs`, each one's output the next one's input, as `pipeline`
+/// says; `who` starts the lines said about what went wrong.
+pub(crate) fn start_jobs(jobs: &[Job], input: Option<c_int>, mut output: Option<c_int>, who: &str) -> Result<Vec<c_int>, Failed> {
     let mut ids = Vec::new();
     let mut reading = input;
     let mut failed = None;
-    for (n, stage) in stages.iter().enumerate() {
+    for (n, job) in jobs.iter().enumerate() {
         let mut actions = Vec::new();
         if let Some(from) = reading {
             actions.push(Action::Dup2 { from, to: 0 });
@@ -804,10 +867,11 @@ fn pipeline(command: &str, input: Option<c_int>, mut output: Option<c_int>) -> R
         // The pipe to the next command: its write end this one's output.
         let mut next = None;
         let writing;
-        if n + 1 < stages.len() {
+        if n + 1 < jobs.len() {
             let mut ends = [0; 2];
             // SAFETY: room for two.
             if unsafe { crate::pipes::pipe(ends.as_mut_ptr()) } != 0 {
+                complain(&alloc::format!("{who}: no descriptor for a pipe\n"));
                 failed = Some(Failed::Refused(crate::errno::EMFILE));
                 break;
             }
@@ -819,28 +883,17 @@ fn pipeline(command: &str, input: Option<c_int>, mut output: Option<c_int>) -> R
         if let Some(from) = writing {
             actions.push(Action::Dup2 { from, to: 1 });
         }
-        for redirection in &stage.redirections {
-            actions.push(match redirection {
-                Redirection::In { fd, path } => Action::Open { descriptor: *fd as c_int, path: path.clone(), flags: O_RDONLY },
-                Redirection::Out { fd, path, append } => Action::Open {
-                    descriptor: *fd as c_int,
-                    path: path.clone(),
-                    flags: O_WRONLY | O_CREAT | if *append { O_APPEND } else { O_TRUNC },
-                },
-                Redirection::Copy { fd, to } => Action::Dup2 { from: *to as c_int, to: *fd as c_int },
-            });
-        }
-        let name = &stage.words[0];
+        actions.extend(job.actions.iter().cloned());
+        let name = &job.words[0];
         let started = standard_for(&actions)
             .inspect_err(|&code| {
-                complain(&alloc::format!("system: {name}: a redirection's file cannot be opened: {}\n", describe(code)));
+                complain(&alloc::format!("{who}: {name}: a redirection's file cannot be opened: {}\n", describe(code)));
             })
             .and_then(|standard| {
-                // SAFETY: environ is always an array of strings.
-                let environment = unsafe { environment_of(core::ptr::null()) };
-                start(name, name, &stage.words[1..], true, standard, &environment).inspect_err(|&code| {
-                    if code != EPERM {
-                        complain(&alloc::format!("system: {name}: {}\n", describe(code)));
+                start(&job.path, name, &job.words[1..], true, standard, &job.environment).inspect_err(|&code| {
+                    // system says nothing of EPERM: its -1 says it.
+                    if code != EPERM || who != "system" {
+                        complain(&alloc::format!("{who}: {name}: {}\n", describe(code)));
                     }
                 })
             });
@@ -859,8 +912,8 @@ fn pipeline(command: &str, input: Option<c_int>, mut output: Option<c_int>) -> R
                 failed = Some(Failed::Refused(EPERM));
                 break;
             }
-            Err(_) => {
-                failed = Some(Failed::NotStarted);
+            Err(code) => {
+                failed = Some(Failed::NotStarted(code));
                 break;
             }
         }
@@ -884,6 +937,7 @@ fn describe(code: c_int) -> &'static str {
         ENOENT => "not found",
         ENOEXEC => "not a program",
         ENOMEM => "no memory for it",
+        EPERM => "not given the right to start programs",
         crate::errno::EISDIR => "it is a directory",
         crate::errno::EROFS => "the files are read-only here",
         EACCES => "no files were given",
@@ -930,7 +984,7 @@ pub unsafe extern "C" fn __taaj_popen(command: *const c_char, writing: c_int) ->
             crate::descriptors::close(ours);
             crate::descriptors::fail(match failed {
                 Failed::Refused(code) => code,
-                Failed::NotStarted => ENOENT,
+                Failed::NotStarted(_) => ENOENT,
             })
         }
     }

@@ -89,18 +89,18 @@ int setenv(const char *name, const char *value, int overwrite);
 int unsetenv(const char *name);
 int putenv(char *entry);
 
-/* Runs a command and waits for it; its status, as waitpid's. There is
- * no shell here: the command is split into words as sh splits them
- * (quotes and backslashes work), with pipes (a | b) and redirections
- * (< f, > f, >> f, 2> f, 2>&1, >&2), and each command's first word
- * started as posix_spawnp starts a name - a bare name is the file of
- * that name in the root. A pipeline's status is its last command's.
- * What needs more of a shell (';', '&&', '&', '$', a wildcard,
- * VAR=x cmd) is not run: -1, ENOSYS, and a line on standard error. A
- * program that cannot be started, or a redirection's file that cannot
- * be opened: status 127, as sh's "not found", with a line saying why.
- * Without the right to start programs (`with programs`): -1, EPERM.
- * system(NULL) is 1. */
+/* Runs a command and waits for it; its status, as waitpid's. A plain
+ * pipeline - words as sh splits them, pipes (a | b), redirections
+ * (< f, > f, >> f, 2> f, 2>&1, >&2) - is started from here, each
+ * command's first word as posix_spawnp starts a name: a bare name is
+ * the file of that name in the root. Anything more (';', '&&', '$', a
+ * wildcard, VAR=x cmd, a builtin such as cd or exit) is run by
+ * `/sh -c command` (libc/programs/sh.c); with no /sh: -1, ENOSYS, and
+ * a line on standard error. A pipeline's status is its last
+ * command's. A program that cannot be started, or a redirection's file
+ * that cannot be opened: status 127, as sh's "not found", with a line
+ * saying why. Without the right to start programs (`with programs`):
+ * -1, EPERM. system(NULL) is 1. */
 int system(const char *command);
 
 /* The whole path from the root that path names, if something is there:

@@ -85,8 +85,8 @@ extern FILE *stderr;
 FILE *fopen(const char *path, const char *mode);
 
 /* A command's output ("r"), or input ("w"), as a stream: the command is
- * run as system() runs one (stdlib.h) - words, pipes and redirections,
- * no shell - with a pipe to this program (unistd.h). NULL, with errno,
+ * run as system() runs one (stdlib.h) - a pipeline from here, anything
+ * more by /sh - with a pipe to this program (unistd.h). NULL, with errno,
  * if it was not started. pclose closes the stream, waits for the
  * command, and gives its status as waitpid does; -1 with ECHILD for a
  * stream popen did not make. Needs the right to start programs. */
