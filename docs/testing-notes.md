@@ -2711,3 +2711,48 @@ make test64
 | `test64: all passed` | every part |
 
 Automated: make test64
+
+---
+
+## 083 · The C library by make: TheTaaJ's C library and its programs built by make on TheTaaJ
+
+[The entry](journal/083-the-c-library-by-make.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`.
+
+| Type | You should see |
+|---|---|
+| `cd /src/libc/c` | |
+| `time with programs make` | each command (`cd . && tcc -c format.c`, ... `cd ../programs && tcc -L.. sh.c -o sh`), then `took ... s` (about 80 s) |
+| `with programs make` | `make: nothing to be done for all` |
+| `with programs ../programs/sh -c 'for p in ../programs/c*o; do echo "made: ${p##*/}"; done; echo "$((6 * 7))"'` | `made: chello`, `made: cstdio`, `42` |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1 (the make takes about 130 s).
+
+**3. The tests by themselves**
+
+```
+make libmake64-test aarch64-libmake-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `make on TheTaaJ (x86_64) built the C library and its 12 programs ... all 76 files byte for byte the host's tcc's` | the library and programs, by make, on the PC; the same for aarch64 |
+| `test64: all passed` | every part |
+
+Automated: make libmake64-test aarch64-libmake-test

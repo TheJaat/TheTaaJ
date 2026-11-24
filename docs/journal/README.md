@@ -90,6 +90,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 080 | [Fast tests: TaajFS keeps its free map up to date instead of walking the whole disk at every write, the file service reads files in runs of 128 KiB, and the long parts of `make test64` start first and run side by side - over an hour down to a quarter of one](080-fast-tests.md) | written | `125c3b6` (TheKernel `a3323eb`) |
 | 081 | [A small shell: `sh -c`, with lists, variables, `$(...)`, quoting, wildcards and the builtins a recipe uses, so that `system`, `popen` and make run commands as POSIX says](081-a-small-shell.md) | written | `1ed43ab` (TheKernel `2c68306`) |
 | 082 | [Control flow in sh: `if`, `while`, `until`, `for`, `case`, `{ }`, `( )`, functions, `${X%.c}` and `$((...))`, a compound command in a pipeline or redirected run by a copy of sh](082-control-flow-in-sh.md) | written | `aed6f3d` (TheKernel `b2eccff`) |
+| 083 | [The C library by make: TheTaaJ's C library and its 12 C programs, `sh` among them, built by make on TheTaaJ with tcc, again only what a change puts out of date, byte for byte what the host's tcc writes](083-the-c-library-by-make.md) | written | `ef5c184` (TheKernel `b421b9e`) |
 
 ## How to run what the entries describe
 
