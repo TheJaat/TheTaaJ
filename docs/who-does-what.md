@@ -80,7 +80,8 @@ MaK's memory can grow: a `.wslconfig` gives WSL more of the laptop's memory, if 
 7. **Only the bootloader's owner (MaK) changes TheBootloader.** If The-Jat needs a change there, it's written down here and MaK does it.
 8. **Files both machines touch often**, such as `Makefile`, `README.md`, `docs/testing-notes.md`, `libc/` and `kernel64/src/syscall*`: keep changes small and merge `main` in often, so conflicts stay small.
 9. **Machine-local settings stay out of commits:** `kernel/headers/revision.h`, `bootloader/headers/revision.h`, `toolchain/`, and local tweaks to `qemu-boot.sh`.
-10. If a step on one machine finds a bug in the other machine's area, the fix goes in the finder's branch only if it's small. Otherwise it's added to the right list below.
+10. **Everything is documented**: every feature, every bug fix (even a small one between steps), every test or tooling change and every change to how we work gets a journal entry in `docs/journal/` (why, how it fits together, design decisions, bugs, how it was checked, what is still missing, what I learned, a testing note), a row in `docs/journal/README.md`, and `python3 tools/testing-notes.py` run. A small fix gets a short entry, never none.
+11. If a step on one machine finds a bug in the other machine's area, the fix goes in the finder's branch only if it's small. Otherwise it's added to the right list below.
 
 ### What waits for what
 
@@ -107,7 +108,7 @@ Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 
 | Machine | Step | Branch |
 |---|---|---|
-| The-Jat | Entry 097, the core basics: test64 on the merged branch, then merge into `main` | `core-basics` |
+| The-Jat | Entry 098, two machines (this file, MaK's three fixes documented); then step B | `two-machines` |
 | MaK | A: the scheduler and timing step | `timing` |
 
 ## The decided order
@@ -118,7 +119,7 @@ Each step below is one branch, one journal entry and one test64 run. The items a
 
 | Step | Items | Why in this order |
 |---|---|---|
-| **A** Merge the core basics | entry 097 | Already done; only the merge is left |
+| **A** Merge the core basics | entry 097 | **Done (entry 097)**, merged 2026-11-26 |
 | **B** Std's ground, part 1: randomness, real thread-local storage, signals std uses | J2 `getrandom`, J1 ELF TLS, J4 `sigaltstack`, J10 `waitid` and SIGCHLD | J2 first: MaK's security and network steps wait for it |
 | **C** Std's ground, part 2: libc calls std uses | J3 `poll`, J5 `dl_iterate_phdr`, J6 pthread attributes, J7 `stat`, J8 `realpath` and `getcwd`, J9 `posix_spawn` with fd 3+, J12 `dlopen` stubs, J13 zlib, J37 environment, J38 `execvp` and `/bin`, J39 the real `argv[0]` | Everything R3 will ask for, so R3 is only Rust's side |
 | **D** TaajFS version 4 | J17 file times, J18 files over 256 MiB, J19 long names, J20 faster writes, J35 a replacing `rename` | One format change instead of four |
@@ -147,7 +148,7 @@ Each step below is one branch, one journal entry and one test64 run. The items a
 The E list (either machine) is taken by whoever finishes a step and is waiting for the other.
 
 ---|---|---|
-| The-Jat | Entry 097, the core basics: test64 on the merged branch, then merge into `main` | `core-basics` |
+| The-Jat | Entry 098, two machines (this file, MaK's three fixes documented); then step B | `two-machines` |
 | MaK | (free; pick from the MaK list) | |
 
 ---

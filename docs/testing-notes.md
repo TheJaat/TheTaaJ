@@ -3624,3 +3624,42 @@ make test64
 | `test64: all passed` | every part, the new two included |
 
 Automated: make basics64-test, make aarch64-basics-test, make test64
+
+---
+
+## 098 · Two machines: The-Jat and MaK, and what the second one found at once
+
+[The entry](journal/098-two-machines.md)
+
+On The-Jat (no KVM):
+
+```
+make run64
+```
+
+| Look for | You should see |
+|---|---|
+| The QEMU command printed by make | `qemu-system-x86_64 -accel tcg ...` |
+| The system | It boots as before |
+
+On MaK (KVM), the same command prints `-accel kvm`, and the boot to the shell takes a second or two instead of several. To force emulation there, use `make run64 RUN_ACCEL=tcg`.
+
+```
+make libc-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `scan: N checks, all the same as the host's sscanf (a bare 0x: as C says)` | `sscanf` agrees with the host everywhere, and with C on a bare `0x` |
+
+```
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `test64: all passed` | Every part, with the bootloader and `check-boot.sh` fixes |
+
+The work split itself is in `docs/who-does-what.md`.
+
+Automated: make libc-test, make test64
