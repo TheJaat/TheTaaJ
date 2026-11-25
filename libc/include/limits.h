@@ -44,6 +44,10 @@ extern "C" {
 /* The room a path needs, its zero byte included. */
 #define PATH_MAX 4096
 
+/* The longest name in a path, not counting a zero: a file's or a
+   directory's own name. A longer one fails with ENAMETOOLONG. */
+#define NAME_MAX 64
+
 #ifdef __cplusplus
 }
 #endif

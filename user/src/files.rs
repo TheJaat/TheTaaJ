@@ -25,7 +25,7 @@
 use alloc::string::String;
 
 pub use fileserver::path;
-pub use fileserver::protocol::{Kind, Status};
+pub use fileserver::protocol::{Kind, Status, COMPONENT_MAX};
 use fileserver::protocol::{self, Request, MESSAGE_MAX};
 
 use crate::{Error, Handle};

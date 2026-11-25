@@ -21,7 +21,7 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
-use taajfs::format::{MAX_FILE_SIZE, NAME_MAX as TAAJFS_NAME_MAX};
+use taajfs::format::{LONG_NAME_MAX as TAAJFS_NAME_MAX, MAX_FILE_SIZE};
 use taajfs::{BlockDevice, Error, Volume};
 
 use crate::protocol::{self, Kind, Status};
@@ -55,7 +55,7 @@ fn check(path: &str) -> Result<&str, Status> {
 
 /// The same, for a path that may also be the root.
 fn check_directory(path: &str) -> Result<&str, Status> {
-    if valid_directory(path) && names(path).all(|name| name.len() < TAAJFS_NAME_MAX) {
+    if valid_directory(path) && names(path).all(|name| name.len() <= TAAJFS_NAME_MAX) {
         Ok(path)
     } else {
         Err(Status::BadName)
@@ -278,8 +278,9 @@ mod tests {
         let mut s = fresh();
         s.write("keep", 0, b"safe").unwrap();
         let free = s.free_blocks();
-        assert_eq!(s.write(&"n".repeat(27), 0, b"x").map(|_| ()), Ok(()), "27 bytes fit");
-        assert_eq!(s.write(&"n".repeat(28), 0, b"x"), Err(Status::BadName), "28 do not, on TaajFS");
+        assert_eq!(s.write(&"n".repeat(27), 0, b"x").map(|_| ()), Ok(()), "27 bytes fit a slot");
+        assert_eq!(s.write(&"m".repeat(64), 0, b"x").map(|_| ()), Ok(()), "64 fit two");
+        assert_eq!(s.write(&"n".repeat(65), 0, b"x"), Err(Status::BadName), "65 do not");
         assert_eq!(s.write("a/b", 0, b"x"), Err(Status::NotFound), "no directory a");
         assert_eq!(s.write("keep/b", 0, b"x"), Err(Status::NotDirectory));
         assert_eq!(s.write("a/..", 0, b"x"), Err(Status::BadName));
@@ -291,6 +292,7 @@ mod tests {
         assert_eq!(s.size("huge"), Err(Status::NotFound));
         assert_eq!(s.remove("nothing"), Err(Status::NotFound));
         s.remove(&"n".repeat(27)).unwrap();
+        s.remove(&"m".repeat(64)).unwrap();
         assert_eq!(s.free_blocks(), free, "every block of the refused writes came back");
         assert_eq!(contents(&mut remount(s), "keep"), b"safe");
     }
@@ -322,7 +324,9 @@ mod tests {
         assert_eq!(call(&mut s, rw, "notes", "nowhere/x"), Status::NotFound);
         assert_eq!(call(&mut s, rw, "docs", "notes/today/x"), Status::NotDirectory);
         assert_eq!(call(&mut s, rw, "notes", "a/../b"), Status::BadName);
-        assert_eq!(call(&mut s, rw, "notes", &"n".repeat(28)), Status::BadName, "too long for TaajFS");
+        assert_eq!(call(&mut s, rw, "notes", &"n".repeat(65)), Status::BadName, "too long for TaajFS");
+        assert_eq!(call(&mut s, rw, "notes", &"a-name-of-forty-bytes-for-the-notes-dir."), Status::Ok);
+        assert_eq!(call(&mut s, rw, "a-name-of-forty-bytes-for-the-notes-dir.", "notes"), Status::Ok);
         assert_eq!(call(&mut s, rw, "notes", ""), Status::BadName);
         assert_eq!(s.free_blocks(), free, "a move keeps no blocks, and a refused one takes none");
 

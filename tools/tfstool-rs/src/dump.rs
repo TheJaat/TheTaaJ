@@ -73,7 +73,8 @@ pub fn dump<D: BlockDevice, W: Write>(device: &mut D, out: &mut W) -> io::Result
         let holds = match live.version {
             2 => "directories",
             3 => "directories and big files",
-            _ => "directories, big files and change stamps",
+            4 => "directories, big files and change stamps",
+            _ => "directories, big files, change stamps and names of up to 64 bytes",
         };
         writeln!(out, "format version {}: may hold {holds}", live.version)?;
     }

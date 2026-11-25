@@ -80,9 +80,9 @@ put_tree() { # put_tree FROM TO
     done
     for f in $(cd "$1" && find . -type f | sort); do
         f=${f#./}
-        # TaajFS names are at most 27 bytes (CUDA's, HIP's and a few
-        # other headers of clang's are longer, and are left out).
-        [ "$(basename "$f" | wc -c)" -gt 28 ] || put "$2/$f" "$1/$f"
+        # TaajFS names are at most 64 bytes: all of clang's headers fit
+        # (before version 5, 27 did not leave room for CUDA's and HIP's).
+        [ "$(basename "$f" | wc -c)" -gt 65 ] || put "$2/$f" "$1/$f"
     done
 }
 for d in lib lib/clang lib/clang/18 lib/clang/18/include include libc libc/programs tmp; do

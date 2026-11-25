@@ -21,8 +21,8 @@ use core::fmt;
 use crate::device::{BlockDevice, DeviceError};
 use crate::format::{
     empty_block, get_u32, put_u32, Block, DirBlock, DirEntry, Inode, Superblock, BLOCK_SIZE, DIR_ENTRIES,
-    FIRST_DATA, INDEX_BLOCKS, INODE_BLOCKS, MAGIC, MAX_BLOCKS, MAX_FILE_SIZE, NAME_MAX, SUPER_A, SUPER_B,
-    TYPE_DIR, TYPE_FILE, VERSION_BIG_FILES, VERSION_DIRECTORIES, VERSION_STAMPS, STAMPED_BLOCKS,
+    FIRST_DATA, INDEX_BLOCKS, INODE_BLOCKS, MAGIC, MAX_BLOCKS, MAX_FILE_SIZE, LONG_NAME_MAX, NAME_MAX, SUPER_A, SUPER_B,
+    TYPE_DIR, TYPE_FILE, VERSION_BIG_FILES, VERSION_DIRECTORIES, VERSION_LONG_NAMES, VERSION_STAMPS, STAMPED_BLOCKS,
 };
 
 /// The most blocks `read_at` asks the device for at once: 256 KiB.
@@ -74,7 +74,7 @@ impl fmt::Display for Error {
             Error::Full => f.write_str("no free blocks"),
             Error::NotFound => f.write_str("not found"),
             Error::Exists => f.write_str("already exists"),
-            Error::Name => write!(f, "each name in a path must be 1 to {} bytes, and not . or ..; at most {MAX_DEPTH} deep", NAME_MAX - 1),
+            Error::Name => write!(f, "each name in a path must be 1 to {LONG_NAME_MAX} bytes, and not . or ..; at most {MAX_DEPTH} deep"),
             Error::TooBig => f.write_str("file would exceed the maximum size"),
             Error::BadSize => write!(f, "a volume must be 8 to {MAX_BLOCKS} blocks"),
             Error::NotDirectory => f.write_str("not a directory"),
@@ -129,15 +129,17 @@ pub const MAX_DEPTH: usize = 16;
 /// notes. Slashes at either end, and doubled ones, mean nothing - "/a",
 /// "a/" and "a" are the same - and no names at all is the root itself.
 ///
-/// Each name must fit the 28-byte field with its terminating NUL (the
-/// rule `TfsCreate` enforces). "." and ".." are refused: nothing on the
+/// Each name must be at most LONG_NAME_MAX (64) bytes. One that does
+/// not fit a slot's 28-byte field with a NUL after it - the rule
+/// `TfsCreate` enforces - makes the volume version 5 when it is written
+/// (`allow_name`). "." and ".." are refused: nothing on the
 /// disk has those names, and a path that climbs is the caller's to
 /// resolve before it gets here.
 ///
 /// The result borrows from `path`: no copies, only views into it.
 fn components(path: &str) -> Result<Vec<&str>> {
     let names: Vec<&str> = path.split('/').filter(|name| !name.is_empty()).collect();
-    let bad = |name: &&str| name.len() >= NAME_MAX || name.contains('\0') || *name == "." || *name == "..";
+    let bad = |name: &&str| name.len() > LONG_NAME_MAX || name.contains('\0') || *name == "." || *name == "..";
     if names.len() > MAX_DEPTH + 1 || names.iter().any(bad) {
         return Err(Error::Name);
     }
@@ -150,6 +152,25 @@ fn split_leaf(path: &str) -> Result<(Vec<&str>, &str)> {
     let mut names = components(path)?;
     let leaf = names.pop().ok_or(Error::Name)?;
     Ok((names, leaf))
+}
+
+/// A directory's entries cut into blocks, in order: as many as fit each
+/// block's DIR_ENTRIES slots, a long name counting two, and never split
+/// between blocks. Always at least one block, if an empty one: an empty
+/// directory still needs a block for its parent to point at. With only
+/// short names this is `chunks(DIR_ENTRIES)`, the blocks C writes.
+fn pack(entries: &[DirEntry]) -> Vec<&[DirEntry]> {
+    let mut blocks = Vec::new();
+    let (mut start, mut used) = (0, 0);
+    for (i, entry) in entries.iter().enumerate() {
+        if used + entry.slots() > DIR_ENTRIES {
+            blocks.push(&entries[start..i]);
+            (start, used) = (i, 0);
+        }
+        used += entry.slots();
+    }
+    blocks.push(&entries[start..]);
+    blocks
 }
 
 // ---- formatting -----------------------------------------------------
@@ -199,7 +220,7 @@ impl<D: BlockDevice> Volume<D> {
     /// nothing else can write to the disk behind the volume's back.
     pub fn mount(mut device: D) -> Result<Volume<D>> {
         let mut best: Option<(u32, Superblock)> = None;
-        let mut lowest = VERSION_STAMPS;
+        let mut lowest = VERSION_LONG_NAMES;
         let mut block = empty_block();
 
         for slot in [SUPER_A, SUPER_B] {
@@ -588,6 +609,16 @@ impl<D: BlockDevice> Volume<D> {
         self.raise_version(VERSION_STAMPS)
     }
 
+    /// Makes the volume one that may hold `name`: version 5 in both
+    /// slots if it is too long for one directory slot. Called before the
+    /// change that writes it, never inside one: raising commits.
+    fn allow_name(&mut self, name: &str) -> Result<()> {
+        if name.len() >= NAME_MAX {
+            self.raise_version(VERSION_LONG_NAMES)?;
+        }
+        Ok(())
+    }
+
     /// Whether inodes written now are stamped: only when no slot says
     /// less than version 4, as with every other version (see
     /// `raise_version`).
@@ -789,13 +820,7 @@ impl<D: BlockDevice> Volume<D> {
             (None, None) => return Err(Error::NotFound),
         }
 
-        // Always at least one block: an empty directory still needs a
-        // block for the superblock to point at.
-        let chunks: Vec<&[DirEntry]> = if entries.is_empty() {
-            vec![&entries[..]]
-        } else {
-            entries.chunks(DIR_ENTRIES).collect()
-        };
+        let chunks = pack(&entries);
         if chunks.len() > MAX_DIR_BLOCKS {
             return Err(Error::Full);
         }
@@ -943,6 +968,7 @@ impl<D: BlockDevice> Volume<D> {
             return Err(Error::Exists);
         }
 
+        self.allow_name(name)?;
         self.change(|v| {
             let inode = v.write_inode(0, TYPE_FILE, Vec::new())?;
             let root = v.rewrite_path(&dirs, name, Some(DirEntry::new(name, inode, 0, TYPE_FILE)))?;
@@ -985,6 +1011,7 @@ impl<D: BlockDevice> Volume<D> {
         }
 
         self.allow_directories()?;
+        self.allow_name(name)?;
         self.change(|v| {
             // An empty directory is one block with no entries - as the
             // root of a fresh volume is.
@@ -1090,6 +1117,7 @@ impl<D: BlockDevice> Volume<D> {
         if data.len().div_ceil(BLOCK_SIZE) > self.direct_slots() {
             self.allow_big_files()?;
         }
+        self.allow_name(name)?;
 
         self.change(|v| {
             let mut blocks = Vec::with_capacity(data.len().div_ceil(BLOCK_SIZE));
@@ -1193,6 +1221,7 @@ impl<D: BlockDevice> Volume<D> {
             return Err(Error::Exists);
         }
 
+        self.allow_name(to_name)?;
         self.change(|v| {
             let moved = DirEntry::new(to_name, entry.inode, entry.size, entry.kind);
             let root = if same_directory {
@@ -1406,6 +1435,167 @@ mod tests {
         }
     }
 
+    // ---- long names (version 5) --------------------------------------
+
+    /// A name of `len` bytes that says which one it is.
+    fn long_name(n: usize, len: usize) -> String {
+        let head = format!("name-{n}-");
+        format!("{head}{}", "x".repeat(len - head.len()))
+    }
+
+    /// The slots each block of the directory at `first` uses, in order.
+    fn slots_per_block(v: &mut Volume<MemDevice>, first: u32) -> Vec<u32> {
+        let mut used = Vec::new();
+        let mut number = first;
+        while number != 0 {
+            let dir = DirBlock::parse(&v.read(number).unwrap());
+            used.push(dir.count);
+            number = dir.next;
+        }
+        used
+    }
+
+    #[test]
+    fn long_names_survive_a_remount_and_make_the_volume_version_5() {
+        let mut v = fresh();
+        v.put("short", b"s").unwrap();
+        v.put(&"a".repeat(NAME_MAX - 1), b"27").unwrap();
+        let device = v.into_device();
+        assert_eq!(slot_versions(&device), [VERSION, VERSION], "27 bytes still fits a slot");
+
+        let mut v = Volume::mount(device).unwrap();
+        let file = long_name(1, 40);
+        let most = long_name(2, LONG_NAME_MAX);
+        let directory = long_name(3, NAME_MAX);
+        v.put(&file, b"forty").unwrap();
+        v.create(&most).unwrap();
+        v.make_directory(&directory).unwrap();
+        v.put(&format!("{directory}/{file}"), b"inside").unwrap();
+        let device = v.into_device();
+        assert_eq!(slot_versions(&device), [VERSION_LONG_NAMES, VERSION_LONG_NAMES]);
+
+        let mut v = Volume::mount(device).unwrap();
+        let mut names: Vec<String> = v.list().unwrap().into_iter().map(|f| f.name).collect();
+        names.sort();
+        let mut expected = vec!["short".to_string(), "a".repeat(NAME_MAX - 1), file.clone(), most.clone(), directory.clone()];
+        expected.sort();
+        assert_eq!(names, expected);
+        assert_eq!(contents(&mut v, &file), b"forty");
+        assert_eq!(contents(&mut v, &format!("/{directory}/{file}")), b"inside");
+        assert_eq!(v.lookup(&most).unwrap().size, 0);
+        assert!(matches!(v.lookup(&file[..NAME_MAX]), Err(Error::NotFound)), "its first slot alone is not its name");
+
+        // Raised once: another long name is one commit, as any change.
+        let generation = v.superblock().generation;
+        v.create(&long_name(4, 50)).unwrap();
+        assert_eq!(v.superblock().generation, generation + 1);
+    }
+
+    #[test]
+    fn a_long_name_can_be_renamed_to_and_from_and_deleted() {
+        let mut v = fresh();
+        v.put("f", b"data").unwrap();
+        let long = long_name(1, 60);
+        v.rename("f", &long).unwrap();
+        assert_eq!(v.superblock().version, VERSION_LONG_NAMES);
+        v.make_directory("d").unwrap();
+        let moved = format!("d/{}", long_name(2, 33));
+        v.rename(&long, &moved).unwrap();
+        let mut v = remount(v);
+        assert_eq!(contents(&mut v, &moved), b"data");
+        assert!(matches!(v.lookup(&long), Err(Error::NotFound)));
+        v.rename(&moved, "d/g").unwrap();
+        v.put(&long, b"again").unwrap();
+        v.delete(&long).unwrap();
+        let mut v = remount(v);
+        assert_eq!(v.list().unwrap().len(), 1);
+        assert_eq!(contents(&mut v, "d/g"), b"data");
+    }
+
+    #[test]
+    fn a_long_name_is_never_split_between_blocks() {
+        let short: Vec<DirEntry> = (0..DIR_ENTRIES - 1).map(|n| DirEntry::new(&format!("s{n}"), 5, 0, TYPE_FILE)).collect();
+        let long = DirEntry::new(&long_name(0, 40), 5, 0, TYPE_FILE);
+        // 101 slots used: the long name's two do not fit, so it begins
+        // the next block.
+        let mut entries = short.clone();
+        entries.push(long);
+        assert_eq!(pack(&entries).iter().map(|b| b.len()).collect::<Vec<_>>(), [DIR_ENTRIES - 1, 1]);
+        // First, it and 100 short names fill a block's 102 slots
+        // exactly; the other two short ones go on to the next.
+        let mut entries = short.clone();
+        entries.insert(0, long);
+        entries.push(DirEntry::new("last", 5, 0, TYPE_FILE));
+        assert_eq!(pack(&entries).iter().map(|b| b.len()).collect::<Vec<_>>(), [DIR_ENTRIES - 1, 2]);
+        // Only short names: as C cuts them.
+        let many: Vec<DirEntry> = (0..250).map(|n| DirEntry::new(&format!("s{n}"), 5, 0, TYPE_FILE)).collect();
+        assert_eq!(pack(&many).iter().map(|b| b.len()).collect::<Vec<_>>(), [DIR_ENTRIES, DIR_ENTRIES, 250 - 2 * DIR_ENTRIES]);
+        assert_eq!(pack(&[]).len(), 1, "an empty directory is still a block");
+    }
+
+    #[test]
+    fn a_directory_of_long_and_short_names_fills_its_blocks() {
+        let mut v = fresh_big();
+        v.make_directory("d").unwrap();
+        let names: Vec<String> =
+            (0..160).map(|n| if n % 3 == 0 { format!("s{n}") } else { long_name(n, 28 + n % 37) }).collect();
+        for name in &names {
+            v.create(&format!("d/{name}")).unwrap();
+        }
+        // Gone from the middle, and renamed long to short and back.
+        for n in (10..160).step_by(25) {
+            v.delete(&format!("d/{}", names[n])).unwrap();
+        }
+        v.rename(&format!("d/{}", names[1]), "d/was-long").unwrap();
+        v.rename("d/s3", &format!("d/{}", long_name(1000, 64))).unwrap();
+
+        let mut v = remount(v);
+        let mut listed: Vec<String> = v.list_in("d").unwrap().into_iter().map(|f| f.name).collect();
+        let mut expected: Vec<String> = names
+            .iter()
+            .enumerate()
+            .filter(|&(n, _)| !(n >= 10 && (n - 10) % 25 == 0) && n != 1 && n != 3)
+            .map(|(_, name)| name.clone())
+            .chain(["was-long".to_string(), long_name(1000, 64)])
+            .collect();
+        listed.sort();
+        expected.sort();
+        assert_eq!(listed, expected);
+
+        let first = v.lookup("d").unwrap().inode;
+        let used = slots_per_block(&mut v, first);
+        assert!(used.len() >= 3, "{used:?}");
+        assert!(used.iter().all(|&n| n as usize <= DIR_ENTRIES), "{used:?}");
+        assert!(used[..used.len() - 1].iter().all(|&n| n as usize >= DIR_ENTRIES - 1), "full but for a long name's slot: {used:?}");
+    }
+
+    /// Whenever the power goes while the first long name is written, no
+    /// slot an older implementation trusts may point at a tree with it.
+    #[test]
+    fn the_first_long_name_locks_old_readers_out_before_it_exists() {
+        let mut v = fresh();
+        v.put("keep", b"safe").unwrap();
+        let base = v.into_device();
+        let long = long_name(1, 45);
+        for writes_allowed in 0.. {
+            let device = MemDevice { blocks: base.blocks.clone(), writes_left: Some(writes_allowed) };
+            let mut v = Volume::mount(device).unwrap();
+            let made = v.put(&long, b"long").is_ok();
+            let mut device = v.into_device();
+            device.writes_left = None;
+            let below: Vec<u32> = slot_versions(&device).into_iter().filter(|&n| n < VERSION_LONG_NAMES).collect();
+            let mut v = Volume::mount(device).expect("volume must always mount");
+            assert_eq!(contents(&mut v, "keep"), b"safe");
+            if v.lookup(&long).is_ok() {
+                assert!(below.is_empty(), "after {writes_allowed} writes: a long name, and a slot saying {below:?}");
+            }
+            if made {
+                assert_eq!(contents(&mut v, &long), b"long");
+                break;
+            }
+        }
+    }
+
     #[test]
     fn the_first_big_file_raises_both_slots_to_version_3() {
         let mut v = fresh_big();
@@ -1595,8 +1785,8 @@ mod tests {
         assert!(matches!(v.create("a"), Err(Error::Exists)));
         assert!(matches!(v.create(""), Err(Error::Name)));
         assert!(matches!(v.create("/"), Err(Error::Name)));
-        assert!(matches!(v.create(&"n".repeat(NAME_MAX)), Err(Error::Name)));
-        v.create(&"n".repeat(NAME_MAX - 1)).unwrap();
+        assert!(matches!(v.create(&"n".repeat(LONG_NAME_MAX + 1)), Err(Error::Name)));
+        v.create(&"n".repeat(LONG_NAME_MAX)).unwrap();
     }
 
     #[test]
@@ -2076,7 +2266,7 @@ mod tests {
         assert!(matches!(v.rename("d", "d/x"), Err(Error::IntoItself)));
         assert!(matches!(v.rename("d", "d/inner/x"), Err(Error::IntoItself)));
         assert!(matches!(v.rename("d/inner", "d/inner/inner"), Err(Error::IntoItself)));
-        for bad in ["", "/", ".", "d/..", "a/./b", &"n".repeat(NAME_MAX)[..]] {
+        for bad in ["", "/", ".", "d/..", "a/./b", &"n".repeat(LONG_NAME_MAX + 1)[..]] {
             assert!(matches!(v.rename("g", bad), Err(Error::Name)), "{bad:?}");
             assert!(matches!(v.rename(bad, "x"), Err(Error::Name)), "{bad:?}");
         }

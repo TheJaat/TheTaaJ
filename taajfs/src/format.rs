@@ -35,8 +35,22 @@ pub const VERSION_BIG_FILES: u32 = 3;
 /// change made by code that knows it - and stays it. Older code would
 /// take a stamped inode for a damaged one.
 pub const VERSION_STAMPS: u32 = 4;
+/// Version 5: a name may be longer than a slot's 28 bytes - up to
+/// LONG_NAME_MAX, in a second slot (see `DirEntry`) - and there may be
+/// stamps, big files and directories. A volume becomes this before the
+/// first long name is written, and stays it. Older code would take the
+/// second slot for an entry of its own, a file whose inode number is
+/// four letters of the name.
+pub const VERSION_LONG_NAMES: u32 = 5;
 pub const BLOCK_SIZE: usize = 4096;
+/// The name field of a slot. A name shorter than this has a NUL after
+/// it there and takes one slot; one this long or longer takes two.
 pub const NAME_MAX: usize = 28;
+/// The longest name: the 28 bytes of the first slot and 36 of a second
+/// (protocol::COMPONENT_MAX, the file service's own limit, is the same).
+pub const LONG_NAME_MAX: usize = NAME_MAX + MORE_NAME;
+/// The name bytes a second slot holds: all of it but the type field.
+pub const MORE_NAME: usize = 36;
 pub const MAX_BLOCKS: u32 = 65536;
 
 pub const SUPER_A: u32 = 0;
@@ -48,6 +62,9 @@ pub const TYPE_FILE: u32 = 1;
 /// but the first block of its own chain of directory blocks, and its
 /// `size` is 0. Only on a volume of VERSION_DIRECTORIES.
 pub const TYPE_DIR: u32 = 2;
+/// The second slot of a long name: 36 more bytes of the name, then this
+/// as its type. It follows its entry's slot, in the same block.
+pub const TYPE_MORE: u32 = 3;
 
 pub const DIR_HEADER: usize = 16;
 pub const DIR_ENTRY_SIZE: usize = 40;
@@ -219,7 +236,7 @@ impl Superblock {
     /// The same checks `TfsMount` applies before trusting a slot.
     pub fn is_valid(&self) -> bool {
         self.magic == MAGIC
-            && (VERSION..=VERSION_STAMPS).contains(&self.version)
+            && (VERSION..=VERSION_LONG_NAMES).contains(&self.version)
             && self.block_size == BLOCK_SIZE as u32
             && self.total_blocks != 0
             && self.total_blocks <= MAX_BLOCKS
@@ -229,13 +246,21 @@ impl Superblock {
 
 // ---- directory entries and blocks -----------------------------------
 
-/// One name in a directory: 28 bytes of name, then inode, size, type.
+/// One name in a directory. On disk, a slot of 40 bytes: 28 bytes of
+/// name, then inode, size, type. A name of 28 bytes or more (version 5)
+/// goes on in a second slot right after: 36 more bytes of the name, NUL
+/// padded, and the type TYPE_MORE.
+///
+/// ```text
+///  slot:   [ name 0..28            ][ inode ][ size ][ type 1|2 ]
+///  second: [ name 28..64                              ][ type 3  ]
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DirEntry {
-    /// NUL-padded. Not a `String`: on disk it is just 28 bytes, and
+    /// NUL-padded. Not a `String`: on disk it is just bytes, and
     /// keeping it as bytes means a name round-trips exactly, even one
     /// that is not valid UTF-8.
-    pub name: [u8; NAME_MAX],
+    pub name: [u8; LONG_NAME_MAX],
     /// Block holding this file's inode. 0 marks an unused slot.
     pub inode: u32,
     pub size: u32,
@@ -248,9 +273,9 @@ impl DirEntry {
     /// (`Volume` does, in `check_name`), so a too-long name here is a
     /// bug and is cut rather than overrunning anything.
     pub fn new(name: &str, inode: u32, size: u32, kind: u32) -> DirEntry {
-        let mut field = [0u8; NAME_MAX];
+        let mut field = [0u8; LONG_NAME_MAX];
         let bytes = name.as_bytes();
-        let len = bytes.len().min(NAME_MAX);
+        let len = bytes.len().min(LONG_NAME_MAX);
         field[..len].copy_from_slice(&bytes[..len]);
         DirEntry {
             name: field,
@@ -260,9 +285,10 @@ impl DirEntry {
         }
     }
 
+    /// One slot's entry; a second slot's bytes are added by `DirBlock`.
     pub fn parse(bytes: &[u8]) -> DirEntry {
-        let mut name = [0u8; NAME_MAX];
-        name.copy_from_slice(&bytes[..NAME_MAX]);
+        let mut name = [0u8; LONG_NAME_MAX];
+        name[..NAME_MAX].copy_from_slice(&bytes[..NAME_MAX]);
         DirEntry {
             name,
             inode: get_u32(bytes, 28),
@@ -271,16 +297,28 @@ impl DirEntry {
         }
     }
 
+    /// Writes the entry's slots: `bytes` is room for `slots()` of them.
     pub fn write_to(&self, bytes: &mut [u8]) {
-        bytes[..NAME_MAX].copy_from_slice(&self.name);
+        bytes[..NAME_MAX].copy_from_slice(&self.name[..NAME_MAX]);
         put_u32(bytes, 28, self.inode);
         put_u32(bytes, 32, self.size);
         put_u32(bytes, 36, self.kind);
+        if self.slots() == 2 {
+            let more = &mut bytes[DIR_ENTRY_SIZE..2 * DIR_ENTRY_SIZE];
+            more[..MORE_NAME].copy_from_slice(&self.name[NAME_MAX..]);
+            put_u32(more, MORE_NAME, TYPE_MORE);
+        }
+    }
+
+    /// How many slots it takes on disk: 2 for a name that does not fit
+    /// the first slot with a NUL after it.
+    pub fn slots(&self) -> usize {
+        if self.name_bytes().len() >= NAME_MAX { 2 } else { 1 }
     }
 
     /// The name up to its first NUL, as raw bytes.
     pub fn name_bytes(&self) -> &[u8] {
-        let end = self.name.iter().position(|&b| b == 0).unwrap_or(NAME_MAX);
+        let end = self.name.iter().position(|&b| b == 0).unwrap_or(LONG_NAME_MAX);
         &self.name[..end]
     }
 
@@ -301,13 +339,15 @@ impl DirEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirBlock {
     pub magic: u32,
-    /// The count as stored. Kept separately from `entries.len()` so a
-    /// dump can report a corrupt count instead of hiding it.
+    /// The count of slots, as stored. Kept separately from
+    /// `entries.len()` so a dump can report a corrupt count instead of
+    /// hiding it.
     pub count: u32,
     /// 0 = this is the last block of the directory.
     pub next: u32,
-    /// The first `min(count, DIR_ENTRIES)` slots - including unused
-    /// ones (inode 0), which callers skip.
+    /// The entries in the first `min(count, DIR_ENTRIES)` slots - a
+    /// long name's two slots one entry - including unused ones (inode
+    /// 0), which callers skip.
     pub entries: Vec<DirEntry>,
 }
 
@@ -315,7 +355,7 @@ impl DirBlock {
     pub fn new(entries: Vec<DirEntry>, next: u32) -> DirBlock {
         DirBlock {
             magic: MAGIC,
-            count: entries.len() as u32,
+            count: entries.iter().map(DirEntry::slots).sum::<usize>() as u32,
             next,
             entries,
         }
@@ -325,15 +365,26 @@ impl DirBlock {
         let count = get_u32(block, 4);
         let usable = (count as usize).min(DIR_ENTRIES);
 
-        // An iterator chain: for each index, find its 40 bytes and
-        // decode them, then collect the results into a Vec. The same
-        // loop as in C, said as "what" rather than "how".
-        let entries = (0..usable)
-            .map(|i| {
-                let at = DIR_HEADER + i * DIR_ENTRY_SIZE;
-                DirEntry::parse(&block[at..at + DIR_ENTRY_SIZE])
-            })
-            .collect();
+        let slot = |i: usize| &block[DIR_HEADER + i * DIR_ENTRY_SIZE..DIR_HEADER + (i + 1) * DIR_ENTRY_SIZE];
+        let is_more = |i: usize| i < usable && get_u32(slot(i), MORE_NAME) == TYPE_MORE;
+        let mut entries = Vec::with_capacity(usable);
+        let mut i = 0;
+        while i < usable {
+            if is_more(i) {
+                // A second slot with no first before it: nothing a
+                // volume writes, so nothing to trust - an unused slot.
+                entries.push(DirEntry::parse(&[0u8; DIR_ENTRY_SIZE]));
+                i += 1;
+                continue;
+            }
+            let mut entry = DirEntry::parse(slot(i));
+            if is_more(i + 1) {
+                entry.name[NAME_MAX..].copy_from_slice(&slot(i + 1)[..MORE_NAME]);
+                i += 1;
+            }
+            entries.push(entry);
+            i += 1;
+        }
 
         DirBlock {
             magic: get_u32(block, 0),
@@ -347,18 +398,18 @@ impl DirBlock {
     /// `Volume` splits directories into chunks of `DIR_ENTRIES`, so
     /// overfilling is a bug, not a condition to handle.
     pub fn to_block(&self) -> Block {
-        assert!(
-            self.entries.len() <= DIR_ENTRIES,
-            "directory block overfilled"
-        );
+        let slots: usize = self.entries.iter().map(DirEntry::slots).sum();
+        assert!(slots <= DIR_ENTRIES, "directory block overfilled");
 
         let mut block = empty_block();
         put_u32(&mut block, 0, self.magic);
         put_u32(&mut block, 4, self.count);
         put_u32(&mut block, 8, self.next);
-        for (i, entry) in self.entries.iter().enumerate() {
-            let at = DIR_HEADER + i * DIR_ENTRY_SIZE;
-            entry.write_to(&mut block[at..at + DIR_ENTRY_SIZE]);
+        let mut at = DIR_HEADER;
+        for entry in &self.entries {
+            let length = entry.slots() * DIR_ENTRY_SIZE;
+            entry.write_to(&mut block[at..at + length]);
+            at += length;
         }
         block
     }
@@ -673,6 +724,53 @@ mod tests {
 
         assert!(back.is_big());
         assert_eq!(back.blocks, [40]);
+    }
+
+    #[test]
+    fn a_long_name_takes_a_second_slot() {
+        let long = "a-name-longer-than-twenty-seven-bytes-up-to-sixty-four.c";
+        let full = "x".repeat(LONG_NAME_MAX);
+        let entries = vec![
+            DirEntry::new("short", 5, 1, TYPE_FILE),
+            DirEntry::new(long, 6, 2, TYPE_FILE),
+            DirEntry::new(&"y".repeat(NAME_MAX), 7, 0, TYPE_DIR),
+            DirEntry::new(&full, 8, 3, TYPE_FILE),
+            DirEntry::new(&"z".repeat(NAME_MAX - 1), 9, 4, TYPE_FILE),
+        ];
+        assert_eq!(entries.iter().map(DirEntry::slots).collect::<Vec<_>>(), [1, 2, 2, 2, 1]);
+        let dir = DirBlock::new(entries.clone(), 0);
+        assert_eq!(dir.count, 8, "slots, not entries");
+        let block = dir.to_block();
+        let second = DIR_HEADER + 2 * DIR_ENTRY_SIZE;
+        assert_eq!(&block[second..second + 4], &long.as_bytes()[NAME_MAX..NAME_MAX + 4]);
+        assert_eq!(get_u32(&block, second + MORE_NAME), TYPE_MORE);
+        let back = DirBlock::parse(&block);
+        assert_eq!(back.entries, entries);
+        assert_eq!(back.entries[1].name_lossy(), long);
+        assert!(back.entries[3].is_named(&full));
+        assert!(!back.entries[3].is_named(&full[..NAME_MAX]), "the first slot alone is not the name");
+    }
+
+    #[test]
+    fn short_names_are_laid_out_as_before() {
+        let entries: Vec<DirEntry> = (0..DIR_ENTRIES as u32).map(|n| DirEntry::new(&format!("f{n}"), n + 3, n, TYPE_FILE)).collect();
+        let block = DirBlock::new(entries, 0).to_block();
+        for n in 0..DIR_ENTRIES {
+            let at = DIR_HEADER + n * DIR_ENTRY_SIZE;
+            let name = format!("f{n}");
+            assert_eq!(&block[at..at + name.len() + 1], format!("{name}\0").as_bytes());
+            assert_eq!(get_u32(&block, at + 28), n as u32 + 3);
+        }
+    }
+
+    #[test]
+    fn a_second_slot_alone_is_an_unused_one() {
+        let mut block = DirBlock::new(vec![DirEntry::new("a", 5, 0, TYPE_FILE), DirEntry::new("b", 6, 0, TYPE_FILE)], 0).to_block();
+        put_u32(&mut block, DIR_HEADER + MORE_NAME, TYPE_MORE);
+        let dir = DirBlock::parse(&block);
+        assert_eq!(dir.entries.len(), 2);
+        assert_eq!(dir.entries[0].inode, 0);
+        assert!(dir.entries[1].is_named("b"));
     }
 
     #[test]

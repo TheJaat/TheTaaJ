@@ -259,8 +259,10 @@ pub(crate) fn reason(error: FileError) -> c_int {
     }
 }
 
-/// A path from C: text ending in a zero. None if it is not UTF-8,
-/// which no name on this system is.
+/// A path from C: text ending in a zero. EINVAL if it is not UTF-8,
+/// which no name on this system is; ENAMETOOLONG, as POSIX says, if a
+/// name in it is longer than NAME_MAX (limits.h) or the whole is
+/// PATH_MAX or longer.
 ///
 /// # Safety
 /// `path` must be null or point to a string that ends in a zero byte.
@@ -269,8 +271,16 @@ pub(crate) unsafe fn text<'a>(path: *const c_char) -> Result<&'a str, c_int> {
         return Err(EFAULT);
     }
     // SAFETY: not null, and the caller's promise.
-    unsafe { CStr::from_ptr(path) }.to_str().map_err(|_| EINVAL)
+    let path = unsafe { CStr::from_ptr(path) }.to_str().map_err(|_| EINVAL)?;
+    if path.len() >= PATH_MAX || path.split('/').any(|name| name.len() > NAME_MAX) {
+        return Err(ENAMETOOLONG);
+    }
+    Ok(path)
 }
+
+/// limits.h's NAME_MAX: the longest name in a path. The file service's
+/// limit, which TaajFS (since version 5) and its memory store share.
+pub const NAME_MAX: usize = taaj::files::COMPONENT_MAX;
 
 /// `open(path, flags)`: what the C function `open` calls (libc/c/fcntl.c
 /// - it takes `...`, for a third argument nothing here uses).

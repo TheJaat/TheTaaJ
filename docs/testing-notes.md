@@ -3424,3 +3424,52 @@ make test64
 | `test64: all passed` | every part |
 
 Automated: make test64
+
+---
+
+## 094 · Long names: up to 64 bytes on TaajFS
+
+[The entry](journal/094-long-names.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`. The first long name makes your disk version 5. The Rust `tfstool`, which `make` uses, reads it; the C one never read a disk with directories anyway.
+
+| Type | You should see |
+|---|---|
+| `with files mkdir a-directory-whose-name-is-longer-than-27` | nothing: the directory's name is 40 bytes |
+| `with files cp src/tcc/tccgen.c a-directory-whose-name-is-longer-than-27/the-code-generator-of-tcc-under-a-long-name.c` | `...under-a-long-name.c: 273655 bytes` |
+| `with files ls a-directory-whose-name-is-longer-than-27` | `273655  the-code-generator-of-tcc-under-a-long-name.c`, the whole name, then `1 file, 273655 bytes` |
+| `with files wc a-directory-whose-name-is-longer-than-27/the-code-generator-of-tcc-under-a-long-name.c` | `9197 lines, 32363 words, 273655 bytes` |
+| `with files write this-name-is-sixty-five-bytes-long-which-is-one-more-than-allowed x` | `write: this-name-...-than-allowed: not a valid name`: 65 bytes is one too many |
+| `with files mv a-directory-whose-name-is-longer-than-27/the-code-generator-of-tcc-under-a-long-name.c short.c` | nothing; then `with files ls a-directory-whose-name-is-longer-than-27` says `empty` |
+
+After closing QEMU, on the host: `tools/tfstool-rs/target/release/tfstool dump build/taaj-disk.img | grep version` says `format version 5`.
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `pipes on TheTaaJ (x86_64): 119 checks ... names of up to 64 bytes on the disk` | long names from C, from sh, and read back by the host's tool; the same for aarch64 |
+| `clang64-test passed`, with no "headers not on the disk" line | every clang header is on its disk |
+| `test64: all passed` | every part |
+
+Automated: make test64
