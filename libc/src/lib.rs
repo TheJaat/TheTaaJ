@@ -81,6 +81,7 @@ pub mod memory;
 pub mod number;
 pub mod sockets;
 pub mod pipes;
+pub mod random;
 pub mod spawn;
 pub mod status;
 pub mod string;

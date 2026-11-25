@@ -108,7 +108,7 @@ Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 
 | Machine | Step | Branch |
 |---|---|---|
-| The-Jat | Entry 098, two machines (this file, MaK's three fixes documented); then step B | `two-machines` |
+| The-Jat | C: std's ground, part 2 (the libc calls std uses) | `std-ground-2` |
 | MaK | A: the scheduler and timing step | `timing` |
 
 ## The decided order
@@ -120,10 +120,10 @@ Each step below is one branch, one journal entry and one test64 run. The items a
 | Step | Items | Why in this order |
 |---|---|---|
 | **A** Merge the core basics | entry 097 | **Done (entry 097)**, merged 2026-11-26 |
-| **B** Std's ground, part 1: randomness, real thread-local storage, signals std uses | J2 `getrandom`, J1 ELF TLS, J4 `sigaltstack`, J10 `waitid` and SIGCHLD | J2 first: MaK's security and network steps wait for it |
+| **B** Std's ground, part 1: randomness, real thread-local storage, signals std uses | J2 `getrandom`, J1 ELF TLS, J4 `sigaltstack`, J10 `waitid` and SIGCHLD | **Done (entry 099)** |
 | **C** Std's ground, part 2: libc calls std uses | J3 `poll`, J5 `dl_iterate_phdr`, J6 pthread attributes, J7 `stat`, J8 `realpath` and `getcwd`, J9 `posix_spawn` with fd 3+, J12 `dlopen` stubs, J13 zlib, J37 environment, J38 `execvp` and `/bin`, J39 the real `argv[0]` | Everything R3 will ask for, so R3 is only Rust's side |
 | **D** TaajFS version 4 | J17 file times, J18 files over 256 MiB, J19 long names, J20 faster writes, J35 a replacing `rename` | One format change instead of four |
-| **E** LLVM 23 | J14 | Long; runs unattended on The-Jat |
+| **E** LLVM 23 | J14, and C++ (libc++, the LLVM port) moved from emulated to real thread-local storage | Long; runs unattended on The-Jat; it rebuilds the ports anyway |
 | **F** R3 Rust's std | J15, J16 | Needs B-E |
 | **G** Memory for big programs | J26-J31 | Before rustc's 182 MB runs |
 | **H** R4 rustc on TheTaaJ | J21 | |
@@ -147,10 +147,6 @@ Each step below is one branch, one journal entry and one test64 run. The items a
 
 The E list (either machine) is taken by whoever finishes a step and is waiting for the other.
 
----|---|---|
-| The-Jat | Entry 098, two machines (this file, MaK's three fixes documented); then step B | `two-machines` |
-| MaK | (free; pick from the MaK list) | |
-
 ---
 
 ## The-Jat: the road to rustc on TheTaaJ (Era 9), and what it needs
@@ -161,16 +157,16 @@ The order matters here: each item is needed by the ones after it.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J1 | **Real thread-local storage (ELF TLS)**: `PT_TLS` loaded per thread, the FS base / `TPIDR_EL0` pointing at a proper TLS block, `__tls_get_addr` for the general model | M | Today only emulated TLS works (`emutls.c`); Rust's std uses `#[thread_local]` |
-| J2 | **`getrandom`** in the kernel: RDRAND/RDSEED on x86, `RNDR` or virtio-rng on AArch64, mixed with timer jitter into a ChaCha20 generator; `getrandom()`, `getentropy()`, `/dev/urandom`-like call in libc | M | Also needed by MaK's ASLR and TLS work, and by TCP sequence numbers |
+| J1 | **Real thread-local storage (ELF TLS)**: `PT_TLS` loaded per thread, the FS base / `TPIDR_EL0` pointing at a proper TLS block, `__tls_get_addr` for the general model | M | **Done (entry 099)** for static programs (local-exec); C++ still emulated until step E; no `__tls_get_addr` (no shared libraries) |
+| J2 | **`getrandom`** in the kernel: RDRAND/RDSEED on x86, `RNDR` or virtio-rng on AArch64, mixed with timer jitter into a ChaCha20 generator; `getrandom()`, `getentropy()`, `/dev/urandom`-like call in libc | M | **Done (entry 099)**: ChaCha20, RDSEED/RDRAND/RNDR + timings; no virtio-rng, no `/dev/urandom` file |
 | J3 | **`poll`** (and `select` on top of it) over pipes, files, sockets and the keyboard | M | Needs "writable" readiness in `object_wait` (an open issue) |
-| J4 | **`sigaltstack`** and running a handler on it; SIGSEGV on a stack overflow reaches that handler | S | rustc installs one for its own stack overflow report |
+| J4 | **`sigaltstack`** and running a handler on it; SIGSEGV on a stack overflow reaches that handler | S | **Done (entry 099)** |
 | J5 | **`dl_iterate_phdr`** (for the program itself only, no shared libraries) | S | std's backtraces and unwinding look for it |
 | J6 | **`pthread_getattr_np`**, `pthread_attr_getstack`, `pthread_sigmask` | S | std's thread guard pages |
 | J7 | **`statx` or a full `stat`**: sizes, types, times (once TaajFS has them, see J17) | S | `std::fs::metadata` |
 | J8 | **`realpath`, `getcwd`, `fchdir`, `opendir` on handles** | S | std paths |
 | J9 | **`posix_spawn` file actions for fd 3+** (E11 left over from Era 6) | M | `std::process::Command` with pipes |
-| J10 | **`waitid`, `WNOHANG` everywhere, SIGCHLD** | S | `Command::try_wait` |
+| J10 | **`waitid`, `WNOHANG` everywhere, SIGCHLD** | S | **Done (entry 099)**: PROCESS_NOTIFY; WNOHANG and WNOWAIT |
 | J11 | **Wide characters**: `wchar_t` functions, `mbrtowc`, `wcrtomb` in UTF-8 | M | Also helps libc++'s missing parts |
 | J12 | **`dlopen`/`dlsym` stubs answering "unsupported"** honestly | S | rustc probes for codegen backends |
 | J13 | **zlib** ported (for rustc's metadata compression) | S | |

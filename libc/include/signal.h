@@ -76,14 +76,40 @@ typedef void (*sighandler_t)(int);
 /* A set of signals: bit n for signal n. */
 typedef unsigned long sigset_t;
 
-/* What sigaction's handler with SA_SIGINFO is told. */
+/* What sigaction's handler with SA_SIGINFO is told, and what waitid
+ * fills in: for a child, its number (si_pid), how it ended (si_code: a
+ * CLD_ value) and its exit code or signal (si_status). */
 typedef struct {
     int si_signo;
     int si_errno;
     int si_code;
     pid_t si_pid;
     void *si_addr;
+    uid_t si_uid;
+    int si_status;
 } siginfo_t;
+
+/* si_code for SIGCHLD and waitid: the child exited, or a signal ended
+ * it (CLD_DUMPED is never said: nothing is dumped). */
+#define CLD_EXITED 1
+#define CLD_KILLED 2
+#define CLD_DUMPED 3
+
+/* A signal stack (sigaltstack): where handlers installed with
+ * SA_ONSTACK run - the only place one can when the thread's own stack
+ * has overflowed. Each thread has its own. */
+typedef struct {
+    void *ss_sp;
+    int ss_flags;
+    size_t ss_size;
+} stack_t;
+
+#define SS_ONSTACK 1
+#define SS_DISABLE 2
+#define MINSIGSTKSZ 4096
+#define SIGSTKSZ 16384
+
+int sigaltstack(const stack_t *stack, stack_t *old);
 
 struct sigaction {
     union {

@@ -123,6 +123,14 @@ _Noreturn void _Exit(int code);
 int rand(void);
 void srand(unsigned seed);
 
+/* Random numbers from the kernel's generator (BSD's, and glibc's since
+ * 2.36): unpredictable, unlike rand. arc4random_uniform's numbers below
+ * `bound` are all equally likely. */
+#include <stdint.h>
+uint32_t arc4random(void);
+void arc4random_buf(void *buffer, size_t length);
+uint32_t arc4random_uniform(uint32_t bound);
+
 /* The same in base ten, with no way of saying it failed. */
 int atoi(const char *text);
 long atol(const char *text);

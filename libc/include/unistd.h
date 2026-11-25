@@ -96,6 +96,8 @@ char *getcwd(char *buffer, size_t size);
 
 /* The kernel's number for this process. */
 pid_t getpid(void);
+/* At most 256 random bytes from the kernel (sys/random.h has getrandom). */
+int getentropy(void *buffer, size_t length);
 
 /* Facts about the system: sysconf(_SC_PAGESIZE) is the size of a page
  * of memory (4096 here), _SC_NPROCESSORS_ONLN how many processors the
