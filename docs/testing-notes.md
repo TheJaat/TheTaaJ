@@ -3711,3 +3711,46 @@ make test64
 | `test64: all passed` | every part, the new two included |
 
 Automated: make ground64-test, make aarch64-ground-test, make test64
+
+---
+
+## 100 · Std's ground, part 2: poll and select, dl_iterate_phdr, pthread attributes, exec with PATH, directory descriptors, zlib
+
+[The entry](journal/100-std-ground-2.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`. It puts `ground2` on the disk.
+
+| Type | You should see |
+|---|---|
+| `with programs ground2` | after a few seconds `ground2: 87 checks, all passed`; in the terminal, its children `exited with code 7` (twice: the program exec started, then the one that exec'd), `ended by signal 15 (SIGTERM)` then `exited with code -1115` (the go-between passing the signal's code on), `exited with code 42` twice, `exited with code 3` twice, `exited with code 4`, and at the end `"ground2" exited with code 0` |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make ground2-64-test
+make aarch64-ground2-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `std's ground, part 2 (x86_64): 87 checks of poll, select, dl_iterate_phdr, getauxval, dlfcn, pthread attributes, exec with PATH, descriptors through exec, argv[0], realpath and zlib passed` | every part above; the same for aarch64 |
+| `test64: all passed` | every part, the new two included |
+
+Automated: make ground2-64-test, make aarch64-ground2-test, make test64

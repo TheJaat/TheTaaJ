@@ -108,7 +108,7 @@ Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 
 | Machine | Step | Branch |
 |---|---|---|
-| The-Jat | C: std's ground, part 2 (the libc calls std uses) | `std-ground-2` |
+| The-Jat | D: TaajFS version 4 | `taajfs-4` |
 | MaK | A: the scheduler and timing step | `timing` |
 
 ## The decided order
@@ -121,8 +121,8 @@ Each step below is one branch, one journal entry and one test64 run. The items a
 |---|---|---|
 | **A** Merge the core basics | entry 097 | **Done (entry 097)**, merged 2026-11-26 |
 | **B** Std's ground, part 1: randomness, real thread-local storage, signals std uses | J2 `getrandom`, J1 ELF TLS, J4 `sigaltstack`, J10 `waitid` and SIGCHLD | **Done (entry 099)** |
-| **C** Std's ground, part 2: libc calls std uses | J3 `poll`, J5 `dl_iterate_phdr`, J6 pthread attributes, J7 `stat`, J8 `realpath` and `getcwd`, J9 `posix_spawn` with fd 3+, J12 `dlopen` stubs, J13 zlib, J37 environment, J38 `execvp` and `/bin`, J39 the real `argv[0]` | Everything R3 will ask for, so R3 is only Rust's side |
-| **D** TaajFS version 4 | J17 file times, J18 files over 256 MiB, J19 long names, J20 faster writes, J35 a replacing `rename` | One format change instead of four |
+| **C** Std's ground, part 2: libc calls std uses | J3 `poll`, J5 `dl_iterate_phdr`, J6 pthread attributes, J7 `stat`, J8 `realpath` and `getcwd`, J9 `posix_spawn` with fd 3+, J12 `dlopen` stubs, J13 zlib, J37 environment, J38 `execvp` and `/bin`, J39 the real `argv[0]` | **Done (entry 100)** |
+| **D** TaajFS version 4 | J17 file times, J18 files over 256 MiB, J19 long names, J20 faster writes, J35 a replacing `rename`, J55 `/bin` | One format change instead of four |
 | **E** LLVM 23 | J14, and C++ (libc++, the LLVM port) moved from emulated to real thread-local storage | Long; runs unattended on The-Jat; it rebuilds the ports anyway |
 | **F** R3 Rust's std | J15, J16 | Needs B-E |
 | **G** Memory for big programs | J26-J31 | Before rustc's 182 MB runs |
@@ -159,17 +159,17 @@ The order matters here: each item is needed by the ones after it.
 |---|---|---|---|
 | J1 | **Real thread-local storage (ELF TLS)**: `PT_TLS` loaded per thread, the FS base / `TPIDR_EL0` pointing at a proper TLS block, `__tls_get_addr` for the general model | M | **Done (entry 099)** for static programs (local-exec); C++ still emulated until step E; no `__tls_get_addr` (no shared libraries) |
 | J2 | **`getrandom`** in the kernel: RDRAND/RDSEED on x86, `RNDR` or virtio-rng on AArch64, mixed with timer jitter into a ChaCha20 generator; `getrandom()`, `getentropy()`, `/dev/urandom`-like call in libc | M | **Done (entry 099)**: ChaCha20, RDSEED/RDRAND/RNDR + timings; no virtio-rng, no `/dev/urandom` file |
-| J3 | **`poll`** (and `select` on top of it) over pipes, files, sockets and the keyboard | M | Needs "writable" readiness in `object_wait` (an open issue) |
+| J3 | **`poll`** (and `select` on top of it) over pipes, files, sockets and the keyboard | M | **Done (entry 100)**: in libc, over the read ends' channels; sockets always "ready" until the network service says when data comes |
 | J4 | **`sigaltstack`** and running a handler on it; SIGSEGV on a stack overflow reaches that handler | S | **Done (entry 099)** |
-| J5 | **`dl_iterate_phdr`** (for the program itself only, no shared libraries) | S | std's backtraces and unwinding look for it |
-| J6 | **`pthread_getattr_np`**, `pthread_attr_getstack`, `pthread_sigmask` | S | std's thread guard pages |
-| J7 | **`statx` or a full `stat`**: sizes, types, times (once TaajFS has them, see J17) | S | `std::fs::metadata` |
-| J8 | **`realpath`, `getcwd`, `fchdir`, `opendir` on handles** | S | std paths |
-| J9 | **`posix_spawn` file actions for fd 3+** (E11 left over from Era 6) | M | `std::process::Command` with pipes |
+| J5 | **`dl_iterate_phdr`** (for the program itself only, no shared libraries) | S | **Done (entry 100)**, with `getauxval` |
+| J6 | **`pthread_getattr_np`**, `pthread_attr_getstack`, `pthread_sigmask` | S | **Done (entry 100)**: glibc's 56-byte `pthread_attr_t`, `pthread_attr_setstack`, `pthread_getattr_np` (the main thread's too); `pthread_sigmask` was already there |
+| J7 | **`statx` or a full `stat`**: sizes, types, times (once TaajFS has them, see J17) | S | **Done** before this list (`stat`, `fstat`, `lstat` with types, sizes, a modification time); more times wait for J17 |
+| J8 | **`realpath`, `getcwd`, `fchdir`, `opendir` on handles** | S | **Done (entry 100)**: `realpath` and `getcwd` were there; `open` with O_DIRECTORY, `fchdir`, `fdopendir`, `dirfd` added |
+| J9 | **`posix_spawn` file actions for fd 3+** (E11 left over from Era 6) | M | **Done**: entry 092 (E11) for spawn; entry 100 checks it through exec too |
 | J10 | **`waitid`, `WNOHANG` everywhere, SIGCHLD** | S | **Done (entry 099)**: PROCESS_NOTIFY; WNOHANG and WNOWAIT |
 | J11 | **Wide characters**: `wchar_t` functions, `mbrtowc`, `wcrtomb` in UTF-8 | M | Also helps libc++'s missing parts |
-| J12 | **`dlopen`/`dlsym` stubs answering "unsupported"** honestly | S | rustc probes for codegen backends |
-| J13 | **zlib** ported (for rustc's metadata compression) | S | |
+| J12 | **`dlopen`/`dlsym` stubs answering "unsupported"** honestly | S | **Done (entry 100)**: `dlopen(NULL)` works, `dlsym` says no, `dlerror` says why |
+| J13 | **zlib** ported (for rustc's metadata compression) | S | **Done (entry 100)**: zlib 1.3.2 in `ports/zlib`, `make zlib64`/`zlib-aarch64` |
 | J14 | **LLVM 23** for TheTaaJ (our port is 18; rustc 1.100 needs 23) | L | Redo E1-E4's port on the new version, byte-for-byte checks again |
 
 ### Era 9 proper
@@ -208,9 +208,9 @@ The order matters here: each item is needed by the ones after it.
 | J34 | `erf`, `erfc`, `tgamma`, `lgamma` and the long double math | S | Declared, not defined |
 | J35 | `rename` replaces an existing file atomically | S | TaajFS operation |
 | J36 | libc descriptors follow the file, not the name (rename/remove of an open file) | M | |
-| J37 | `getenv`/`setenv` with a real environment passed to children | S | Always NULL today |
-| J38 | `execvp`, `PATH` search; a `/bin` directory | S | |
-| J39 | `argv[0]` is the program's real name (not "program") | S | Fixes clang finding itself |
+| J37 | `getenv`/`setenv` with a real environment passed to children | S | **Done** before this list (`environ`, posix_spawn's envp; checked through exec in entry 100) |
+| J38 | `execvp`, `PATH` search; a `/bin` directory | S | **Done (entry 100)**: the exec family as spawn-and-wait with the exact exit code; PATH, or `/` then `/bin`. The `/bin` directory itself waits for step D |
+| J39 | `argv[0]` is the program's real name (not "program") | S | **Done**: argv[0] is the parent's (checked in entry 100) |
 | J40 | libc++ `<filesystem>`, `random_device` (after J2), wide streams | M | |
 | J41 | Double `free` and overrun detection in `malloc` (a debug mode) | S | |
 | J42 | Host tests for `malloc`'s family | S | |
@@ -236,6 +236,9 @@ The order matters here: each item is needed by the ones after it.
 | J52 | A test that fails when rule 1 or rule 3 of `threads.rs` is broken | S | Known gap |
 | J53 | A test for the ticks mutation from entry 097 (late timer interrupts) | S | Perhaps by stopping a CPU for a while |
 | J54 | A fresh `git clone --recurse-submodules` builds and passes (in a clean container) | S | Never tried |
+| J55 | Programs in a `/bin` directory on the disk (the search already looks there, entry 100) | S | With step D: the disk tools and every test put programs in the root |
+| J56 | zlib (and later other libraries) installed on TheTaaJ's disk with its header, for programs compiled there | S | With step E, when there is a place for libraries on the disk |
+| J57 | exec without the go-between: signals sent to it passed on to the program it started, and a keyboard handed on | M | Entry 100's exec is spawn-and-wait |
 
 ---
 
@@ -303,6 +306,7 @@ The order matters here: each item is needed by the ones after it.
 | K36 | IPv6 | L | Later |
 | K37 | TLS 1.3 with its cryptography | L | After J2 |
 | K38 | HTTP server: several connections, keep-alive | S | |
+| K49 | Socket readiness for `poll`: the network service tells a socket's channel when bytes arrive, so poll can wait for it (entry 100 treats a socket as always ready) | S | After K33 |
 
 ### Desktop
 

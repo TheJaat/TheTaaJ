@@ -74,6 +74,11 @@ const DESTRUCTOR_ROUNDS: usize = 4;
 /// that uses 20 KiB of it takes 20 KiB.
 const STACK_MIN: usize = 16 * 1024;
 const STACK_DEFAULT: usize = 8 * 1024 * 1024;
+/// The guard a thread's stack has below it: the page under every
+/// reservation is left unmapped (the kernel's memory_reserve), so
+/// running off the end faults. pthread_attr_setguardsize is remembered
+/// and said back, but the guard is always that page.
+const GUARD_DEFAULT: usize = 4096;
 
 type Start = extern "C" fn(*mut c_void) -> *mut c_void;
 type Destructor = unsafe extern "C" fn(*mut c_void);
@@ -100,8 +105,15 @@ pub struct Thread {
     start: Option<Start>,
     argument: *mut c_void,
     /// Its stack, a mapping of its own; null for the main thread, whose
-    /// stack is the program's.
+    /// stack is the program's, and for a stack the program gave
+    /// (pthread_attr_setstack), which stays the program's to free.
     stack: *mut u8,
+    /// Where its stack is, whoever made it: the lowest address and the
+    /// size (pthread_getattr_np). (0, 0) for the main thread: worked
+    /// out when asked.
+    stack_area: (usize, usize),
+    /// The guard size its attributes asked for, to say it back.
+    guard: usize,
     /// pthread_setspecific's values, one per key.
     values: [*mut c_void; KEYS_MAX],
     /// C++'s thread_local variables: this thread's copy of each, by
@@ -122,6 +134,8 @@ impl Thread {
             start: None,
             argument: ptr::null_mut(),
             stack: ptr::null_mut(),
+            stack_area: (0, 0),
+            guard: GUARD_DEFAULT,
             values: [ptr::null_mut(); KEYS_MAX],
             copies: Vec::new(),
         }
@@ -193,12 +207,9 @@ fn read_template() -> Template {
     found
 }
 
-/// A new thread-local area for `record`: the TCB filled in and the
-/// template copied. (the area, its layout, the thread pointer), or None
-/// with no memory for it.
-fn tls_area(record: *mut Thread) -> Option<(*mut u8, Layout, usize)> {
-    // SAFETY: set before any thread but the first existed; read-only since.
-    let t = unsafe { &*TEMPLATE.0.get() };
+/// Where things go in a thread-local area for template `t`: (its size,
+/// its alignment, the thread pointer's offset in it, the block's).
+fn area_layout(t: &Template) -> (usize, usize, usize, usize) {
     // The alignment the block needs, and the TCB's (two words, kept at 16).
     let align = t.align.max(16).next_power_of_two();
     // x86_64: the block ends where the TCB begins, the thread pointer;
@@ -216,6 +227,30 @@ fn tls_area(record: *mut Thread) -> Option<(*mut u8, Layout, usize)> {
         let start = TCB.next_multiple_of(t.align);
         (start + block, 0, start)
     };
+    (size, align, tp_offset, block_offset)
+}
+
+/// This thread's thread-local block - what dl_iterate_phdr calls
+/// dlpi_tls_data; null if the program has none.
+pub(crate) fn tls_block() -> *mut u8 {
+    // SAFETY: as in tls_area.
+    let t = unsafe { &*TEMPLATE.0.get() };
+    // SAFETY: current() is this thread's record, alive while it runs.
+    let area = unsafe { (*current()).tls };
+    if t.memory_size == 0 || area.is_null() {
+        return ptr::null_mut();
+    }
+    // SAFETY: inside the area tls_area made.
+    unsafe { area.add(area_layout(t).3) }
+}
+
+/// A new thread-local area for `record`: the TCB filled in and the
+/// template copied. (the area, its layout, the thread pointer), or None
+/// with no memory for it.
+fn tls_area(record: *mut Thread) -> Option<(*mut u8, Layout, usize)> {
+    // SAFETY: set before any thread but the first existed; read-only since.
+    let t = unsafe { &*TEMPLATE.0.get() };
+    let (size, align, tp_offset, block_offset) = area_layout(t);
     let layout = Layout::from_size_align(size, align).ok()?;
     // SAFETY: a non-zero size (the TCB at least).
     let area = unsafe { alloc::alloc::alloc_zeroed(layout) };
@@ -339,22 +374,33 @@ unsafe fn free_thread(thread: *mut Thread) {
 
 // ---- threads ------------------------------------------------------------
 
-/// pthread_attr_t: one int. Bit 0: detached. The rest: the stack size
-/// in KiB (0: the default).
+/// pthread_attr_t, laid out in glibc's 56 bytes (pthread.h): whether
+/// the thread starts detached, its stack's size (0: the default), the
+/// stack itself if the program gives one (pthread_attr_setstack), and
+/// the guard size asked for.
 #[repr(C)]
 pub struct Attributes {
-    bits: c_int,
+    detached: c_int,
+    _unused: c_int,
+    stack_size: usize,
+    /// The lowest address of a stack the program gave; 0 for none.
+    stack_address: usize,
+    guard_size: usize,
+    _spare: [usize; 3],
 }
 
-const DETACHED_BIT: c_int = 1;
 
 impl Attributes {
+    const fn new() -> Attributes {
+        Attributes { detached: 0, _unused: 0, stack_size: 0, stack_address: 0, guard_size: GUARD_DEFAULT, _spare: [0; 3] }
+    }
+
     fn detached(&self) -> bool {
-        self.bits & DETACHED_BIT != 0
+        self.detached != 0
     }
 
     fn stack_size(&self) -> usize {
-        match (self.bits as u32 >> 1) as usize * 1024 {
+        match self.stack_size {
             0 => STACK_DEFAULT,
             size => size,
         }
@@ -364,7 +410,7 @@ impl Attributes {
 #[no_mangle]
 pub unsafe extern "C" fn pthread_attr_init(attr: *mut Attributes) -> c_int {
     // SAFETY: the caller's promise.
-    unsafe { (*attr).bits = 0 };
+    unsafe { attr.write(Attributes::new()) };
     0
 }
 
@@ -378,8 +424,7 @@ pub unsafe extern "C" fn pthread_attr_setdetachstate(attr: *mut Attributes, stat
     // SAFETY: the caller's promise.
     let attr = unsafe { &mut *attr };
     match state {
-        0 => attr.bits &= !DETACHED_BIT,
-        1 => attr.bits |= DETACHED_BIT,
+        0 | 1 => attr.detached = state,
         _ => return EINVAL,
     }
     0
@@ -394,12 +439,11 @@ pub unsafe extern "C" fn pthread_attr_getdetachstate(attr: *const Attributes, st
 
 #[no_mangle]
 pub unsafe extern "C" fn pthread_attr_setstacksize(attr: *mut Attributes, size: usize) -> c_int {
-    if size < STACK_MIN || size / 1024 > (c_int::MAX >> 1) as usize {
+    if size < STACK_MIN {
         return EINVAL;
     }
     // SAFETY: the caller's promise.
-    let attr = unsafe { &mut *attr };
-    attr.bits = (attr.bits & DETACHED_BIT) | ((size.div_ceil(1024) as c_int) << 1);
+    unsafe { (*attr).stack_size = size };
     0
 }
 
@@ -407,6 +451,90 @@ pub unsafe extern "C" fn pthread_attr_setstacksize(attr: *mut Attributes, size: 
 pub unsafe extern "C" fn pthread_attr_getstacksize(attr: *const Attributes, size: *mut usize) -> c_int {
     // SAFETY: the caller's promise.
     unsafe { *size = (*attr).stack_size() };
+    0
+}
+
+/// `pthread_attr_setstack(attr, address, size)`: the thread runs on
+/// the program's own memory, `size` bytes from `address` (its lowest),
+/// which the program frees after the thread has ended. EINVAL below
+/// PTHREAD_STACK_MIN.
+#[no_mangle]
+pub unsafe extern "C" fn pthread_attr_setstack(attr: *mut Attributes, address: *mut c_void, size: usize) -> c_int {
+    if size < STACK_MIN || address.is_null() {
+        return EINVAL;
+    }
+    // SAFETY: the caller's promise.
+    let attr = unsafe { &mut *attr };
+    attr.stack_address = address as usize;
+    attr.stack_size = size;
+    0
+}
+
+/// `pthread_attr_getstack(attr, address, size)`: the stack's lowest
+/// address and size - 0 and the size for a stack pthread_create is to
+/// make; the thread's own, from pthread_getattr_np.
+#[no_mangle]
+pub unsafe extern "C" fn pthread_attr_getstack(attr: *const Attributes, address: *mut *mut c_void, size: *mut usize) -> c_int {
+    // SAFETY: the caller's promise.
+    unsafe {
+        *address = (*attr).stack_address as *mut c_void;
+        *size = (*attr).stack_size();
+    }
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pthread_attr_setguardsize(attr: *mut Attributes, size: usize) -> c_int {
+    // SAFETY: the caller's promise.
+    unsafe { (*attr).guard_size = size };
+    0
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn pthread_attr_getguardsize(attr: *const Attributes, size: *mut usize) -> c_int {
+    // SAFETY: the caller's promise.
+    unsafe { *size = (*attr).guard_size };
+    0
+}
+
+/// The main thread's stack, (lowest address, size): it ends at
+/// abi::stack::TOP, and is as big as the program's PT_GNU_STACK asked
+/// (the kernel's rule, abi::stack::size).
+fn main_stack() -> (usize, usize) {
+    let mut headers = [0u8; 56 * 32];
+    let total = taaj::program_headers(&mut headers).unwrap_or(0).min(headers.len());
+    let mut wanted = 0;
+    for h in headers[..total].chunks_exact(56) {
+        if u32::from_le_bytes([h[0], h[1], h[2], h[3]]) == 0x6474_e551 {
+            wanted = u64::from_le_bytes(h[40..48].try_into().unwrap_or([0; 8]));
+        }
+    }
+    let size = abi::stack::size(wanted).unwrap_or(abi::stack::DEFAULT);
+    ((abi::stack::TOP - size) as usize, size as usize)
+}
+
+/// `pthread_getattr_np(thread, attr)`: `thread`'s attributes as they
+/// are now - detached or not, and where its stack is: what Rust's std
+/// asks to find the bottom of the main thread's stack, for its overflow
+/// message. ESRCH for a thread that is not one of the program's.
+#[no_mangle]
+pub unsafe extern "C" fn pthread_getattr_np(thread: usize, attr: *mut Attributes) -> c_int {
+    let thread = thread as *mut Thread;
+    let known = thread == MAIN.0.get() || THREADS.lock().0.contains(&thread);
+    if !known {
+        return ESRCH;
+    }
+    let detached = DETACHED.lock().0.contains(&thread);
+    // SAFETY: one of the program's records, alive until joined or freed.
+    let (area, guard) = unsafe { ((*thread).stack_area, (*thread).guard) };
+    let (address, size) = if area.1 == 0 { main_stack() } else { area };
+    let mut made = Attributes::new();
+    made.detached = c_int::from(detached);
+    made.stack_address = address;
+    made.stack_size = size;
+    made.guard_size = guard;
+    // SAFETY: the caller's promise.
+    unsafe { attr.write(made) };
     0
 }
 
@@ -432,13 +560,22 @@ pub unsafe extern "C" fn pthread_create(
     free_ended();
     // SAFETY: the caller's promise: null or valid.
     let attr = unsafe { attr.as_ref() };
-    let size = attr.map_or(STACK_DEFAULT, Attributes::stack_size).next_multiple_of(4096);
-    let Ok(stack) = taaj::memory_reserve(size as u64, true) else { return EAGAIN };
+    let given = attr.map_or(0, |attr| attr.stack_address);
+    let (stack, base, size) = if given != 0 {
+        // The program's own stack: used as it is, never unmapped here.
+        (ptr::null_mut(), given, attr.map_or(0, Attributes::stack_size))
+    } else {
+        let size = attr.map_or(STACK_DEFAULT, Attributes::stack_size).next_multiple_of(4096);
+        let Ok(stack) = taaj::memory_reserve(size as u64, true) else { return EAGAIN };
+        (stack, stack as usize, size)
+    };
 
     let mut record = Box::new(Thread::new(NEXT_ID.fetch_add(1, Ordering::Relaxed)));
     record.start = start;
     record.argument = argument;
     record.stack = stack;
+    record.stack_area = (base, size);
+    record.guard = attr.map_or(GUARD_DEFAULT, |attr| attr.guard_size);
     let thread = Box::into_raw(record);
     let Some((area, layout, tp)) = tls_area(thread) else {
         // SAFETY: just made, never shared; this unmaps its stack too.
@@ -458,7 +595,8 @@ pub unsafe extern "C" fn pthread_create(
     }
     // SAFETY: the caller's promise.
     unsafe { *out = thread as usize };
-    let top = stack as u64 + size as u64;
+    // The stack pointer starts 16-byte aligned, as both ABIs want.
+    let top = (base + size) as u64 & !15;
     match taaj::thread_create(begin as *const () as u64, top, thread as u64, tp as u64) {
         Ok(_) => 0,
         Err(_) => {
@@ -1132,5 +1270,5 @@ fn _sizes() {
     const _: () = assert!(core::mem::size_of::<PthreadMutex>() == 8);
     const _: () = assert!(core::mem::size_of::<Condition>() == 4);
     const _: () = assert!(core::mem::size_of::<ReadWriteLock>() == 8);
-    const _: () = assert!(core::mem::size_of::<Attributes>() == 4);
+    const _: () = assert!(core::mem::size_of::<Attributes>() == 56);
 }

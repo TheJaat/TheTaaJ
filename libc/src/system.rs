@@ -223,14 +223,6 @@ pub extern "C" fn clock() -> c_long {
     (taaj::monotonic_ns() / 1000) as c_long
 }
 
-/// `execvp(file, argv)`: replacing the running program with another is
-/// not something TheTaaJ does - a program asks for a new process
-/// instead - so this always fails, with ENOSYS.
-#[no_mangle]
-pub extern "C" fn execvp(_file: *const c_char, _argv: *const *const c_char) -> c_int {
-    crate::descriptors::fail(ENOSYS)
-}
-
 /// `nanosleep(wanted, left)`: sleeps for at least `*wanted` - unless a
 /// signal handler runs meanwhile: then -1 with EINTR, and the time not
 /// slept in `*left`. 0, or -1 with EINVAL if the time is negative or its
@@ -333,18 +325,6 @@ pub extern "C" fn getpagesize() -> c_int {
 /// (posix_spawn, in spawn.rs). -1, ENOSYS.
 #[no_mangle]
 pub extern "C" fn fork() -> c_int {
-    crate::descriptors::fail(ENOSYS)
-}
-
-/// `execv(path, argv)`: as execvp - never replaced: -1, ENOSYS.
-#[no_mangle]
-pub extern "C" fn execv(_path: *const c_char, _argv: *const *const c_char) -> c_int {
-    crate::descriptors::fail(ENOSYS)
-}
-
-/// `execve(path, argv, environment)`: the same.
-#[no_mangle]
-pub extern "C" fn execve(_path: *const c_char, _argv: *const *const c_char, _env: *const *const c_char) -> c_int {
     crate::descriptors::fail(ENOSYS)
 }
 

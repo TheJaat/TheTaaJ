@@ -289,6 +289,47 @@ impl Input {
         }
     }
 
+    /// Whether a read would not wait, finding out without waiting:
+    /// `(bytes, ended)` - bytes held or come in, or the end reached.
+    /// Messages already there are taken in. A keyboard is asked for its
+    /// next line, as `read` would: whoever asks whether there is input
+    /// means to read it.
+    pub fn ready(&mut self) -> (bool, bool) {
+        loop {
+            if self.taken < self.held.len() {
+                return (true, false);
+            }
+            let Some(channel) = self.channel else { return (false, true) };
+            if self.keyboard && !self.asked {
+                if send(channel, &[abi::stream::WANT], &[]).is_err() {
+                    self.channel = None;
+                    return (false, true);
+                }
+                self.asked = true;
+            }
+            if !matches!(poll(&[channel]), Ok(Some(_))) {
+                return (false, false);
+            }
+            let mut message = [0u8; abi::MESSAGE_MAX as usize];
+            match receive(channel, &mut message, &mut []) {
+                Ok((length, _)) if length >= 1 && message[0] == abi::stream::DATA => {
+                    self.asked = false;
+                    self.held.clear();
+                    self.held.extend_from_slice(&message[1..length]);
+                    self.taken = 0;
+                }
+                Ok(_) => {}
+                Err(_) => self.channel = None,
+            }
+        }
+    }
+
+    /// The channel input comes on, while there may be more: what to
+    /// wait on for it.
+    pub fn handle(&self) -> Option<Handle> {
+        self.channel
+    }
+
     /// All of it, a piece at a time, until the end.
     pub fn each(&mut self, mut piece: impl FnMut(&[u8])) {
         let mut buffer = [0u8; 1024];
@@ -608,6 +649,22 @@ pub fn object_wait(handles: &[Handle]) -> Result<usize, Error> {
 /// None if nothing was ready by then.
 pub fn object_wait_until(handles: &[Handle], deadline: u64) -> Result<Option<usize>, Error> {
     match restarting(|| syscall(call::OBJECT_WAIT_UNTIL, handles.as_ptr() as u64, handles.len() as u64, deadline)) {
+        Ok(index) => Ok(Some(index as usize)),
+        Err(Error::TimedOut) => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+/// As `object_wait_until` (or `object_wait`, with no deadline), but a
+/// signal that runs a handler ends the wait: `Err(Interrupted)`, after
+/// the handler ran. For the calls POSIX says fail with EINTR whatever
+/// SA_RESTART says - poll and select among them.
+pub fn object_wait_or_signal(handles: &[Handle], deadline: Option<u64>) -> Result<Option<usize>, Error> {
+    let made = match deadline {
+        Some(deadline) => syscall(call::OBJECT_WAIT_UNTIL, handles.as_ptr() as u64, handles.len() as u64, deadline),
+        None => syscall(call::OBJECT_WAIT, handles.as_ptr() as u64, handles.len() as u64, 0),
+    };
+    match abi::decode(made) {
         Ok(index) => Ok(Some(index as usize)),
         Err(Error::TimedOut) => Ok(None),
         Err(error) => Err(error),

@@ -54,6 +54,7 @@ const O_CREAT: c_int = 0o100;
 const O_EXCL: c_int = 0o200;
 const O_TRUNC: c_int = 0o1000;
 const O_APPEND: c_int = 0o2000;
+pub(crate) const O_DIRECTORY: c_int = 0o200000;
 
 const SEEK_SET: c_int = 0;
 const SEEK_CUR: c_int = 1;
@@ -140,6 +141,20 @@ static INPUT: Mutex<Option<taaj::Input>> = Mutex::new(None);
 
 fn read_input(out: &mut [u8]) -> usize {
     INPUT.lock().get_or_insert_with(taaj::input).read(out)
+}
+
+/// Whether reading standard input would not wait - `(bytes, ended)` -
+/// and the channel to wait on until it would. None while another thread
+/// is reading it (and holds it): then only its channel is known.
+pub(crate) fn input_ready() -> Option<((bool, bool), Option<taaj::Handle>)> {
+    let mut input = INPUT.try_lock()?;
+    let input = input.get_or_insert_with(taaj::input);
+    Some((input.ready(), input.handle()))
+}
+
+/// What descriptor `fd` stands for now, if anything.
+pub(crate) fn open_at(fd: c_int) -> Option<Open> {
+    with(|state| usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::clone))
 }
 
 impl State {
@@ -347,7 +362,13 @@ pub unsafe extern "C" fn __taaj_open(path: *const c_char, flags: c_int) -> c_int
             }
         }
         let made_ready = match files.stat(&file.path) {
+            // A directory opens only when asked for as one, to read:
+            // a descriptor for fchdir, fdopendir and the like (its read
+            // gives EISDIR). Without O_DIRECTORY, EISDIR at once, as
+            // TheTaaJ always said.
+            Ok((Kind::Directory, _)) if flags & O_DIRECTORY != 0 && !file.writes() => Ok(()),
             Ok((Kind::Directory, _)) => return fail(EISDIR),
+            Ok((Kind::File, _)) if flags & O_DIRECTORY != 0 => return fail(ENOTDIR),
             Ok((Kind::File, _)) if flags & (O_CREAT | O_EXCL) == O_CREAT | O_EXCL => return fail(EEXIST),
             // Writing nothing over a file leaves it empty.
             Ok((Kind::File, _)) if flags & O_TRUNC != 0 && file.writes() => files.write(&file.path, &[]).map(|_| ()),

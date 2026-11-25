@@ -76,11 +76,13 @@
 extern crate alloc;
 
 pub mod descriptors;
+pub mod dynamic;
 pub mod errno;
 pub mod memory;
 pub mod number;
 pub mod sockets;
 pub mod pipes;
+pub mod poll;
 pub mod random;
 pub mod spawn;
 pub mod status;

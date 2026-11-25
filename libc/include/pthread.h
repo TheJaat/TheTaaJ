@@ -60,7 +60,12 @@ typedef struct {
 } pthread_condattr_t;
 
 typedef struct {
-    int bits;     /* detached, and the stack size in KiB */
+    int detached;
+    int unused;
+    unsigned long stack_size;    /* 0: the default, 8 MiB */
+    void *stack_address;         /* the program's own stack, or 0 */
+    unsigned long guard_size;    /* said back; the guard is one page */
+    long spare[3];               /* 56 bytes in all, as glibc's */
 } pthread_attr_t;
 
 typedef struct {
@@ -138,6 +143,14 @@ int pthread_attr_setdetachstate(pthread_attr_t *attr, int state);
 int pthread_attr_getdetachstate(const pthread_attr_t *attr, int *state);
 int pthread_attr_setstacksize(pthread_attr_t *attr, unsigned long size);
 int pthread_attr_getstacksize(const pthread_attr_t *attr, unsigned long *size);
+int pthread_attr_setstack(pthread_attr_t *attr, void *address, unsigned long size);
+int pthread_attr_getstack(const pthread_attr_t *attr, void **address, unsigned long *size);
+int pthread_attr_setguardsize(pthread_attr_t *attr, unsigned long size);
+int pthread_attr_getguardsize(const pthread_attr_t *attr, unsigned long *size);
+/* thread's attributes now: detached or not, and where its stack is
+ * (the main thread's too). Not POSIX: glibc's (_np), which Rust's std
+ * and others use. */
+int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr);
 
 pthread_t pthread_self(void);
 int pthread_equal(pthread_t a, pthread_t b);

@@ -25,4 +25,7 @@ int utimes(const char *path, const struct timeval times[2]);
 }
 #endif
 
+/* select, as Linux's sys/time.h brings it. */
+#include <sys/select.h>
+
 #endif

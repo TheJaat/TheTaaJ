@@ -4,7 +4,7 @@ import glob, re, os
 out = ["# Testing notes, collected\n",
        "\nThe testing note from the end of each journal entry, from entry 044 on, one after another, so that a run of steps can be tested in one sitting. Each is copied from its entry word for word; the entry has the story. For entries before 044, see the entry itself.\n",
        "\nBuild once and everything below runs from the root of TheTaaJ. `make run64` opens a QEMU window to type in; the kernel's log appears in the terminal it was started from. `make test64` runs every automated test and should end `test64: all passed`.\n"]
-for path in sorted(glob.glob("docs/journal/0[0-9][0-9]-*.md")):
+for path in sorted(glob.glob("docs/journal/[0-9][0-9][0-9]-*.md")):
     number = int(os.path.basename(path)[:3])
     if number < 44:
         continue

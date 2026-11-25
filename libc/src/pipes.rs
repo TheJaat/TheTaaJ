@@ -84,6 +84,37 @@ impl Reader {
     }
 }
 
+impl Reader {
+    /// Whether a read would not wait, found out without waiting:
+    /// `(bytes, ended)`. Messages already there are taken in. None if
+    /// another thread is reading now (and so holds the bytes): what it
+    /// is waiting for, poll can wait for too, on the channel.
+    pub(crate) fn ready(&self) -> Option<(bool, bool)> {
+        let mut held = self.held.try_lock()?;
+        loop {
+            if held.taken < held.bytes.len() {
+                return Some((true, false));
+            }
+            if held.ended {
+                return Some((false, true));
+            }
+            if !matches!(taaj::poll(&[self.channel.0]), Ok(Some(_))) {
+                return Some((false, false));
+            }
+            let mut message = [0u8; abi::MESSAGE_MAX as usize];
+            match taaj::receive(self.channel.0, &mut message, &mut []) {
+                Ok((length, _)) if length > 1 && message[0] == abi::stream::DATA => {
+                    held.bytes.clear();
+                    held.bytes.extend_from_slice(&message[1..length]);
+                    held.taken = 0;
+                }
+                Ok(_) => {}
+                Err(_) => held.ended = true,
+            }
+        }
+    }
+}
+
 /// A pipe's read end, shared by its descriptors (and threads).
 pub(crate) type ReadEnd = Arc<Reader>;
 /// A pipe's write end, shared by its descriptors.

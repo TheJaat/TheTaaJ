@@ -214,9 +214,11 @@ static void files(void)
     check(stream != NULL && fclose(stream) == 0, "fclose a stream fdopen made");
 
     check(getenv("PATH") == NULL, "getenv: no environment");
-    char *arguments[] = {"ls", NULL};
+    /* execvp runs a program in this one's place (entry 100): one that
+     * is not there leaves this program running, with ENOENT. */
+    char *arguments[] = {"no-such-program", NULL};
     errno = 0;
-    check(execvp("ls", arguments) == -1 && errno == ENOSYS, "execvp: ENOSYS");
+    check(execvp("no-such-program", arguments) == -1 && errno == ENOENT, "execvp of nothing: ENOENT");
 }
 
 /* ---- what C++'s library needs ---- */

@@ -53,6 +53,8 @@ int usleep(unsigned microseconds);
 /* Names that do not start with '/' are taken from path from now on;
  * getcwd says it. For this program only. */
 int chdir(const char *path);
+/* chdir to what fd, opened with O_DIRECTORY, is open on. */
+int fchdir(int fd);
 
 /* The file becomes length bytes long: cut short, or with zeros added. */
 int truncate(const char *path, off_t length);
@@ -127,9 +129,20 @@ int pause(void);
 
 /* Replaces the program with another. TheTaaJ starts programs as new
  * processes and never replaces one: this always fails (ENOSYS). */
+/* The exec family. TheTaaJ cannot replace a running program, so these
+ * start the new one as a process of its own - with the arguments, the
+ * environment, the current directory and every descriptor not marked
+ * close-on-exec - wait for it, and end this one with its exact exit
+ * code (libc/src/spawn.rs). They return only if it could not be
+ * started: -1 with errno. The p forms look a name with no '/' up in
+ * PATH (or, without one, in / and then /bin). */
 int execvp(const char *file, char *const argv[]);
+int execvpe(const char *file, char *const argv[], char *const environment[]);
 int execv(const char *path, char *const argv[]);
 int execve(const char *path, char *const argv[], char *const environment[]);
+int execl(const char *path, const char *argument, ...);
+int execlp(const char *file, const char *argument, ...);
+int execle(const char *path, const char *argument, ...);
 
 /* Copies the running program: not how TheTaaJ starts programs (a new
  * one is started from its file: posix_spawn, in spawn.h): always -1,

@@ -12,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <stdarg.h>
 #include <unistd.h>
 
 /* ---- libgen.h ------------------------------------------------------ */
@@ -529,4 +530,86 @@ int pclose(FILE *stream)
     int fd = fileno(stream);
     fclose(stream);
     return __taaj_pclose(fd);
+}
+
+/* ---- execl, execlp, execle --------------------------------------------
+ * The list forms of exec: the arguments one by one, ending in a null
+ * pointer (execle's environment after it), gathered into an array for
+ * the v forms (libc/src/spawn.rs).
+ *
+ * The va_list goes to the helpers as a pointer. Passed by value, it
+ * would work on x86_64 only by accident: there va_list is an array, so
+ * the helper's reads move the caller's list on too; on AArch64 it is a
+ * struct, copied, and execle would then read its first argument again
+ * where the environment should be. */
+
+/* How many arguments up to and including the null: counted on a copy of
+ * the list, since a va_list is read once. */
+static size_t count_arguments(const char *first, va_list *list)
+{
+    va_list copy;
+    va_copy(copy, *list);
+    size_t n = 1;
+    for (const char *a = first; a != NULL; a = va_arg(copy, const char *))
+        n++;
+    va_end(copy);
+    return n;
+}
+
+/* The array: first, then the rest of *list up to its null (read), then
+ * null. NULL with ENOMEM - the list read all the same. */
+static char **gather(const char *first, va_list *list)
+{
+    char **argv = malloc(count_arguments(first, list) * sizeof(char *));
+    size_t i = 0;
+    for (const char *a = first; a != NULL; a = va_arg(*list, const char *))
+        if (argv != NULL)
+            argv[i++] = (char *)a;
+    if (argv == NULL) {
+        errno = ENOMEM;
+        return NULL;
+    }
+    argv[i] = NULL;
+    return argv;
+}
+
+int execl(const char *path, const char *argument, ...)
+{
+    va_list list;
+    va_start(list, argument);
+    char **argv = gather(argument, &list);
+    va_end(list);
+    if (argv == NULL)
+        return -1;
+    execv(path, argv);
+    free(argv);
+    return -1;
+}
+
+int execlp(const char *file, const char *argument, ...)
+{
+    va_list list;
+    va_start(list, argument);
+    char **argv = gather(argument, &list);
+    va_end(list);
+    if (argv == NULL)
+        return -1;
+    execvp(file, argv);
+    free(argv);
+    return -1;
+}
+
+int execle(const char *path, const char *argument, ...)
+{
+    va_list list;
+    va_start(list, argument);
+    char **argv = gather(argument, &list);
+    /* gather read up to the null; the environment comes next. */
+    char *const *environment = va_arg(list, char *const *);
+    va_end(list);
+    if (argv == NULL)
+        return -1;
+    execve(path, argv, environment);
+    free(argv);
+    return -1;
 }

@@ -294,6 +294,9 @@ pub struct Dirent {
 /// where readdir has got to.
 pub struct Dir {
     path: String,
+    /// The descriptor it reads (fdopendir), or dirfd made for it; -1
+    /// for none. closedir closes it.
+    fd: c_int,
     entries: Vec<(String, u8)>,
     next: usize,
     entry: Dirent,
@@ -328,6 +331,7 @@ pub unsafe extern "C" fn opendir(path: *const c_char) -> *mut Dir {
     match listed {
         Ok((path, entries)) => Box::into_raw(Box::new(Dir {
             path,
+            fd: -1,
             entries,
             next: 0,
             entry: Dirent { d_ino: 0, d_off: 0, d_reclen: 0, d_type: 0, d_name: [0; 256] },
@@ -389,8 +393,70 @@ pub unsafe extern "C" fn closedir(dir: *mut Dir) -> c_int {
         return fail(EBADF);
     }
     // SAFETY: the caller's promise: it came from Box::into_raw in opendir.
-    drop(unsafe { Box::from_raw(dir) });
+    let dir = unsafe { Box::from_raw(dir) };
+    if dir.fd >= 0 {
+        crate::descriptors::close(dir.fd);
+    }
     0
+}
+
+/// The path from the root that descriptor `fd` was opened on, if it is
+/// a file's or a directory's.
+fn path_of(fd: c_int) -> Result<String, c_int> {
+    match crate::descriptors::open_at(fd) {
+        Some(crate::descriptors::Open::File(file)) => Ok(file.lock().path.clone()),
+        Some(_) => Err(ENOTDIR),
+        None => Err(EBADF),
+    }
+}
+
+/// `fdopendir(fd)`: opendir on what `fd` - opened with O_DIRECTORY - is
+/// open on. The DIR then owns `fd`: closedir closes it.
+#[no_mangle]
+pub extern "C" fn fdopendir(fd: c_int) -> *mut Dir {
+    let path = match path_of(fd) {
+        Ok(path) => path,
+        Err(code) => return fail_null(code),
+    };
+    let Ok(path) = alloc::ffi::CString::new(path) else { return fail_null(EINVAL) };
+    // SAFETY: a string ending in a zero.
+    let dir = unsafe { opendir(path.as_ptr()) };
+    if !dir.is_null() {
+        // SAFETY: just made.
+        unsafe { (*dir).fd = fd };
+    }
+    dir
+}
+
+/// `dirfd(dir)`: a descriptor for the directory `dir` reads - the one
+/// fdopendir was given, or one opened now (O_DIRECTORY) and kept until
+/// closedir. -1 with errno if it cannot be opened.
+///
+/// # Safety
+/// `dir` must come from opendir or fdopendir and not have been closed.
+#[no_mangle]
+pub unsafe extern "C" fn dirfd(dir: *mut Dir) -> c_int {
+    // SAFETY: the caller's promise.
+    let dir = unsafe { &mut *dir };
+    if dir.fd < 0 {
+        let Ok(path) = alloc::ffi::CString::new(dir.path.clone()) else { return fail(EINVAL) };
+        // SAFETY: a string ending in a zero.
+        dir.fd = unsafe { crate::descriptors::__taaj_open(path.as_ptr(), crate::descriptors::O_DIRECTORY) };
+    }
+    dir.fd
+}
+
+/// `fchdir(fd)`: chdir to the directory `fd` (opened with O_DIRECTORY)
+/// is open on. ENOTDIR for anything else, EBADF for no descriptor.
+#[no_mangle]
+pub extern "C" fn fchdir(fd: c_int) -> c_int {
+    let path = match path_of(fd) {
+        Ok(path) => path,
+        Err(code) => return fail(code),
+    };
+    let Ok(path) = alloc::ffi::CString::new(path) else { return fail(EINVAL) };
+    // SAFETY: a string ending in a zero.
+    unsafe { chdir(path.as_ptr()) }
 }
 
 // ---- marking a file changed -------------------------------------------

@@ -629,9 +629,29 @@ fn descriptors_channel(rest: Vec<(u8, Given)>) -> Result<Option<Handle>, c_int> 
 fn start(path: &str, name: &str, arguments: &[String], command: bool, standard: Standard, environment: &[u8]) -> Result<Handle, c_int> {
     // The file, as a path from the root ("" is the root): a command is
     // a file in the root; anything else is a path from here.
+    let search = command && !path.contains('/');
+    let directories = if search { search_path() } else { Vec::new() };
     let found = with(|state| {
         let files = state.files().ok_or(ENOENT)?;
-        let file = if command && !path.contains('/') { String::from(path) } else { files.resolve(path) };
+        let file = if search {
+            // The first directory that has it (a file, not empty); if
+            // none does, the error the first gives.
+            let candidates: Vec<String> = directories
+                .iter()
+                .map(|directory| match directory.as_str() {
+                    "" => files.resolve(path),
+                    directory => files.resolve(&alloc::format!("{}/{path}", directory.trim_end_matches('/'))),
+                })
+                .collect();
+            candidates
+                .iter()
+                .find(|file| matches!(files.stat(&alloc::format!("/{file}")), Ok((taaj::files::Kind::File, _))))
+                .or(candidates.first())
+                .cloned()
+                .ok_or(ENOENT)?
+        } else {
+            files.resolve(path)
+        };
         // `file` is from the root; the calls below take a path from the
         // current directory, so it goes to them as one from the root.
         let from_root = alloc::format!("/{file}");
@@ -654,6 +674,25 @@ fn start(path: &str, name: &str, arguments: &[String], command: bool, standard: 
             standard.close();
             Err(code)
         }
+    }
+}
+
+extern "C" {
+    fn getenv(name: *const c_char) -> *const c_char;
+}
+
+/// Where a command - a name with no '/' - is looked for, in order: the
+/// directories in PATH, split at ':' (an empty one is the current
+/// directory), or, with no PATH, the root and then /bin. Commands have
+/// always been files in the root here; /bin is where a Unix program
+/// expects them.
+fn search_path() -> Vec<String> {
+    // SAFETY: a string ending in a zero; getenv's answer is null or one.
+    let path = unsafe { getenv(c"PATH".as_ptr()).as_ref() };
+    match path {
+        // SAFETY: getenv's answer, a string.
+        Some(path) => unsafe { CStr::from_ptr(path) }.to_string_lossy().split(':').map(String::from).collect(),
+        None => alloc::vec![String::from("/"), String::from("/bin")],
     }
 }
 
@@ -770,6 +809,109 @@ fn ask_init(
         }
         Err(_) => Err(EIO),
     }
+}
+
+/// The exec family, as TheTaaJ can do it. A process here is not
+/// replaced by another: there is no such call, and nothing a program
+/// holds - its handles, its memory - could be kept across one. So exec
+/// starts `path` as a new process, with everything exec would leave it
+/// - the arguments, the environment, the current directory, every
+/// descriptor not marked close-on-exec, standard input too - waits for
+/// it, and ends this one with exactly the exit code it ended with (a
+/// signal's too): whoever waits for this program sees what Unix would
+/// have shown. What differs: this program stays in memory meanwhile,
+/// it is the new program's parent rather than becoming it, and the
+/// process ID changes. Returns (-1, with errno) only if the program
+/// could not be started, as exec does.
+///
+/// # Safety
+/// `path` a string; `argv` and `envp` null or arrays of strings ending
+/// in null.
+unsafe fn exec(path: *const c_char, argv: *const *const c_char, envp: *const *const c_char, command: bool) -> c_int {
+    use crate::descriptors::fail;
+    if path.is_null() {
+        return fail(crate::errno::EFAULT);
+    }
+    // SAFETY: the caller's promise.
+    let path = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
+    let mut words = Vec::new();
+    if !argv.is_null() {
+        let mut at = argv;
+        // SAFETY: an array of strings ending in null, as promised.
+        while let Some(word) = unsafe { at.read().as_ref() } {
+            words.push(unsafe { CStr::from_ptr(word) }.to_string_lossy().into_owned());
+            at = unsafe { at.add(1) };
+        }
+    }
+    // SAFETY: the caller's promise.
+    let environment = unsafe { environment_of(envp) };
+    // Standard input, as exec leaves it. If this program has none (0
+    // closed: EBADF), the new one has none either; nor if it is a
+    // keyboard, which cannot be handed on (EPERM: typed lines go to
+    // whoever asked for them, spawn.rs) - the new program then starts
+    // with no input, as one started by posix_spawn does.
+    let id = match run(&path, &words, &[Action::Dup2 { from: 0, to: 0 }], command, &environment) {
+        Err(EBADF | EPERM) => run(&path, &words, &[], command, &environment),
+        other => other,
+    };
+    let id = match id {
+        Ok(id) => id,
+        Err(code) => return fail(code),
+    };
+    let Some(handle) = children(|list| {
+        let at = list.iter().position(|&(other, _)| other == id)?;
+        Some(list.remove(at).1)
+    }) else {
+        return fail(ECHILD);
+    };
+    // The program is running: from here on, this one only waits. A
+    // signal sent to it meanwhile is not passed on.
+    match taaj::wait_any(&[handle]) {
+        Ok((_, code)) => taaj::exit(code),
+        Err(_) => taaj::exit(127),
+    }
+}
+
+/// `execve(path, argv, envp)`: runs `path` in this program's place
+/// (see `exec`). -1 with errno if it could not be started.
+///
+/// # Safety
+/// As `exec`.
+#[no_mangle]
+pub unsafe extern "C" fn execve(path: *const c_char, argv: *const *const c_char, envp: *const *const c_char) -> c_int {
+    // SAFETY: the caller's promise.
+    unsafe { exec(path, argv, envp, false) }
+}
+
+/// `execv(path, argv)`: execve with this program's environment.
+///
+/// # Safety
+/// As `exec`.
+#[no_mangle]
+pub unsafe extern "C" fn execv(path: *const c_char, argv: *const *const c_char) -> c_int {
+    // SAFETY: the caller's promise.
+    unsafe { exec(path, argv, core::ptr::null(), false) }
+}
+
+/// `execvp(file, argv)`: execv, a name with no '/' looked for in PATH
+/// (`search_path`).
+///
+/// # Safety
+/// As `exec`.
+#[no_mangle]
+pub unsafe extern "C" fn execvp(file: *const c_char, argv: *const *const c_char) -> c_int {
+    // SAFETY: the caller's promise.
+    unsafe { exec(file, argv, core::ptr::null(), true) }
+}
+
+/// `execvpe(file, argv, envp)`: execvp with an environment of its own.
+///
+/// # Safety
+/// As `exec`.
+#[no_mangle]
+pub unsafe extern "C" fn execvpe(file: *const c_char, argv: *const *const c_char, envp: *const *const c_char) -> c_int {
+    // SAFETY: the caller's promise.
+    unsafe { exec(file, argv, envp, true) }
 }
 
 /// What waitpid says of a child that ended with `code`: its exit code

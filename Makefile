@@ -6,7 +6,7 @@ KERNEL_DIR = kernel
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
-        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test \
+        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test zlib64 zlib-aarch64 \
         llvm64 llvm-aarch64 clang-tblgen llvm64-test clang64-test aarch64-clang-test aarch64-llvm-test llvm-put llvm-put-aarch64
 
 # Default target
@@ -503,7 +503,7 @@ RUN_USB      ?= no
 ifeq ($(RUN_USB),yes)
 RUN_USB_ARGS ?= $(if $(filter usb,$(RUN_DISK_BUS)),,-device qemu-xhci,id=xhci) -device usb-kbd,bus=xhci.0 -device usb-mouse,bus=xhci.0
 endif
-run-disk: user64 cprogs64 pdpmake64 tcc64 cxx64 tfstool-rs
+run-disk: user64 cprogs64 pdpmake64 tcc64 cxx64 zlib64 tfstool-rs
 	@[ -f $(RUN_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_DISK) $(RUN_DISK_BLOCKS) > /dev/null && truncate -s $$(($(RUN_DISK_BLOCKS) * 4096)) $(RUN_DISK) \
 	    && echo "Made a new disk: $(RUN_DISK)"; }
 	@for program in $(DISK_PROGRAMS); do \
@@ -531,6 +531,8 @@ ifeq ($(HAVE_CC),yes)
 	@$(TFSTOOL_RS) rm $(RUN_DISK) basics > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) basics $(C_BIN)/basics > /dev/null
 	@clang $(TAAJ_CFLAGS) -c $(GROUND_C) -o $(C_BIN)/ground.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/ground.o $(LIBC_A) -o $(C_BIN)/ground
 	@$(TFSTOOL_RS) rm $(RUN_DISK) ground > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) ground $(C_BIN)/ground > /dev/null
+	@clang $(TAAJ_CFLAGS) $(ZLIB_CFLAGS) -c $(GROUND2_C) -o $(C_BIN)/ground2.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/ground2.o $(C_BIN)/libz.a $(LIBC_A) -o $(C_BIN)/ground2
+	@$(TFSTOOL_RS) rm $(RUN_DISK) ground2 > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) ground2 $(C_BIN)/ground2 > /dev/null
 endif
 	@$(TFSTOOL_RS) rm $(RUN_DISK) threadcheck > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) threadcheck $(USER_BIN)/threadcheck > /dev/null
 
@@ -1069,7 +1071,7 @@ aarch64-test-disk: user-aarch64 cprogs-aarch64 tfstool-rs
 # TaajFS volume kept from one run to the next, its programs replaced
 # with the ones just built.
 RUN_A64_DISK = $(BUILD_DIR)/aarch64/taaj-disk.img
-run-aarch64-disk: user-aarch64 cprogs-aarch64 pdpmake-aarch64 tcc-aarch64 cxx-aarch64 tfstool-rs
+run-aarch64-disk: user-aarch64 cprogs-aarch64 pdpmake-aarch64 tcc-aarch64 cxx-aarch64 zlib-aarch64 tfstool-rs
 	@mkdir -p $(BUILD_DIR)/aarch64
 	@[ -f $(RUN_A64_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_A64_DISK) $(RUN_DISK_BLOCKS) > /dev/null && truncate -s $$(($(RUN_DISK_BLOCKS) * 4096)) $(RUN_A64_DISK) \
 	    && printf 'Hello from the host\n' > $(RUN_A64_DISK).welcome && $(TFSTOOL_RS) put $(RUN_A64_DISK) welcome $(RUN_A64_DISK).welcome > /dev/null \
@@ -1099,6 +1101,8 @@ ifeq ($(HAVE_CC),yes)
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) basics > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) basics $(C_A64_BIN)/basics > /dev/null
 	@clang $(TAAJ_A64_CFLAGS) -c $(GROUND_C) -o $(C_A64_BIN)/ground.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/ground.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/ground
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) ground > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) ground $(C_A64_BIN)/ground > /dev/null
+	@clang $(TAAJ_A64_CFLAGS) $(ZLIB_CFLAGS) -c $(GROUND2_C) -o $(C_A64_BIN)/ground2.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/ground2.o $(C_A64_BIN)/libz.a $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/ground2
+	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) ground2 > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) ground2 $(C_A64_BIN)/ground2 > /dev/null
 endif
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) threadcheck > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) threadcheck $(A64_USER_BIN)/threadcheck > /dev/null
 
@@ -1620,6 +1624,64 @@ else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 ground boot is not run"
 endif
 
+# zlib 1.3.2 (ports/zlib, journal entry 100): the compression library
+# rustc and much else is built with - here as build/c/libz.a, for each
+# CPU, compiled as the C library's own C is. The library's
+# configure would set Z_HAVE_UNISTD_H; it is said here instead, and a
+# program using zlib.h is compiled with the same (ZLIB_CFLAGS), so that
+# both agree on what zconf.h declares.
+ZLIB_PARTS  = adler32 compress crc32 deflate gzclose gzlib gzread gzwrite infback inffast inflate inftrees trees uncompr zutil
+ZLIB_CFLAGS = -DZ_HAVE_UNISTD_H -I ports/zlib
+zlib64: libc64
+ifeq ($(HAVE_CC),yes)
+	@mkdir -p $(C_BIN)/zlib
+	@for part in $(ZLIB_PARTS); do \
+	    [ $(C_BIN)/zlib/$$part.o -nt ports/zlib/$$part.c ] && continue; \
+	    echo "  CC      ports/zlib/$$part.c"; \
+	    clang $(TAAJ_CFLAGS) $(ZLIB_CFLAGS) -c ports/zlib/$$part.c -o $(C_BIN)/zlib/$$part.o || exit 1; \
+	done
+	@rm -f $(C_BIN)/libz.a && $(LLVM_AR) rcs $(C_BIN)/libz.a $(addprefix $(C_BIN)/zlib/,$(addsuffix .o,$(ZLIB_PARTS)))
+endif
+
+zlib-aarch64: user-aarch64
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(C_A64_BIN)/zlib
+	@for part in $(ZLIB_PARTS); do \
+	    [ $(C_A64_BIN)/zlib/$$part.o -nt ports/zlib/$$part.c ] && continue; \
+	    echo "  CC      ports/zlib/$$part.c (AArch64)"; \
+	    clang $(TAAJ_A64_CFLAGS) $(ZLIB_CFLAGS) -c ports/zlib/$$part.c -o $(C_A64_BIN)/zlib/$$part.o || exit 1; \
+	done
+	@rm -f $(C_A64_BIN)/libz.a && $(LLVM_AR) rcs $(C_A64_BIN)/libz.a $(addprefix $(C_A64_BIN)/zlib/,$(addsuffix .o,$(ZLIB_PARTS)))
+endif
+
+# Std's ground, part 2 (The-Jat's step C, journal entry 100): the C
+# library calls std and rustc ask for - poll and select, dl_iterate_phdr
+# and getauxval, dlfcn's stubs, the pthread attributes with
+# pthread_getattr_np, the exec family with a PATH search, descriptors 3
+# and up through spawn and exec, argv[0] - and zlib. ground2.c checks
+# them all in one boot.
+GROUND2_LOG     = $(BUILD_DIR)/ground2-64.log
+GROUND2_A64_LOG = $(BUILD_DIR)/aarch64/ground2.log
+GROUND2_C       = $(KERNEL64_DIR)/scripts/ground2.c
+ground2-64-test: iso64 user64 libc64 zlib64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@clang $(TAAJ_CFLAGS) $(ZLIB_CFLAGS) -c $(GROUND2_C) -o $(C_BIN)/ground2.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/ground2.o $(C_BIN)/libz.a $(LIBC_A) -o $(C_BIN)/ground2
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/ground2-test.sh x86_64 $(ISO64_IMG) $(GROUND2_LOG).disk $(GROUND2_LOG) $(C_BIN)/ground2
+	@echo "ground2-64-test passed"
+else
+	@echo "FAIL: the ground2 test needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+
+aarch64-ground2-test: kernel-aarch64 user-aarch64 zlib-aarch64 tfstool-rs
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@clang $(TAAJ_A64_CFLAGS) $(ZLIB_CFLAGS) -c $(GROUND2_C) -o $(C_A64_BIN)/ground2.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/ground2.o $(C_A64_BIN)/libz.a $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/ground2
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/ground2-test.sh aarch64 $(KERNEL_A64_IMAGE) $(GROUND2_A64_LOG).disk $(GROUND2_A64_LOG) $(C_A64_BIN)/ground2
+	@echo "aarch64-ground2-test passed"
+else
+	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 ground2 boot is not run"
+endif
+
 aarch64-tcc-test: kernel-aarch64 user-aarch64 tcc-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
@@ -1851,7 +1913,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 12
-TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test
+TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared
