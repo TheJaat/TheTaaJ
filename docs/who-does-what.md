@@ -9,19 +9,19 @@ TheTaaJ is built on two machines. Both push to the same three repositories (TheT
 
 ## The machines
 
-Measured on MaK on 2026-11-25. The-Jat's blanks are for The-Jat to fill in: above all its `make test64` time, the comparison this table is missing.
+Measured on MaK on 2026-11-25 and on The-Jat on 2026-11-26.
 
 ### Hardware and setup
 
 | | **MaK** | **The-Jat** |
 |---|---|---|
-| Machine | A laptop: 13th Gen Intel Core i7-13620H | A VMware virtual machine |
-| CPU | 10 cores (6 performance + 4 efficient), 16 threads | 16 CPUs |
-| Vector instructions | AVX2, no AVX-512 | *(fill in)* |
+| Machine | A laptop: 13th Gen Intel Core i7-13620H | A VMware virtual machine on an Intel Core Ultra 9 275HX |
+| CPU | 10 cores (6 performance + 4 efficient), 16 threads | 16 virtual CPUs |
+| Vector instructions | AVX2, no AVX-512 | AVX2, no AVX-512 |
 | Memory | 11 GiB given to WSL (WSL's default share; no `.wslconfig`) | 15 GB |
-| Disk | 1 TB virtual disk, 917 GB free | *(fill in)* |
+| Disk | 1 TB virtual disk, 917 GB free | 167 GB, 103 GB free |
 | Virtualization | KVM in WSL2 (VT-x, nested) | None: every QEMU boot is emulated |
-| OS | Ubuntu 26.04 on WSL2 (kernel 6.6) | Ubuntu 24.04 |
+| OS | Ubuntu 26.04 on WSL2 (kernel 6.6) | Ubuntu 24.04.4 (kernel 7.0) |
 | Host LLVM | 21 by default; Ubuntu 24.04's 18.1.3 unpacked locally for the byte-for-byte tests | 18.1.3, the reference |
 | Host glibc | 2.43 (newer than the reference) | 2.39, the reference |
 | AArch64 boots | Emulated | Emulated |
@@ -30,17 +30,17 @@ Measured on MaK on 2026-11-25. The-Jat's blanks are for The-Jat to fill in: abov
 
 | Task | **MaK, KVM** | **MaK, emulated** | **The-Jat** |
 |---|---|---|---|
-| `make test64`, all 48 parts | 14 min 6 s | not measured | *(fill in)* |
-| `make test64`, the x86_64 parts only | 7 min 56 s | not measured | |
-| The ports (LLVM, Clang, lld, libc++ for both CPUs), first build | 39 min 3 s (compiling on the host: KVM doesn't change it) | | *(fill in)* |
-| The i686 cross compiler (`toolchain_i686.sh`) | about 12 min | | |
-| `smp64-test` | 14 s | 43 s | |
-| `thread64-test` | 25 s | 36 s | |
-| `bigmem64-test` | 33 s | 48 s | |
-| `boot64-test` (mostly typing keys and waiting) | 382 s | 385 s | |
-| Four `cprimes` copies at once (the busy part) | about 1.4 s | about 14 s | |
+| `make test64`, all 48 parts | 14 min 6 s | not measured | 13 min 55 s |
+| `make test64`, the x86_64 parts only | 7 min 56 s | not measured | not measured |
+| The ports (LLVM, Clang, lld, libc++ for both CPUs), first build | 39 min 3 s (compiling on the host: KVM doesn't change it) | | not measured (built before this table) |
+| The i686 cross compiler (`toolchain_i686.sh`) | about 12 min | | not measured |
+| `smp64-test` | 14 s | 43 s | 36 s |
+| `thread64-test` | 25 s | 36 s | 33 s |
+| `bigmem64-test` | 33 s | 48 s | 36 s |
+| `boot64-test` (mostly typing keys and waiting) | 382 s | 385 s | not measured |
+| Four `cprimes` copies at once (the busy part) | about 1.4 s | about 14 s | not measured |
 
-The whole of `make test64` is about as long on both kinds of CPU, because its slowest parts are the AArch64 ones, emulated everywhere. KVM makes the x86_64 half several times faster.
+The-Jat's emulated boots are a little faster than MaK's emulated ones (a newer CPU, and nothing else on it). The whole of `make test64` is about as long on both machines, because its slowest parts are the AArch64 ones, emulated everywhere. KVM makes the x86_64 half several times faster.
 
 ### What follows for the split
 
@@ -73,6 +73,46 @@ Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 
 | Machine | Step | Branch |
 |---|---|---|
+| The-Jat | Entry 097, the core basics: test64 on the merged branch, then merge into `main` | `core-basics` |
+| MaK | A: the scheduler and timing step | `timing` |
+
+## The decided order
+
+Each step below is one branch, one journal entry and one test64 run. The items are grouped into big steps, as the project does. When a step is merged, the machine takes its next one.
+
+### The-Jat
+
+| Step | Items | Why in this order |
+|---|---|---|
+| **A** Merge the core basics | entry 097 | Already done; only the merge is left |
+| **B** Std's ground, part 1: randomness, real thread-local storage, signals std uses | J2 `getrandom`, J1 ELF TLS, J4 `sigaltstack`, J10 `waitid` and SIGCHLD | J2 first: MaK's security and network steps wait for it |
+| **C** Std's ground, part 2: libc calls std uses | J3 `poll`, J5 `dl_iterate_phdr`, J6 pthread attributes, J7 `stat`, J8 `realpath` and `getcwd`, J9 `posix_spawn` with fd 3+, J12 `dlopen` stubs, J13 zlib, J37 environment, J38 `execvp` and `/bin`, J39 the real `argv[0]` | Everything R3 will ask for, so R3 is only Rust's side |
+| **D** TaajFS version 4 | J17 file times, J18 files over 256 MiB, J19 long names, J20 faster writes, J35 a replacing `rename` | One format change instead of four |
+| **E** LLVM 23 | J14 | Long; runs unattended on The-Jat |
+| **F** R3 Rust's std | J15, J16 | Needs B-E |
+| **G** Memory for big programs | J26-J31 | Before rustc's 182 MB runs |
+| **H** R4 rustc on TheTaaJ | J21 | |
+| **I** R5 the build without cargo | J22, J23 (nasm; the bootloader change is MaK's) | |
+| **J** R6 the milestone | J24, J25 | |
+| Fillers, between big steps | J32-J34, J36, J40-J54 | When a long build runs, or for a short break |
+
+### MaK
+
+| Step | Items | Why in this order |
+|---|---|---|
+| **A** Scheduler and timing | K19 the race hunt (test64 under KVM 20 times), K20 priorities and CPU choice, K21 CPU time in `ps`, K24 fine timers (one-shot timer, `setitimer`), J53 the ticks mutation test | Needs only KVM; races found now are cheaper than on the real PC |
+| **B** The real PC | K1 R7 (USB stick, BIOS and UEFI), K39 native resolution, K11 GPT, K7 x2APIC, then K3 a day on it | Whenever you can be at the PC; it may jump ahead of A |
+| **C** Drivers the real PC needs | K2 USB hubs, K5 Intel I219, K6 Realtek, and whatever B found | After B shows which ones matter |
+| **D** Network for real networks | K30 DHCP, K31 DNS, K32 link state, K33 loopback and UDP from C, K34 | DHCP is needed on any real network |
+| **E** ACPI | K13 AML, K14 `_PRT`, K15 the power button, K16 a clean shutdown, K28 who may switch off | Real PCs need `_PRT` for many cards |
+| **F** Security | K25 ASLR, K26 stack protector, K29 random TCP numbers | Needs The-Jat's B (`getrandom`) |
+| **G** Disks | K8 NVMe, K9 AHCI, K10 a queue per disk, K12 an installer | |
+| **H** Desktop | K40-K46 | |
+| **I** Later | K17, K18, K27, K35-K38, K47-K48 | TLS waits for `getrandom`; sound is Era 10 |
+
+The E list (either machine) is taken by whoever finishes a step and is waiting for the other.
+
+---|---|---|
 | The-Jat | Entry 097, the core basics: test64 on the merged branch, then merge into `main` | `core-basics` |
 | MaK | (free; pick from the MaK list) | |
 
