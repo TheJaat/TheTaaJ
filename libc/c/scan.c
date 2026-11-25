@@ -159,6 +159,16 @@ int vsscanf(const char *text, const char *format, va_list given)
             memcpy(digits, in, n);
             digits[n] = '\0';
             int base = letter == 'd' || letter == 'u' ? 10 : letter == 'o' ? 8 : letter == 'i' ? 0 : 16;
+            /* "0x" with no hex digit after it (within the width) is not
+             * a number: the longest start of one C can read there is
+             * "0x", which is not one itself - a matching failure, as
+             * newer glibc says too (2.43 does; 2.39 still took the 0).
+             * strtoull would take the 0. */
+            if (base == 16 || base == 0) {
+                const char *p = digits[0] == '+' || digits[0] == '-' ? digits + 1 : digits;
+                if (p[0] == '0' && (p[1] == 'x' || p[1] == 'X') && !isxdigit((unsigned char)p[2]))
+                    goto done;
+            }
             char *end;
             unsigned long long value;
             if (letter == 'd' || letter == 'i')
