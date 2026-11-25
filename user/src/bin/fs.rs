@@ -25,6 +25,13 @@
 //! are read from the disk once. Writes are not held back: each goes to
 //! the disk before the request is answered, as before.
 //!
+//! A commit costs the same whether it adds a byte or a megabyte - the
+//! new inode, directories and superblock are written either way - so
+//! this service makes as few as it can: a WRITE_FROM brings up to 1 MiB
+//! in a memory object, one commit; and the messages waiting on an
+//! output stream are gathered and added to the file together, one
+//! commit for all of them, not one each.
+//!
 //! All the logic - the protocol, both stores, the mapping onto TaajFS -
 //! is in the `fileserver` crate, tested on the host. This program only
 //! connects it to channels: requests in, and disk sectors out.
@@ -229,6 +236,19 @@ fn read_into(store: &mut impl Store, message: &[u8], memory: Handle, reply: &mut
     length
 }
 
+/// A WRITE_FROM: the bytes, straight from the memory object the client
+/// sent. The reply, or None if the object cannot be mapped.
+fn write_from(store: &mut impl Store, access: Access, message: &[u8], memory: Handle, reply: &mut [u8; MESSAGE_MAX]) -> Option<usize> {
+    let size = usize::try_from(taaj::memory_size(memory).ok()?).ok()?;
+    let base = taaj::memory_map(memory, false).ok()?;
+    // SAFETY: the mapping is `size` bytes long and ours until it is
+    // unmapped below; it is only read.
+    let from = unsafe { core::slice::from_raw_parts(base, size) };
+    let length = fileserver::serve_from(store, access, message, from, reply);
+    let _ = taaj::memory_unmap(base);
+    length
+}
+
 /// A stream this service keeps: the channel it travels on, and what it
 /// is.
 struct Open {
@@ -319,6 +339,15 @@ fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 
             let _ = taaj::close(handles[0]);
             continue;
         }
+        if count == 2 && message[0] == protocol::WRITE_FROM {
+            let length = write_from(store, access, &message[..n], handles[1], &mut reply);
+            let _ = taaj::close(handles[1]);
+            if let Some(length) = length {
+                let _ = taaj::send(handles[0], &reply[..length], &[]);
+            }
+            let _ = taaj::close(handles[0]);
+            continue;
+        }
         if count == 2 {
             let length = read_into(store, &message[..n], handles[1], &mut reply);
             let _ = taaj::close(handles[1]);
@@ -359,29 +388,42 @@ fn close_stream(streams: &mut Vec<Open>, index: usize) {
     let _ = taaj::close(open.channel);
 }
 
-/// Stream `index`'s channel is ready: a message for an output stream,
-/// or the reader of an input stream gone. Returns whether the stream is
-/// still open.
+/// Stream `index`'s channel is ready: messages for an output stream,
+/// or the reader of an input stream gone. Every message already waiting
+/// (up to STREAM_TURN) is taken, and their bytes added to the file
+/// together: one commit. Returns whether the stream is still open.
 fn take_from(store: &mut impl Store, streams: &mut Vec<Open>, index: usize, message: &mut [u8; MESSAGE_MAX]) -> bool {
     let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
-    match taaj::receive(streams[index].channel, message, &mut handles) {
-        Ok((n, count)) => {
-            for &handle in &handles[..count] {
-                let _ = taaj::close(handle); // not part of a stream
-            }
-            // A file that cannot take more: the writer is told the only
-            // way a stream can tell it, by nobody being there.
-            if streams[index].stream.take(store, &message[..n]).is_err() {
-                close_stream(streams, index);
-                return false;
-            }
-            true
+    let mut gathered: Vec<u8> = Vec::new();
+    let mut open = true;
+    for taken in 0..STREAM_TURN {
+        // The first was said to be there; the rest only if they are.
+        if taken > 0 && !matches!(taaj::poll(&[streams[index].channel]), Ok(Some(_))) {
+            break;
         }
-        Err(_) => {
-            close_stream(streams, index);
-            false
+        match taaj::receive(streams[index].channel, message, &mut handles) {
+            Ok((n, count)) => {
+                for &handle in &handles[..count] {
+                    let _ = taaj::close(handle); // not part of a stream
+                }
+                if let Some(bytes) = fileserver::stream_data(&message[..n]) {
+                    gathered.extend_from_slice(bytes);
+                }
+            }
+            Err(_) => {
+                // The writer is gone: what it sent first still counts.
+                open = false;
+                break;
+            }
         }
     }
+    // A file that cannot take more: the writer is told the only way a
+    // stream can tell it, by nobody being there.
+    if streams[index].stream.add(store, &gathered).is_err() || !open {
+        close_stream(streams, index);
+        return false;
+    }
+    true
 }
 
 /// Everything already sent on the output streams, into their files.
@@ -393,10 +435,13 @@ fn empty_outputs(store: &mut impl Store, streams: &mut Vec<Open>, message: &mut 
             continue;
         }
         let mut open = true;
-        let mut taken = 0;
-        while open && taken < STREAM_TURN && matches!(taaj::poll(&[streams[index].channel]), Ok(Some(_))) {
+        let mut turns = 0;
+        // A turn takes up to STREAM_TURN messages; a few turns, so that
+        // a writer that keeps the channel full cannot hold the requests
+        // back for ever.
+        while open && turns < 4 && matches!(taaj::poll(&[streams[index].channel]), Ok(Some(_))) {
             open = take_from(store, streams, index, message);
-            taken += 1;
+            turns += 1;
         }
         // A stream closed is out of the list: the next is at `index`.
         if open {

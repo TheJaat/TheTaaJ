@@ -3381,3 +3381,46 @@ make test64
 | `test64: all passed` | every part |
 
 Automated: make test64
+
+---
+
+## 093 · Faster writes: a commit per megabyte, not per kilobyte
+
+[The entry](journal/093-faster-writes.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`. `src/tcc/tccgen.c` (273,655 bytes) is one of the TCC sources the disk carries.
+
+| Type | You should see |
+|---|---|
+| `time with files cp src/tcc/tccgen.c copy.c` | `copy.c: 273655 bytes`, then `took 0.xx s`: well under a second (0.17 s in my scripted boot) |
+| `with files cat src/tcc/tccgen.c > cat.c` | nothing: cat's output, a stream, went into cat.c, gathered into a few commits. (Not under `time`: TheTaaJ's shell sends time's "took" line into the redirected file too) |
+| `with files wc copy.c` and `with files wc cat.c` | `9197 lines, 32363 words, 273655 bytes` for each, the same as `with files wc src/tcc/tccgen.c` |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `pipes on TheTaaJ (x86_64): 108 checks ... passed` | big writes, stdio and streams, on the PC; the same for aarch64 |
+| `test64: all passed` | every part |
+
+Automated: make test64

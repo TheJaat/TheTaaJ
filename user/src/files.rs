@@ -270,6 +270,9 @@ impl Files {
         if name.len() > protocol::NAME_MAX {
             return Err(FileError::Refused(Status::BadName));
         }
+        if data.len() > protocol::write_max(name) {
+            return self.write_through_memory(name, offset, data);
+        }
         let mut reply = [0u8; MESSAGE_MAX];
         let mut size = None;
         let mut offset = offset;
@@ -285,6 +288,44 @@ impl Files {
             }
         }
         size.ok_or(FileError::Refused(Status::BadRequest))
+    }
+
+    /// More than one message holds: the bytes copied into a memory
+    /// object, and written from there (protocol::WRITE_FROM) - one
+    /// request, and one commit, for each WRITE_FROM_MAX of them, where
+    /// WRITEs would make one a message (about 1 KB).
+    fn write_through_memory(&self, name: &str, offset: u64, data: &[u8]) -> Result<u64, FileError> {
+        let memory = crate::memory_create(data.len() as u64).map_err(FileError::Unreachable)?;
+        let filled = crate::memory_map(memory, true).map(|base| {
+            // SAFETY: the object is at least data.len() bytes, mapped
+            // writable, and ours alone until unmapped.
+            unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), base, data.len()) };
+            let _ = crate::memory_unmap(base);
+        });
+        if let Err(error) = filled {
+            let _ = crate::close(memory);
+            return Err(FileError::Unreachable(error));
+        }
+        let mut written = Ok(0);
+        let mut offset = offset;
+        for start in (0..data.len()).step_by(protocol::WRITE_FROM_MAX) {
+            let length = (data.len() - start).min(protocol::WRITE_FROM_MAX);
+            let place = [(start as u64).to_le_bytes(), (length as u64).to_le_bytes()].concat();
+            let request = Request { op: protocol::WRITE_FROM, name, number: offset, data: &place };
+            let mut reply = [0u8; MESSAGE_MAX];
+            written = crate::duplicate(memory, crate::rights::READ | crate::rights::TRANSFER)
+                .map_err(FileError::Unreachable)
+                .and_then(|lent| self.call_with(request, &[lent], &mut reply))
+                .and_then(|n| protocol::number(&reply[1..=n]).ok_or(FileError::Refused(Status::BadRequest)));
+            if written.is_err() {
+                break;
+            }
+            if offset != protocol::APPEND {
+                offset += length as u64;
+            }
+        }
+        let _ = crate::close(memory);
+        written
     }
 
     /// What `path` names - a file or a directory - and its size.

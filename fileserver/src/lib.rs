@@ -112,6 +112,18 @@ pub mod protocol {
     pub const STREAM_IN: u8 = 14;
     /// Most streams the service keeps open at once.
     pub const STREAMS_MAX: usize = 16;
+    /// WRITE_FROM name, number: writes bytes that come in the memory
+    /// object with the request - its second handle, after the reply
+    /// channel - at `number` (an offset, or APPEND), creating the file
+    /// if needed: one change, one commit, for up to WRITE_FROM_MAX bytes,
+    /// where WRITE carries at most a message's worth. The data field is
+    /// where they are in the object and how many: [from: u64 LE]
+    /// [length: u64 LE]. Payload: the new size, u64 LE, as WRITE's.
+    pub const WRITE_FROM: u8 = 15;
+    /// The most one WRITE_FROM writes: 1 MiB. As READ_INTO_MAX, small
+    /// enough that the service answers everyone else soon enough; and
+    /// a write is slower than a read - every block goes to the disk.
+    pub const WRITE_FROM_MAX: usize = 1 << 20;
 
     /// The longest STALL: 30 seconds of 100 Hz ticks.
     pub const STALL_MAX: u64 = 3000;
@@ -409,6 +421,49 @@ pub fn serve_into(store: &mut impl Store, message: &[u8], into: &mut [u8], reply
     }
 }
 
+/// The answer to a WRITE_FROM request, whose memory object the service
+/// has mapped as `from` (all of it, to read): the bytes the request
+/// names, written into the file, and the reply into `reply`. Returns
+/// the reply's length; None if the message is not a WRITE_FROM. A
+/// change: refused on the read-only channel.
+pub fn serve_from(store: &mut impl Store, access: Access, message: &[u8], from: &[u8], reply: &mut [u8; MESSAGE_MAX]) -> Option<usize> {
+    let request = Request::decode(message).filter(|request| request.op == protocol::WRITE_FROM)?;
+    let written = (|| {
+        if access == Access::ReadOnly {
+            return Err(Status::ReadOnly);
+        }
+        let start = request.data.get(..8).and_then(protocol::number).ok_or(Status::BadRequest)?;
+        let length = request.data.get(8..16).and_then(protocol::number).ok_or(Status::BadRequest)?;
+        let start = usize::try_from(start).map_err(|_| Status::BadRequest)?;
+        let length = usize::try_from(length).map_err(|_| Status::BadRequest)?;
+        if length > protocol::WRITE_FROM_MAX {
+            return Err(Status::BadRequest);
+        }
+        let bytes = start.checked_add(length).and_then(|end| from.get(start..end)).ok_or(Status::BadRequest)?;
+        store.write(request.name, request.number, bytes)
+    })();
+    match written {
+        Ok(size) => {
+            reply[0] = Status::Ok as u8;
+            reply[1..9].copy_from_slice(&size.to_le_bytes());
+            Some(9)
+        }
+        Err(status) => {
+            reply[0] = status as u8;
+            Some(1)
+        }
+    }
+}
+
+/// The bytes of a message on an output stream, if it is a DATA message
+/// with any: the rest is not part of the stream.
+pub fn stream_data(message: &[u8]) -> Option<&[u8]> {
+    match message.split_first() {
+        Some((&abi::stream::DATA, bytes)) if !bytes.is_empty() => Some(bytes),
+        _ => None,
+    }
+}
+
 /// A file being written or read as a stream (protocol::STREAM_OUT,
 /// STREAM_IN): what the service keeps for it between messages. The
 /// channel it travels on is the service's business, not this.
@@ -470,10 +525,17 @@ impl Stream {
     /// stream and is ignored. An error means the file cannot take
     /// more, and the stream should be closed.
     pub fn take(&mut self, store: &mut impl Store, message: &[u8]) -> Result<(), Status> {
-        match (self, message.split_first()) {
-            (Stream::Out { path }, Some((&abi::stream::DATA, bytes))) if !bytes.is_empty() => {
-                store.write(path, protocol::APPEND, bytes).map(|_| ())
-            }
+        match stream_data(message) {
+            Some(bytes) => self.add(store, bytes),
+            None => Ok(()),
+        }
+    }
+
+    /// Bytes of an output stream - the data of one message or of many
+    /// gathered - added to the end of the file: one change.
+    pub fn add(&mut self, store: &mut impl Store, bytes: &[u8]) -> Result<(), Status> {
+        match self {
+            Stream::Out { path } if !bytes.is_empty() => store.write(path, protocol::APPEND, bytes).map(|_| ()),
             _ => Ok(()),
         }
     }
@@ -715,6 +777,82 @@ mod tests {
         let mut device = MemDevice::new(256);
         format_volume(&mut device, 256).unwrap();
         streams_write_and_read_files(&mut DiskStore::mount(device).unwrap());
+    }
+
+    fn write_from(store: &mut impl Store, access: Access, name: &str, number: u64, object: &[u8], start: u64, length: u64) -> (Status, Option<u64>) {
+        let mut message = [0u8; MESSAGE_MAX];
+        let data = [start.to_le_bytes(), length.to_le_bytes()].concat();
+        let n = Request { op: protocol::WRITE_FROM, name, number, data: &data }.encode(&mut message).expect("fits");
+        let mut reply = [0u8; MESSAGE_MAX];
+        let length = serve_from(store, access, &message[..n], object, &mut reply).expect("a WRITE_FROM");
+        (Status::from_u8(reply[0]), protocol::number(&reply[1..length]))
+    }
+
+    /// The same for every store: what the request names of the object
+    /// goes into the file, at the offset or the end; anything outside
+    /// the object, too much, or on the read-only channel, is refused
+    /// and changes nothing.
+    fn writes_from_memory(store: &mut impl Store) {
+        let object: Vec<u8> = (0..3 * 4096 + 100u32).map(|n| (n % 251) as u8).collect();
+        assert_eq!(write_from(store, Access::ReadWrite, "f", 0, &object, 0, object.len() as u64), (Status::Ok, Some(object.len() as u64)));
+        assert_eq!(contents_all(store, "f"), object, "one request, many blocks");
+        assert_eq!(write_from(store, Access::ReadWrite, "f", protocol::APPEND, &object, 10, 5), (Status::Ok, Some(object.len() as u64 + 5)));
+        assert_eq!(write_from(store, Access::ReadWrite, "f", 1, &object, 0, 2), (Status::Ok, Some(object.len() as u64 + 5)));
+        let mut expected = object.clone();
+        expected.extend_from_slice(&object[10..15]);
+        expected[1..3].copy_from_slice(&object[0..2]);
+        assert_eq!(contents_all(store, "f"), expected);
+        let size = object.len() as u64;
+        for (start, length, why) in [(size, 1, "past the object"), (0, size + 1, "longer than it"), (u64::MAX, 2, "wrapping round")] {
+            assert_eq!(write_from(store, Access::ReadWrite, "f", 0, &object, start, length).0, Status::BadRequest, "{why}");
+        }
+        let big = vec![0u8; protocol::WRITE_FROM_MAX + 1];
+        assert_eq!(write_from(store, Access::ReadWrite, "g", 0, &big, 0, big.len() as u64).0, Status::BadRequest, "more than WRITE_FROM_MAX");
+        assert_eq!(write_from(store, Access::ReadOnly, "f", 0, &object, 0, 4).0, Status::ReadOnly);
+        assert_eq!(contents_all(store, "f"), expected, "refused: nothing changed");
+        assert_eq!(ask(store, Access::ReadOnly, STAT, "g", &[]).0, Status::NotFound);
+        let mut message = [0u8; MESSAGE_MAX];
+        let n = Request::new(protocol::READ, "f", 0).encode(&mut message).unwrap();
+        assert!(serve_from(store, Access::ReadWrite, &message[..n], &object, &mut [0u8; MESSAGE_MAX]).is_none(), "not a WRITE_FROM");
+    }
+
+    fn contents_all(store: &mut impl Store, name: &str) -> Vec<u8> {
+        let size = store.size(name).unwrap() as usize;
+        let mut out = vec![0u8; size];
+        let mut at = 0;
+        while at < size {
+            at += store.read(name, at as u64, &mut out[at..]).unwrap();
+        }
+        out
+    }
+
+    #[test]
+    fn writes_from_memory_in_memory() {
+        writes_from_memory(&mut RamStore::new());
+    }
+
+    #[test]
+    fn writes_from_memory_on_disk() {
+        let mut device = MemDevice::new(256);
+        format_volume(&mut device, 256).unwrap();
+        writes_from_memory(&mut DiskStore::mount(device).unwrap());
+    }
+
+    #[test]
+    fn many_stream_messages_are_one_change() {
+        let mut device = MemDevice::new(256);
+        format_volume(&mut device, 256).unwrap();
+        let mut store = DiskStore::mount(device).unwrap();
+        let (_, stream) = open(&mut store, Access::ReadWrite, protocol::STREAM_OUT, "out", 0);
+        let mut stream = stream.unwrap();
+        let before = stamp(&mut store, "out");
+        let messages: Vec<Vec<u8>> = (0..5).map(|n| [&[abi::stream::DATA][..], format!("line {n}\n").as_bytes()].concat()).collect();
+        let gathered: Vec<u8> = messages.iter().filter_map(|m| stream_data(m)).flatten().copied().collect();
+        stream.add(&mut store, &gathered).unwrap();
+        assert_eq!(contents(&mut store, "out"), b"line 0\nline 1\nline 2\nline 3\nline 4\n");
+        assert_eq!(stamp(&mut store, "out"), before + 1, "one commit");
+        assert_eq!(stream_data(&[abi::stream::WANT]), None);
+        assert_eq!(stream_data(&[abi::stream::DATA]), None);
     }
 
     #[test]

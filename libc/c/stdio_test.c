@@ -426,22 +426,28 @@ int main(void)
         taaj_fclose(lines);
     }
 
-    /* Blocks bigger than the buffer, in items. */
+    /* Blocks bigger than the buffer, in items. A file fopen opens has
+     * a 64 KB buffer (FILE_BUFFER): 8198 items of 8 are more. */
     {
+        static unsigned char huge[8198 * 8];
+        for (size_t n = 0; n < sizeof huge; n++)
+            huge[n] = pattern[n % sizeof pattern];
         taaj_FILE *file = taaj_fopen("big", "w");
         writes = 0;
-        CHECK(taaj_fwrite(pattern, 8, 2500, file) == 2500, "fwrite of 2500 items of 8 says 2500");
+        CHECK(taaj_fwrite(huge, 8, 8198, file) == 8198, "fwrite of 8198 items of 8 says 8198");
         CHECK(writes == 1, "more than a buffer goes straight out, in one write");
         CHECK(taaj_fwrite(pattern, 1, 100, file) == 100 && writes == 1, "and a little more waits");
         CHECK(taaj_fclose(file) == 0 && writes == 2, "until fclose");
 
-        static unsigned char back[20200];
+        static unsigned char back[sizeof huge + 100];
         file = taaj_fopen("big", "r");
         CHECK(taaj_fread(back, 3, 6000, file) == 6000, "fread of 6000 items of 3 says 6000");
-        CHECK(memcmp(back, pattern, 18000) == 0, "and they are the bytes written");
-        CHECK(taaj_fread(back, 7, 1000, file) == 300, "asking for more than is left gives the whole items there are");
+        CHECK(memcmp(back, huge, 18000) == 0, "and they are the bytes written");
+        /* 65684 - 18000 = 47684 bytes left: 6812 items of 7. */
+        CHECK(taaj_fread(back, 7, 10000, file) == 6812, "asking for more than is left gives the whole items there are");
         CHECK(taaj_feof(file) && !taaj_ferror(file), "and that was the end, not a failure");
-        CHECK(memcmp(back, pattern + 18000, 2000) == 0 && memcmp(back + 2000, pattern, 100) == 0, "with the right bytes");
+        CHECK(memcmp(back, huge + 18000, sizeof huge - 18000) == 0 && memcmp(back + sizeof huge - 18000, pattern, 100) == 0,
+              "with the right bytes");
         taaj_fclose(file);
 
         CHECK(taaj_fwrite(pattern, SIZE_MAX, 2, taaj_stderr) == 0, "a size times a count that overflows writes nothing");

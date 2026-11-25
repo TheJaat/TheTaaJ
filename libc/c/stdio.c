@@ -341,6 +341,13 @@ static int parse_mode(const char *mode, unsigned *flags)
     return how | (mode[0] == 'r' ? O_RDONLY : O_WRONLY);
 }
 
+/* A file fopen opens gets a bigger buffer than BUFSIZ: each write that
+ * empties it is one request to the file service and one commit on the
+ * disk (the file service's WRITE_FROM, fileserver/src/lib.rs), and a commit costs about the
+ * same for 4 KB as for 64 KB. fdopen's descriptor may be a pipe or the
+ * screen, where a big buffer only holds output back: BUFSIZ there. */
+#define FILE_BUFFER (64 * 1024)
+
 FILE *fopen(const char *path, const char *mode)
 {
     unsigned flags;
@@ -353,7 +360,7 @@ FILE *fopen(const char *path, const char *mode)
      * starts where the stream ends. Asked for before the file is
      * opened, so that a "w" that cannot have a stream does not empty
      * the file on its way to failing. */
-    FILE *stream = malloc(sizeof *stream + BUFSIZ);
+    FILE *stream = malloc(sizeof *stream + FILE_BUFFER);
     if (stream == NULL)
         return NULL; /* malloc has said why */
     int descriptor = open(path, how, 0666);
@@ -367,7 +374,7 @@ FILE *fopen(const char *path, const char *mode)
     stream->descriptor = descriptor;
     stream->flags = flags | ALLOCATED;
     stream->own = (unsigned char *)(stream + 1);
-    stream->own_size = BUFSIZ;
+    stream->own_size = FILE_BUFFER;
     stream->buffer = stream->own;
     stream->size = stream->own_size;
     stream->pushed = EOF;

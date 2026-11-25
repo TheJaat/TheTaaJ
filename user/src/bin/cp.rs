@@ -7,8 +7,9 @@
 //! something, cp says so and stops.
 //!
 //! Unlike mv, this is not one step. The file service has no "copy": cp
-//! reads the file a message's worth at a time and appends each piece to
-//! the new one, and every append is its own change on the disk. If it
+//! reads the file a message's worth at a time, gathers the pieces, and
+//! appends them a megabyte (protocol::WRITE_FROM_MAX) at a time - each
+//! append its own change on the disk, a few for a big file. If it
 //! fails on the way - the disk fills up - cp removes the part it made,
 //! so what is left is the copy or nothing; but a power cut in the
 //! middle leaves a short copy behind.
@@ -18,10 +19,12 @@
 
 extern crate alloc;
 
+use alloc::vec::Vec;
+
 #[path = "common/target.rs"]
 mod target;
 
-use fileserver::protocol::Status;
+use fileserver::protocol::{self, Status};
 use taaj::files::{FileError, Kind};
 use taaj::{eprintln, println};
 
@@ -72,14 +75,23 @@ fn main() -> i64 {
         eprintln!("cp: {to}: {}", error.describe());
         return 1;
     }
-    // `read` hands over the file piece by piece; each piece is appended
-    // as it comes, so no more than one message is ever held in memory.
-    // After a failed append the rest is still read, and dropped.
+    // `read` hands over the file piece by piece; the pieces are gathered
+    // and appended when a megabyte is held, and at the end: a commit a
+    // megabyte, not one a piece. After a failed append the rest is
+    // still read, and dropped.
+    let mut held: Vec<u8> = Vec::new();
     let read = files.read(from, |piece| {
         if copied.is_ok() {
-            copied = files.append(&to, piece);
+            held.extend_from_slice(piece);
+            if held.len() >= protocol::WRITE_FROM_MAX {
+                copied = files.append(&to, &held);
+                held.clear();
+            }
         }
     });
+    if copied.is_ok() && !held.is_empty() {
+        copied = files.append(&to, &held);
+    }
     match (read, copied) {
         (Ok(_), Ok(size)) => {
             println!("{to}: {size} bytes");
