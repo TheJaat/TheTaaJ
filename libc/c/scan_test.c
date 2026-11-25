@@ -25,6 +25,36 @@ static void fail(const char *text, const char *format, const char *what)
         printf("FAIL: sscanf(\"%s\", \"%s\"): %s\n", text, format, what);
 }
 
+/* Whether an integer conversion meets a bare "0x" - no hex digit after
+ * it, within the width: %x, %X and %i (and %llx, %2x, ...) on "0x", or
+ * %2x on "0x1f". C says that is a matching failure, count 0, and newer
+ * glibc agrees (2.43); older glibc (2.39, Ubuntu 24.04) reads the 0.
+ * Ours does what C says, so these are checked against C, not the host. */
+static int bare_hex_prefix(const char *text, const char *format)
+{
+    const char *f = format + 1; /* past the % */
+    if (*f == '*')
+        return 0; /* nothing stored: the count is 0 either way */
+    size_t width = 0;
+    while (*f >= '0' && *f <= '9')
+        width = width * 10 + (size_t)(*f++ - '0');
+    while (*f == 'h' || *f == 'l' || *f == 'j' || *f == 'z' || *f == 't')
+        f++;
+    if (*f != 'x' && *f != 'X' && *f != 'i')
+        return 0;
+    while (*text == ' ')
+        text++;
+    size_t n = strlen(text);
+    if (width && width < n)
+        n = width;
+    size_t at = n > 0 && (text[0] == '+' || text[0] == '-');
+    if (n < at + 2 || text[at] != '0' || (text[at + 1] != 'x' && text[at + 1] != 'X'))
+        return 0;
+    return n == at + 2 || !((text[at + 2] >= '0' && text[at + 2] <= '9') ||
+                            (text[at + 2] >= 'a' && text[at + 2] <= 'f') ||
+                            (text[at + 2] >= 'A' && text[at + 2] <= 'F'));
+}
+
 /* One conversion of type T: both scanf the text, and must agree on the
  * count and, if something was stored, on its value (by its bytes). */
 #define ONE(T, text, format)                                                     \
@@ -34,7 +64,10 @@ static void fail(const char *text, const char *format, const char *what)
         memset(&b, 0x5a, sizeof b);                                              \
         int ra = taaj_sscanf(text, format, &a), rb = sscanf(text, format, &b);   \
         checks++;                                                                \
-        if (ra != rb)                                                            \
+        if (bare_hex_prefix(text, format)) {                                     \
+            if (ra != 0)                                                         \
+                fail(text, format, "not the matching failure C asks for");       \
+        } else if (ra != rb)                                                     \
             fail(text, format, "a different count");                             \
         else if (ra == 1 && memcmp(&a, &b, sizeof a) != 0)                       \
             fail(text, format, "a different value");                             \
@@ -141,6 +174,6 @@ int main(void)
         ONE(double, text, "%lf");
     }
 
-    printf("scan: %d checks, %s\n", checks, failures ? "some FAILED" : "all the same as the host's sscanf");
+    printf("scan: %d checks, %s\n", checks, failures ? "some FAILED" : "all the same as the host's sscanf (a bare 0x: as C says)");
     return failures != 0;
 }
