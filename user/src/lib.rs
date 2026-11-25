@@ -17,11 +17,13 @@ pub mod net;
 pub mod nic;
 pub mod nic_service;
 pub mod services;
+pub mod sync;
+pub mod thread;
 pub mod window;
 
 use core::arch::asm;
 use core::fmt::{self, Write};
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 pub use abi::{call, rights, Error};
 pub use allocator::heap_usage;
@@ -626,6 +628,38 @@ pub fn memory_map(memory: Handle, writable: bool) -> Result<*mut u8, Error> {
 /// Asks the firmware, through a power handle (only `power` is given
 /// one, on AArch64), to switch the machine off (abi::power::OFF) or
 /// reset it (abi::power::RESET). Returns only if the firmware refused.
+/// Starts another thread in this program at `entry`, with its stack
+/// pointer at `stack` (16-byte aligned: the top of room made for it),
+/// `argument` as its first argument, and thread pointer `pointer`. Its
+/// id. (`thread::spawn` does all this for a closure.)
+pub fn thread_create(entry: u64, stack: u64, argument: u64, pointer: u64) -> Result<u64, Error> {
+    abi::decode(syscall5(call::THREAD_CREATE, entry, stack, argument, pointer, 0))
+}
+
+/// Ends this thread, after setting `clear` to 0 and waking whoever
+/// waits on it - or ends the program, if this is its last thread.
+pub fn thread_exit(clear: &AtomicU32) -> ! {
+    syscall(call::THREAD_EXIT, clear as *const AtomicU32 as u64, 0, 0);
+    unreachable!("thread_exit returned")
+}
+
+/// Sets this thread's thread pointer (FS base / TPIDR_EL0).
+pub fn set_thread_pointer(value: u64) -> Result<(), Error> {
+    abi::decode(syscall(call::THREAD_POINTER, value, 0, 0)).map(|_| ())
+}
+
+/// Sleeps while `word` holds `expected`, until a futex_wake on it or
+/// the tick count reaches `deadline` (0: no deadline). Err(Changed) at
+/// once if it does not hold `expected`; Err(TimedOut) at the deadline.
+pub fn futex_wait(word: &AtomicU32, expected: u32, deadline: u64) -> Result<(), Error> {
+    abi::decode(syscall(call::FUTEX_WAIT, word as *const AtomicU32 as u64, u64::from(expected), deadline)).map(|_| ())
+}
+
+/// Wakes up to `count` threads waiting on `word`; how many it woke.
+pub fn futex_wake(word: &AtomicU32, count: u32) -> u64 {
+    abi::decode(syscall(call::FUTEX_WAKE, word as *const AtomicU32 as u64, u64::from(count), 0)).unwrap_or(0)
+}
+
 pub fn power(handle: Handle, action: u8) -> Result<(), Error> {
     abi::decode(syscall(call::POWER, handle, u64::from(action), 0)).map(|_| ())
 }

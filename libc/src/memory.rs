@@ -85,11 +85,10 @@ struct Small {
     end: *mut u8,
 }
 
-/// The one Small, behind a spin lock: a program here has one thread,
-/// so it is never waited for; it is what makes a `static` of raw
-/// pointers sound.
+/// The one Small, behind a futex lock (taaj::sync): the program's
+/// threads take turns, and one that finds it taken sleeps.
 struct SmallLock {
-    locked: core::sync::atomic::AtomicBool,
+    locked: taaj::sync::Lock,
     small: core::cell::UnsafeCell<Small>,
 }
 
@@ -97,7 +96,7 @@ struct SmallLock {
 unsafe impl Sync for SmallLock {}
 
 static SMALL: SmallLock = SmallLock {
-    locked: core::sync::atomic::AtomicBool::new(false),
+    locked: taaj::sync::Lock::new(),
     small: core::cell::UnsafeCell::new(Small {
         free: [ptr::null_mut(); SMALL_MAX / ALIGNMENT + 1],
         next: ptr::null_mut(),
@@ -106,13 +105,10 @@ static SMALL: SmallLock = SmallLock {
 };
 
 fn with_small<R>(f: impl FnOnce(&mut Small) -> R) -> R {
-    use core::sync::atomic::Ordering;
-    while SMALL.locked.swap(true, Ordering::Acquire) {
-        core::hint::spin_loop();
-    }
+    SMALL.locked.lock();
     // SAFETY: the lock is held, so this is the only reference.
     let result = f(unsafe { &mut *SMALL.small.get() });
-    SMALL.locked.store(false, Ordering::Release);
+    SMALL.locked.unlock();
     result
 }
 

@@ -19,9 +19,9 @@
 //! the program exits, with its address space.
 
 use core::alloc::{GlobalAlloc, Layout};
-use core::hint;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, Ordering};
+
+use crate::sync::Lock;
 
 use heap::Heap;
 
@@ -30,9 +30,10 @@ const REGION_MAX: u64 = abi::MEMORY_MAX;
 const PAGE: u64 = 4096;
 
 struct UserHeap {
-    /// A spin lock. A program has one thread today; the lock makes the
-    /// allocator sound anyway, and costs one atomic swap.
-    locked: AtomicBool,
+    /// One thread at a time. A futex lock (sync.rs): taking it when
+    /// nobody else wants it is one atomic instruction; a thread that
+    /// finds it taken sleeps instead of spinning.
+    locked: Lock,
     heap: core::cell::UnsafeCell<Heap>,
 }
 
@@ -40,16 +41,14 @@ struct UserHeap {
 unsafe impl Sync for UserHeap {}
 
 #[global_allocator]
-static HEAP: UserHeap = UserHeap { locked: AtomicBool::new(false), heap: core::cell::UnsafeCell::new(Heap::empty()) };
+static HEAP: UserHeap = UserHeap { locked: Lock::new(), heap: core::cell::UnsafeCell::new(Heap::empty()) };
 
 impl UserHeap {
     fn with<R>(&self, f: impl FnOnce(&mut Heap) -> R) -> R {
-        while self.locked.swap(true, Ordering::Acquire) {
-            hint::spin_loop();
-        }
+        self.locked.lock();
         // SAFETY: the lock is held, so this is the only reference.
         let result = f(unsafe { &mut *self.heap.get() });
-        self.locked.store(false, Ordering::Release);
+        self.locked.unlock();
         result
     }
 }

@@ -33,9 +33,9 @@
 # directories, entropy, wide characters, time zones - are left out (see
 # ports/llvm/taaj/__config_site). Upstream's own build is CMake; the
 # lists of sources here follow its CMakeLists.txt for that configuration.
-# Threads are in, on the C library's pthread for one thread (libc/
-# include/pthread.h); thread_local variables need -femulated-tls in
-# CXXFLAGS (libc/c/emutls.c).
+# Threads are in, on the C library's pthreads (libc/include/pthread.h,
+# libc/src/threads.rs); thread_local variables need -femulated-tls in
+# CXXFLAGS (__emutls_get_address, in threads.rs too).
 #
 # KEEP_GOING=1 in the environment goes on past a file that does not
 # compile, to see every error at once - for porting; the archive made

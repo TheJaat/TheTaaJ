@@ -24,6 +24,12 @@
 
 int taaj_errno;
 
+/* errno.h's errno is (*__errno_location()): this one here. */
+int *taaj___errno_location(void)
+{
+    return &taaj_errno;
+}
+
 int taaj_isalpha(int c);
 int taaj_isdigit(int c);
 int taaj_isalnum(int c);

@@ -17,14 +17,41 @@
 #![cfg_attr(test, allow(dead_code))]
 
 use core::ffi::{c_char, c_int};
-use core::sync::atomic::AtomicI32;
+use core::sync::atomic::Ordering;
 
-/// The variable itself. An atomic integer is, in memory, exactly a C
-/// `int`, so C reads and writes it as one - and Rust can change it
-/// without `unsafe`, which a plain `static mut` would need.
-#[cfg_attr(not(test), no_mangle)]
+/// errno itself. Each thread has its own (threads.rs keeps it in the
+/// thread's record), and C reaches it through `__errno_location()`, as
+/// errno.h's `#define errno (*__errno_location())` says. Rust code here
+/// says `errno.store(code, ...)` and `errno.load(...)`, as when errno
+/// was one atomic int: the two methods find the running thread's.
 #[allow(non_upper_case_globals)]
-pub static errno: AtomicI32 = AtomicI32::new(0);
+pub static errno: Errno = Errno;
+
+pub struct Errno;
+
+#[cfg(not(test))]
+extern "C" {
+    fn __errno_location() -> *mut c_int;
+}
+
+/// Compiled alone, on the host, there are no threads: one errno.
+#[cfg(test)]
+unsafe fn __errno_location() -> *mut c_int {
+    static mut ERRNO: c_int = 0;
+    &raw mut ERRNO
+}
+
+impl Errno {
+    pub fn store(&self, code: c_int, _order: Ordering) {
+        // SAFETY: the running thread's errno, which only it touches.
+        unsafe { *__errno_location() = code };
+    }
+
+    pub fn load(&self, _order: Ordering) -> c_int {
+        // SAFETY: as above.
+        unsafe { *__errno_location() }
+    }
+}
 
 pub const ENOENT: c_int = 2;
 pub const EIO: c_int = 5;

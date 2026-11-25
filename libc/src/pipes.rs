@@ -20,10 +20,10 @@
 
 use crate::descriptors::{fail, with, Open};
 use crate::errno::{EFAULT, EMFILE, EPIPE, EIO, ENFILE};
-use alloc::rc::Rc;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::cell::RefCell;
 use core::ffi::c_int;
+use taaj::sync::Mutex;
 use taaj::{Error, Handle};
 
 /// A channel end, closed when the last copy goes.
@@ -35,51 +35,59 @@ impl Drop for Channel {
     }
 }
 
-/// The end of a stream that is read: what a message brought, kept
-/// until it has all been asked for.
+/// The end of a stream that is read: the channel, and what a message
+/// brought, kept until it has all been asked for. The channel needs no
+/// lock (spawn.rs hands its handle on while a thread may be reading);
+/// the bytes held have one, so two threads reading the same end take
+/// turns, and each byte goes to one of them.
 pub(crate) struct Reader {
     pub(crate) channel: Channel,
-    held: Vec<u8>,
+    held: Mutex<Held>,
+}
+
+struct Held {
+    bytes: Vec<u8>,
     taken: usize,
     ended: bool,
 }
 
 impl Reader {
     pub(crate) fn new(channel: Handle) -> Reader {
-        Reader { channel: Channel(channel), held: Vec::new(), taken: 0, ended: false }
+        Reader { channel: Channel(channel), held: Mutex::new(Held { bytes: Vec::new(), taken: 0, ended: false }) }
     }
 
     /// Up to `out.len()` bytes, waiting until there are some; 0 at the
     /// end, when every writer has closed its end and all was read.
-    pub(crate) fn read(&mut self, out: &mut [u8]) -> usize {
+    pub(crate) fn read(&self, out: &mut [u8]) -> usize {
+        let mut held = self.held.lock();
         loop {
-            if self.taken < self.held.len() {
-                let n = out.len().min(self.held.len() - self.taken);
-                out[..n].copy_from_slice(&self.held[self.taken..self.taken + n]);
-                self.taken += n;
+            if held.taken < held.bytes.len() {
+                let n = out.len().min(held.bytes.len() - held.taken);
+                out[..n].copy_from_slice(&held.bytes[held.taken..held.taken + n]);
+                held.taken += n;
                 return n;
             }
-            if self.ended {
+            if held.ended {
                 return 0;
             }
             let mut message = [0u8; abi::MESSAGE_MAX as usize];
             match taaj::receive(self.channel.0, &mut message, &mut []) {
                 Ok((length, _)) if length > 1 && message[0] == abi::stream::DATA => {
-                    self.held.clear();
-                    self.held.extend_from_slice(&message[1..length]);
-                    self.taken = 0;
+                    held.bytes.clear();
+                    held.bytes.extend_from_slice(&message[1..length]);
+                    held.taken = 0;
                 }
                 Ok(_) => {} // empty, or not part of the stream
-                Err(_) => self.ended = true,
+                Err(_) => held.ended = true,
             }
         }
     }
 }
 
-/// A pipe's read end, shared by its descriptors.
-pub(crate) type ReadEnd = Rc<RefCell<Reader>>;
+/// A pipe's read end, shared by its descriptors (and threads).
+pub(crate) type ReadEnd = Arc<Reader>;
 /// A pipe's write end, shared by its descriptors.
-pub(crate) type WriteEnd = Rc<Channel>;
+pub(crate) type WriteEnd = Arc<Channel>;
 
 /// Writes `bytes` on a write end, as stream DATA messages.
 pub(crate) fn write(end: &WriteEnd, bytes: &[u8]) -> isize {
@@ -106,12 +114,12 @@ pub unsafe extern "C" fn pipe(fds: *mut c_int) -> c_int {
             let _ = taaj::close(read_end);
             return None;
         };
-        state.table[read] = Some(Open::PipeRead(Rc::new(RefCell::new(Reader::new(read_end)))));
+        state.table[read] = Some(Open::PipeRead(Arc::new(Reader::new(read_end))));
         let Some(write) = state.free_slot() else {
             state.table[read] = None; // closes read_end
             return None;
         };
-        state.table[write] = Some(Open::PipeWrite(Rc::new(Channel(write_end))));
+        state.table[write] = Some(Open::PipeWrite(Arc::new(Channel(write_end))));
         Some((read, write))
     });
     match ends {

@@ -3473,3 +3473,50 @@ make test64
 | `test64: all passed` | every part |
 
 Automated: make test64
+
+---
+
+## 095 · Threads in a program: pthreads for real, on every CPU
+
+[The entry](journal/095-threads.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`. It puts `threads` and `threadcheck` on the disk.
+
+| Type | You should see |
+|---|---|
+| `with files threads` | after a few seconds, `threads: 30 checks, all passed` |
+| `threads speed` | `threads: the same work: 1 thread 0.xx s, 4 threads 0.xx s (N times as fast)`, with N around 3 to 4 on 4 CPUs |
+| `threads exit` | `threads: exit(7) from a thread, with others waiting and one spinning`, then `threads exited with code 7` |
+| `threadcheck` | `threadcheck: 4 threads, 20000 additions and as many blocks, all passed` |
+| `cxxlib` | `c++: 66 checks, all passed` |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make thread64-test
+make aarch64-thread-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `threads on TheTaaJ (x86_64): 30 checks of pthreads on 4 CPUs passed; ...` | every check, exit from a thread, the last thread, Rust threads; the same for aarch64 |
+| `test64: all passed` | every part |
+
+Automated: make thread64-test, make aarch64-thread-test, make test64

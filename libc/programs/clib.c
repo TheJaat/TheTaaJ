@@ -6,7 +6,7 @@
  * sscanf, asprintf, strftime and mktime, the exact parts of math.h,
  * aligned_alloc, the locale, constructors and atexit - and of what
  * LLVM needs of it: stat and directories, chdir, truncate, dup2 and
- * fcntl, mmap, signals, pthread for one thread, sysconf, nanosleep,
+ * fcntl, mmap, signals, pthreads, sysconf, nanosleep,
  * rand - and of what make needs: change stamps, and utimensat.
  *
  *   with files clib     every check; "library: N checks, all passed",
@@ -302,6 +302,12 @@ static void on_signal(int signal)
 }
 
 static int once_calls;
+/* A second thread's work: its argument plus one. */
+static void *plus_one(void *argument)
+{
+    return (void *)((long)argument + 1);
+}
+
 static void once_function(void)
 {
     once_calls++;
@@ -405,7 +411,8 @@ static void for_llvm(void)
     check(raise(SIGCHLD) == 0 && kill(getpid() + 1000, SIGTERM) == -1 && errno == EPERM, "the defaults, and kill");
     check(strcmp(strsignal(SIGSEGV), "bad memory access") == 0, "strsignal");
 
-    /* pthread for one thread. */
+    /* pthreads (threads.c, beside the threads test, checks them with
+     * many threads at once). */
     pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
     check(pthread_mutex_lock(&mutex) == 0 && pthread_mutex_trylock(&mutex) == EBUSY
               && pthread_mutex_lock(&mutex) == EDEADLK && pthread_mutex_unlock(&mutex) == 0,
@@ -428,8 +435,10 @@ static void for_llvm(void)
     check(pthread_key_create(&key, NULL) == 0 && pthread_setspecific(key, &value) == 0 && pthread_getspecific(key) == &value,
           "a thread's key");
     pthread_t thread;
-    check(pthread_create(&thread, NULL, NULL, NULL) == EAGAIN && pthread_equal(pthread_self(), pthread_self()),
-          "no second thread");
+    void *result = NULL;
+    check(pthread_create(&thread, NULL, plus_one, (void *)41L) == 0 && pthread_join(thread, &result) == 0
+              && (long)result == 42 && pthread_equal(pthread_self(), pthread_self()) && !pthread_equal(pthread_self(), thread),
+          "a second thread, joined, with its answer");
 
     /* The rest. */
     check(sysconf(_SC_PAGESIZE) == 4096 && getpagesize() == 4096 && sysconf(_SC_NPROCESSORS_ONLN) == 1, "sysconf");

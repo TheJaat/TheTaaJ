@@ -29,6 +29,12 @@
 
 int taaj_errno;
 
+/* errno.h's errno is (*__errno_location()): this one here. */
+int *taaj___errno_location(void)
+{
+    return &taaj_errno;
+}
+
 char *taaj_basename(char *path);
 char *taaj_dirname(char *path);
 int taaj_fnmatch(const char *pattern, const char *string, int flags);

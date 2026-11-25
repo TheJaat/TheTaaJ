@@ -156,6 +156,28 @@ void clearerr(FILE *stream);
 /* The descriptor underneath. */
 int fileno(FILE *stream);
 
+/* Threads. Each call above holds the stream's lock while it runs, so
+ * two threads' printf never mix inside a line. flockfile holds it
+ * across many calls (it counts: the calls inside still work), and the
+ * _unlocked calls skip it, for a thread that holds it already. */
+void flockfile(FILE *stream);
+int ftrylockfile(FILE *stream);
+void funlockfile(FILE *stream);
+int getc_unlocked(FILE *stream);
+int getchar_unlocked(void);
+int putc_unlocked(int byte, FILE *stream);
+int putchar_unlocked(int byte);
+int fgetc_unlocked(FILE *stream);
+int fputc_unlocked(int byte, FILE *stream);
+char *fgets_unlocked(char *to, int size, FILE *stream);
+int fputs_unlocked(const char *string, FILE *stream);
+size_t fread_unlocked(void *to, size_t size, size_t count, FILE *stream);
+size_t fwrite_unlocked(const void *from, size_t size, size_t count, FILE *stream);
+int fflush_unlocked(FILE *stream);
+int feof_unlocked(FILE *stream);
+int ferror_unlocked(FILE *stream);
+void clearerr_unlocked(FILE *stream);
+
 /* Removes a file. 0, or -1. */
 int remove(const char *path);
 

@@ -14,8 +14,10 @@
 extern "C" {
 #endif
 
-extern int errno;
-#define errno errno
+/* Each thread has its own errno: this is where the running thread's
+ * is (libc/src/threads.rs). */
+extern int *__errno_location(void);
+#define errno (*__errno_location())
 
 #define ENOENT      2   /* no such file or directory */
 #define EIO         5   /* the file service or the disk failed */

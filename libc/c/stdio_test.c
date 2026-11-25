@@ -74,6 +74,80 @@ void __taaj_flush_streams(void);
 
 int taaj_errno;
 
+/* errno.h's errno is (*__errno_location()): one per thread there, this
+ * one here. */
+int *taaj___errno_location(void)
+{
+    return &taaj_errno;
+}
+
+/* ---- the stream locks, counted ----
+ *
+ * Every stream has a lock (a pthread mutex) that each call holds while
+ * it runs. On the host there is one thread, so these stand-ins only
+ * count: how many are held right now (0 between calls, or a call forgot
+ * to let one go), and whether a lock that does not count (the list of
+ * open streams) was ever taken twice - which with two threads would be
+ * a thread waiting for itself. Laid out as libc/include/pthread.h's. */
+struct taaj_mutex {
+    int kind;
+    int depth;
+};
+static int locks_held, locked_twice;
+
+int taaj_pthread_mutexattr_init(int *attr)
+{
+    *attr = 0;
+    return 0;
+}
+
+int taaj_pthread_mutexattr_settype(int *attr, int kind)
+{
+    *attr = kind;
+    return 0;
+}
+
+int taaj_pthread_mutexattr_destroy(int *attr)
+{
+    (void)attr;
+    return 0;
+}
+
+int taaj_pthread_mutex_init(struct taaj_mutex *mutex, const int *attr)
+{
+    mutex->kind = attr != NULL ? *attr : 0;
+    mutex->depth = 0;
+    return 0;
+}
+
+int taaj_pthread_mutex_destroy(struct taaj_mutex *mutex)
+{
+    return mutex->depth != 0 ? EBUSY : 0;
+}
+
+int taaj_pthread_mutex_lock(struct taaj_mutex *mutex)
+{
+    if (mutex->depth > 0 && (mutex->kind & 0xFF) != 1)
+        locked_twice++;
+    mutex->depth++;
+    locks_held++;
+    return 0;
+}
+
+int taaj_pthread_mutex_trylock(struct taaj_mutex *mutex)
+{
+    return taaj_pthread_mutex_lock(mutex);
+}
+
+int taaj_pthread_mutex_unlock(struct taaj_mutex *mutex)
+{
+    if (mutex->depth == 0)
+        return EPERM;
+    mutex->depth--;
+    locks_held--;
+    return 0;
+}
+
 static int reads, writes;
 static size_t read_limit, write_limit; /* 0: no limit */
 static int fail_reads, fail_writes;
@@ -730,6 +804,9 @@ int main(void)
         taaj_errno = 0;
         CHECK(taaj_printf("after") == EOF && taaj_errno == EBADF, "and printf after it fails");
     }
+
+    CHECK(locks_held == 0, "every stream lock a call took, it gave back");
+    CHECK(locked_twice == 0, "no lock that does not count was taken twice");
 
     /* Clearing up: only if all is well, so that a failure leaves the
      * files to be looked at. */

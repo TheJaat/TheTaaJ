@@ -91,20 +91,13 @@ pub struct Attributes {
 }
 
 /// The children not yet waited for: their numbers, and their processes.
-struct Children {
-    list: core::cell::UnsafeCell<Vec<(c_int, Handle)>>,
-}
-
-// SAFETY: a C program has one thread on TheTaaJ (as the rest of this
-// library assumes), and every use is a short, non-reentrant borrow.
-unsafe impl Sync for Children {}
-
-static CHILDREN: Children = Children { list: core::cell::UnsafeCell::new(Vec::new()) };
+/// Behind a lock, which is held only to look or change, never while
+/// waiting for a child: any thread may start or wait for one.
+static CHILDREN: taaj::sync::Mutex<Vec<(c_int, Handle)>> = taaj::sync::Mutex::new(Vec::new());
 static NEXT_ID: AtomicI32 = AtomicI32::new(2);
 
 fn children<R>(f: impl FnOnce(&mut Vec<(c_int, Handle)>) -> R) -> R {
-    // SAFETY: see Children; nothing called here touches CHILDREN again.
-    f(unsafe { &mut *CHILDREN.list.get() })
+    f(&mut CHILDREN.lock())
 }
 
 /// `posix_spawn_file_actions_init(actions)`: no actions. 0.
@@ -435,10 +428,10 @@ fn standard_for(actions: &[Action]) -> Result<Standard, c_int> {
                 Some(Open::Input) => None,
                 Some(Open::Output) => Some(Source::Output),
                 Some(Open::Error) => Some(Source::Error),
-                Some(Open::PipeRead(end)) => Some(Source::Channel { handle: end.borrow().channel.0, reads: true }),
+                Some(Open::PipeRead(end)) => Some(Source::Channel { handle: end.channel.0, reads: true }),
                 Some(Open::PipeWrite(end)) => Some(Source::Channel { handle: end.0, reads: false }),
                 Some(Open::File(file)) => {
-                    let file = file.borrow();
+                    let file = file.lock();
                     Some(Source::File { path: file.path.clone(), offset: file.offset, flags: file.flags })
                 }
                 Some(Open::Socket(_)) | None => None,
@@ -1087,7 +1080,7 @@ fn describe(code: c_int) -> &'static str {
 }
 
 /// The pipelines popen started, by the descriptor it gave for each.
-static POPENED: Children = Children { list: core::cell::UnsafeCell::new(Vec::new()) };
+static POPENED: taaj::sync::Mutex<Vec<(c_int, Handle)>> = taaj::sync::Mutex::new(Vec::new());
 
 /// What popen (unix.c) calls: starts `command`, and gives a descriptor
 /// of this program for it - reading its last command's output, or with
@@ -1114,9 +1107,7 @@ pub unsafe extern "C" fn __taaj_popen(command: *const c_char, writing: c_int) ->
     };
     match started {
         Ok(ids) => {
-            // SAFETY: as Children.
-            let list = unsafe { &mut *POPENED.list.get() };
-            list.extend(ids.into_iter().map(|id| (ours, id as Handle)));
+            POPENED.lock().extend(ids.into_iter().map(|id| (ours, id as Handle)));
             ours
         }
         Err(failed) => {
@@ -1134,10 +1125,12 @@ pub unsafe extern "C" fn __taaj_popen(command: *const c_char, writing: c_int) ->
 /// if popen gave no such descriptor.
 #[no_mangle]
 pub extern "C" fn __taaj_pclose(fd: c_int) -> c_int {
-    // SAFETY: as Children.
-    let list = unsafe { &mut *POPENED.list.get() };
-    let ids: Vec<c_int> = list.iter().filter(|&&(of, _)| of == fd).map(|&(_, id)| id as c_int).collect();
-    list.retain(|&(of, _)| of != fd);
+    let ids: Vec<c_int> = {
+        let mut list = POPENED.lock();
+        let ids = list.iter().filter(|&&(of, _)| of == fd).map(|&(_, id)| id as c_int).collect();
+        list.retain(|&(of, _)| of != fd);
+        ids
+    };
     if ids.is_empty() {
         return crate::descriptors::fail(ECHILD);
     }

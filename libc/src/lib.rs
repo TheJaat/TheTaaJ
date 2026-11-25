@@ -87,6 +87,7 @@ pub mod words;
 pub mod sh;
 pub mod sh_system;
 pub mod system;
+pub mod threads;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -142,6 +143,9 @@ pub extern "C" fn __taaj_executable() -> *const c_char {
 /// that each end in a zero byte, with a null pointer after the last.
 #[no_mangle]
 pub extern "C" fn _start(startup_handles: u64, argument: u64) -> ! {
+    // First: the main thread's record and thread pointer, which errno
+    // and the locks need (threads.rs).
+    threads::init();
     taaj::set_startup(startup_handles, argument);
     // The strings: the name it was started by, then the arguments as
     // the shell divided them - each given the zero byte that ends a C

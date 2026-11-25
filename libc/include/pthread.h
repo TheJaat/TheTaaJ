@@ -1,27 +1,26 @@
-/* pthread.h - POSIX threads, for a program with one thread.
+/* pthread.h - POSIX threads (libc/src/threads.rs).
  *
- * A program on TheTaaJ has one thread today: the kernel has threads,
- * but no way yet for a program to start a second one of its own. So
- * this is POSIX's interface with that one thread behind it - not
- * stubs that pretend, but what each call really means when there is no
- * one else:
+ * A program on TheTaaJ may have many threads, on every CPU at once.
+ * The kernel gives each its own stack and thread pointer, and a futex
+ * to sleep on; the rest is in the program:
  *
- *   mutexes      real: a held mutex is held. Locking it again is the
- *                deadlock POSIX describes, reported as EDEADLK rather
- *                than waited out forever; a recursive one counts.
- *   conditions   signal and broadcast wake nobody, which is right;
- *                waiting could only end by another thread's signal, so
- *                pthread_cond_wait fails with EDEADLK at once, and
- *                pthread_cond_timedwait sleeps to its deadline and
- *                says ETIMEDOUT
- *   once         runs the function the first time
- *   keys         a value per key, for the one thread
- *   threads      pthread_self is 1; pthread_create fails with EAGAIN
- *                (no more threads may be made), so std::thread throws
+ *   threads      pthread_create, join, detach, exit, self. A thread's
+ *                stack is 1 MiB unless its attributes say otherwise
+ *   mutexes      normal, recursive and error-checking. One nobody else
+ *                wants costs one atomic instruction to take and one to
+ *                give back; a thread that has to wait sleeps in the
+ *                kernel. Locking a normal mutex again from the thread
+ *                that holds it says EDEADLK instead of waiting for ever
+ *   conditions   wait, timedwait (CLOCK_REALTIME, as POSIX says),
+ *                signal, broadcast
+ *   rwlocks      many readers or one writer
+ *   once, keys   pthread_once; keys with destructors, run at each
+ *                thread's end
  *
- * C++'s <mutex>, <condition_variable> and <thread> are built on these
- * (libc++ uses its pthread backend), and so is LLVM, which needs a
- * mutex even when it runs on one thread. */
+ * errno is per thread, and so are C++'s thread_local variables.
+ *
+ * The types keep the sizes they had when a program had one thread, so
+ * code compiled against them then (libc++) still fits. */
 
 #ifndef _PTHREAD_H
 #define _PTHREAD_H
@@ -41,8 +40,10 @@ extern "C" {
 typedef unsigned long pthread_t;
 
 typedef struct {
-    int kind;   /* PTHREAD_MUTEX_NORMAL, _RECURSIVE or _ERRORCHECK */
-    int depth;  /* how many times it is held: 0 is free */
+    int kind;   /* PTHREAD_MUTEX_NORMAL, _RECURSIVE or _ERRORCHECK, and
+                 * above the low 8 bits how many more times its owner
+                 * holds a recursive one */
+    int state;  /* 0 free; else the owner's id, and whether anyone waits */
 } pthread_mutex_t;
 
 typedef struct {
@@ -50,7 +51,7 @@ typedef struct {
 } pthread_mutexattr_t;
 
 typedef struct {
-    int unused;
+    int sequence; /* moved on by every signal */
 } pthread_cond_t;
 
 typedef struct {
@@ -58,12 +59,12 @@ typedef struct {
 } pthread_condattr_t;
 
 typedef struct {
-    int unused;
+    int bits;     /* detached, and the stack size in KiB */
 } pthread_attr_t;
 
 typedef struct {
-    int readers;
-    int writer;
+    int state;    /* how many read; all bits set: one writes */
+    int sequence; /* moved on by every unlock */
 } pthread_rwlock_t;
 
 typedef struct {
@@ -87,8 +88,13 @@ typedef unsigned pthread_key_t;
 #define PTHREAD_CREATE_JOINABLE 0
 #define PTHREAD_CREATE_DETACHED 1
 
-/* How many keys a program may make. */
+/* How many keys a program may make, and how many times the
+ * destructors are run at a thread's end while values are left. */
 #define PTHREAD_KEYS_MAX 128
+#define PTHREAD_DESTRUCTOR_ITERATIONS 4
+
+/* The smallest stack a thread may be given. */
+#define PTHREAD_STACK_MIN 16384
 
 int pthread_mutexattr_init(pthread_mutexattr_t *attr);
 int pthread_mutexattr_destroy(pthread_mutexattr_t *attr);
@@ -128,7 +134,9 @@ int pthread_setspecific(pthread_key_t key, const void *value);
 int pthread_attr_init(pthread_attr_t *attr);
 int pthread_attr_destroy(pthread_attr_t *attr);
 int pthread_attr_setdetachstate(pthread_attr_t *attr, int state);
+int pthread_attr_getdetachstate(const pthread_attr_t *attr, int *state);
 int pthread_attr_setstacksize(pthread_attr_t *attr, unsigned long size);
+int pthread_attr_getstacksize(const pthread_attr_t *attr, unsigned long *size);
 
 pthread_t pthread_self(void);
 int pthread_equal(pthread_t a, pthread_t b);

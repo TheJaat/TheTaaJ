@@ -30,12 +30,14 @@
 
 use alloc::format;
 use alloc::string::String;
+use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 use core::ffi::{c_char, c_int, c_long, c_void, CStr};
-use core::hint;
 use core::ptr;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::Ordering;
+
+use taaj::sync::{Lock, Mutex};
 
 use taaj::files::{FileError, Files, Kind};
 use taaj::Error;
@@ -61,7 +63,10 @@ const SEEK_END: c_int = 2;
 /// starts with among them.
 const OPEN_MAX: usize = 32;
 
-/// What a descriptor stands for.
+/// What a descriptor stands for. Cloning it is what `dup` does: the
+/// copy shares the file, socket or pipe end - and so, between threads,
+/// one thread may read a pipe while another writes to it (see `read`).
+#[derive(Clone)]
 pub(crate) enum Open {
     Input,
     Output,
@@ -69,21 +74,29 @@ pub(crate) enum Open {
     /// Shared with the descriptors `dup` made of it: one offset, moved
     /// by a read through any of them - POSIX's "open file description".
     File(SharedFile),
-    /// (Boxed: a connection holds a message's worth of bytes that
-    /// arrived and were not read yet.)
-    Socket(alloc::boxed::Box<crate::sockets::Socket>),
+    /// Shared with the descriptors `dup` made of it, unread bytes and
+    /// all.
+    Socket(Shared<crate::sockets::Socket>),
     /// One end of a stream channel: a pipe's (pipes.rs). Shared with
     /// the descriptors `dup` made of it.
     PipeRead(crate::pipes::ReadEnd),
     PipeWrite(crate::pipes::WriteEnd),
 }
 
+/// Something the descriptors that `dup` made share, with a lock of its
+/// own: a thread uses it with only that lock held, not the table's.
+pub(crate) type Shared<T> = Arc<Mutex<T>>;
+
+pub(crate) fn shared<T>(value: T) -> Shared<T> {
+    Arc::new(Mutex::new(value))
+}
+
 /// A file open, as its descriptors share it.
-pub(crate) type SharedFile = alloc::rc::Rc<core::cell::RefCell<File>>;
+pub(crate) type SharedFile = Shared<File>;
 
 /// A descriptor for a file newly open.
 fn file(file: File) -> Open {
-    Open::File(alloc::rc::Rc::new(core::cell::RefCell::new(file)))
+    Open::File(shared(file))
 }
 
 pub(crate) struct File {
@@ -111,27 +124,46 @@ pub(crate) struct State {
     /// program this one starts does not get (spawn.rs). Every new
     /// descriptor starts without it.
     pub(crate) cloexec: u32,
-    input: taaj::Input,
     /// The file service: not asked for until a file is first opened,
     /// and then once (the outer Option) - a program may have been
-    /// given none (the inner).
-    pub(crate) files: Option<Option<Files>>,
+    /// given none (the inner). Shared, so that a thread can read a file
+    /// with the table let go.
+    pub(crate) files: Option<Option<Arc<Files>>>,
     /// The network service, the same way: asked for at the first
     /// socket.
-    pub(crate) net: Option<Option<taaj::net::Net>>,
+    pub(crate) net: Option<Option<Arc<taaj::net::Net>>>,
+}
+
+/// Standard input, behind its own lock: a thread waiting for a key
+/// holds only this one.
+static INPUT: Mutex<Option<taaj::Input>> = Mutex::new(None);
+
+fn read_input(out: &mut [u8]) -> usize {
+    INPUT.lock().get_or_insert_with(taaj::input).read(out)
 }
 
 impl State {
     /// The file service, asked for the first time it is needed; None if
     /// this program was not given one.
-    pub(crate) fn files(&mut self) -> Option<&Files> {
-        self.files.get_or_insert_with(taaj::file_service).as_ref()
+    pub(crate) fn files(&mut self) -> Option<&Arc<Files>> {
+        self.files.get_or_insert_with(|| taaj::file_service().map(Arc::new)).as_ref()
+    }
+
+    /// What descriptor `fd` stands for, and the file service: a copy
+    /// to use once the table is let go.
+    fn entry(&mut self, fd: c_int) -> Option<(Open, Option<Arc<Files>>)> {
+        let open = usize::try_from(fd).ok().and_then(|fd| self.table.get(fd)).and_then(Option::as_ref)?.clone();
+        let files = match open {
+            Open::File(_) => self.files().cloned(),
+            _ => None,
+        };
+        Some((open, files))
     }
 
     fn new() -> State {
         let mut table = Vec::with_capacity(OPEN_MAX);
         table.extend([Some(Open::Input), Some(Open::Output), Some(Open::Error)]);
-        let mut state = State { table, cloexec: 0, input: taaj::input(), files: None, net: None };
+        let mut state = State { table, cloexec: 0, files: None, net: None };
         state.inherit();
         state
     }
@@ -164,10 +196,8 @@ impl State {
                 // program given no file service cannot use the file.
                 (Entry::File { .. }, _) if self.files().is_none() => continue,
                 (Entry::File { flags, offset, path, .. }, _) => file(File { path: String::from(path), offset, flags }),
-                (Entry::Read { .. }, Some(handle)) => {
-                    Open::PipeRead(alloc::rc::Rc::new(core::cell::RefCell::new(crate::pipes::Reader::new(handle))))
-                }
-                (_, Some(handle)) => Open::PipeWrite(alloc::rc::Rc::new(crate::pipes::Channel(handle))),
+                (Entry::Read { .. }, Some(handle)) => Open::PipeRead(Arc::new(crate::pipes::Reader::new(handle))),
+                (_, Some(handle)) => Open::PipeWrite(Arc::new(crate::pipes::Channel(handle))),
                 (_, None) => continue, // ruled out above
             };
             while self.table.len() <= slot {
@@ -209,27 +239,30 @@ impl State {
     }
 }
 
-/// The one State, behind a spin lock. A C program here has one thread,
-/// so the lock is never waited for; it is what makes handing out a
-/// `&mut State` from a `static` sound, and costs one atomic swap.
-struct Lock {
-    locked: AtomicBool,
+/// The one State - the table of descriptors - behind a futex lock
+/// (taaj::sync): one thread at a time changes it. Nothing that may wait
+/// - for input, a pipe, a socket, the file service - is done with it
+/// held: `read` and `write` take what the descriptor stands for out of
+/// the table, let the table go, and wait holding only that thing's own
+/// lock. Otherwise a thread waiting to read a pipe would keep the
+/// thread that writes to it out of the table, and both would wait for
+/// ever.
+struct StateLock {
+    locked: Lock,
     state: UnsafeCell<Option<State>>,
 }
 
 // SAFETY: `state` is reached only while `locked` is held.
-unsafe impl Sync for Lock {}
+unsafe impl Sync for StateLock {}
 
-static STATE: Lock = Lock { locked: AtomicBool::new(false), state: UnsafeCell::new(None) };
+static STATE: StateLock = StateLock { locked: Lock::new(), state: UnsafeCell::new(None) };
 
 pub(crate) fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
-    while STATE.locked.swap(true, Ordering::Acquire) {
-        hint::spin_loop();
-    }
+    STATE.locked.lock();
     // SAFETY: the lock is held, so this is the only reference.
     let state = unsafe { &mut *STATE.state.get() };
     let result = f(state.get_or_insert_with(State::new));
-    STATE.locked.store(false, Ordering::Release);
+    STATE.locked.unlock();
     result
 }
 
@@ -299,7 +332,7 @@ pub unsafe extern "C" fn __taaj_open(path: *const c_char, flags: c_int) -> c_int
     }
     with(|state| {
         let Some(slot) = state.free_slot() else { return fail(EMFILE) };
-        let Some(files) = state.files.get_or_insert_with(taaj::file_service).as_ref() else {
+        let Some(files) = state.files() else {
             return fail(EACCES);
         };
         let file = File { path: format!("/{}", files.resolve(name)), offset: 0, flags };
@@ -360,39 +393,40 @@ pub unsafe extern "C" fn read(fd: c_int, buffer: *mut c_void, count: usize) -> i
     if buffer.is_null() && count != 0 {
         return fail(EFAULT);
     }
-    with(|state| {
-        let State { table, input, files, .. } = state;
-        let open = usize::try_from(fd).ok().and_then(|fd| table.get_mut(fd)).and_then(Option::as_mut);
-        if count == 0 {
-            return if open.is_some() { 0 } else { fail(EBADF) };
-        }
-        // SAFETY: the caller's promise, and `buffer` is not null.
-        let out = unsafe { core::slice::from_raw_parts_mut(buffer.cast::<u8>(), count) };
-        match open {
-            Some(Open::Input) => input.read(out) as isize,
-            Some(Open::Socket(socket)) => socket.read(out),
-            Some(Open::PipeRead(end)) => end.borrow_mut().read(out) as isize,
-            Some(Open::File(file)) if file.borrow().reads() => {
-                let mut file = file.borrow_mut();
-                // A file can only be in the table if the service was
-                // there to open it.
-                let Some(Some(files)) = files else { return fail(EIO) };
-                let mut taken = 0;
-                let read = files.read_from(&file.path, file.offset, |piece| {
-                    taken = piece.len().min(out.len());
-                    out[..taken].copy_from_slice(&piece[..taken]);
-                });
-                match read {
-                    Ok(_) => {
-                        file.offset += taken as u64;
-                        taken as isize
-                    }
-                    Err(error) => fail(reason(error)),
-                }
+    let Some((open, files)) = with(|state| state.entry(fd)) else { return fail(EBADF) };
+    if count == 0 {
+        return 0;
+    }
+    // SAFETY: the caller's promise, and `buffer` is not null.
+    let out = unsafe { core::slice::from_raw_parts_mut(buffer.cast::<u8>(), count) };
+    // The table is let go: what is read now may wait (see STATE).
+    match open {
+        Open::Input => read_input(out) as isize,
+        Open::Socket(socket) => socket.lock().read(out),
+        Open::PipeRead(end) => end.read(out) as isize,
+        Open::File(file) => {
+            let mut file = file.lock();
+            if !file.reads() {
+                return fail(EBADF);
             }
-            _ => fail(EBADF),
+            // A file can only be in the table if the service was there
+            // to open it.
+            let Some(files) = files else { return fail(EIO) };
+            let mut taken = 0;
+            let read = files.read_from(&file.path, file.offset, |piece| {
+                taken = piece.len().min(out.len());
+                out[..taken].copy_from_slice(&piece[..taken]);
+            });
+            match read {
+                Ok(_) => {
+                    file.offset += taken as u64;
+                    taken as isize
+                }
+                Err(error) => fail(reason(error)),
+            }
         }
-    })
+        _ => fail(EBADF),
+    }
 }
 
 /// `write(fd, buffer, count)`: writes `count` bytes where the
@@ -406,39 +440,40 @@ pub unsafe extern "C" fn write(fd: c_int, buffer: *const c_void, count: usize) -
     if buffer.is_null() && count != 0 {
         return fail(EFAULT);
     }
-    with(|state| {
-        let State { table, files, .. } = state;
-        let open = usize::try_from(fd).ok().and_then(|fd| table.get_mut(fd)).and_then(Option::as_mut);
-        if count == 0 {
-            return if open.is_some() { 0 } else { fail(EBADF) };
-        }
-        // SAFETY: the caller's promise: `count` readable bytes at
-        // `buffer`, which is not null.
-        let bytes = unsafe { core::slice::from_raw_parts(buffer.cast::<u8>(), count) };
-        match open {
-            Some(Open::Output) => taaj::write(bytes).map_or_else(|_| fail(EIO), |_| count as isize),
-            Some(Open::Error) => taaj::write_error(bytes).map_or_else(|_| fail(EIO), |_| count as isize),
-            Some(Open::Socket(socket)) => socket.write(bytes),
-            Some(Open::PipeWrite(end)) => crate::pipes::write(end, bytes),
-            Some(Open::File(file)) if file.borrow().writes() => {
-                let mut file = file.borrow_mut();
-                let Some(Some(files)) = files else { return fail(EIO) };
-                let written = if file.flags & O_APPEND != 0 {
-                    // The service finds the end itself, at the moment
-                    // it writes: two programs appending to one file
-                    // cannot write over each other.
-                    files.append(&file.path, bytes).map(|size| file.offset = size)
-                } else {
-                    files.write_from(&file.path, file.offset, bytes).map(|_| file.offset += count as u64)
-                };
-                match written {
-                    Ok(()) => count as isize,
-                    Err(error) => fail(reason(error)),
-                }
+    let Some((open, files)) = with(|state| state.entry(fd)) else { return fail(EBADF) };
+    if count == 0 {
+        return 0;
+    }
+    // SAFETY: the caller's promise: `count` readable bytes at `buffer`,
+    // which is not null.
+    let bytes = unsafe { core::slice::from_raw_parts(buffer.cast::<u8>(), count) };
+    // The table is let go: a write may wait for room (see STATE).
+    match open {
+        Open::Output => taaj::write(bytes).map_or_else(|_| fail(EIO), |_| count as isize),
+        Open::Error => taaj::write_error(bytes).map_or_else(|_| fail(EIO), |_| count as isize),
+        Open::Socket(socket) => socket.lock().write(bytes),
+        Open::PipeWrite(end) => crate::pipes::write(&end, bytes),
+        Open::File(file) => {
+            let mut file = file.lock();
+            if !file.writes() {
+                return fail(EBADF);
             }
-            _ => fail(EBADF),
+            let Some(files) = files else { return fail(EIO) };
+            let written = if file.flags & O_APPEND != 0 {
+                // The service finds the end itself, at the moment it
+                // writes: two programs appending to one file cannot
+                // write over each other.
+                files.append(&file.path, bytes).map(|size| file.offset = size)
+            } else {
+                files.write_from(&file.path, file.offset, bytes).map(|_| file.offset += count as u64)
+            };
+            match written {
+                Ok(()) => count as isize,
+                Err(error) => fail(reason(error)),
+            }
         }
-    })
+        _ => fail(EBADF),
+    }
 }
 
 /// `lseek(fd, offset, whence)`: moves where the next read or write
@@ -448,19 +483,18 @@ pub unsafe extern "C" fn write(fd: c_int, buffer: *const c_void, count: usize) -
 /// zeros in between.
 #[no_mangle]
 pub extern "C" fn lseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
-    with(|state| {
-        let State { table, files, .. } = state;
-        let file = match usize::try_from(fd).ok().and_then(|fd| table.get_mut(fd)).and_then(Option::as_mut) {
-            Some(Open::File(file)) => file,
-            Some(_) => return fail(ESPIPE),
-            None => return fail(EBADF),
-        };
-        let mut file = file.borrow_mut();
+    let (file, files) = match with(|state| state.entry(fd)) {
+        Some((Open::File(file), files)) => (file, files),
+        Some(_) => return fail(ESPIPE),
+        None => return fail(EBADF),
+    };
+    {
+        let mut file = file.lock();
         let from = match whence {
             SEEK_SET => 0,
             SEEK_CUR => file.offset,
             SEEK_END => {
-                let Some(Some(files)) = files else { return fail(EIO) };
+                let Some(files) = files else { return fail(EIO) };
                 match files.size(&file.path) {
                     Ok(size) => size,
                     Err(error) => return fail(reason(error)),
@@ -477,7 +511,7 @@ pub extern "C" fn lseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
             }
             None => fail(EINVAL),
         }
-    })
+    }
 }
 
 /// Copies `text` and a zero byte into `buffer` (`size` bytes), or - if
@@ -518,7 +552,7 @@ unsafe fn give(text: &str, buffer: *mut c_char, size: usize) -> *mut c_char {
 /// `buffer` must be null or valid for writing `size` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn getcwd(buffer: *mut c_char, size: usize) -> *mut c_char {
-    let directory = with(|state| match state.files.get_or_insert_with(taaj::file_service).as_ref() {
+    let directory = with(|state| match state.files() {
         Some(files) => format!("/{}", files.directory()),
         // Not given the files: names mean nothing, and "/" is as true
         // as anything.
@@ -545,7 +579,7 @@ pub unsafe extern "C" fn realpath(path: *const c_char, resolved: *mut c_char) ->
         Err(code) => return fail_null(code),
     };
     let whole = with(|state| {
-        let files = state.files.get_or_insert_with(taaj::file_service).as_ref().ok_or(EACCES)?;
+        let files = state.files().ok_or(EACCES)?;
         files.stat(name).map_err(reason)?;
         Ok(format!("/{}", files.resolve(name)))
     });
@@ -579,7 +613,7 @@ pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
         Err(code) => return fail(code),
     };
     with(|state| {
-        let Some(files) = state.files.get_or_insert_with(taaj::file_service).as_ref() else {
+        let Some(files) = state.files() else {
             return fail(EACCES);
         };
         match files.stat(name) {
@@ -609,7 +643,7 @@ pub unsafe extern "C" fn rename(from: *const c_char, to: *const c_char) -> c_int
         (Err(code), _) | (_, Err(code)) => return fail(code),
     };
     with(|state| {
-        let Some(files) = state.files.get_or_insert_with(taaj::file_service).as_ref() else {
+        let Some(files) = state.files() else {
             return fail(EACCES);
         };
         match files.rename(from, to) {
@@ -647,22 +681,10 @@ pub extern "C" fn isatty(fd: c_int) -> c_int {
     0
 }
 
-/// A second entry for what `fd` is open on. A file's copy starts where
-/// the first has got to, but moves on its own afterwards: the place is
-/// kept per descriptor here, where Unix shares one between the two. A
-/// socket cannot be copied yet (its unread bytes would have to be
-/// shared): EOPNOTSUPP.
+/// A second entry for what `fd` is open on, sharing it: a file's place
+/// in it, a socket's unread bytes, a pipe's end.
 fn copy_of(state: &State, fd: c_int) -> Result<Open, c_int> {
-    match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
-        Some(Open::Input) => Ok(Open::Input),
-        Some(Open::Output) => Ok(Open::Output),
-        Some(Open::Error) => Ok(Open::Error),
-        Some(Open::File(file)) => Ok(Open::File(file.clone())),
-        Some(Open::Socket(_)) => Err(EOPNOTSUPP),
-        Some(Open::PipeRead(end)) => Ok(Open::PipeRead(end.clone())),
-        Some(Open::PipeWrite(end)) => Ok(Open::PipeWrite(end.clone())),
-        None => Err(EBADF),
-    }
+    usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref).cloned().ok_or(EBADF)
 }
 
 /// `dup(fd)`: a second descriptor for the same thing, the lowest number
@@ -768,12 +790,12 @@ pub extern "C" fn __taaj_fcntl(fd: c_int, command: c_int, argument: c_long) -> c
                 state.set_cloexec(slot, argument & FD_CLOEXEC != 0);
                 0
             }
-            (F_GETFL, Open::File(file)) => file.borrow().flags,
+            (F_GETFL, Open::File(file)) => file.lock().flags,
             (F_GETFL, Open::Input) => O_RDONLY,
             (F_GETFL, Open::Output | Open::Error) => O_WRONLY,
             (F_GETFL, Open::Socket(_)) => 2, // O_RDWR
             (F_SETFL, Open::File(file)) => {
-                let mut file = file.borrow_mut();
+                let mut file = file.lock();
                 let changeable = O_APPEND | O_NONBLOCK;
                 file.flags = (file.flags & !changeable) | (argument as c_int & changeable);
                 0

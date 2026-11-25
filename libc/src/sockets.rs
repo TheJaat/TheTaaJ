@@ -19,12 +19,12 @@
 
 use core::ffi::{c_int, c_uint, c_void};
 
-use alloc::boxed::Box;
+use alloc::sync::Arc;
 
 use taaj::net::{Ipv4, NetError, TcpListener, TcpStream};
 use taaj::Error;
 
-use crate::descriptors::{fail, with, Open, State};
+use crate::descriptors::{fail, shared, with, Open, Shared, State};
 use crate::errno::*;
 
 const AF_INET: c_int = 2;
@@ -38,8 +38,9 @@ const SHUT_RDWR: c_int = 2;
 /// The size of a struct sockaddr_in (netinet/in.h).
 const SOCKADDR_IN: usize = 16;
 
-// The whole of it is boxed in the descriptor table (`Open::Socket`):
-// one allocation per socket, whichever kind it is.
+// Shared in the descriptor table (`Open::Socket`): one allocation per
+// socket, whichever kind it is, with its own lock - a thread waiting in
+// `accept` or `read` holds that, not the table.
 #[allow(clippy::large_enum_variant)]
 pub enum Socket {
     Fresh { port: u16 },
@@ -91,13 +92,14 @@ impl Socket {
     }
 }
 
-/// The socket behind descriptor `fd`, or why there is none.
-fn socket_of(state: &mut State, fd: c_int) -> Result<&mut Socket, c_int> {
-    match usize::try_from(fd).ok().and_then(|fd| state.table.get_mut(fd)).and_then(Option::as_mut) {
-        Some(Open::Socket(socket)) => Ok(socket),
+/// The socket behind descriptor `fd`, or why there is none: taken out
+/// of the table, which is let go again before the socket is used.
+fn socket_of(fd: c_int) -> Result<Shared<Socket>, c_int> {
+    with(|state| match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
+        Some(Open::Socket(socket)) => Ok(socket.clone()),
         Some(_) => Err(ENOTSOCK),
         None => Err(EBADF),
-    }
+    })
 }
 
 /// An IPv4 address and port from C's struct sockaddr_in.
@@ -147,9 +149,13 @@ unsafe fn address_to(address: *mut c_void, length: *mut c_uint, ip: Ipv4, port: 
 }
 
 /// The network service: asked for once, at the first socket.
-fn net(state: &mut State) -> Result<&taaj::net::Net, c_int> {
+fn net_in(state: &mut State) -> Result<Arc<taaj::net::Net>, c_int> {
     // EACCES, as for files: the program was not given it.
-    state.net.get_or_insert_with(taaj::net::Net::find).as_ref().ok_or(EACCES)
+    state.net.get_or_insert_with(|| taaj::net::Net::find().map(Arc::new)).clone().ok_or(EACCES)
+}
+
+fn net() -> Result<Arc<taaj::net::Net>, c_int> {
+    with(net_in)
 }
 
 /// `socket(family, type, protocol)`: a new descriptor that is a socket,
@@ -163,11 +169,11 @@ pub extern "C" fn socket(family: c_int, kind: c_int, protocol: c_int) -> c_int {
         return fail(EPROTONOSUPPORT);
     }
     with(|state| {
-        if let Err(code) = net(state) {
+        if let Err(code) = net_in(state) {
             return fail(code);
         }
         let Some(slot) = state.free_slot() else { return fail(EMFILE) };
-        state.table[slot] = Some(Open::Socket(Box::new(Socket::Fresh { port: 0 })));
+        state.table[slot] = Some(Open::Socket(shared(Socket::Fresh { port: 0 })));
         slot as c_int
     })
 }
@@ -184,29 +190,29 @@ pub unsafe extern "C" fn connect(fd: c_int, address: *const c_void, length: c_ui
         Ok(found) => found,
         Err(code) => return fail(code),
     };
-    with(|state| {
-        match socket_of(state, fd) {
-            Ok(Socket::Fresh { port: 0 }) => {}
-            // (A connection from a port chosen with bind is not
-            // something the service can make yet.)
-            Ok(Socket::Fresh { .. }) => return fail(EOPNOTSUPP),
-            Ok(Socket::Connected { .. }) => return fail(EISCONN),
-            Ok(Socket::Listening(_)) => return fail(EOPNOTSUPP),
-            Err(code) => return fail(code),
-        }
-        if port == 0 {
-            return fail(EINVAL);
-        }
-        let stream = match net(state).map(|net| net.tcp_connect(to, port)) {
-            Ok(Ok(stream)) => stream,
-            Ok(Err(error)) => return fail(reason(error)),
-            Err(code) => return fail(code),
-        };
-        if let Ok(socket) = socket_of(state, fd) {
-            *socket = Socket::Connected { stream, shut: false };
-        }
-        0
-    })
+    let socket = match socket_of(fd) {
+        Ok(socket) => socket,
+        Err(code) => return fail(code),
+    };
+    let mut socket = socket.lock();
+    match &*socket {
+        Socket::Fresh { port: 0 } => {}
+        // (A connection from a port chosen with bind is not something
+        // the service can make yet.)
+        Socket::Fresh { .. } => return fail(EOPNOTSUPP),
+        Socket::Connected { .. } => return fail(EISCONN),
+        Socket::Listening(_) => return fail(EOPNOTSUPP),
+    }
+    if port == 0 {
+        return fail(EINVAL);
+    }
+    let stream = match net().map(|net| net.tcp_connect(to, port)) {
+        Ok(Ok(stream)) => stream,
+        Ok(Err(error)) => return fail(reason(error)),
+        Err(code) => return fail(code),
+    };
+    *socket = Socket::Connected { stream, shut: false };
+    0
 }
 
 /// `bind(fd, address, length)`: the port the socket is to listen on.
@@ -222,14 +228,18 @@ pub unsafe extern "C" fn bind(fd: c_int, address: *const c_void, length: c_uint)
         Ok(found) => found,
         Err(code) => return fail(code),
     };
-    with(|state| match socket_of(state, fd) {
-        Ok(Socket::Fresh { port: bound @ 0 }) => {
+    let socket = match socket_of(fd) {
+        Ok(socket) => socket,
+        Err(code) => return fail(code),
+    };
+    let mut socket = socket.lock();
+    match &mut *socket {
+        Socket::Fresh { port: bound @ 0 } => {
             *bound = port;
             0
         }
-        Ok(_) => fail(EINVAL),
-        Err(code) => fail(code),
-    })
+        _ => fail(EINVAL),
+    }
 }
 
 /// `listen(fd, backlog)`: connections to the bound port are taken from
@@ -237,23 +247,23 @@ pub unsafe extern "C" fn bind(fd: c_int, address: *const c_void, length: c_uint)
 /// getsockname tells.)
 #[no_mangle]
 pub extern "C" fn listen(fd: c_int, _backlog: c_int) -> c_int {
-    with(|state| {
-        let port = match socket_of(state, fd) {
-            Ok(Socket::Fresh { port }) => *port,
-            Ok(Socket::Listening(_)) => return 0,
-            Ok(Socket::Connected { .. }) => return fail(EISCONN),
-            Err(code) => return fail(code),
-        };
-        let listener = match net(state).map(|net| net.tcp_listen(port)) {
-            Ok(Ok(listener)) => listener,
-            Ok(Err(error)) => return fail(reason(error)),
-            Err(code) => return fail(code),
-        };
-        if let Ok(socket) = socket_of(state, fd) {
-            *socket = Socket::Listening(listener);
-        }
-        0
-    })
+    let socket = match socket_of(fd) {
+        Ok(socket) => socket,
+        Err(code) => return fail(code),
+    };
+    let mut socket = socket.lock();
+    let port = match &*socket {
+        Socket::Fresh { port } => *port,
+        Socket::Listening(_) => return 0,
+        Socket::Connected { .. } => return fail(EISCONN),
+    };
+    let listener = match net().map(|net| net.tcp_listen(port)) {
+        Ok(Ok(listener)) => listener,
+        Ok(Err(error)) => return fail(reason(error)),
+        Err(code) => return fail(code),
+    };
+    *socket = Socket::Listening(listener);
+    0
 }
 
 /// `accept(fd, address, length)`: waits for the next connection to a
@@ -263,26 +273,33 @@ pub extern "C" fn listen(fd: c_int, _backlog: c_int) -> c_int {
 /// `address` and `length` must be null, or as `getsockname` asks.
 #[no_mangle]
 pub unsafe extern "C" fn accept(fd: c_int, address: *mut c_void, length: *mut c_uint) -> c_int {
+    if with(|state| state.free_slot().is_none()) {
+        return fail(EMFILE);
+    }
+    let socket = match socket_of(fd) {
+        Ok(socket) => socket,
+        Err(code) => return fail(code),
+    };
+    // Waiting for a connection, with only this socket's lock held.
+    let stream = match &mut *socket.lock() {
+        Socket::Listening(listener) => loop {
+            match listener.accept_until(u64::MAX) {
+                Ok(Some(stream)) => break stream,
+                Ok(None) => {}
+                Err(error) => return fail(reason(error)),
+            }
+        },
+        _ => return fail(EINVAL),
+    };
+    let (from, from_port) = stream.peer();
+    // SAFETY: the caller's promise.
+    unsafe { address_to(address, length, from, from_port) };
+    // (Another thread may have taken the last free descriptor
+    // meanwhile; then the connection is dropped, closed, as Unix would
+    // leave it waiting.)
     with(|state| {
-        if state.free_slot().is_none() {
-            return fail(EMFILE);
-        }
-        let stream = match socket_of(state, fd) {
-            Ok(Socket::Listening(listener)) => loop {
-                match listener.accept_until(u64::MAX) {
-                    Ok(Some(stream)) => break stream,
-                    Ok(None) => {}
-                    Err(error) => return fail(reason(error)),
-                }
-            },
-            Ok(_) => return fail(EINVAL),
-            Err(code) => return fail(code),
-        };
-        let (from, from_port) = stream.peer();
-        // SAFETY: the caller's promise.
-        unsafe { address_to(address, length, from, from_port) };
         let Some(slot) = state.free_slot() else { return fail(EMFILE) };
-        state.table[slot] = Some(Open::Socket(Box::new(Socket::Connected { stream, shut: false })));
+        state.table[slot] = Some(Open::Socket(shared(Socket::Connected { stream, shut: false })));
         slot as c_int
     })
 }
@@ -318,20 +335,24 @@ pub unsafe extern "C" fn recv(fd: c_int, buffer: *mut c_void, count: usize, flag
 /// here: what arrives is kept until it is read or the socket closed.
 #[no_mangle]
 pub extern "C" fn shutdown(fd: c_int, how: c_int) -> c_int {
-    with(|state| match (socket_of(state, fd), how) {
-        (Ok(Socket::Connected { .. }), SHUT_RD) => 0,
-        (Ok(Socket::Connected { shut: true, .. }), SHUT_WR | SHUT_RDWR) => 0,
-        (Ok(Socket::Connected { stream, shut }), SHUT_WR | SHUT_RDWR) => match stream.shutdown() {
+    let socket = match socket_of(fd) {
+        Ok(socket) => socket,
+        Err(code) => return fail(code),
+    };
+    let mut socket = socket.lock();
+    match (&mut *socket, how) {
+        (Socket::Connected { .. }, SHUT_RD) => 0,
+        (Socket::Connected { shut: true, .. }, SHUT_WR | SHUT_RDWR) => 0,
+        (Socket::Connected { stream, shut }, SHUT_WR | SHUT_RDWR) => match stream.shutdown() {
             Ok(()) => {
                 *shut = true;
                 0
             }
             Err(error) => fail(reason(error)),
         },
-        (Ok(Socket::Connected { .. }), _) => fail(EINVAL),
-        (Ok(_), _) => fail(ENOTCONN),
-        (Err(code), _) => fail(code),
-    })
+        (Socket::Connected { .. }, _) => fail(EINVAL),
+        (_, _) => fail(ENOTCONN),
+    }
 }
 
 /// `setsockopt(fd, level, option, value, length)`: SO_REUSEADDR is
@@ -339,11 +360,11 @@ pub extern "C" fn shutdown(fd: c_int, how: c_int) -> c_int {
 /// uses it. Nothing else is known.
 #[no_mangle]
 pub extern "C" fn setsockopt(fd: c_int, level: c_int, option: c_int, _value: *const c_void, _length: c_uint) -> c_int {
-    with(|state| match socket_of(state, fd) {
+    match socket_of(fd) {
         Ok(_) if level == SOL_SOCKET && option == SO_REUSEADDR => 0,
         Ok(_) => fail(ENOPROTOOPT),
         Err(code) => fail(code),
-    })
+    }
 }
 
 /// `getsockname(fd, address, length)`: the port of this machine the
@@ -358,16 +379,17 @@ pub unsafe extern "C" fn getsockname(fd: c_int, address: *mut c_void, length: *m
     if address.is_null() || length.is_null() {
         return fail(EFAULT);
     }
-    with(|state| {
-        let port = match socket_of(state, fd) {
-            Ok(Socket::Fresh { port }) => *port,
-            Ok(Socket::Connected { stream, .. }) => stream.local_port(),
-            Ok(Socket::Listening(listener)) => listener.port(),
-            Err(code) => return fail(code),
-        };
-        // SAFETY: the caller's promise.
-        unsafe { address_to(address, length, Ipv4::NONE, port) };
-        0
-    })
+    let socket = match socket_of(fd) {
+        Ok(socket) => socket,
+        Err(code) => return fail(code),
+    };
+    let port = match &*socket.lock() {
+        Socket::Fresh { port } => *port,
+        Socket::Connected { stream, .. } => stream.local_port(),
+        Socket::Listening(listener) => listener.port(),
+    };
+    // SAFETY: the caller's promise.
+    unsafe { address_to(address, length, Ipv4::NONE, port) };
+    0
 }
 

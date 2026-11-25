@@ -139,7 +139,7 @@ pub unsafe extern "C" fn lstat(path: *const c_char, out: *mut Stat) -> c_int {
 pub unsafe extern "C" fn fstat(fd: c_int, out: *mut Stat) -> c_int {
     let found = with(|state| {
         let path = match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
-            Some(Open::File(file)) => file.borrow().path.clone(),
+            Some(Open::File(file)) => file.lock().path.clone(),
             Some(Open::PipeRead(_) | Open::PipeWrite(_)) => {
                 return Ok(Stat { st_dev: 1, st_ino: 1 + fd as u64, st_nlink: 1, st_mode: S_IFIFO | 0o600, st_blksize: 4096, ..Stat::default() })
             }
@@ -464,7 +464,7 @@ pub unsafe extern "C" fn utimensat(dirfd: c_int, path: *const c_char, times: *co
 #[no_mangle]
 pub unsafe extern "C" fn futimens(fd: c_int, times: *const Time) -> c_int {
     let path = with(|state| match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
-        Some(Open::File(file)) => Ok(file.borrow().path.clone()),
+        Some(Open::File(file)) => Ok(file.lock().path.clone()),
         Some(_) => Err(EINVAL),
         None => Err(EBADF),
     });
@@ -562,7 +562,7 @@ pub unsafe extern "C" fn chdir(path: *const c_char) -> c_int {
             Err(error) => return fail(reason(error)),
         }
         let moved = taaj::files::Files::in_directory(files.channel(), &files.resolve(name));
-        state.files = Some(Some(moved));
+        state.files = Some(Some(alloc::sync::Arc::new(moved)));
         0
     })
 }
@@ -627,7 +627,7 @@ pub extern "C" fn ftruncate(fd: c_int, length: i64) -> c_int {
     let Ok(length) = u64::try_from(length) else { return fail(EINVAL) };
     with(|state| {
         let path = match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
-            Some(Open::File(file)) if file.borrow().writes() => file.borrow().path.clone(),
+            Some(Open::File(file)) if file.lock().writes() => file.lock().path.clone(),
             Some(_) => return fail(EINVAL), // POSIX: not a file open for writing
             None => return fail(EBADF),
         };

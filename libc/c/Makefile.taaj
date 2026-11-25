@@ -19,7 +19,7 @@
 CC = tcc
 
 # The C half, in this directory.
-OBJECTS = format.o stdio.o fcntl.o ctype.o stdlib.o inet.o float.o setjmp.o time.o abort.o fp128.o math.o scan.o locale.o atexit.o pthread.o emutls.o signal.o mmap.o users.o unix.o
+OBJECTS = format.o stdio.o fcntl.o ctype.o stdlib.o inet.o float.o setjmp.o time.o abort.o fp128.o math.o scan.o locale.o atexit.o signal.o mmap.o users.o unix.o
 
 # musl's approximations of math.h, in libm, joined into libm.o in two
 # halves.

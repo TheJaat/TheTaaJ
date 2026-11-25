@@ -31,9 +31,28 @@
  * any C program could: open, close, read, write, lseek, unlink, isatty,
  * malloc and free. That is also what lets it be compiled and tested on
  * the host, with those seven calls replaced by ones that count and can
- * be told to fail (libc/c/stdio_test.c). */
+ * be told to fail (libc/c/stdio_test.c).
+ *
+ * Threads. Every stream has a lock, a recursive pthread mutex, and
+ * every call that takes a stream holds it for the whole call: two
+ * threads printing at once get whole lines, each fread its own bytes.
+ * flockfile holds it across many calls - and since it counts, the calls
+ * inside still work. The *_unlocked calls are the same without the
+ * lock, for a program that holds it already.
+ *
+ * Two locks are taken together in two places, always in this order:
+ *
+ *   the list of open streams, then a stream     fflush(NULL), exit
+ *   standard input, then standard output        reading the keyboard
+ *                                               shows the question
+ *
+ * and fclose lets its stream go before it takes the list. A lock taken
+ * in one order in one place and the other in another is two threads
+ * each holding what the other waits for. */
 
 #include <stdio.h>
+
+#include <pthread.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -76,6 +95,8 @@ struct _FILE {
     unsigned char single;
     /* The next of the streams fopen made: exit must find them all. */
     FILE *following;
+    /* Held by the thread using the stream (see the top). */
+    pthread_mutex_t lock;
 };
 
 static unsigned char input_buffer[BUFSIZ];
@@ -89,6 +110,7 @@ static FILE standard_input = {
     .pushed = EOF,
     .own = input_buffer,
     .own_size = sizeof input_buffer,
+    .lock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP,
 };
 
 /* Whether standard output is the screen is not known until the program
@@ -101,6 +123,7 @@ static FILE standard_output = {
     .pushed = EOF,
     .own = output_buffer,
     .own_size = sizeof output_buffer,
+    .lock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP,
 };
 
 /* Standard error keeps nothing: a complaint that is still in a buffer
@@ -111,14 +134,51 @@ static FILE standard_error = {
     .buffer = &standard_error.single,
     .size = 1,
     .pushed = EOF,
+    .lock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP,
 };
 
 FILE *stdin = &standard_input;
 FILE *stdout = &standard_output;
 FILE *stderr = &standard_error;
 
-/* The streams fopen made and fclose has not yet taken back. */
+/* The streams fopen made and fclose has not yet taken back, and the
+ * lock that is held to go through them or change them. */
 static FILE *opened;
+static pthread_mutex_t opened_lock = PTHREAD_MUTEX_INITIALIZER;
+
+void flockfile(FILE *stream)
+{
+    pthread_mutex_lock(&stream->lock);
+}
+
+int ftrylockfile(FILE *stream)
+{
+    return pthread_mutex_trylock(&stream->lock) == 0 ? 0 : -1;
+}
+
+void funlockfile(FILE *stream)
+{
+    pthread_mutex_unlock(&stream->lock);
+}
+
+/* A new stream's lock: recursive, free. */
+static void new_lock(FILE *stream)
+{
+    pthread_mutexattr_t recursive;
+    pthread_mutexattr_init(&recursive);
+    pthread_mutexattr_settype(&recursive, PTHREAD_MUTEX_RECURSIVE);
+    pthread_mutex_init(&stream->lock, &recursive);
+    pthread_mutexattr_destroy(&recursive);
+}
+
+/* Puts a stream fopen or fdopen made on the list. */
+static void add_opened(FILE *stream)
+{
+    pthread_mutex_lock(&opened_lock);
+    stream->following = opened;
+    opened = stream;
+    pthread_mutex_unlock(&opened_lock);
+}
 
 /* ---- between the buffer and the descriptor ---- */
 
@@ -222,8 +282,12 @@ static size_t fetch(FILE *stream, unsigned char *to, size_t room)
     /* A program that prints "name? " and then reads means the question
      * to be seen before the answer is waited for - though it did not
      * end in a new line. */
-    if (stream == &standard_input && (standard_output.flags & BY_LINE))
-        flush_waiting(&standard_output);
+    if (stream == &standard_input) {
+        flockfile(&standard_output);
+        if (standard_output.flags & BY_LINE)
+            flush_waiting(&standard_output);
+        funlockfile(&standard_output);
+    }
     ssize_t count = read(stream->descriptor, to, room);
     if (count < 0)
         stream->flags |= FAILED;
@@ -271,12 +335,18 @@ static int put(FILE *stream, const void *from, size_t count)
 static int flush_all(void)
 {
     int result = 0;
+    flockfile(&standard_output);
     if (flush_waiting(&standard_output) < 0)
         result = EOF;
+    funlockfile(&standard_output);
+    pthread_mutex_lock(&opened_lock);
     for (FILE *stream = opened; stream != NULL; stream = stream->following) {
+        flockfile(stream);
         if (flush_waiting(stream) < 0)
             result = EOF;
+        funlockfile(stream);
     }
+    pthread_mutex_unlock(&opened_lock);
     return result;
 }
 
@@ -287,6 +357,16 @@ void __taaj_flush_streams(void)
 }
 
 int fflush(FILE *stream)
+{
+    if (stream == NULL)
+        return flush_all();
+    flockfile(stream);
+    int result = fflush_unlocked(stream);
+    funlockfile(stream);
+    return result;
+}
+
+int fflush_unlocked(FILE *stream)
 {
     if (stream == NULL)
         return flush_all();
@@ -378,8 +458,8 @@ FILE *fopen(const char *path, const char *mode)
     stream->buffer = stream->own;
     stream->size = stream->own_size;
     stream->pushed = EOF;
-    stream->following = opened;
-    opened = stream;
+    new_lock(stream);
+    add_opened(stream);
     return stream;
 }
 
@@ -401,8 +481,8 @@ FILE *fdopen(int descriptor, const char *mode)
     stream->buffer = stream->own;
     stream->size = stream->own_size;
     stream->pushed = EOF;
-    stream->following = opened;
-    opened = stream;
+    new_lock(stream);
+    add_opened(stream);
     return stream;
 }
 
@@ -417,28 +497,37 @@ _Noreturn void __taaj_assert_failed(const char *condition, const char *file, int
 
 int fclose(FILE *stream)
 {
+    flockfile(stream);
     int result = flush_waiting(stream) < 0 ? EOF : 0;
     if (close(stream->descriptor) < 0)
         result = EOF;
-    if (stream->flags & ALLOCATED) {
-        /* Out of the list: `link` is whichever pointer points at it. */
-        FILE **link = &opened;
-        while (*link != NULL && *link != stream)
-            link = &(*link)->following;
-        if (*link == stream)
-            *link = stream->following;
-        free(stream);
-    } else {
+    int allocated = (stream->flags & ALLOCATED) != 0;
+    if (!allocated) {
         /* One of the three: it stays, able to do nothing. */
         stream->flags = 0;
         stream->descriptor = -1;
         stream->position = 0;
         stream->filled = 0;
     }
+    /* Let go before the list is taken: the list's lock comes first
+     * (see the top). */
+    funlockfile(stream);
+    if (allocated) {
+        /* Out of the list: `link` is whichever pointer points at it. */
+        pthread_mutex_lock(&opened_lock);
+        FILE **link = &opened;
+        while (*link != NULL && *link != stream)
+            link = &(*link)->following;
+        if (*link == stream)
+            *link = stream->following;
+        pthread_mutex_unlock(&opened_lock);
+        pthread_mutex_destroy(&stream->lock);
+        free(stream);
+    }
     return result;
 }
 
-int setvbuf(FILE *stream, char *buffer, int mode, size_t size)
+static int setvbuf_unlocked(FILE *stream, char *buffer, int mode, size_t size)
 {
     if (mode != _IOFBF && mode != _IOLBF && mode != _IONBF)
         return -1;
@@ -465,7 +554,7 @@ int setvbuf(FILE *stream, char *buffer, int mode, size_t size)
 
 /* ---- reading ---- */
 
-int fgetc(FILE *stream)
+int fgetc_unlocked(FILE *stream)
 {
     if (begin_reading(stream) < 0)
         return EOF;
@@ -489,7 +578,7 @@ int getchar(void)
     return fgetc(stdin);
 }
 
-int ungetc(int byte, FILE *stream)
+static int ungetc_unlocked(int byte, FILE *stream)
 {
     if (byte == EOF || begin_reading(stream) < 0 || stream->pushed != EOF)
         return EOF;
@@ -498,13 +587,13 @@ int ungetc(int byte, FILE *stream)
     return stream->pushed;
 }
 
-char *fgets(char *to, int size, FILE *stream)
+char *fgets_unlocked(char *to, int size, FILE *stream)
 {
     if (size <= 0)
         return NULL;
     int kept = 0;
     while (kept < size - 1) {
-        int byte = fgetc(stream);
+        int byte = fgetc_unlocked(stream);
         if (byte == EOF) {
             /* Half a line and then a failure is not a line. */
             if (stream->flags & FAILED)
@@ -534,7 +623,7 @@ static int product(size_t size, size_t count, size_t *total)
     return 1;
 }
 
-size_t fread(void *to, size_t size, size_t count, FILE *stream)
+size_t fread_unlocked(void *to, size_t size, size_t count, FILE *stream)
 {
     size_t total;
     if (!product(size, count, &total) || total == 0)
@@ -571,7 +660,7 @@ size_t fread(void *to, size_t size, size_t count, FILE *stream)
 
 /* ---- writing ---- */
 
-size_t fwrite(const void *from, size_t size, size_t count, FILE *stream)
+size_t fwrite_unlocked(const void *from, size_t size, size_t count, FILE *stream)
 {
     size_t total;
     if (!product(size, count, &total) || total == 0)
@@ -581,7 +670,7 @@ size_t fwrite(const void *from, size_t size, size_t count, FILE *stream)
     return count;
 }
 
-int fputc(int byte, FILE *stream)
+int fputc_unlocked(int byte, FILE *stream)
 {
     unsigned char one = (unsigned char)byte;
     if (begin_writing(stream) < 0 || put(stream, &one, 1) < 0)
@@ -599,7 +688,7 @@ int putchar(int byte)
     return fputc(byte, stdout);
 }
 
-int fputs(const char *string, FILE *stream)
+int fputs_unlocked(const char *string, FILE *stream)
 {
     if (begin_writing(stream) < 0 || put(stream, string, strlen(string)) < 0)
         return EOF;
@@ -609,9 +698,10 @@ int fputs(const char *string, FILE *stream)
 /* The string and a new line. */
 int puts(const char *string)
 {
-    if (fputs(string, stdout) == EOF || fputc('\n', stdout) == EOF)
-        return EOF;
-    return 0;
+    flockfile(stdout);
+    int result = fputs_unlocked(string, stdout) == EOF || fputc_unlocked('\n', stdout) == EOF ? EOF : 0;
+    funlockfile(stdout);
+    return result;
 }
 
 /* Where printf's text goes: a stream, and whether it took it. */
@@ -627,7 +717,7 @@ static void into_stream(void *context, const char *bytes, size_t count)
         target->failed = 1;
 }
 
-int vfprintf(FILE *stream, const char *format, va_list arguments)
+static int vfprintf_unlocked(FILE *stream, const char *format, va_list arguments)
 {
     if (begin_writing(stream) < 0)
         return EOF;
@@ -692,7 +782,7 @@ void perror(const char *doing)
 
 /* ---- where a stream is ---- */
 
-int fseek(FILE *stream, long offset, int whence)
+static int fseek_unlocked(FILE *stream, long offset, int whence)
 {
     if (stream->flags & WRITING) {
         if (flush_waiting(stream) < 0)
@@ -713,7 +803,7 @@ int fseek(FILE *stream, long offset, int whence)
     return 0;
 }
 
-long ftell(FILE *stream)
+static long ftell_unlocked(FILE *stream)
 {
     off_t place = lseek(stream->descriptor, 0, SEEK_CUR);
     if (place < 0)
@@ -725,21 +815,23 @@ long ftell(FILE *stream)
 
 void rewind(FILE *stream)
 {
-    fseek(stream, 0, SEEK_SET);
+    flockfile(stream);
+    fseek_unlocked(stream, 0, SEEK_SET);
     stream->flags &= ~FAILED;
+    funlockfile(stream);
 }
 
-int feof(FILE *stream)
+int feof_unlocked(FILE *stream)
 {
     return (stream->flags & AT_END) != 0;
 }
 
-int ferror(FILE *stream)
+int ferror_unlocked(FILE *stream)
 {
     return (stream->flags & FAILED) != 0;
 }
 
-void clearerr(FILE *stream)
+void clearerr_unlocked(FILE *stream)
 {
     stream->flags &= ~(AT_END | FAILED);
 }
@@ -752,4 +844,108 @@ int fileno(FILE *stream)
 int remove(const char *path)
 {
     return unlink(path);
+}
+
+/* ---- the same, with the stream's lock held (see the top) ---- */
+
+#define LOCKED(stream, call) \
+    do { \
+        flockfile(stream); \
+        __typeof__(call) result_ = (call); \
+        funlockfile(stream); \
+        return result_; \
+    } while (0)
+
+int setvbuf(FILE *stream, char *buffer, int mode, size_t size)
+{
+    LOCKED(stream, setvbuf_unlocked(stream, buffer, mode, size));
+}
+
+int fgetc(FILE *stream)
+{
+    LOCKED(stream, fgetc_unlocked(stream));
+}
+
+int getc_unlocked(FILE *stream)
+{
+    return fgetc_unlocked(stream);
+}
+
+int getchar_unlocked(void)
+{
+    return fgetc_unlocked(stdin);
+}
+
+int ungetc(int byte, FILE *stream)
+{
+    LOCKED(stream, ungetc_unlocked(byte, stream));
+}
+
+char *fgets(char *to, int size, FILE *stream)
+{
+    LOCKED(stream, fgets_unlocked(to, size, stream));
+}
+
+size_t fread(void *to, size_t size, size_t count, FILE *stream)
+{
+    LOCKED(stream, fread_unlocked(to, size, count, stream));
+}
+
+size_t fwrite(const void *from, size_t size, size_t count, FILE *stream)
+{
+    LOCKED(stream, fwrite_unlocked(from, size, count, stream));
+}
+
+int fputc(int byte, FILE *stream)
+{
+    LOCKED(stream, fputc_unlocked(byte, stream));
+}
+
+int putc_unlocked(int byte, FILE *stream)
+{
+    return fputc_unlocked(byte, stream);
+}
+
+int putchar_unlocked(int byte)
+{
+    return fputc_unlocked(byte, stdout);
+}
+
+int fputs(const char *string, FILE *stream)
+{
+    LOCKED(stream, fputs_unlocked(string, stream));
+}
+
+/* What one printf prints is one piece: no other thread's text lands in
+ * the middle of it. */
+int vfprintf(FILE *stream, const char *format, va_list arguments)
+{
+    LOCKED(stream, vfprintf_unlocked(stream, format, arguments));
+}
+
+int fseek(FILE *stream, long offset, int whence)
+{
+    LOCKED(stream, fseek_unlocked(stream, offset, whence));
+}
+
+long ftell(FILE *stream)
+{
+    LOCKED(stream, ftell_unlocked(stream));
+}
+
+int feof(FILE *stream)
+{
+    LOCKED(stream, feof_unlocked(stream));
+}
+
+int ferror(FILE *stream)
+{
+    LOCKED(stream, ferror_unlocked(stream));
+}
+
+void clearerr(FILE *stream)
+{
+    flockfile(stream);
+    clearerr_unlocked(stream);
+    funlockfile(stream);
 }

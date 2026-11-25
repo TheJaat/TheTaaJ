@@ -6,7 +6,7 @@ KERNEL_DIR = kernel
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
-        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test \
+        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test \
         llvm64 llvm-aarch64 clang-tblgen llvm64-test clang64-test aarch64-clang-test aarch64-llvm-test llvm-put llvm-put-aarch64
 
 # Default target
@@ -208,7 +208,7 @@ CWORDS_HOST  = $(C_BIN)/host-cwords
 CPRIMES_HOST = $(C_BIN)/host-cprimes
 CPRIMES_LIMIT = 24000000
 LIBC_A       = $(C_BIN)/libc.a
-LIBC_C       = format stdio fcntl ctype stdlib inet float setjmp time abort fp128 math scan locale atexit pthread emutls signal mmap users unix \
+LIBC_C       = format stdio fcntl ctype stdlib inet float setjmp time abort fp128 math scan locale atexit signal mmap users unix \
                $(addprefix libm/,$(LIBM))
 # libc/c/libm: musl's sin, exp, log, pow and the rest (journal entry 074),
 # and floats.c, TheTaaJ's float versions of them. Each its own file, as
@@ -523,7 +523,10 @@ ifeq ($(HAVE_CC),yes)
 	    $(TFSTOOL_RS) put $(RUN_DISK) $$program $(CXX_X86_DIR)/bin/$$program > /dev/null || exit 1; \
 	done
 	@$(TFSTOOL_RS) rm $(RUN_DISK) make > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) make $(C_BIN)/make > /dev/null
+	@clang $(TAAJ_CFLAGS) -femulated-tls -c $(THREADS_C) -o $(C_BIN)/threads.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/threads.o $(LIBC_A) -o $(C_BIN)/threads
+	@$(TFSTOOL_RS) rm $(RUN_DISK) threads > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) threads $(C_BIN)/threads > /dev/null
 endif
+	@$(TFSTOOL_RS) rm $(RUN_DISK) threadcheck > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) threadcheck $(USER_BIN)/threadcheck > /dev/null
 
 # One C program of your own, built and put on that disk (close QEMU
 # first: the disk is its while it runs):
@@ -869,7 +872,7 @@ FORMAT_RENAMED = -Dvsnprintf=taaj_vsnprintf -Dsnprintf=taaj_snprintf -Dvsprintf=
                  -Dvasprintf=taaj_vasprintf -Dasprintf=taaj_asprintf
 # What unix.c defines, renamed taaj_NAME for its test on the host (its
 # calls to malloc, fprintf and the rest go to the host's).
-UNIX_NAMES = basename dirname getopt optarg optind opterr optopt environ getenv setenv unsetenv putenv \
+UNIX_NAMES = __errno_location basename dirname getopt optarg optind opterr optopt environ getenv setenv unsetenv putenv \
              fnmatch glob globfree popen pclose errno
 libc-test:
 	@mkdir -p $(LIBC_DIR)/target
@@ -1073,7 +1076,10 @@ ifeq ($(HAVE_CC),yes)
 	    $(TFSTOOL_RS) put $(RUN_A64_DISK) $$program $(CXX_A64_DIR)/bin/$$program > /dev/null || exit 1; \
 	done
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) make > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) make $(C_A64_BIN)/make > /dev/null
+	@clang $(TAAJ_A64_CFLAGS) -femulated-tls -c $(THREADS_C) -o $(C_A64_BIN)/threads.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/threads.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/threads
+	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) threads > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) threads $(C_A64_BIN)/threads > /dev/null
 endif
+	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) threadcheck > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) threadcheck $(A64_USER_BIN)/threadcheck > /dev/null
 
 # The serial port is this terminal: what you type goes to the shell.
 # Ctrl+A, then X, leaves QEMU. RUN_A64 adds QEMU options:
@@ -1488,6 +1494,32 @@ else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 pipes boot is not run"
 endif
 
+# Threads in a program (journal entry 095): threads.c (next to the test
+# script) checks pthreads on 4 CPUs, and that a program ends whichever
+# of its threads ends it. Compiled with -femulated-tls, as C++ is: its
+# _Thread_local variable is found through __emutls_get_address.
+THREAD64_LOG   = $(BUILD_DIR)/thread64.log
+THREAD_A64_LOG = $(BUILD_DIR)/aarch64/thread.log
+THREADS_C      = $(KERNEL64_DIR)/scripts/threads.c
+thread64-test: iso64 user64 libc64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@clang $(TAAJ_CFLAGS) -femulated-tls -c $(THREADS_C) -o $(C_BIN)/threads.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/threads.o $(LIBC_A) -o $(C_BIN)/threads
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/thread-test.sh x86_64 $(ISO64_IMG) $(THREAD64_LOG).disk $(THREAD64_LOG) $(C_BIN)/threads $(USER_BIN)/threadcheck
+	@echo "thread64-test passed"
+else
+	@echo "FAIL: the threads test needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+
+aarch64-thread-test: kernel-aarch64 user-aarch64 tfstool-rs
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@clang $(TAAJ_A64_CFLAGS) -femulated-tls -c $(THREADS_C) -o $(C_A64_BIN)/threads.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/threads.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/threads
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/thread-test.sh aarch64 $(KERNEL_A64_IMAGE) $(THREAD_A64_LOG).disk $(THREAD_A64_LOG) $(C_A64_BIN)/threads $(A64_USER_BIN)/threadcheck
+	@echo "aarch64-thread-test passed"
+else
+	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 threads boot is not run"
+endif
+
 aarch64-tcc-test: kernel-aarch64 user-aarch64 tcc-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
@@ -1719,7 +1751,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 12
-TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test
+TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared

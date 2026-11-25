@@ -3,9 +3,9 @@
 // destructors after it, function-local statics, new and delete) and the
 // standard library (strings, containers, algorithms, iostreams, string
 // streams, <charconv>, <format>, <regex>, <chrono>, smart pointers,
-// <optional>, <variant>, <any>, <functional>), and threads as they are
-// for a program with one thread: <mutex>, call_once, thread_local, a
-// timed wait, and std::thread, which cannot start a second one.
+// <optional>, <variant>, <any>, <functional>), and threads: std::thread
+// on every CPU, <mutex>, call_once, thread_local, condition variables,
+// an exception on another thread's stack, std::async.
 //
 //   cxxlib          every check; "c++: N checks, all passed", and last of
 //                   all, from a destructor after main has returned,
@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <any>
+#include <atomic>
 #include <cassert>
 #include <charconv>
 #include <chrono>
@@ -26,6 +27,7 @@
 #include <deque>
 #include <format>
 #include <functional>
+#include <future>
 #include <iomanip>
 #include <iostream>
 #include <list>
@@ -427,11 +429,11 @@ static void the_rest()
           "<cmath>'s exact functions");
 }
 
-// ---- one thread ----
+// ---- threads ----
 
 static thread_local int per_thread = 7;
 
-static void one_thread()
+static void threads()
 {
     std::mutex mutex;
     {
@@ -446,38 +448,81 @@ static void one_thread()
     recursive.unlock();
 
     // Its first use makes it, from its starting value (-femulated-tls:
-    // libc/c/emutls.c), and it then keeps what is put in it.
+    // __emutls_get_address, libc/src/threads.rs), and it then keeps
+    // what is put in it.
     per_thread += 1;
     check(per_thread == 8, "a thread_local variable");
 
-    std::once_flag once;
-    int calls = 0;
-    std::call_once(once, [&] { calls++; });
-    std::call_once(once, [&] { calls++; });
-    check(calls == 1, "call_once calls once");
+    // Four threads, on as many CPUs as there are: each adds under one
+    // mutex, and each has its own per_thread, starting from 7.
+    long counter = 0;
+    int own = 0;
+    std::vector<std::thread> workers;
+    for (int n = 0; n < 4; n++)
+        workers.emplace_back([&, n] {
+            bool fresh = per_thread == 7;
+            per_thread = 100 + n;
+            for (int i = 0; i < 20000; i++) {
+                std::lock_guard<std::mutex> held(mutex);
+                counter++;
+            }
+            std::lock_guard<std::mutex> held(mutex);
+            own += fresh && per_thread == 100 + n;
+        });
+    for (auto &worker : workers)
+        worker.join();
+    check(counter == 80000, "4 std::threads add 20,000 each under a std::mutex: none lost");
+    check(own == 4 && per_thread == 8, "thread_local: each std::thread its own, from its starting value");
 
-    // Nobody can notify it, so it waits out its time - and not less.
+    std::once_flag once;
+    std::atomic<int> calls{0};
+    workers.clear();
+    for (int n = 0; n < 4; n++)
+        workers.emplace_back([&] { std::call_once(once, [&] { calls++; }); });
+    for (auto &worker : workers)
+        worker.join();
+    check(calls == 1, "call_once from 4 threads calls once");
+
+    // One thread waits until another says go.
     std::condition_variable condition;
+    bool go = false, went = false;
+    std::thread waiter([&] {
+        std::unique_lock<std::mutex> lock(mutex);
+        condition.wait(lock, [&] { return go; });
+        went = true;
+    });
+    {
+        std::lock_guard<std::mutex> held(mutex);
+        go = true;
+    }
+    condition.notify_one();
+    waiter.join();
+    check(went, "a condition_variable: one thread notifies another");
+
+    // Nobody notifies this one, so it waits out its time - and not less.
+    std::condition_variable never;
     std::unique_lock<std::mutex> lock(mutex);
     auto start = std::chrono::steady_clock::now();
-    auto status = condition.wait_for(lock, std::chrono::milliseconds(50));
+    auto status = never.wait_for(lock, std::chrono::milliseconds(50));
     auto waited = std::chrono::steady_clock::now() - start;
     check(status == std::cv_status::timeout && waited >= std::chrono::milliseconds(50),
           "a condition_variable waits out its time");
     lock.unlock();
 
-#ifdef __TAAJ__
-    // A second thread cannot be made: std::thread says so with the
-    // exception the standard gives for it.
-    bool refused = false;
-    try {
-        std::thread second([] {});
-        second.join();
-    } catch (const std::system_error &e) {
-        refused = e.code() == std::errc::resource_unavailable_try_again;
-    }
-    check(refused, "std::thread: no second thread, said with resource_unavailable_try_again");
-#endif
+    // Unwinding walks the thread's own stack, not main's.
+    bool caught = false;
+    std::thread thrower([&] {
+        try {
+            throw std::runtime_error("on another thread");
+        } catch (const std::exception &e) {
+            caught = std::string(e.what()) == "on another thread";
+        }
+    });
+    thrower.join();
+    check(caught, "an exception thrown and caught on another thread");
+
+    auto answer = std::async(std::launch::async, [] { return 6 * 7; });
+    check(answer.get() == 42, "std::async: a thread of its own, its answer through a future");
 }
 
 int main(int argc, char **argv)
@@ -496,7 +541,7 @@ int main(int argc, char **argv)
     containers();
     streams();
     the_rest();
-    one_thread();
+    threads();
     std::cout << "c++: " << checks << " checks, " << (failures ? "some FAILED" : "all passed") << std::endl;
     return failures ? 1 : 0;
 }
