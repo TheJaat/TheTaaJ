@@ -3663,3 +3663,33 @@ make test64
 The work split itself is in `docs/who-does-what.md`.
 
 Automated: make libc-test, make test64
+
+---
+
+## 099 · Tests at full speed: KVM for the test scripts, and the boot test's two typing races
+
+[The entry](journal/099-tests-at-full-speed.md)
+
+On MaK (KVM):
+
+```
+make boot64-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `four copies of cprimes at once: took 8.33 s; the 4 CPUs worked for 27.78 s in all` (times vary) | The four copies ran at once under KVM; worked is well over 1.5 times took |
+| `boot64-test passed` | Every expected line was found, the cfloat lines wherever they were |
+
+On either machine:
+
+```
+make --eval='show-accel: ; @echo $$TAAJ_ACCEL' show-accel
+make test64
+make test64 TAAJ_ACCEL=tcg
+```
+
+| Look for | Meaning |
+|---|---|
+| `kvm` on MaK, `tcg` on The-Jat | The accelerator the tests use |
+| `test64: all passed`, twice | Every part, at full speed and emulated |

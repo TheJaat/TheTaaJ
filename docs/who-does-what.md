@@ -109,7 +109,7 @@ Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 | Machine | Step | Branch |
 |---|---|---|
 | The-Jat | Entry 098, two machines (this file, MaK's three fixes documented); then step B | `two-machines` |
-| MaK | A: the scheduler and timing step | `timing` |
+| MaK | A: the scheduler and timing step, one branch per item: now K19, the race hunt | `k19-race-hunt` |
 
 ## The decided order
 
@@ -277,7 +277,7 @@ The order matters here: each item is needed by the ones after it.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K19 | **Run `make test64` under KVM repeatedly** (say 20 times) and fix every race found | M | KVM already found two |
+| K19 | **Run `make test64` under KVM repeatedly** (say 20 times) and fix every race found | M | KVM already found two. **First part done (entry 099)**: the tests choose KVM themselves (`TAAJ_ACCEL`), and the typed boot test's two typing races are fixed. The repeated runs are next |
 | K20 | Process priorities and choosing a thread's CPU (affinity) | M | Four busy programs make typing sluggish |
 | K21 | CPU time per process in `ps` | S | |
 | K22 | A transmit-interrupt serial writer (AArch64 output capped at ~3200 bytes/s) | S | |
