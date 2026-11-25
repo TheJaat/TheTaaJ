@@ -169,7 +169,8 @@ int dup2(int fd, int to);
  * to one it starts (posix_spawn_file_actions_adddup2, spawn.h) - in
  * another. The reader sees the end once every write end is closed, in
  * every program that has one; a write with no reader left fails with
- * EPIPE. pipe2's flags mean nothing here. */
+ * EPIPE. pipe2's O_CLOEXEC keeps both ends from the programs this one
+ * starts (spawn.h); its O_NONBLOCK means nothing here - the ends wait. */
 int pipe(int fds[2]);
 int pipe2(int fds[2], int flags);
 

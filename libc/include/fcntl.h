@@ -45,8 +45,8 @@ int open(const char *path, int flags, ...);
 /* fcntl(fd, command, ...): asks about or changes a descriptor.
  *
  *   F_DUPFD n         dup, to the lowest free number from n up
- *   F_GETFD, F_SETFD  FD_CLOEXEC: kept and given back, though nothing
- *                     execs here
+ *   F_GETFD, F_SETFD  FD_CLOEXEC: a descriptor marked so is not given
+ *                     to the programs this one starts (spawn.h)
  *   F_GETFL           the flags it was opened with
  *   F_SETFL           O_APPEND and O_NONBLOCK on or off (the others
  *                     cannot change, as POSIX says)

@@ -130,13 +130,36 @@ pub unsafe extern "C" fn pipe(fds: *mut c_int) -> c_int {
     }
 }
 
-/// `pipe2(fds, flags)`: as pipe. O_CLOEXEC means nothing here (no
-/// exec); O_NONBLOCK is not kept - the ends wait.
+/// `pipe2(fds, flags)`: as pipe; with O_CLOEXEC both ends are kept from
+/// the programs this one starts (spawn.rs). O_NONBLOCK is not kept -
+/// the ends wait.
 ///
 /// # Safety
 /// As pipe.
 #[no_mangle]
-pub unsafe extern "C" fn pipe2(fds: *mut c_int, _flags: c_int) -> c_int {
+pub unsafe extern "C" fn pipe2(fds: *mut c_int, flags: c_int) -> c_int {
     // SAFETY: the caller's promise.
-    unsafe { pipe(fds) }
+    let made = unsafe { pipe(fds) };
+    if made == 0 && flags & O_CLOEXEC != 0 {
+        // SAFETY: pipe wrote both.
+        let (read, write) = unsafe { (*fds, *fds.add(1)) };
+        with(|state| {
+            state.set_cloexec(read as usize, true);
+            state.set_cloexec(write as usize, true);
+        });
+    }
+    made
+}
+
+/// open's O_CLOEXEC (fcntl.h).
+pub(crate) const O_CLOEXEC: c_int = 0o2000000;
+
+/// A pipe for this library's own use (the shell's, system's, popen's):
+/// both ends close-on-exec, so that a program started while it is open
+/// does not get them - and, holding a write end, keep a reader from ever
+/// seeing the end. The ends it does mean a program to have it gets by
+/// dup2, which clears the mark.
+pub(crate) fn private_pipe(fds: &mut [c_int; 2]) -> c_int {
+    // SAFETY: room for two.
+    unsafe { pipe2(fds.as_mut_ptr(), O_CLOEXEC) }
 }

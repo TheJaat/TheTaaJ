@@ -66,7 +66,9 @@ pub(crate) enum Open {
     Input,
     Output,
     Error,
-    File(File),
+    /// Shared with the descriptors `dup` made of it: one offset, moved
+    /// by a read through any of them - POSIX's "open file description".
+    File(SharedFile),
     /// (Boxed: a connection holds a message's worth of bytes that
     /// arrived and were not read yet.)
     Socket(alloc::boxed::Box<crate::sockets::Socket>),
@@ -76,12 +78,20 @@ pub(crate) enum Open {
     PipeWrite(crate::pipes::WriteEnd),
 }
 
+/// A file open, as its descriptors share it.
+pub(crate) type SharedFile = alloc::rc::Rc<core::cell::RefCell<File>>;
+
+/// A descriptor for a file newly open.
+fn file(file: File) -> Open {
+    Open::File(alloc::rc::Rc::new(core::cell::RefCell::new(file)))
+}
+
 pub(crate) struct File {
     /// From the root, with the '/' in front: what it meant when it was
     /// opened, whatever directory that was said in.
     pub(crate) path: String,
-    offset: u64,
-    flags: c_int,
+    pub(crate) offset: u64,
+    pub(crate) flags: c_int,
 }
 
 impl File {
@@ -97,6 +107,10 @@ impl File {
 pub(crate) struct State {
     /// The descriptors: the number is the index.
     pub(crate) table: Vec<Option<Open>>,
+    /// Close-on-exec, one bit per descriptor (OPEN_MAX is 32): those a
+    /// program this one starts does not get (spawn.rs). Every new
+    /// descriptor starts without it.
+    pub(crate) cloexec: u32,
     input: taaj::Input,
     /// The file service: not asked for until a file is first opened,
     /// and then once (the outer Option) - a program may have been
@@ -117,19 +131,81 @@ impl State {
     fn new() -> State {
         let mut table = Vec::with_capacity(OPEN_MAX);
         table.extend([Some(Open::Input), Some(Open::Output), Some(Open::Error)]);
-        State { table, input: taaj::input(), files: None, net: None }
+        let mut state = State { table, cloexec: 0, input: taaj::input(), files: None, net: None };
+        state.inherit();
+        state
+    }
+
+    /// The descriptors beyond 0, 1 and 2 whoever started this program
+    /// handed down (abi::startup::DESCRIPTORS, abi::descriptors): a
+    /// file as its name, place and flags; a pipe's end, or another
+    /// stream, as the channel itself. The parent filled the channel and
+    /// closed its end before this program started, so reading stops at
+    /// the last message instead of waiting.
+    fn inherit(&mut self) {
+        use abi::descriptors::Entry;
+        let Some(channel) = taaj::descriptors() else { return };
+        let mut message = [0u8; abi::MESSAGE_MAX as usize];
+        let mut handles = [0u64; 1];
+        while let Ok((length, count)) = taaj::receive(channel, &mut message, &mut handles) {
+            let handle = (count == 1).then_some(handles[0]);
+            let entry = Entry::decode(&message[..length]).filter(|entry| entry.has_handle() == handle.is_some());
+            let slot = entry.as_ref().map(|entry| usize::from(entry.descriptor())).filter(|&slot| (3..OPEN_MAX).contains(&slot));
+            let (Some(entry), Some(slot)) = (entry, slot) else {
+                // Not one this library can use: dropped, its handle closed.
+                if let Some(handle) = handle {
+                    let _ = taaj::close(handle);
+                }
+                continue;
+            };
+            let open = match (entry, handle) {
+                // read and write find the file service already asked
+                // for, as open leaves it: asked for here, then. A
+                // program given no file service cannot use the file.
+                (Entry::File { .. }, _) if self.files().is_none() => continue,
+                (Entry::File { flags, offset, path, .. }, _) => file(File { path: String::from(path), offset, flags }),
+                (Entry::Read { .. }, Some(handle)) => {
+                    Open::PipeRead(alloc::rc::Rc::new(core::cell::RefCell::new(crate::pipes::Reader::new(handle))))
+                }
+                (_, Some(handle)) => Open::PipeWrite(alloc::rc::Rc::new(crate::pipes::Channel(handle))),
+                (_, None) => continue, // ruled out above
+            };
+            while self.table.len() <= slot {
+                self.table.push(None);
+            }
+            self.table[slot] = Some(open);
+        }
+        let _ = taaj::close(channel);
     }
 
     /// The lowest number not in use: what C promises `open` returns.
+    /// Without close-on-exec, as every new descriptor starts.
     pub(crate) fn free_slot(&mut self) -> Option<usize> {
-        if let Some(slot) = self.table.iter().position(Option::is_none) {
-            return Some(slot);
+        let slot = match self.table.iter().position(Option::is_none) {
+            Some(slot) => slot,
+            None if self.table.len() < OPEN_MAX => {
+                self.table.push(None);
+                self.table.len() - 1
+            }
+            None => return None,
+        };
+        self.set_cloexec(slot, false);
+        Some(slot)
+    }
+
+    /// Marks descriptor `slot` close-on-exec, or not.
+    pub(crate) fn set_cloexec(&mut self, slot: usize, on: bool) {
+        if slot < OPEN_MAX {
+            if on {
+                self.cloexec |= 1 << slot;
+            } else {
+                self.cloexec &= !(1 << slot);
+            }
         }
-        if self.table.len() < OPEN_MAX {
-            self.table.push(None);
-            return Some(self.table.len() - 1);
-        }
-        None
+    }
+
+    pub(crate) fn is_cloexec(&self, slot: usize) -> bool {
+        slot < OPEN_MAX && self.cloexec & (1 << slot) != 0
     }
 }
 
@@ -242,7 +318,9 @@ pub unsafe extern "C" fn __taaj_open(path: *const c_char, flags: c_int) -> c_int
         if let Err(error) = made_ready {
             return fail(reason(error));
         }
-        state.table[slot] = Some(Open::File(file));
+        let cloexec = file.flags & O_CLOEXEC != 0;
+        state.table[slot] = Some(self::file(File { flags: file.flags & !O_CLOEXEC, ..file }));
+        state.set_cloexec(slot, cloexec);
         slot as c_int
     })
 }
@@ -253,7 +331,10 @@ pub unsafe extern "C" fn __taaj_open(path: *const c_char, flags: c_int) -> c_int
 #[no_mangle]
 pub extern "C" fn close(fd: c_int) -> c_int {
     with(|state| match usize::try_from(fd).ok().and_then(|fd| state.table.get_mut(fd)).and_then(Option::take) {
-        Some(_) => 0,
+        Some(_) => {
+            state.set_cloexec(fd as usize, false);
+            0
+        }
         None => fail(EBADF),
     })
 }
@@ -281,7 +362,8 @@ pub unsafe extern "C" fn read(fd: c_int, buffer: *mut c_void, count: usize) -> i
             Some(Open::Input) => input.read(out) as isize,
             Some(Open::Socket(socket)) => socket.read(out),
             Some(Open::PipeRead(end)) => end.borrow_mut().read(out) as isize,
-            Some(Open::File(file)) if file.reads() => {
+            Some(Open::File(file)) if file.borrow().reads() => {
+                let mut file = file.borrow_mut();
                 // A file can only be in the table if the service was
                 // there to open it.
                 let Some(Some(files)) = files else { return fail(EIO) };
@@ -328,7 +410,8 @@ pub unsafe extern "C" fn write(fd: c_int, buffer: *const c_void, count: usize) -
             Some(Open::Error) => taaj::write_error(bytes).map_or_else(|_| fail(EIO), |_| count as isize),
             Some(Open::Socket(socket)) => socket.write(bytes),
             Some(Open::PipeWrite(end)) => crate::pipes::write(end, bytes),
-            Some(Open::File(file)) if file.writes() => {
+            Some(Open::File(file)) if file.borrow().writes() => {
+                let mut file = file.borrow_mut();
                 let Some(Some(files)) = files else { return fail(EIO) };
                 let written = if file.flags & O_APPEND != 0 {
                     // The service finds the end itself, at the moment
@@ -362,6 +445,7 @@ pub extern "C" fn lseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
             Some(_) => return fail(ESPIPE),
             None => return fail(EBADF),
         };
+        let mut file = file.borrow_mut();
         let from = match whence {
             SEEK_SET => 0,
             SEEK_CUR => file.offset,
@@ -563,7 +647,7 @@ fn copy_of(state: &State, fd: c_int) -> Result<Open, c_int> {
         Some(Open::Input) => Ok(Open::Input),
         Some(Open::Output) => Ok(Open::Output),
         Some(Open::Error) => Ok(Open::Error),
-        Some(Open::File(file)) => Ok(Open::File(File { path: file.path.clone(), offset: file.offset, flags: file.flags })),
+        Some(Open::File(file)) => Ok(Open::File(file.clone())),
         Some(Open::Socket(_)) => Err(EOPNOTSUPP),
         Some(Open::PipeRead(end)) => Ok(Open::PipeRead(end.clone())),
         Some(Open::PipeWrite(end)) => Ok(Open::PipeWrite(end.clone())),
@@ -603,6 +687,8 @@ pub extern "C" fn dup2(fd: c_int, to: c_int) -> c_int {
             state.table.push(None);
         }
         state.table[slot] = Some(copy);
+        // A copy made by dup2 is handed on, whatever the first is.
+        state.set_cloexec(slot, false);
         to
     })
 }
@@ -653,31 +739,31 @@ pub extern "C" fn __taaj_fcntl(fd: c_int, command: c_int, argument: c_long) -> c
                 state.table.push(None);
             }
             state.table[slot] = Some(copy);
+            state.set_cloexec(slot, command == F_DUPFD_CLOEXEC);
             slot as c_int
         });
     }
     with(|state| {
+        let slot = fd as usize;
+        let cloexec = state.is_cloexec(slot);
         let open = match usize::try_from(fd).ok().and_then(|fd| state.table.get_mut(fd)).and_then(Option::as_mut) {
             Some(open) => open,
             None => return fail(EBADF),
         };
         match (command, open) {
-            (F_GETFD, Open::File(file)) => c_int::from(file.flags & O_CLOEXEC != 0),
-            (F_GETFD, _) => 0,
-            (F_SETFD, Open::File(file)) => {
-                if argument & FD_CLOEXEC != 0 {
-                    file.flags |= O_CLOEXEC;
-                } else {
-                    file.flags &= !O_CLOEXEC;
-                }
+            // Close-on-exec: whether a program this one starts gets the
+            // descriptor (spawn.rs).
+            (F_GETFD, _) => c_int::from(cloexec),
+            (F_SETFD, _) => {
+                state.set_cloexec(slot, argument & FD_CLOEXEC != 0);
                 0
             }
-            (F_SETFD, _) => 0,
-            (F_GETFL, Open::File(file)) => file.flags & !O_CLOEXEC,
+            (F_GETFL, Open::File(file)) => file.borrow().flags,
             (F_GETFL, Open::Input) => O_RDONLY,
             (F_GETFL, Open::Output | Open::Error) => O_WRONLY,
             (F_GETFL, Open::Socket(_)) => 2, // O_RDWR
             (F_SETFL, Open::File(file)) => {
+                let mut file = file.borrow_mut();
                 let changeable = O_APPEND | O_NONBLOCK;
                 file.flags = (file.flags & !changeable) | (argument as c_int & changeable);
                 0

@@ -1000,7 +1000,7 @@ fn main() -> i64 {
 /// one would stop the only process able to fix it.
 fn serve_request(launcher: Handle, requests: Handle, power_ready: bool) -> Option<u8> {
     use abi::init::{Run, BUILT_IN, IMAGE};
-    use abi::startup::{ARGUMENTS, DIRECTORY, HANDLES, KEYBOARD, SCREEN, SERVICES, STDERR, STDIN, STDOUT};
+    use abi::startup::{ARGUMENTS, DESCRIPTORS, DIRECTORY, HANDLES, KEYBOARD, SCREEN, SERVICES, STDERR, STDIN, STDOUT};
 
     // Room for any message and any number of handles: a request that
     // did not fit would stay at the head of the queue forever.
@@ -1023,14 +1023,16 @@ fn serve_request(launcher: Handle, requests: Handle, power_ready: bool) -> Optio
         }
         return Some(if asked == abi::power::ASK_OFF { abi::power::OFF } else { abi::power::RESET });
     }
-    // One handle for the image, one for each flag, one for the reply if
-    // it is to go apart - no more, no fewer.
+    // One handle for the image, one for each flag, one for the
+    // descriptors and one for the reply if they come - no more, no
+    // fewer.
     let run = Run::decode(&message[..n]).filter(|run| {
         let flags = u64::from(run.flags);
         flags & !(STDOUT | SERVICES | STDIN | STDERR | KEYBOARD | SCREEN) == 0
             && count
                 == usize::from(run.what() == IMAGE)
                     + (flags & HANDLES).count_ones() as usize
+                    + usize::from(run.has_descriptors())
                     + usize::from(run.replies_apart())
     });
     let Some(run) = run else {
@@ -1114,15 +1116,22 @@ fn serve_request(launcher: Handle, requests: Handle, power_ready: bool) -> Optio
     };
 
     // The startup handles, in the order of the flags' bits: stdout,
-    // arguments, services, directory, stdin, stderr. What the shell passed is cut
-    // down to the one thing it is for: an output to send on, an input
-    // to receive from.
-    let mut given = [(0u64, 0u32); 6];
+    // arguments, services, directory, stdin, stderr, descriptors. What
+    // the shell passed is cut down to the one thing it is for: an output
+    // to send on, an input to receive from.
+    let mut given = [(0u64, 0u32); 7];
     let mut length = 0;
     let mut flags = u64::from(run.flags);
+    if run.has_descriptors() {
+        flags |= DESCRIPTORS;
+    }
     let mut passed = passed.iter().copied();
-    for flag in [STDOUT, ARGUMENTS, SERVICES, DIRECTORY, STDIN, STDERR] {
+    for flag in [STDOUT, ARGUMENTS, SERVICES, DIRECTORY, STDIN, STDERR, DESCRIPTORS] {
         let entry = match flag {
+            // The descriptors' channel: only to read them from. (What
+            // comes on it - pipe ends, streams - carries rights of its
+            // own.)
+            DESCRIPTORS if flags & flag != 0 => passed.next().map(|handle| (handle, RECEIVE)),
             ARGUMENTS => arguments.map(|rx| (rx, RECEIVE)),
             DIRECTORY => directory.map(|rx| (rx, RECEIVE)),
             // An input that is the keyboard is also sent on: the

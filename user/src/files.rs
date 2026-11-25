@@ -167,7 +167,14 @@ impl Files {
     /// stream DATA messages, and which ends with the file - what to give
     /// a program as its standard input (a shell's `<`).
     pub fn stream_in(&self, name: &str) -> Result<Handle, FileError> {
-        self.stream(Request::new(protocol::STREAM_IN, &self.path(name), 0))
+        self.stream_in_from(name, 0)
+    }
+
+    /// The same, from byte `offset` on: a descriptor that had read part
+    /// of the file, handed to a program as its input, goes on from where
+    /// it was.
+    pub fn stream_in_from(&self, name: &str, offset: u64) -> Result<Handle, FileError> {
+        self.stream(Request::new(protocol::STREAM_IN, &self.path(name), offset))
     }
 
     /// A stream opened: our end of a new channel, whose other end the

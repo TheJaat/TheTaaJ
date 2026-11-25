@@ -14,20 +14,24 @@
 //!   - its file, as a path from the root (what it learns as its own:
 //!     `__taaj_executable`);
 //!   - this program's current directory;
-//!   - this program's standard output and standard error, and whether
-//!     the output is the screen; no standard input - a keyboard is read
-//!     by whoever asked for the line, and a file or pipe would be read
-//!     by both - unless a file action gives it one;
+//!   - this program's descriptors, as Unix's exec leaves them: all but
+//!     those marked close-on-exec - standard output and error (and
+//!     whether the output is the screen), and 3 and up (a file by its
+//!     name, offset and flags; a pipe's end as a handle, both in a
+//!     channel of their own, abi::startup::DESCRIPTORS, which libc's
+//!     start reads into the new program's table, descriptors.rs). No
+//!     standard input, though, unless a file action gives it one: a
+//!     keyboard is read by whoever asked for the line;
 //!   - this program's services;
 //!   - the environment, `envp` (abi::init::ENVIRONMENT), which libc's
 //!     start makes `environ` (lib.rs).
 //!
 //! File actions (`standard_for`) are done on what would be the new
-//! program's descriptors, and it gets the 0, 1 and 2 that come out: a
-//! pipe's end (pipes.rs), this program's own, or a file - as a stream
-//! the file service keeps (STREAM_OUT, STREAM_IN), so that whatever the
-//! program writes reaches the file with nobody here to copy it. Not
-//! attributes: posix_spawn fails with ENOSYS if any were asked for.
+//! program's descriptors, and it gets what comes out. As 0, 1 or 2, a
+//! file is a stream the file service keeps (STREAM_OUT, STREAM_IN), so
+//! that whatever the program writes reaches the file with nobody here
+//! to copy it; as 3 and up, the file itself. Not attributes:
+//! posix_spawn fails with ENOSYS if any were asked for.
 //!
 //! `system` and `popen` run a command line through the same: a
 //! pipeline of programs with redirections (words.rs) is started from
@@ -49,6 +53,7 @@ const O_ACCMODE: c_int = 3;
 const O_CREAT: c_int = 0o100;
 const O_TRUNC: c_int = 0o1000;
 const O_WRONLY: c_int = 1;
+const O_RDWR: c_int = 2;
 const O_APPEND: c_int = 0o2000;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -160,11 +165,12 @@ unsafe fn add(actions: *mut FileActions, action: Action) -> c_int {
 const OPEN_MAX: c_int = 32;
 
 /// `posix_spawn_file_actions_addopen(actions, fd, path, flags, mode)`:
-/// the new program's `fd` open on `path`. Only 0, 1 and 2 reach it (a
-/// program here is given no others), as a stream: written - from the
-/// start with O_TRUNC, at the end otherwise - or read, from the start
-/// (the file service's STREAM_OUT and STREAM_IN). `mode` means nothing
-/// here: files have no permissions.
+/// the new program's `fd` open on `path`. As 0, 1 or 2, a stream:
+/// written - from the start with O_TRUNC, at the end otherwise - or
+/// read, from the start (the file service's STREAM_OUT and STREAM_IN).
+/// Above, the file, made ready here as open would (made, emptied) and
+/// handed down by name. `mode` means nothing here: files have no
+/// permissions.
 ///
 /// # Safety
 /// `actions` made by posix_spawn_file_actions_init; `path` a string.
@@ -356,24 +362,38 @@ pub(crate) unsafe fn environment_of(list: *const *const c_char) -> Vec<u8> {
 }
 
 /// What a descriptor of the new program is, while the actions are done.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum Source {
     /// This program's own standard input, output or error.
     Input,
     Output,
     Error,
-    /// A channel end: a pipe's, or a stream opened for the new program.
-    Channel(Handle),
+    /// A channel end: a pipe's, or a stream opened for the new program;
+    /// `reads` for one to read from.
+    Channel { handle: Handle, reads: bool },
+    /// A file: its name from the root, the place, open's flags.
+    File { path: String, offset: u64, flags: c_int },
 }
 
-/// The new program's standard input, output and error: handles of its
-/// own, to be handed down (closed by whoever does not hand them).
+/// One of the new program's descriptors beyond 0, 1 and 2, as it is
+/// handed down (abi::descriptors): a handle of its own for a stream.
+enum Given {
+    File { path: String, offset: u64, flags: c_int },
+    Read(Handle),
+    Write(Handle),
+}
+
+/// The new program's descriptors: its standard input, output and error,
+/// and the rest - handles of its own, to be handed down (closed by
+/// whoever does not hand them).
 pub(crate) struct Standard {
     input: Option<Handle>,
     output: Option<Handle>,
     error: Option<Handle>,
     /// Its output is this program's, and that is the screen.
     screen: bool,
+    /// Its descriptors from 3 on.
+    rest: Vec<(u8, Given)>,
 }
 
 impl Standard {
@@ -381,13 +401,26 @@ impl Standard {
         for handle in [self.input, self.output, self.error].into_iter().flatten() {
             let _ = taaj::close(handle);
         }
+        for (_, given) in self.rest {
+            if let Given::Read(handle) | Given::Write(handle) = given {
+                let _ = taaj::close(handle);
+            }
+        }
     }
 }
 
-/// Does the actions on what would be the new program's descriptors -
-/// at first this program's, but with no standard input (a keyboard, a
-/// file or a pipe would be read by both) - and makes handles for its 0,
-/// 1 and 2.
+/// Does the actions on what would be the new program's descriptors and
+/// makes handles for them.
+///
+/// It starts as this program's table - every descriptor, as Unix's
+/// child has them between fork and exec - except standard input when
+/// that is the keyboard or this program's own input (a keyboard, a file
+/// or a pipe would be read by both: the new program gets one only when
+/// asked for, by an action, or when this program's 0 was redirected).
+/// Descriptors marked close-on-exec are there while the actions run -
+/// a dup2 from one is how a pipe this library made for itself (pipes.rs
+/// `private_pipe`) reaches the program - and are dropped after. So are
+/// sockets, which cannot be handed on yet.
 fn standard_for(actions: &[Action]) -> Result<Standard, c_int> {
     use crate::descriptors::Open;
     use taaj::rights::{DUPLICATE, RECEIVE, SEND, TRANSFER};
@@ -395,51 +428,78 @@ fn standard_for(actions: &[Action]) -> Result<Standard, c_int> {
     // copies, whatever happens.
     let mut opened: Vec<Handle> = Vec::new();
     let result = with(|state| {
-        let mut table: Vec<(c_int, Source)> = alloc::vec![(1, Source::Output), (2, Source::Error)];
-        let set = |table: &mut Vec<(c_int, Source)>, fd: c_int, source: Option<Source>| {
-            table.retain(|&(n, _)| n != fd);
+        // (descriptor, what it is, dropped at the end: close-on-exec)
+        let mut table: Vec<(c_int, Source, bool)> = Vec::new();
+        for (fd, open) in state.table.iter().enumerate() {
+            let source = match open {
+                Some(Open::Input) => None,
+                Some(Open::Output) => Some(Source::Output),
+                Some(Open::Error) => Some(Source::Error),
+                Some(Open::PipeRead(end)) => Some(Source::Channel { handle: end.borrow().channel.0, reads: true }),
+                Some(Open::PipeWrite(end)) => Some(Source::Channel { handle: end.0, reads: false }),
+                Some(Open::File(file)) => {
+                    let file = file.borrow();
+                    Some(Source::File { path: file.path.clone(), offset: file.offset, flags: file.flags })
+                }
+                Some(Open::Socket(_)) | None => None,
+            };
             if let Some(source) = source {
-                table.push((fd, source));
+                table.push((fd as c_int, source, state.is_cloexec(fd)));
+            }
+        }
+        let set = |table: &mut Vec<(c_int, Source, bool)>, fd: c_int, source: Option<Source>| {
+            table.retain(|(n, _, _)| *n != fd);
+            if let Some(source) = source {
+                table.push((fd, source, false));
             }
         };
-        // This program's descriptor `fd`, as the new one would have it:
-        // only what was not touched by an action yet.
-        let mut touched: Vec<c_int> = alloc::vec![0, 1, 2];
         for action in actions {
             match action {
-                Action::Close(fd) => {
-                    set(&mut table, *fd, None);
-                    touched.push(*fd);
-                }
+                Action::Close(fd) => set(&mut table, *fd, None),
                 Action::Dup2 { from, to } => {
-                    let source = match table.iter().find(|&&(n, _)| n == *from) {
-                        Some(&(_, source)) => source,
-                        None if touched.contains(from) => return Err(EBADF),
-                        None => {
-                            let open = state.table.get(*from as usize).and_then(Option::as_ref).ok_or(EBADF)?;
-                            match open {
-                                Open::Input => Source::Input,
-                                Open::Output => Source::Output,
-                                Open::Error => Source::Error,
-                                Open::PipeRead(end) => Source::Channel(end.borrow().channel.0),
-                                Open::PipeWrite(end) => Source::Channel(end.0),
-                                Open::File(file) => {
-                                    let files = state.files.as_ref().and_then(Option::as_ref).ok_or(EBADF)?;
-                                    let stream = if file.writes() { files.stream_out(&file.path, true) } else { files.stream_in(&file.path) };
-                                    let stream = stream.map_err(reason)?;
-                                    opened.push(stream);
-                                    Source::Channel(stream)
-                                }
-                                Open::Socket(_) => return Err(EBADF),
-                            }
-                        }
+                    let source = table.iter().find(|(n, _, _)| n == from).map(|(_, source, _)| source.clone());
+                    // This program's own input, which the table leaves
+                    // out: given when asked for by number.
+                    let source = match source {
+                        Some(source) => source,
+                        None if *from == 0 && matches!(state.table.first(), Some(Some(Open::Input))) => Source::Input,
+                        None => return Err(EBADF),
                     };
                     set(&mut table, *to, Some(source));
-                    touched.push(*to);
+                }
+                Action::Open { descriptor, path, flags } if *descriptor > 2 => {
+                    // Beyond 0, 1 and 2 a file stays a file: made ready
+                    // here, as open would, and handed down by name.
+                    let files = state.files().ok_or(EACCES)?;
+                    let from_root = alloc::format!("/{}", files.resolve(path));
+                    match files.stat(&from_root) {
+                        Ok((taaj::files::Kind::Directory, _)) => return Err(crate::errno::EISDIR),
+                        Ok(_) if flags & O_TRUNC != 0 && flags & O_ACCMODE != O_RDONLY => {
+                            files.write(&from_root, &[]).map_err(reason)?;
+                        }
+                        Ok(_) => {}
+                        Err(taaj::files::FileError::Refused(taaj::files::Status::NotFound)) if flags & O_CREAT != 0 => {
+                            files.append(&from_root, &[]).map_err(reason)?;
+                        }
+                        Err(error) => return Err(reason(error)),
+                    }
+                    let source = Source::File { path: from_root, offset: 0, flags: flags & !crate::pipes::O_CLOEXEC };
+                    set(&mut table, *descriptor, Some(source));
                 }
                 Action::Open { descriptor, path, flags } => {
                     let files = state.files().ok_or(EACCES)?;
-                    let stream = if flags & O_ACCMODE == O_RDONLY {
+                    // A stream goes one way: a file opened to read and
+                    // write is read as standard input, written as the
+                    // others.
+                    let reads = match flags & O_ACCMODE {
+                        O_RDONLY => true,
+                        O_RDWR => *descriptor == 0,
+                        _ => false,
+                    };
+                    if reads && flags & O_CREAT != 0 && files.stat(path).is_err() {
+                        files.append(path, &[]).map_err(reason)?;
+                    }
+                    let stream = if reads {
                         files.stream_in(path)
                     } else {
                         if flags & O_CREAT == 0 {
@@ -449,55 +509,117 @@ fn standard_for(actions: &[Action]) -> Result<Standard, c_int> {
                     };
                     let stream = stream.map_err(reason)?;
                     opened.push(stream);
-                    set(&mut table, *descriptor, Some(Source::Channel(stream)));
-                    touched.push(*descriptor);
+                    set(&mut table, *descriptor, Some(Source::Channel { handle: stream, reads }));
                 }
             }
         }
-        let find = |fd: c_int| table.iter().find(|&&(n, _)| n == fd).map(|&(_, source)| source);
-        Ok((find(0), find(1), find(2)))
+        table.retain(|(fd, _, dropped)| !dropped && (0..OPEN_MAX).contains(fd));
+        // A file as 0, 1 or 2 must be a stream: written to its end, or
+        // read from where the descriptor had got to.
+        let mut streams = Vec::new();
+        for (fd, source, _) in &mut table {
+            if let (0..=2, Source::File { path, offset, flags }) = (*fd, &*source) {
+                let files = state.files().ok_or(EACCES)?;
+                let reads = flags & O_ACCMODE == O_RDONLY;
+                let stream = if reads { files.stream_in_from(path, *offset) } else { files.stream_out(path, true) };
+                let stream = stream.map_err(reason)?;
+                streams.push(stream);
+                *source = Source::Channel { handle: stream, reads };
+            }
+        }
+        opened.extend(streams);
+        Ok(table)
     });
-    let made = result.and_then(|(input, output, error)| {
-        let screen = matches!(output, Some(Source::Output)) && taaj::output_is_screen();
-        let copy = |source: Option<Source>, rights: u32| -> Result<Option<Handle>, c_int> {
-            let handle = match source {
-                None => return Ok(None),
-                Some(Source::Input) => taaj::stdin(),
-                Some(Source::Output) => taaj::stdout(),
-                Some(Source::Error) => taaj::stderr(),
-                Some(Source::Channel(handle)) => Some(handle),
+    let made = result.and_then(|table| {
+        let find = |fd: c_int| table.iter().find(|(n, _, _)| *n == fd).map(|(_, source, _)| source.clone());
+        let screen = matches!(find(1), Some(Source::Output)) && taaj::output_is_screen();
+        // A handle of the new program's own for what `source` is.
+        let copy = |source: &Source| -> Result<Option<(Handle, bool)>, c_int> {
+            let (handle, reads) = match source {
+                Source::Input => (taaj::stdin(), true),
+                Source::Output => (taaj::stdout(), false),
+                Source::Error => (taaj::stderr(), false),
+                Source::Channel { handle, reads } => (Some(*handle), *reads),
+                Source::File { .. } => return Ok(None),
             };
             // A standard handle this program was not given: the new one
             // does not get it either. One that cannot be handed on (a
             // keyboard: typed lines go to whoever asked) is refused.
             let Some(handle) = handle else { return Ok(None) };
-            taaj::duplicate(handle, rights | DUPLICATE | TRANSFER).map(Some).map_err(|_| EPERM)
+            let rights = if reads { RECEIVE } else { SEND };
+            taaj::duplicate(handle, rights | DUPLICATE | TRANSFER).map(|copy| Some((copy, reads))).map_err(|_| EPERM)
         };
-        let input = copy(input, RECEIVE)?;
-        let output = match copy(output, SEND) {
-            Ok(output) => output,
-            Err(code) => {
-                if let Some(handle) = input {
-                    let _ = taaj::close(handle);
+        let mut standard = Standard { input: None, output: None, error: None, screen, rest: Vec::new() };
+        for (fd, source, _) in &table {
+            let made = match copy(source) {
+                Ok(made) => made,
+                Err(code) => {
+                    standard.close();
+                    return Err(code);
                 }
-                return Err(code);
-            }
-        };
-        let error = match copy(error, SEND) {
-            Ok(error) => error,
-            Err(code) => {
-                for handle in input.into_iter().chain(output) {
-                    let _ = taaj::close(handle);
+            };
+            match (*fd, made, source) {
+                (0, made, _) => standard.input = made.map(|(handle, _)| handle),
+                (1, made, _) => standard.output = made.map(|(handle, _)| handle),
+                (2, made, _) => standard.error = made.map(|(handle, _)| handle),
+                (fd, Some((handle, reads)), _) => {
+                    standard.rest.push((fd as u8, if reads { Given::Read(handle) } else { Given::Write(handle) }))
                 }
-                return Err(code);
+                (fd, None, Source::File { path, offset, flags }) => {
+                    standard.rest.push((fd as u8, Given::File { path: path.clone(), offset: *offset, flags: *flags }))
+                }
+                (_, None, _) => {}
             }
-        };
-        Ok(Standard { input, output, error, screen })
+        }
+        Ok(standard)
     });
     for handle in opened {
         let _ = taaj::close(handle);
     }
     made
+}
+
+/// The new program's descriptors beyond 0, 1 and 2 as a channel to hand
+/// down (abi::startup::DESCRIPTORS): one message each, the handles in
+/// them; the far end closed, so that the program reads them all and
+/// does not wait. None if there are none. The handles in `rest` go
+/// with the messages, or are closed.
+fn descriptors_channel(rest: Vec<(u8, Given)>) -> Result<Option<Handle>, c_int> {
+    use abi::descriptors::Entry;
+    if rest.is_empty() {
+        return Ok(None);
+    }
+    let channel = taaj::channel_create();
+    let mut message = [0u8; abi::MESSAGE_MAX as usize];
+    let mut failed = channel.is_err();
+    for (descriptor, given) in rest {
+        let (entry, handle) = match &given {
+            Given::File { path, offset, flags } => (Entry::File { descriptor, flags: *flags, offset: *offset, path }, None),
+            Given::Read(handle) => (Entry::Read { descriptor }, Some(*handle)),
+            Given::Write(handle) => (Entry::Write { descriptor }, Some(*handle)),
+        };
+        let sent = match (&channel, entry.encode(&mut message)) {
+            (Ok((tx, _)), Some(length)) if !failed => taaj::send(*tx, &message[..length], handle.as_slice()).is_ok(),
+            _ => false,
+        };
+        if !sent {
+            failed = true;
+            if let Some(handle) = handle {
+                let _ = taaj::close(handle);
+            }
+        }
+    }
+    match channel {
+        Ok((tx, rx)) => {
+            let _ = taaj::close(tx);
+            if failed {
+                let _ = taaj::close(rx);
+                return Err(crate::errno::EMFILE);
+            }
+            Ok(Some(rx))
+        }
+        Err(_) => Err(ENOMEM),
+    }
 }
 
 /// Reads the program and asks init to start it: the new process, or an
@@ -565,7 +687,7 @@ fn ask_init(
     // A copy to hand down, which the new program may hand down again.
     use taaj::rights::{DUPLICATE, SEND, TRANSFER};
     let registry = taaj::duplicate(services.handle(), SEND | DUPLICATE | TRANSFER).ok();
-    let Standard { input, output, error, screen } = standard;
+    let Standard { input, output, error, screen, rest } = standard;
     let mut flags = 0u8;
     // In the order of their bits: stdout, services, stdin, stderr.
     for (handle, flag) in [(output, STDOUT), (registry, SERVICES), (input, STDIN), (error, STDERR)] {
@@ -577,6 +699,21 @@ fn ask_init(
     if output.is_some() && screen {
         flags |= SCREEN as u8;
     }
+    // Then the descriptors from 3 on, if there are any: one channel.
+    let descriptors = match descriptors_channel(rest) {
+        Ok(descriptors) => descriptors,
+        Err(code) => {
+            close_given(&given);
+            let _ = taaj::close(init);
+            return Err(code);
+        }
+    };
+    let with_descriptors = if let Some(channel) = descriptors {
+        given.push(channel);
+        abi::init::DESCRIPTORS
+    } else {
+        0
+    };
     let mut encoded = [0u8; abi::MESSAGE_MAX as usize];
     let Some(length) = abi::arguments::encode(arguments.iter().map(String::as_str), &mut encoded) else {
         close_given(&given);
@@ -587,14 +724,14 @@ fn ask_init(
     // (abi::init::ENVIRONMENT).
     let mut packed = [0u8; abi::MESSAGE_MAX as usize];
     let (kind, arguments) = if environment.is_empty() {
-        (abi::init::IMAGE | abi::init::REPLY, &encoded[..length])
+        (abi::init::IMAGE | abi::init::REPLY | with_descriptors, &encoded[..length])
     } else {
         let Some(size) = abi::init::pack(&encoded[..length], environment, &mut packed) else {
             close_given(&given);
             let _ = taaj::close(init);
             return Err(E2BIG);
         };
-        (abi::init::IMAGE | abi::init::REPLY | abi::init::ENVIRONMENT, &packed[..size])
+        (abi::init::IMAGE | abi::init::REPLY | abi::init::ENVIRONMENT | with_descriptors, &packed[..size])
     };
     let whole = alloc::format!("/{file}");
     let request = abi::init::Run { kind, flags, name, directory, file: &whole, arguments };
@@ -779,6 +916,10 @@ pub(crate) fn output_flags(append: bool) -> c_int {
 /// open's flags for reading a file.
 pub(crate) const INPUT_FLAGS: c_int = O_RDONLY;
 
+/// open's flags for `<>`: reading and writing, the file made if it is
+/// not there.
+pub(crate) const READ_WRITE_FLAGS: c_int = O_RDWR | O_CREAT;
+
 /// Waits for child `id`; its status.
 pub(crate) fn reap(id: c_int) -> c_int {
     let mut status = 127 << 8;
@@ -869,8 +1010,7 @@ pub(crate) fn start_jobs(jobs: &[Job], input: Option<c_int>, mut output: Option<
         let writing;
         if n + 1 < jobs.len() {
             let mut ends = [0; 2];
-            // SAFETY: room for two.
-            if unsafe { crate::pipes::pipe(ends.as_mut_ptr()) } != 0 {
+            if crate::pipes::private_pipe(&mut ends) != 0 {
                 complain(&alloc::format!("{who}: no descriptor for a pipe\n"));
                 failed = Some(Failed::Refused(crate::errno::EMFILE));
                 break;
@@ -964,8 +1104,7 @@ pub unsafe extern "C" fn __taaj_popen(command: *const c_char, writing: c_int) ->
     // SAFETY: the caller's promise.
     let command = unsafe { CStr::from_ptr(command) }.to_string_lossy().into_owned();
     let mut ends = [0; 2];
-    // SAFETY: room for two.
-    if unsafe { crate::pipes::pipe(ends.as_mut_ptr()) } != 0 {
+    if crate::pipes::private_pipe(&mut ends) != 0 {
         return -1;
     }
     let (ours, started) = if writing != 0 {

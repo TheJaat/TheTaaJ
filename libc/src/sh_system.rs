@@ -7,16 +7,26 @@
 //!   sh [-ex] -c COMMAND [NAME [ARGUMENT...]]    runs COMMAND; $0 NAME
 //!   sh [-ex] FILE [ARGUMENT...]                 runs the script in FILE
 //!
-//! A builtin or function in a pipeline, or with redirections
-//! (`echo hi > f`), a compound command that is (`for ...; done | wc`),
-//! a subshell and a command substitution are run by another copy of
-//! this program - the file it was started from (`__taaj_executable`) -
-//! as a Unix shell forks one: `sh -c '"$@"' sh echo hi`, the functions
-//! defined first. Its output goes where the redirections say, with
-//! nobody here to copy it.
+//! A builtin or function in a pipeline, a compound command that is
+//! (`for ...; done | wc`), a subshell and a command substitution are
+//! run by another copy of this program - the file it was started from
+//! (`__taaj_executable`) - as a Unix shell forks one: `sh -c '"$@"' sh
+//! echo hi`, the functions defined first. Its output goes where the
+//! redirections say, with nobody here to copy it.
+//!
+//! A builtin, function or compound command with redirections, alone,
+//! runs here: this program's own descriptors are changed with dup2 and
+//! put back after, from copies kept out of the way (10 and up, marked
+//! close-on-exec so that no program started meanwhile gets them).
+//!
+//! A here-document is a pipe, its text written into it before the
+//! command starts and the write end closed: the reader sees the text,
+//! then the end. So it must fit in what a pipe holds unread
+//! (abi::CHANNEL_QUEUE_MAX messages) - a longer one is refused rather
+//! than left waiting for a reader that has not started.
 
 use crate::sh::{Command, Kind, Redirection, Shell, System};
-use crate::spawn::{close_fd, output_flags, reap, start_jobs, Action, Failed, Job, INPUT_FLAGS};
+use crate::spawn::{close_fd, output_flags, reap, start_jobs, Action, Failed, Job, INPUT_FLAGS, READ_WRITE_FLAGS};
 use alloc::ffi::CString;
 use alloc::format;
 use alloc::string::String;
@@ -48,36 +58,186 @@ fn status_of(waited: c_int) -> i32 {
     }
 }
 
+/// open's flags, as fcntl.h has them.
+const O_RDONLY: c_int = 0;
+const O_WRONLY: c_int = 1;
+const O_CREAT: c_int = 0o100;
+const O_TRUNC: c_int = 0o1000;
+const O_APPEND: c_int = 0o2000;
+/// fcntl's: a copy at the lowest free descriptor from the argument on,
+/// close-on-exec.
+const F_DUPFD_CLOEXEC: c_int = 1030;
+/// Where the copies that put this shell's descriptors back are kept:
+/// above what scripts use (`exec 3<`... up to 9).
+const SAVED_FROM: c_int = 10;
+
+/// What the last call that failed said, as text.
+fn why() -> &'static str {
+    let code = crate::errno::errno.load(core::sync::atomic::Ordering::Relaxed);
+    crate::errno::message(code).trim_end_matches('\0')
+}
+
+/// `path` opened with `flags`: its descriptor, or why not.
+fn open(path: &str, flags: c_int) -> Result<c_int, String> {
+    let name = CString::new(path).map_err(|_| format!("{path}: a zero byte in the name"))?;
+    // SAFETY: a string ending in a zero byte.
+    let fd = unsafe { crate::descriptors::__taaj_open(name.as_ptr(), flags) };
+    if fd < 0 {
+        return Err(format!("{path}: {}", why()));
+    }
+    Ok(fd)
+}
+
+/// A pipe with `text` in it and its write end closed: the read end,
+/// close-on-exec until dup2 makes it the descriptor meant.
+fn here_document(text: &str) -> Result<c_int, String> {
+    let room = abi::CHANNEL_QUEUE_MAX * abi::stream::DATA_MAX;
+    if text.len() > room {
+        return Err(format!("a here-document of {} bytes: more than a pipe holds ({room})", text.len()));
+    }
+    let mut ends = [0; 2];
+    if crate::pipes::private_pipe(&mut ends) != 0 {
+        return Err(String::from("no descriptor for a here-document's pipe"));
+    }
+    let mut rest = text.as_bytes();
+    while !rest.is_empty() {
+        // SAFETY: the bytes of a live string.
+        let wrote = unsafe { crate::descriptors::write(ends[1], rest.as_ptr().cast(), rest.len()) };
+        if wrote <= 0 {
+            break;
+        }
+        rest = &rest[wrote as usize..];
+    }
+    crate::descriptors::close(ends[1]);
+    Ok(ends[0])
+}
+
+/// Makes `fd` what `from` is, and closes `from`.
+fn move_to(from: c_int, fd: c_int) {
+    if from != fd {
+        crate::descriptors::dup2(from, fd);
+        crate::descriptors::close(from);
+    }
+}
+
 impl TheTaaJ {
-    fn job(&self, command: &Command) -> Job {
-        let actions = command
-            .redirections
-            .iter()
-            .map(|redirection| match redirection {
+    /// What starts `command`. The read ends of its here-documents'
+    /// pipes are added to `heres`: the caller closes them once it has
+    /// started.
+    fn job(&self, command: &Command, heres: &mut Vec<c_int>) -> Result<Job, String> {
+        let mut actions = Vec::new();
+        for redirection in &command.redirections {
+            actions.push(match redirection {
                 Redirection::In { fd, path } => Action::Open { descriptor: *fd as c_int, path: path.clone(), flags: INPUT_FLAGS },
                 Redirection::Out { fd, path, append } => {
                     Action::Open { descriptor: *fd as c_int, path: path.clone(), flags: output_flags(*append) }
                 }
+                Redirection::ReadWrite { fd, path } => {
+                    Action::Open { descriptor: *fd as c_int, path: path.clone(), flags: READ_WRITE_FLAGS }
+                }
                 Redirection::Copy { fd, to } => Action::Dup2 { from: *to as c_int, to: *fd as c_int },
                 Redirection::Close { fd } => Action::Close(*fd as c_int),
-            })
-            .collect();
+                Redirection::Here { fd, text } => {
+                    let read = here_document(text)?;
+                    heres.push(read);
+                    Action::Dup2 { from: read, to: *fd as c_int }
+                }
+            });
+        }
         let environment = environment_bytes(&command.environment);
         if let Some(copy) = &command.shell {
             let script = format!("{}{}", copy.functions, copy.script);
             let mut words: Vec<String> = alloc::vec![String::from("sh"), String::from("-c"), script, copy.zero.clone()];
             words.extend(command.words.iter().cloned());
-            Job { path: self.myself.clone(), words, actions, environment }
+            Ok(Job { path: self.myself.clone(), words, actions, environment })
         } else {
-            Job { path: command.words[0].clone(), words: command.words.clone(), actions, environment }
+            Ok(Job { path: command.words[0].clone(), words: command.words.clone(), actions, environment })
         }
+    }
+
+    /// The jobs for `commands`, and their here-documents' read ends;
+    /// or why not, said, and nothing left open.
+    fn jobs(&mut self, commands: &[Command]) -> Option<(Vec<Job>, Vec<c_int>)> {
+        let mut heres = Vec::new();
+        let mut jobs = Vec::new();
+        for command in commands {
+            match self.job(command, &mut heres) {
+                Ok(job) => jobs.push(job),
+                Err(why) => {
+                    heres.into_iter().for_each(|fd| close_fd(Some(fd)));
+                    self.write(2, &format!("sh: {why}\n"));
+                    return None;
+                }
+            }
+        }
+        Some((jobs, heres))
+    }
+
+    /// Does one redirection to this program's own descriptors.
+    fn apply(&mut self, redirection: &Redirection) -> Result<(), String> {
+        let fd = redirection.fd() as c_int;
+        match redirection {
+            Redirection::In { path, .. } => move_to(open(path, O_RDONLY)?, fd),
+            Redirection::Out { path, append, .. } => {
+                // Always appending, the file emptied first for `>`: a
+                // program started with this as its output adds to the
+                // end of the file (spawn.rs), and what this shell writes
+                // after must come after that, not over it.
+                if !append {
+                    crate::descriptors::close(open(path, O_WRONLY | O_CREAT | O_TRUNC)?);
+                }
+                move_to(open(path, O_WRONLY | O_CREAT | O_APPEND)?, fd);
+            }
+            Redirection::ReadWrite { path, .. } => move_to(open(path, READ_WRITE_FLAGS)?, fd),
+            Redirection::Copy { to, .. } => {
+                if crate::descriptors::dup2(*to as c_int, fd) < 0 {
+                    return Err(format!("{to}: not an open descriptor"));
+                }
+            }
+            Redirection::Close { .. } => {
+                crate::descriptors::close(fd);
+            }
+            Redirection::Here { text, .. } => move_to(here_document(text)?, fd),
+        }
+        Ok(())
     }
 }
 
 impl System for TheTaaJ {
+    /// Each descriptor changed, with a copy of what it was (-1 if it was
+    /// not open).
+    type Saved = Vec<(c_int, c_int)>;
+
+    fn redirect(&mut self, redirections: &[Redirection], save: bool) -> Result<Self::Saved, String> {
+        let mut saved = Vec::new();
+        for redirection in redirections {
+            let fd = redirection.fd() as c_int;
+            if save && !saved.iter().any(|&(n, _)| n == fd) {
+                saved.push((fd, crate::descriptors::__taaj_fcntl(fd, F_DUPFD_CLOEXEC, SAVED_FROM.into())));
+            }
+            if let Err(why) = self.apply(redirection) {
+                self.restore(saved);
+                return Err(why);
+            }
+        }
+        Ok(saved)
+    }
+
+    fn restore(&mut self, saved: Self::Saved) {
+        for (fd, copy) in saved.into_iter().rev() {
+            if copy < 0 {
+                crate::descriptors::close(fd);
+            } else {
+                move_to(copy, fd);
+            }
+        }
+    }
+
     fn pipeline(&mut self, commands: &[Command]) -> i32 {
-        let jobs: Vec<Job> = commands.iter().map(|command| self.job(command)).collect();
-        match start_jobs(&jobs, None, None, "sh") {
+        let Some((jobs, heres)) = self.jobs(commands) else { return 1 };
+        let started = start_jobs(&jobs, None, None, "sh");
+        heres.into_iter().for_each(|fd| close_fd(Some(fd)));
+        match started {
             Ok(ids) => ids.into_iter().fold(0, |_, id| status_of(reap(id))),
             Err(Failed::NotStarted(code)) if code == crate::errno::ENOEXEC => 126,
             Err(Failed::NotStarted(_)) => 127,
@@ -89,13 +249,17 @@ impl System for TheTaaJ {
 
     fn capture(&mut self, command: &Command) -> (String, i32) {
         let mut ends = [0; 2];
-        // SAFETY: room for two.
-        if unsafe { crate::pipes::pipe(ends.as_mut_ptr()) } != 0 {
+        if crate::pipes::private_pipe(&mut ends) != 0 {
             self.write(2, "sh: no descriptor for a command substitution's pipe\n");
             return (String::new(), 126);
         }
-        let job = self.job(command);
-        let started = start_jobs(core::slice::from_ref(&job), None, Some(ends[1]), "sh");
+        let Some((jobs, heres)) = self.jobs(core::slice::from_ref(command)) else {
+            close_fd(Some(ends[0]));
+            close_fd(Some(ends[1]));
+            return (String::new(), 1);
+        };
+        let started = start_jobs(&jobs, None, Some(ends[1]), "sh");
+        heres.into_iter().for_each(|fd| close_fd(Some(fd)));
         let mut output = Vec::new();
         if started.is_ok() {
             let mut buffer = [0u8; 4096];

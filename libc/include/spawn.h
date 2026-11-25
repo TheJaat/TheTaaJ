@@ -6,23 +6,32 @@
  * shell's `with programs`); otherwise EPERM.
  *
  * The new program gets its arguments and name (argv), its file, this
- * program's current directory, standard output and error, and services;
- * no standard input, unless a file action gives it one.
+ * program's current directory, its services and its descriptors, as
+ * Unix's exec leaves them: every one not marked close-on-exec
+ * (O_CLOEXEC, FD_CLOEXEC, pipe2) - but no standard input, unless a
+ * file action gives it one. A file at 3 or above is handed down by its
+ * name, where this program had got to and how it was opened; at 0, 1
+ * or 2 it becomes a stream the file service keeps, read from where this
+ * program had got to or added to the end. A pipe's end is handed down
+ * as itself: the reader sees the end only once every program that was
+ * given the write end has closed it - so mark a pipe meant for one
+ * program close-on-exec (pipe2(fds, O_CLOEXEC)) and dup2 the end it is
+ * to have.
  *
  * File actions are done, in order, on what would be the new program's
  * descriptors - this program's, but without standard input - and it
- * gets the 0, 1 and 2 that come out (a program here is given no other
- * descriptors):
+ * gets what comes out:
  *   adddup2(a, fd, to)    `to` is what `fd` is: this program's
  *                         standard ones, a pipe's end (unistd.h), a
  *                         file open here, or what an earlier action made
  *   addopen(a, fd, path, flags, mode)
- *                         `fd` open on `path`, as a stream the file
- *                         service keeps: read from the start with
- *                         O_RDONLY, else written - from empty with
- *                         O_TRUNC, at the end otherwise; ENOENT without
- *                         O_CREAT for a file not there. `mode` means
- *                         nothing (no permissions).
+ *                         `fd` open on `path`: for 0, 1 and 2 a stream
+ *                         the file service keeps - read from the start
+ *                         with O_RDONLY (and O_RDWR, for 0), else
+ *                         written, from empty with O_TRUNC, at the end
+ *                         otherwise; above, the file itself. ENOENT
+ *                         without O_CREAT for a file not there. `mode`
+ *                         means nothing (no permissions).
  *   addclose(a, fd)       the new program does not get `fd`
  * Attributes cannot be set: posix_spawn fails with ENOSYS if any are.
  * envp is the new program's environment (its environ); NULL passes this

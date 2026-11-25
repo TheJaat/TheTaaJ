@@ -643,10 +643,16 @@ static STARTUP_HANDLES: AtomicU64 = AtomicU64::new(0);
 static STARTUP_ARGUMENT: AtomicU64 = AtomicU64::new(0);
 
 /// The startup handle a flag stands for, if the parent set that flag:
-/// flagged handles come first, in the order of the flags' bits.
+/// flagged handles come first, in the order of the flags' bits
+/// (abi::startup::index - KEYBOARD and SCREEN bring none).
 fn flagged_handle(flag: u64) -> Option<Handle> {
-    let flags = STARTUP_ARGUMENT.load(Ordering::Relaxed);
-    (flags & flag != 0).then(|| startup_handle(u64::from((flags & (flag - 1)).count_ones()))).flatten()
+    abi::startup::index(STARTUP_ARGUMENT.load(Ordering::Relaxed), flag).and_then(startup_handle)
+}
+
+/// The channel of descriptors beyond 0, 1 and 2 a C program's parent
+/// handed down (abi::startup::DESCRIPTORS), if it did: libc reads it.
+pub fn descriptors() -> Option<Handle> {
+    flagged_handle(abi::startup::DESCRIPTORS)
 }
 
 /// Standard output's channel, if the parent gave one.

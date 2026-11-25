@@ -1,17 +1,24 @@
 //! A small POSIX shell's language - what `sh -c`, `system` and make's
 //! recipes need of one:
-//!   - lists (`;`, `&&`, `||`), pipelines (`|`, `!`), redirections;
+//!   - lists (`;`, `&&`, `||`), pipelines (`|`, `!`), redirections
+//!     (`<`, `>`, `>>`, `<>`, `N>&M`, `N>&-`), here-documents (`<<`,
+//!     `<<-`);
 //!   - `if`, `while`, `until`, `for`, `case`, `{ ...; }`, `( ... )`,
 //!     functions, `break`, `continue`, `return`;
 //!   - variables (`NAME=value`, `$NAME`, `${NAME:-word}`, `${NAME%.c}`,
 //!     `"$@"`, `$?`), `$((...))`, command substitution (`$(...)` and
 //!     backquotes), quoting, wildcards;
 //!   - the builtins a recipe uses (cd, echo, test, read, export, set -e,
-//!     eval and the rest).
+//!     eval, exec and the rest).
 //!
-//! Not yet: here-documents, `&`, `<>`. Those are refused, by name,
-//! before anything runs - a script half understood is worse than one
-//! refused.
+//! A builtin, a function or a compound command with redirections runs
+//! here, in this shell, its descriptors changed around it and put back
+//! after (`read x < file` sets x; `while read l; do ...; done < f`
+//! keeps its variables); `exec` with only redirections changes them
+//! for good (`exec 3< list`).
+//!
+//! Not yet: `&`. It is refused, by name, before anything runs - a
+//! script half understood is worse than one refused.
 //!
 //! No system in it: what it asks of one - start a pipeline, read a
 //! directory for a wildcard, change directory - is the `System` trait,
@@ -42,6 +49,25 @@ pub enum Redirection {
     Copy { fd: u32, to: u32 },
     /// `N>&-`: closed.
     Close { fd: u32 },
+    /// `N<> path`: the file opened to read and to write, made if it is
+    /// not there.
+    ReadWrite { fd: u32, path: String },
+    /// `N<< END`: `text` read from it - a here-document, expanded.
+    Here { fd: u32, text: String },
+}
+
+impl Redirection {
+    /// The descriptor it changes.
+    pub fn fd(&self) -> u32 {
+        match self {
+            Redirection::In { fd, .. }
+            | Redirection::Out { fd, .. }
+            | Redirection::Copy { fd, .. }
+            | Redirection::Close { fd }
+            | Redirection::ReadWrite { fd, .. }
+            | Redirection::Here { fd, .. } => *fd,
+        }
+    }
 }
 
 /// A script for another copy of this shell to run, as a Unix shell's
@@ -80,6 +106,8 @@ pub enum Kind {
 
 /// What the shell needs done by the system it runs on.
 pub trait System {
+    /// What `redirect` keeps to put this shell's descriptors back.
+    type Saved;
     /// Starts the commands, each one's output the next one's input,
     /// and waits for them: the last one's status, as `$?` has it (0 to
     /// 255; 128 + N for a program stopped by signal N; 127 for one not
@@ -99,6 +127,14 @@ pub trait System {
     fn write(&mut self, fd: u32, text: &str);
     /// A line of standard input, without its new line; None at the end.
     fn read_line(&mut self) -> Option<String>;
+    /// Changes this shell's own descriptors, in order, as `redirections`
+    /// say - for a builtin, a function or a compound command run here.
+    /// With `save`, what is needed to put them back (`restore`); without,
+    /// they stay so (`exec 3< f`). If one cannot be done, why is the
+    /// error - and, with `save`, those done already are undone.
+    fn redirect(&mut self, redirections: &[Redirection], save: bool) -> Result<Self::Saved, String>;
+    /// Puts back the descriptors `redirect` changed.
+    fn restore(&mut self, saved: Self::Saved);
     fn pid(&self) -> i32;
 }
 
@@ -185,14 +221,36 @@ enum Token {
 }
 
 /// The operators, longest first, so that `&&` is not read as `&`.
-const OPERATORS: [&str; 17] = ["&&", "||", ";;", "<<", ">>", "<&", ">&", "<>", ">|", "&", "|", ";", "<", ">", "(", ")", "\n"];
+const OPERATORS: [&str; 18] = ["<<-", "&&", "||", ";;", "<<", ">>", "<&", ">&", "<>", ">|", "&", "|", ";", "<", ">", "(", ")", "\n"];
+
+/// A here-document whose `<<` has been read, waiting for the end of
+/// its line: the lines after that are its text.
+struct Pending {
+    /// The line that ends it.
+    end: String,
+    /// The delimiter was quoted (`<< 'END'`): the text is as written,
+    /// not expanded.
+    quoted: bool,
+    /// `<<-`: tabs at the start of each line are taken away.
+    tabs: bool,
+}
 
 struct Lexer {
     chars: Vec<char>,
     at: usize,
+    /// After `<<` or `<<-` (`Some(tabs)`): the next word is a delimiter.
+    delimiter: Option<bool>,
+    pending: Vec<Pending>,
+    /// The here-documents' texts, in the order of their `<<`s: the
+    /// parser takes them in that order.
+    heres: Vec<Word>,
 }
 
 impl Lexer {
+    fn new(chars: Vec<char>) -> Lexer {
+        Lexer { chars, at: 0, delimiter: None, pending: Vec::new(), heres: Vec::new() }
+    }
+
     fn peek(&self) -> Option<char> {
         self.chars.get(self.at).copied()
     }
@@ -213,7 +271,12 @@ impl Lexer {
         loop {
             let start = self.at;
             match self.peek() {
-                None => return Ok(tokens),
+                None => {
+                    if let Some(pending) = self.pending.first() {
+                        return Err(Refused::Syntax(format!("a here-document with no lines: nothing after the line with << {}", pending.end)));
+                    }
+                    return Ok(tokens);
+                }
                 Some(' ' | '\t') => self.at += 1,
                 Some('\\') if self.peek_at(1) == Some('\n') => self.at += 2,
                 Some('#') => {
@@ -225,9 +288,26 @@ impl Lexer {
                     if let Some(op) = OPERATORS.iter().find(|op| self.chars[self.at..].starts_with(&op.chars().collect::<Vec<_>>())) {
                         self.at += op.chars().count();
                         tokens.push((Token::Operator(op), start, self.at));
+                        self.delimiter = match *op {
+                            "<<" => Some(false),
+                            "<<-" => Some(true),
+                            _ => None,
+                        };
+                        if *op == "\n" {
+                            // The here-documents begun on the line that
+                            // just ended: their texts come next.
+                            for pending in core::mem::take(&mut self.pending) {
+                                let text = self.here_document(&pending)?;
+                                self.heres.push(text);
+                            }
+                        }
                         continue;
                     }
                     let word = self.word()?;
+                    if let Some(tabs) = self.delimiter.take() {
+                        let (end, quoted) = delimiter(&word)?;
+                        self.pending.push(Pending { end, quoted, tabs });
+                    }
                     let number = word.plain().filter(|text| text.bytes().all(|b| b.is_ascii_digit()));
                     let token = match number {
                         Some(digits) if matches!(self.peek(), Some('<' | '>')) => {
@@ -283,6 +363,62 @@ impl Lexer {
                     self.at += 1;
                     push_text(&mut parts, c.encode_utf8(&mut [0; 4]), false);
                 }
+            }
+        }
+        Ok(Word { parts })
+    }
+
+    /// A here-document's lines, from here up to the line that is its
+    /// end: its text, as a word - quoted all through, so that it is not
+    /// split or matched against file names, but with `$` and `` ` ``
+    /// still working in it unless the delimiter was quoted.
+    fn here_document(&mut self, pending: &Pending) -> Result<Word, Refused> {
+        let mut text = String::new();
+        loop {
+            if self.at >= self.chars.len() {
+                return Err(Refused::Syntax(format!("a here-document that does not end: no line {} after it", pending.end)));
+            }
+            let mut line: String = self.chars[self.at..].iter().take_while(|&&c| c != '\n').collect();
+            self.at = (self.at + line.chars().count() + 1).min(self.chars.len());
+            if pending.tabs {
+                line = String::from(line.trim_start_matches('\t'));
+            }
+            if line == pending.end {
+                break;
+            }
+            text.push_str(&line);
+            text.push('\n');
+        }
+        if pending.quoted {
+            return Ok(Word { parts: vec![Part::Quoted(text)] });
+        }
+        Lexer::new(text.chars().collect()).here_text()
+    }
+
+    /// An unquoted here-document's text: as inside double quotes, but
+    /// a `"` is itself.
+    fn here_text(&mut self) -> Result<Word, Refused> {
+        let mut parts = vec![Part::Quoted(String::new())];
+        while let Some(c) = self.next() {
+            match c {
+                '\\' => match self.next() {
+                    Some('\n') => {}
+                    Some(c @ ('$' | '`' | '\\')) => push_text(&mut parts, c.encode_utf8(&mut [0; 4]), true),
+                    Some(c) => {
+                        push_text(&mut parts, "\\", true);
+                        push_text(&mut parts, c.encode_utf8(&mut [0; 4]), true);
+                    }
+                    None => push_text(&mut parts, "\\", true),
+                },
+                '$' => {
+                    let part = self.dollar(true)?;
+                    parts.push(part);
+                }
+                '`' => {
+                    let script = self.backquoted()?;
+                    parts.push(Part::Substitution { script, quoted: true });
+                }
+                c => push_text(&mut parts, c.encode_utf8(&mut [0; 4]), true),
             }
         }
         Ok(Word { parts })
@@ -530,6 +666,24 @@ impl Lexer {
     }
 }
 
+/// A here-document's delimiter, as the line that ends it is written:
+/// quotes taken away; and whether there were any.
+fn delimiter(word: &Word) -> Result<(String, bool), Refused> {
+    let mut end = String::new();
+    let mut quoted = false;
+    for part in &word.parts {
+        match part {
+            Part::Plain(text) => end.push_str(text),
+            Part::Quoted(text) => {
+                end.push_str(text);
+                quoted = true;
+            }
+            _ => return Err(Refused::Missing("a here-document's delimiter with $ or ` in it")),
+        }
+    }
+    Ok((end, quoted))
+}
+
 /// Adds text to a word, to the last part if that is the same kind.
 fn push_text(parts: &mut Vec<Part>, text: &str, quoted: bool) {
     match (parts.last_mut(), quoted) {
@@ -610,6 +764,10 @@ enum RedirectKind {
     Append,
     /// `>&` and `<&`: a number, or `-`.
     Copy,
+    /// `<>`
+    ReadWrite,
+    /// `<<`, `<<-`: the target is the text.
+    Here,
 }
 
 /// Reserved words that only end or continue a compound command: said
@@ -619,8 +777,9 @@ const CLOSERS: [&str; 9] = ["then", "else", "elif", "fi", "do", "done", "esac", 
 /// A script, read: its commands, or why it cannot be run.
 pub fn parse(script: &str) -> Result<Script, Refused> {
     let chars: Vec<char> = script.chars().collect();
-    let tokens = Lexer { chars: chars.clone(), at: 0 }.tokens()?;
-    let mut parser = Parser { tokens, chars, at: 0 };
+    let mut lexer = Lexer::new(chars.clone());
+    let tokens = lexer.tokens()?;
+    let mut parser = Parser { tokens, chars, at: 0, heres: lexer.heres.into_iter() };
     let lists = parser.list(&[])?;
     match parser.peek() {
         None => Ok(Script { lists }),
@@ -642,6 +801,8 @@ struct Parser {
     tokens: Vec<(Token, usize, usize)>,
     chars: Vec<char>,
     at: usize,
+    /// The here-documents' texts, for the `<<`s in order.
+    heres: alloc::vec::IntoIter<Word>,
 }
 
 impl Parser {
@@ -935,7 +1096,7 @@ impl Parser {
                     };
                     self.redirect(&mut redirections, Some(fd), op)?;
                 }
-                Some(Token::Operator(op @ ("<" | ">" | ">>" | ">|" | "<&" | ">&" | "<<" | "<>"))) => {
+                Some(Token::Operator(op @ ("<" | ">" | ">>" | ">|" | "<&" | ">&" | "<<" | "<<-" | "<>"))) => {
                     self.at += 1;
                     self.redirect(&mut redirections, None, op)?;
                 }
@@ -965,7 +1126,7 @@ impl Parser {
                     };
                     self.redirect(&mut simple.redirections, Some(fd), op)?;
                 }
-                Some(Token::Operator(op @ ("<" | ">" | ">>" | ">|" | "<&" | ">&" | "<<" | "<>"))) => {
+                Some(Token::Operator(op @ ("<" | ">" | ">>" | ">|" | "<&" | ">&" | "<<" | "<<-" | "<>"))) => {
                     self.at += 1;
                     self.redirect(&mut simple.redirections, None, op)?;
                 }
@@ -988,10 +1149,16 @@ impl Parser {
             ">>" => (1, RedirectKind::Append),
             "<&" => (0, RedirectKind::Copy),
             ">&" => (1, RedirectKind::Copy),
-            "<<" => return Err(Refused::Missing("a here-document, <<,")),
-            _ => return Err(Refused::Missing("opening for reading and writing, <>,")),
+            "<>" => (0, RedirectKind::ReadWrite),
+            _ => (0, RedirectKind::Here),
         };
         match self.next() {
+            Some(Token::Word(_)) if kind == RedirectKind::Here => {
+                // The delimiter: the lexer has the text it ended.
+                let text = self.heres.next().ok_or_else(|| Refused::Syntax(String::from("a here-document with no text")))?;
+                redirections.push(Redirect { fd: fd.unwrap_or(default), kind, target: text });
+                Ok(())
+            }
             Some(Token::Word(target)) => {
                 if kind == RedirectKind::Copy && !target.plain().is_some_and(|t| t == "-" || t.bytes().all(|b| b.is_ascii_digit())) {
                     return Err(Refused::Missing("a redirection to a file with >&"));
@@ -1328,9 +1495,9 @@ pub struct Shell<S: System> {
 }
 
 /// The builtins that change the shell itself: run here, always.
-const SPECIAL: [&str; 12] = ["cd", "exit", "export", "unset", "set", "shift", "read", "eval", "return", "break", "continue", "."];
-/// The builtins that only say something: run here when alone, and by
-/// another copy of the shell in a pipeline or with redirections.
+const SPECIAL: [&str; 13] = ["cd", "exit", "export", "unset", "set", "shift", "read", "eval", "return", "break", "continue", ".", "exec"];
+/// The builtins that only say something: run here when alone or with
+/// redirections, and by another copy of the shell in a pipeline.
 const REGULAR: [&str; 7] = [":", "true", "false", "echo", "pwd", "test", "["];
 
 /// Whether `name` is one of this shell's builtins.
@@ -1532,6 +1699,8 @@ impl<S: System> Shell<S> {
                     RedirectKind::Append => Redirection::Out { fd, path: target, append: true },
                     RedirectKind::Copy if target == "-" => Redirection::Close { fd },
                     RedirectKind::Copy => Redirection::Copy { fd, to: target.parse().unwrap_or(0) },
+                    RedirectKind::ReadWrite => Redirection::ReadWrite { fd, path: target },
+                    RedirectKind::Here => Redirection::Here { fd, text: target },
                 }
             })
             .collect()
@@ -1554,14 +1723,18 @@ impl<S: System> Shell<S> {
         match command {
             Cmd::Simple(simple) => self.run_simple(simple),
             Cmd::Compound { body, redirections, source } => {
-                if matches!(body, Compound::Subshell(_)) || !redirections.is_empty() {
+                if matches!(body, Compound::Subshell(_)) {
                     let redirections = self.redirections(redirections);
                     let copy = self.compound_copy(source, redirections);
                     self.trace(core::slice::from_ref(&copy));
                     self.status = self.system.pipeline(&[copy]);
                     return self.status;
                 }
-                self.run_compound(body)
+                if redirections.is_empty() {
+                    return self.run_compound(body);
+                }
+                self.status = self.redirected(redirections, |shell| shell.run_compound(body));
+                self.status
             }
             Cmd::Function { name, body, source } => {
                 let function = Function { name: name.clone(), body: (**body).clone(), source: source.clone() };
@@ -1705,33 +1878,90 @@ impl<S: System> Shell<S> {
                 self.status = self.substituted.unwrap_or(0);
                 return self.status;
             }
-            // `> file` by itself: the file made, and nothing run.
-            let redirections = self.redirections(&simple.redirections);
-            let command = self.copy_running(vec![String::from(":")], redirections, Vec::new());
-            self.trace(core::slice::from_ref(&command));
-            self.status = self.system.pipeline(&[command]);
+            // `> file` by itself: the file made, here, and nothing run.
+            self.status = self.redirected(&simple.redirections, |_| 0);
             return self.status;
         }
+        self.run_words(simple, words)
+    }
+
+    /// A simple command, its words already expanded: a builtin or a
+    /// function, run here, or a program.
+    fn run_words(&mut self, simple: &Simple, words: Vec<String>) -> i32 {
         let name = words[0].as_str();
-        let here = SPECIAL.contains(&name)
-            || (simple.redirections.is_empty() && (self.function(name).is_some() || REGULAR.contains(&name)));
-        if here {
-            if !simple.redirections.is_empty() {
-                self.complain(&format!("{name}: a redirection for {name} is not in this shell yet"));
-                self.status = 2;
-                return 2;
-            }
+        if name == "exec" {
+            return self.exec(simple, &words);
+        }
+        if SPECIAL.contains(&name) || self.function(name).is_some() || REGULAR.contains(&name) {
             let line = Command { words: words.clone(), redirections: Vec::new(), environment: Vec::new(), shell: None };
             self.trace(core::slice::from_ref(&line));
-            self.status = match self.function(name) {
-                Some(n) if !SPECIAL.contains(&name) => self.call(n, &words),
-                _ => self.builtin(&words),
+            let run = |shell: &mut Self| match shell.function(name) {
+                Some(n) if !SPECIAL.contains(&name) => shell.call(n, &words),
+                _ => shell.builtin(&words),
             };
+            self.status = if simple.redirections.is_empty() { run(self) } else { self.redirected(&simple.redirections, run) };
             return self.status;
         }
         let command = self.prepare_with(simple, words);
         self.trace(core::slice::from_ref(&command));
         self.status = self.system.pipeline(&[command]);
+        self.status
+    }
+
+    /// Runs `run` here with this shell's descriptors redirected, and
+    /// puts them back after: a builtin's, a function's or a compound
+    /// command's redirections. One that cannot be done (no such file)
+    /// is said, and nothing is run: status 1.
+    fn redirected(&mut self, redirects: &[Redirect], run: impl FnOnce(&mut Self) -> i32) -> i32 {
+        let Some(redirections) = self.expanded_redirections(redirects) else { return 2 };
+        match self.system.redirect(&redirections, true) {
+            Ok(saved) => {
+                let status = run(self);
+                self.system.restore(saved);
+                status
+            }
+            Err(why) => {
+                self.complain(&why);
+                1
+            }
+        }
+    }
+
+    /// The redirections, their words expanded; None, and the shell
+    /// ended, if an expansion failed (`> $((1/0))`).
+    fn expanded_redirections(&mut self, redirects: &[Redirect]) -> Option<Vec<Redirection>> {
+        let redirections = self.redirections(redirects);
+        if self.failed {
+            self.failed = false;
+            self.status = 2;
+            self.exited = Some(2);
+            return None;
+        }
+        Some(redirections)
+    }
+
+    /// `exec`: with no command, its redirections are this shell's from
+    /// now on (`exec 3< list`, `exec > log`). With one, the command is
+    /// run and the shell ends, with its status - which is how a Unix
+    /// shell's exec, the shell becoming the command, looks from
+    /// outside. A redirection that cannot be done ends the shell too.
+    fn exec(&mut self, simple: &Simple, words: &[String]) -> i32 {
+        if words.len() > 1 {
+            let status = self.run_words(simple, words[1..].to_vec());
+            if self.exited.is_none() {
+                self.exited = Some(status);
+            }
+            return status;
+        }
+        let Some(redirections) = self.expanded_redirections(&simple.redirections) else { return 2 };
+        self.status = match self.system.redirect(&redirections, false) {
+            Ok(_) => 0,
+            Err(why) => {
+                self.complain(&format!("exec: {why}"));
+                self.exited = Some(1);
+                1
+            }
+        };
         self.status
     }
 
@@ -1810,7 +2040,7 @@ impl<S: System> Shell<S> {
     /// Words expanded into fields: variables and substitutions, then
     /// split where they were not quoted, then wildcards.
     pub fn fields_of(&mut self, script_words: &str) -> Result<Vec<String>, Refused> {
-        let tokens = Lexer { chars: script_words.chars().collect(), at: 0 }.tokens()?;
+        let tokens = Lexer::new(script_words.chars().collect()).tokens()?;
         let words: Vec<Word> = tokens
             .into_iter()
             .filter_map(|(token, _, _)| match token {
@@ -2418,9 +2648,93 @@ mod tests {
         cwd: String,
         out: String,
         err: String,
+        /// Files there are to read, by name: their text.
+        contents: BTreeMap<String, String>,
+        /// What was written to files, by name.
+        written: BTreeMap<String, String>,
+        /// The shell's descriptors that are not as it began (0 standard
+        /// input, 1 `out`, 2 `err`): None for one closed.
+        table: BTreeMap<u32, Option<Open>>,
+        /// The lines still to be read from each file or here-document
+        /// opened, shared by the descriptors that are copies of one.
+        streams: Vec<Vec<String>>,
+    }
+
+    /// One of the pretend shell's descriptors.
+    #[derive(Debug, Clone, PartialEq)]
+    enum Open {
+        Input,
+        Out,
+        Err,
+        /// Writing to the file of this name.
+        File(String),
+        /// Reading `streams[n]`.
+        Reading(usize),
+    }
+
+    impl Pretend {
+        fn open(&self, fd: u32) -> Option<Open> {
+            match self.table.get(&fd) {
+                Some(open) => open.clone(),
+                None => [Open::Input, Open::Out, Open::Err].get(fd as usize).cloned(),
+            }
+        }
+
+        fn reading(&mut self, text: &str) -> Open {
+            self.streams.push(text.lines().map(String::from).collect());
+            Open::Reading(self.streams.len() - 1)
+        }
     }
 
     impl System for Pretend {
+        type Saved = Vec<(u32, Option<Open>)>;
+
+        fn redirect(&mut self, redirections: &[Redirection], save: bool) -> Result<Self::Saved, String> {
+            let mut saved: Self::Saved = Vec::new();
+            for redirection in redirections {
+                let fd = redirection.fd();
+                if save && !saved.iter().any(|(n, _)| *n == fd) {
+                    saved.push((fd, self.open(fd)));
+                }
+                let open = match redirection {
+                    Redirection::In { path, .. } => match self.contents.get(path).cloned() {
+                        Some(text) => Ok(Some(self.reading(&text))),
+                        None => Err(format!("{path}: no such file")),
+                    },
+                    Redirection::Out { path, append, .. } => {
+                        let file = self.written.entry(path.clone()).or_default();
+                        if !append {
+                            file.clear();
+                        }
+                        Ok(Some(Open::File(path.clone())))
+                    }
+                    Redirection::ReadWrite { path, .. } => Ok(Some(Open::File(path.clone()))),
+                    Redirection::Copy { to, .. } => match self.open(*to) {
+                        Some(open) => Ok(Some(open)),
+                        None => Err(format!("{to}: not an open descriptor")),
+                    },
+                    Redirection::Close { .. } => Ok(None),
+                    Redirection::Here { text, .. } => Ok(Some(self.reading(text))),
+                };
+                match open {
+                    Ok(open) => {
+                        self.table.insert(fd, open);
+                    }
+                    Err(why) => {
+                        self.restore(saved);
+                        return Err(why);
+                    }
+                }
+            }
+            Ok(saved)
+        }
+
+        fn restore(&mut self, saved: Self::Saved) {
+            for (fd, open) in saved.into_iter().rev() {
+                self.table.insert(fd, open);
+            }
+        }
+
         fn pipeline(&mut self, commands: &[Command]) -> i32 {
             self.ran.extend(commands.iter().cloned());
             let last = &commands[commands.len() - 1];
@@ -2472,11 +2786,21 @@ mod tests {
         }
 
         fn write(&mut self, fd: u32, text: &str) {
-            if fd == 1 { &mut self.out } else { &mut self.err }.push_str(text);
+            match self.open(fd) {
+                Some(Open::Out) => self.out.push_str(text),
+                Some(Open::Err) => self.err.push_str(text),
+                Some(Open::File(name)) => self.written.entry(name).or_default().push_str(text),
+                _ => {}
+            }
         }
 
         fn read_line(&mut self) -> Option<String> {
-            (!self.input.is_empty()).then(|| self.input.remove(0))
+            let lines = match self.open(0)? {
+                Open::Input => &mut self.input,
+                Open::Reading(n) => &mut self.streams[n],
+                _ => return None,
+            };
+            (!lines.is_empty()).then(|| lines.remove(0))
         }
 
         fn pid(&self) -> i32 {
@@ -2587,10 +2911,13 @@ mod tests {
             ]
         );
         let shell = run("echo 2 > f; echo \"2\">g");
-        assert_eq!(ran(&shell), vec![vec!["echo", "2"], vec!["echo", "2"]], "a number apart, or quoted, is a word");
-        assert!(shell.system.ran.iter().all(|c| c.shell.is_some() && c.redirections.len() == 1 && matches!(c.redirections[0], Redirection::Out { fd: 1, .. })));
+        assert_eq!(shell.system.written.get("f").map(String::as_str), Some("2\n"), "a number apart, or quoted, is a word");
+        assert_eq!(shell.system.written.get("g").map(String::as_str), Some("2\n"));
+        let shell = run("a <> f; b 3<>g");
+        assert_eq!(shell.system.ran[0].redirections, vec![Redirection::ReadWrite { fd: 0, path: String::from("f") }]);
+        assert_eq!(shell.system.ran[1].redirections, vec![Redirection::ReadWrite { fd: 3, path: String::from("g") }]);
         let shell = run("X=out; echo hi > $X.txt");
-        assert_eq!(shell.system.ran[0].redirections, vec![Redirection::Out { fd: 1, path: String::from("out.txt"), append: false }]);
+        assert_eq!(shell.system.written.get("out.txt").map(String::as_str), Some("hi\n"));
     }
 
     #[test]
@@ -2603,8 +2930,8 @@ mod tests {
         assert!(shell.system.ran[0].shell.is_some() && shell.system.ran[1].shell.is_none());
         assert_eq!(shell.system.out, "", "not said here: the pipeline's echo says it");
         let shell = run("> made");
-        assert_eq!(ran(&shell), vec![vec![":"]]);
-        assert_eq!(shell.system.ran[0].redirections, vec![Redirection::Out { fd: 1, path: String::from("made"), append: false }]);
+        assert!(shell.system.ran.is_empty(), "made here: nothing is run");
+        assert_eq!(shell.system.written.get("made").map(String::as_str), Some(""));
     }
 
     #[test]
@@ -2747,8 +3074,7 @@ mod tests {
     fn what_this_shell_does_not_have_is_refused_before_anything_runs() {
         for (script, what) in [
             ("a; b &", "running a command in the background, &, is not in this shell yet"),
-            ("cat << END", "a here-document, <<, is not in this shell yet"),
-            ("a <> f", "opening for reading and writing, <>, is not in this shell yet"),
+            ("cat << $X", "a here-document's delimiter with $ or ` in it is not in this shell yet"),
             ("a >& file", "a redirection to a file with >& is not in this shell yet"),
             ("echo ${X?gone}", "${NAME?message} is not in this shell yet"),
         ] {
@@ -2774,6 +3100,9 @@ mod tests {
             ("case x in a) b;; c esac", "'esac' where ')' should be"),
             ("{ a; ", "the end where '}' should be"),
             ("(a", "the end where ')' should be"),
+            ("cat << END", "a here-document with no lines: nothing after the line with << END"),
+            ("cat << END\nx\nEN", "a here-document that does not end: no line END after it"),
+            ("cat <<\n", "the end of a line after '<<', where a file should be"),
             ("f() echo x", "the function f's body is not a compound command"),
             ("echo $((1+2)", "a $(( closed by one ) only"),
             ("a > ", "the end after '>', where a file should be"),
@@ -2897,13 +3226,12 @@ mod tests {
         assert_eq!(shell.system.out, "/t\n", "a subshell is a copy: its output is its own, and its cd too");
         let copy = shell.system.ran[0].shell.as_ref().expect("a copy of the shell");
         assert_eq!(copy.script, "cd sub; echo in");
-        let shell = run("{ echo a; } > out; for f in x; do echo $f; done | wc");
-        assert_eq!(shell.system.out, "");
+        let shell = run("{ echo a; X=1; } > out; for f in x; do echo $f; done | wc; echo $X");
+        assert_eq!(shell.system.out, "1\n", "a group with a redirection runs here: its X stays");
+        assert_eq!(shell.system.written.get("out").map(String::as_str), Some("a\n"));
         let ran = &shell.system.ran;
-        assert_eq!(ran[0].shell.as_ref().map(|c| c.script.as_str()), Some("{ echo a; }"));
-        assert_eq!(ran[0].redirections, vec![Redirection::Out { fd: 1, path: String::from("out"), append: false }]);
-        assert_eq!(ran[1].shell.as_ref().map(|c| c.script.as_str()), Some("for f in x; do echo $f; done"));
-        assert_eq!(words(&ran[2]), vec!["wc"]);
+        assert_eq!(ran[0].shell.as_ref().map(|c| c.script.as_str()), Some("for f in x; do echo $f; done"));
+        assert_eq!(words(&ran[1]), vec!["wc"]);
     }
 
     #[test]
@@ -2913,13 +3241,13 @@ mod tests {
         let shell = run("f() { for i in 1 2 3; do [ $i = 2 ] && return; echo $i; done; }; f; echo after");
         assert_eq!(shell.system.out, "1\nafter\n");
         let shell = run("f() { echo x; }; f | wc; f > out");
+        assert_eq!(shell.system.written.get("out").map(String::as_str), Some("x\n"), "run here, its output to the file");
         let ran = &shell.system.ran;
-        assert_eq!(ran.len(), 3);
+        assert_eq!(ran.len(), 2);
         let copy = ran[0].shell.as_ref().expect("the function, run by a copy");
         assert_eq!(copy.functions, "f() { echo x; }\n", "the copy is given the function");
         assert_eq!(copy.script, "\"$@\"");
         assert_eq!(words(&ran[0]), vec!["f"]);
-        assert!(ran[2].shell.is_some() && ran[2].redirections.len() == 1);
         let shell = run("cd() { echo mine; }; cd sub; pwd");
         assert_eq!(shell.system.out, "/t/sub\n", "a special builtin before a function");
         let shell = run("return 4; echo no");
@@ -2960,8 +3288,82 @@ mod tests {
             s.input = vec![String::from("x"), String::from("y")];
         });
         assert_eq!(shell.system.out, "got x\ngot y\ndone\n");
-        let shell = run("read x < file");
-        assert_eq!(shell.system.err, "sh: read: a redirection for read is not in this shell yet\n");
+        let shell = run("read x < file; echo $?");
+        assert_eq!((shell.system.err.as_str(), shell.system.out.as_str()), ("sh: file: no such file\n", "1\n"));
+    }
+
+    #[test]
+    fn here_documents() {
+        let shell = run("X=1; cat <<END\nhi $X \\$X \"q\" 'q' \\a $(( X + 1 ))\n  two\nEND\necho after");
+        assert_eq!(shell.system.ran[0].redirections, vec![Redirection::Here { fd: 0, text: String::from("hi 1 $X \"q\" 'q' \\a 2\n  two\n") }]);
+        assert_eq!(shell.system.out, "after\n");
+        for quoted in ["'END'", "\"END\"", "\\END", "E'N'D"] {
+            let shell = run(&format!("cat <<{quoted}\nhi $X `x`\nEND\n"));
+            assert_eq!(shell.system.ran[0].redirections, vec![Redirection::Here { fd: 0, text: String::from("hi $X `x`\n") }], "{quoted}");
+        }
+        let shell = run("cat <<-END\n\tone\n\t\ttwo\n\tEND\nb");
+        assert_eq!(shell.system.ran[0].redirections, vec![Redirection::Here { fd: 0, text: String::from("one\ntwo\n") }]);
+        assert_eq!(ran(&shell), vec![vec!["cat"], vec!["b"]]);
+        let shell = run("a <<A 3<<B; b <<C\n1\nA\n2\nB\n3\nC\nd <<E\nE");
+        let texts: Vec<&Vec<Redirection>> = shell.system.ran.iter().map(|c| &c.redirections).collect();
+        let here = |fd, text: &str| Redirection::Here { fd, text: String::from(text) };
+        assert_eq!(texts, vec![&vec![here(0, "1\n"), here(3, "2\n")], &vec![here(0, "3\n")], &vec![here(0, "")]], "in the order of their <<s");
+        let shell = run_with("cat <<E\n[$(name)]\nE", |s| {
+            s.outputs.insert(String::from("name"), String::from("N\n"));
+        });
+        assert_eq!(shell.system.ran[0].redirections, vec![here(0, "[N]\n")]);
+        let shell = run("read a b <<E\none two\nE\necho $b $a");
+        assert_eq!(shell.system.out, "two one\n", "read here: its variables stay");
+        let shell = run("while read l; do echo \"[$l]\"; done <<E | wc\nx\nE\nwhile read l; do echo \"[$l]\"; done <<E\nx\ny\nE\necho \"$l.\"");
+        assert_eq!(shell.system.out, "[x]\n[y]\n.\n");
+        assert_eq!(shell.system.ran[0].redirections, vec![here(0, "x\n")], "in a pipeline, the copy's");
+        let shell = run("f() {\ncat <<E\nin f\nE\n}\nf | wc");
+        assert_eq!(shell.system.ran[0].shell.as_ref().map(|c| c.functions.as_str()), Some("f() {\ncat <<E\nin f\nE\n}\n"), "a copy is given the text");
+    }
+
+    #[test]
+    fn builtins_and_groups_redirected_run_here() {
+        let input = |s: &mut Pretend| {
+            s.contents.insert(String::from("in"), String::from("first\nsecond\n"));
+        };
+        let shell = run_with("echo hi > f; echo more >> f; echo err 2> e >&2; echo back", input);
+        assert_eq!(shell.system.written.get("f").map(String::as_str), Some("hi\nmore\n"));
+        assert_eq!(shell.system.written.get("e").map(String::as_str), Some("err\n"));
+        assert_eq!(shell.system.out, "back\n", "put back after");
+        assert!(shell.system.ran.is_empty());
+        let shell = run_with("read x < in; { read a; read b; } < in; echo $x $a $b", input);
+        assert_eq!(shell.system.out, "first first second\n");
+        let shell = run_with("while read l; do echo \"<$l>\"; n=$l; done < in > out; echo $n", input);
+        assert_eq!(shell.system.written.get("out").map(String::as_str), Some("<first>\n<second>\n"));
+        assert_eq!(shell.system.out, "second\n");
+        let shell = run_with("{ echo a; read x; echo $x >&2; } < none 2> e; echo $?", input);
+        assert_eq!((shell.system.err.as_str(), shell.system.out.as_str()), ("sh: none: no such file\n", "1\n"), "nothing run");
+        assert!(!shell.system.written.contains_key("e"), "and what was done undone");
+        let shell = run_with("echo x 3>&-; echo y >&3; echo $?", input);
+        assert_eq!((shell.system.err.as_str(), shell.system.out.as_str()), ("sh: 3: not an open descriptor\n", "x\n1\n"));
+    }
+
+    #[test]
+    fn exec_changes_this_shells_descriptors_or_ends_it() {
+        let input = |s: &mut Pretend| {
+            s.contents.insert(String::from("in"), String::from("first\nsecond\n"));
+            s.statuses.insert(String::from("prog"), 3);
+        };
+        let shell = run_with("exec 3< in; read x <&3; read y <&3; echo $x $y; exec > log; echo one; echo two >&2", input);
+        assert_eq!(shell.system.out, "first second\n");
+        assert_eq!(shell.system.written.get("log").map(String::as_str), Some("one\n"));
+        assert_eq!(shell.system.err, "two\n");
+        let mut shell = self::shell();
+        input(&mut shell.system);
+        assert_eq!(shell.run("exec prog a > o; echo no"), 3);
+        assert_eq!(ran(&shell), vec![vec!["prog", "a"]]);
+        assert_eq!(shell.system.out, "");
+        let mut shell = self::shell();
+        assert_eq!(shell.run("exec < none; echo no"), 1);
+        assert_eq!((shell.system.err.as_str(), shell.system.out.as_str()), ("sh: exec: none: no such file\n", ""));
+        let mut shell = self::shell();
+        assert_eq!(shell.run("exec; echo $?"), 0);
+        assert_eq!(shell.system.out, "0\n");
     }
 
     #[test]

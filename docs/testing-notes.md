@@ -3334,3 +3334,50 @@ make test64
 | `boot64-test passed`, `stick64-test passed` | the VESA change still finds QEMU's mode |
 | `usb64-test passed` | among the rest, the tablet and the hub are named once each |
 | `test64: all passed` | every part |
+
+---
+
+## 092 · Descriptors for a child: inheritance, close-on-exec, here-documents and `exec`
+
+[The entry](journal/092-descriptors-for-a-child.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`. Type each line in TheTaaJ's shell, exactly as written (the `\$` in the first line is meant).
+
+| Type | You should see |
+|---|---|
+| `with programs sh -c 'echo "cat <<END" > h.sh; echo "six sevens: \$((6 * 7))" >> h.sh; echo END >> h.sh'` | nothing; `sh` exits with code 0. h.sh now holds a here-document |
+| `with programs sh h.sh` | `six sevens: 42` |
+| `with programs sh -c 'exec 3< h.sh; read -r a <&3; read -r b <&3; echo "[$a] [$b]"'` | `[cat <<END] [six sevens: $((6 * 7))]`: two lines read through descriptor 3 |
+| `with programs sh -c '{ echo first; cprimes 10; echo last; } > g.txt; cat g.txt'` | `first`, `cprimes: 4 primes below 10`, `last`, in that order |
+| `with programs sh -c 'n=0; while read l; do n=$((n + 1)); done < h.sh; echo "$n lines"'` | `3 lines`: the loop's variable kept |
+| `with programs sh -c 'exec cprimes 10; echo never'` | `cprimes: 4 primes below 10`, and no `never` |
+| `with programs sh -c 'a &'` | `sh: running a command in the background, &, is not in this shell yet`, `sh exited with code 2` |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `pipes on TheTaaJ (x86_64): 102 checks ... passed; sh ran a list and a script with if, for, while read, case, a function, exec 3< and a here-document` | inheritance and the shell, on the PC; the same for aarch64 |
+| `test64: all passed` | every part |
+
+Automated: make test64
