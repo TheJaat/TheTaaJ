@@ -688,14 +688,19 @@ RUN_CPUS ?= 4
 # run64 RUN_MEMORY=4G` for programs that want a lot (bigmem big).
 RUN_MEMORY ?= 512M
 
+# KVM when /dev/kvm can be opened, else QEMU emulates: `make run64
+# RUN_ACCEL=tcg` to emulate anyway. TAAJ_ACCEL, which the test scripts
+# read, sets it too.
+RUN_ACCEL ?= $(or $(TAAJ_ACCEL),$(shell [ -r /dev/kvm ] && [ -w /dev/kvm ] && echo kvm || echo tcg))
+
 run64: iso64 run-disk
-	qemu-system-x86_64 -m $(RUN_MEMORY) -smp $(RUN_CPUS) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS) $(RUN_NET) $(RUN_USB_ARGS)
+	qemu-system-x86_64 -accel $(RUN_ACCEL) -m $(RUN_MEMORY) -smp $(RUN_CPUS) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS) $(RUN_NET) $(RUN_USB_ARGS)
 
 run64-uefi: iso64 run-disk
 ifneq ($(HAVE_CLANG),yes)
 	@echo "ERROR: no UEFI loader in the ISO - it needs clang and lld (sudo apt install clang lld)"; exit 1
 endif
-	qemu-system-x86_64 -m $(RUN_MEMORY) -smp $(RUN_CPUS) -bios $(OVMF) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS) $(RUN_NET) $(RUN_USB_ARGS)
+	qemu-system-x86_64 -accel $(RUN_ACCEL) -m $(RUN_MEMORY) -smp $(RUN_CPUS) -bios $(OVMF) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS) $(RUN_NET) $(RUN_USB_ARGS)
 
 # Booted from the USB stick (make stick64), with no CD and no other
 # disk: a USB keyboard and mouse beside it. The files written land in
@@ -703,10 +708,10 @@ endif
 RUN_STICK_ARGS = -device qemu-xhci,id=xhci -drive file=$(STICK64_IMG),format=raw,if=none,id=stick \
 	-device usb-storage,bus=xhci.0,drive=stick,bootindex=0 -device usb-kbd,bus=xhci.0 -device usb-mouse,bus=xhci.0
 run64-stick: stick64
-	qemu-system-x86_64 -m $(RUN_MEMORY) -smp $(RUN_CPUS) -serial stdio $(RUN_STICK_ARGS) $(RUN_NET)
+	qemu-system-x86_64 -accel $(RUN_ACCEL) -m $(RUN_MEMORY) -smp $(RUN_CPUS) -serial stdio $(RUN_STICK_ARGS) $(RUN_NET)
 
 run64-stick-uefi: stick64
-	qemu-system-x86_64 -m $(RUN_MEMORY) -smp $(RUN_CPUS) -bios $(OVMF) -serial stdio $(RUN_STICK_ARGS) $(RUN_NET)
+	qemu-system-x86_64 -accel $(RUN_ACCEL) -m $(RUN_MEMORY) -smp $(RUN_CPUS) -bios $(OVMF) -serial stdio $(RUN_STICK_ARGS) $(RUN_NET)
 
 # Boots the 64-bit kernel headless and checks what it printed. A start on
 # the "boot every architecture on every commit" rule from the roadmap.
