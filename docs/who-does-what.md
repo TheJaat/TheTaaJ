@@ -58,14 +58,48 @@ MaK's memory can grow: a `.wslconfig` gives WSL more of the laptop's memory, if 
 
 ## How we work
 
-1. **One branch per step**, with the same name in every repository the step touches (for example `r3-std`, `usb-hubs`). Nobody commits straight to `main`.
-2. **Before a merge into `main`:** pull `main`, merge it into the branch, run `make test64` (it must pass), then merge into `main` and push. Push TheKernel and TheBootloader first, TheTaaJ last.
-3. **Journal numbers are taken at merge time.** Whoever merges into `main` first takes the next number. The other renumbers their entry (file name, title, README row) before merging.
-4. **Update this file** when a step starts (its branch under "Now") and when it is merged (tick it, write the entry number).
-5. **Only the bootloader's owner (MaK) changes TheBootloader.** If The-Jat needs a change there, it's written down here and MaK does it.
-6. **Files both machines touch often**, such as `Makefile`, `README.md`, `docs/testing-notes.md`, `libc/` and `kernel64/src/syscall*`: keep changes small and merge `main` in often, so conflicts stay small.
-7. **Machine-local settings stay out of commits:** `kernel/headers/revision.h`, `bootloader/headers/revision.h`, `toolchain/`, and local tweaks to `qemu-boot.sh`.
-8. If a step on one machine finds a bug in the other machine's area, the fix goes in the finder's branch only if it's small. Otherwise it's added to the right list below.
+**This file is the one place for the work items.** Every item, its owner, its order, what it depends on and whether it is done is written here and nowhere else. Each machine reads it after every `git pull` and changes it in the same branch as the work. How an item was built goes in its journal entry; this file only points to it.
+
+### Rules for both machines
+
+1. **A separate branch for everything**: every step, fix or document change, with the same name in every repository it touches (for example `r3-std`, `usb-hubs`). Nothing is committed straight to `main`.
+2. **Nothing is merged into `main` without asking the user first**, and only after full testing:
+   - pull `main` and merge it into the branch;
+   - `make test64` passes on the branch with `main` merged in;
+   - the step's own new tests pass, and its testing note was checked by a scripted boot;
+   - the user is asked and says yes;
+   - then merge and push, TheKernel and TheBootloader first, TheTaaJ last.
+3. **The same commit author on both machines: `The-Jat`**, with the same email. Set it once in each repository (`git config user.name "The-Jat"`, and the email the user gives). Nothing else goes in a commit message's author or trailers: no "Claude" and no `Co-Authored-By` line.
+4. **Work follows the dependencies.** An item is started only when the items it depends on are done. Among the items that are ready, the one that most other items wait for goes first (see "What waits for what" below). If an item turns out to block more work than this file says, move it up and write down why.
+5. **Journal numbers are taken at merge time.** Whoever merges into `main` first takes the next number. The other renumbers their entry (file name, title, README row) before merging.
+6. **Keep this file current**, in the step's own branch:
+   - when a step starts, put it and its branch under "Now";
+   - when an item is done, write **Done (entry NNN)** in its Notes;
+   - when something new is found to do, add it to the right list with a new number (numbers are never reused);
+   - when a dependency is found, add it to "What waits for what".
+7. **Only the bootloader's owner (MaK) changes TheBootloader.** If The-Jat needs a change there, it's written down here and MaK does it.
+8. **Files both machines touch often**, such as `Makefile`, `README.md`, `docs/testing-notes.md`, `libc/` and `kernel64/src/syscall*`: keep changes small and merge `main` in often, so conflicts stay small.
+9. **Machine-local settings stay out of commits:** `kernel/headers/revision.h`, `bootloader/headers/revision.h`, `toolchain/`, and local tweaks to `qemu-boot.sh`.
+10. If a step on one machine finds a bug in the other machine's area, the fix goes in the finder's branch only if it's small. Otherwise it's added to the right list below.
+
+### What waits for what
+
+The items most others wait for, most first. This is why the order below is what it is.
+
+| Item | Waiting for it | Owner |
+|---|---|---|
+| **J2 `getrandom`** | J15 R3, J40 `random_device`, K25 ASLR, K29 random TCP numbers, K37 TLS | The-Jat, step B |
+| **J15 R3 Rust's std** | J16, J21 R4, J22 R5, J25 R6 | The-Jat, step F |
+| **J14 LLVM 23** | J15 R3, J21 R4 | The-Jat, step E |
+| **J1 ELF thread-local storage** | J15 R3 | The-Jat, step B |
+| **J3 `poll`** | J15 R3, K33 non-blocking sockets | The-Jat, step C |
+| **J17-J20 TaajFS version 4** | J7 `stat` with times, J21 (rustc's big files), E1 `fsck` (written for the new format) | The-Jat, step D |
+| **K1 R7, the real PC** | K3 a day on it, K4 its fixes, MaK's step C drivers | MaK, step B |
+| **K13 AML interpreter** | K14 `_PRT`, K15 power button, K17 battery, K18 suspend | MaK, step E |
+| **J43 shell variables and `if`** | J45 rebuilding only what changed, J25 R6's build scripts | The-Jat, filler |
+| **K44 pseudo-terminals** | K45 job control | MaK, step H |
+| **K11 GPT** | K12 the installer | MaK, step B |
+| **J51 test programs out of the kernel image** | Every kernel feature, once the image nears its 3 MiB limit (about 680 KiB left) | The-Jat, filler; it moves to the front if less than 200 KiB is left |
 
 Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 
