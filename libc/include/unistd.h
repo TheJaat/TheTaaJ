@@ -116,9 +116,12 @@ pid_t getpid(void);
 long sysconf(int name);
 int getpagesize(void);
 
-/* Asks for SIGALRM in `seconds`. The kernel sends programs no signals
- * (signal.h), so it never comes; returns 0. */
+/* SIGALRM in `seconds` (to the tick, 10 ms), in place of any alarm set
+ * before; 0 only cancels. Returns the seconds the one before had left,
+ * or 0. */
 unsigned alarm(unsigned seconds);
+/* Waits until a signal handler has run; always -1 with EINTR. */
+int pause(void);
 
 /* Replaces the program with another. TheTaaJ starts programs as new
  * processes and never replaces one: this always fails (ENOSYS). */

@@ -351,8 +351,35 @@ pub fn yield_now() {
     syscall(call::YIELD, 0, 0, 0);
 }
 
+/// Sleeps for `ticks` timer ticks - less, if a signal the program
+/// catches cuts it short.
 pub fn sleep(ticks: u64) {
     syscall(call::SLEEP, ticks, 0, 0);
+}
+
+/// `sleep`, saying whether it slept the whole time: false if a signal
+/// cut it short (its handler has run by now). The one wait here that is
+/// not restarted (see `restarting`): nanosleep is to say EINTR.
+pub fn sleep_unless_signalled(ticks: u64) -> bool {
+    abi::decode(syscall(call::SLEEP, ticks, 0, 0)).is_ok()
+}
+
+/// A call that waits, made again for as long as a signal cuts it short.
+///
+/// A signal a program catches ends whatever wait one of its threads is
+/// in, with Interrupted, so that the thread goes back to user mode and
+/// the handler runs there (kernel64's signals.rs). By the time the call
+/// returns here, it has. The wait is then simply made again: what POSIX
+/// calls SA_RESTART, and what every caller of these functions expects -
+/// none of them was written for a wait that ends with nothing. (A
+/// program being killed never sees Interrupted: it ends first.)
+fn restarting(mut call: impl FnMut() -> u64) -> Result<u64, Error> {
+    loop {
+        match abi::decode(call()) {
+            Err(Error::Interrupted) => continue,
+            other => return other,
+        }
+    }
 }
 
 pub fn process_id() -> u64 {
@@ -361,6 +388,18 @@ pub fn process_id() -> u64 {
 
 pub fn ticks() -> u64 {
     syscall(call::TICKS, 0, 0, 0)
+}
+
+/// Nanoseconds since the system started, from the CPU's counter: finer
+/// than `ticks`, and never going back.
+pub fn monotonic_ns() -> u64 {
+    abi::decode(syscall(call::CLOCK, abi::clock::MONOTONIC, 0, 0)).unwrap_or(0)
+}
+
+/// The time of day: nanoseconds since 1 January 1970, UTC - from the
+/// machine's real-time clock at boot, plus the time since.
+pub fn realtime_ns() -> u64 {
+    abi::decode(syscall(call::CLOCK, abi::clock::REALTIME, 0, 0)).unwrap_or(0)
 }
 
 /// A new channel: the handles of its two ends.
@@ -385,14 +424,16 @@ pub fn send(channel: Handle, data: &[u8], handles: &[Handle]) -> Result<(), Erro
 
 /// Waits for a message on `channel`; returns (bytes, handles) received.
 pub fn receive(channel: Handle, buffer: &mut [u8], handles: &mut [Handle]) -> Result<(usize, usize), Error> {
-    let packed = abi::decode(syscall5(
-        call::CHANNEL_RECEIVE,
-        channel,
-        buffer.as_mut_ptr() as u64,
-        buffer.len() as u64,
-        handles.as_mut_ptr() as u64,
-        handles.len() as u64,
-    ))?;
+    let packed = restarting(|| {
+        syscall5(
+            call::CHANNEL_RECEIVE,
+            channel,
+            buffer.as_mut_ptr() as u64,
+            buffer.len() as u64,
+            handles.as_mut_ptr() as u64,
+            handles.len() as u64,
+        )
+    })?;
     Ok(((packed & 0xFFFF_FFFF) as usize, (packed >> 32) as usize))
 }
 
@@ -450,7 +491,7 @@ pub fn duplicate(handle: Handle, rights: u32) -> Result<Handle, Error> {
 
 /// Waits for the interrupt `line`; returns how often it fired.
 pub fn interrupt_wait(line: Handle) -> Result<u64, Error> {
-    abi::decode(syscall(call::INTERRUPT_WAIT, line, 0, 0))
+    restarting(|| syscall(call::INTERRUPT_WAIT, line, 0, 0))
 }
 
 /// Lets this process use the I/O ports `ports` names, with the `port`
@@ -560,13 +601,13 @@ pub fn spawn_image(
 /// Waits until any of `handles` is ready (a channel to receive from, a
 /// process that ended, a pending interrupt); returns its index.
 pub fn object_wait(handles: &[Handle]) -> Result<usize, Error> {
-    abi::decode(syscall(call::OBJECT_WAIT, handles.as_ptr() as u64, handles.len() as u64, 0)).map(|i| i as usize)
+    restarting(|| syscall(call::OBJECT_WAIT, handles.as_ptr() as u64, handles.len() as u64, 0)).map(|i| i as usize)
 }
 
 /// As `object_wait`, but only until the tick count reaches `deadline`:
 /// None if nothing was ready by then.
 pub fn object_wait_until(handles: &[Handle], deadline: u64) -> Result<Option<usize>, Error> {
-    match abi::decode(syscall(call::OBJECT_WAIT_UNTIL, handles.as_ptr() as u64, handles.len() as u64, deadline)) {
+    match restarting(|| syscall(call::OBJECT_WAIT_UNTIL, handles.as_ptr() as u64, handles.len() as u64, deadline)) {
         Ok(index) => Ok(Some(index as usize)),
         Err(Error::TimedOut) => Ok(None),
         Err(error) => Err(error),
@@ -599,12 +640,7 @@ pub fn process_list(system: Handle, out: &mut [abi::ProcessEntry]) -> Result<usi
 /// Waits until one of `processes` ends: returns its index and exit code.
 pub fn wait_any(processes: &[Handle]) -> Result<(usize, i64), Error> {
     let mut code = 0i64;
-    let index = abi::decode(syscall(
-        call::PROCESS_WAIT,
-        processes.as_ptr() as u64,
-        processes.len() as u64,
-        &raw mut code as u64,
-    ))?;
+    let index = restarting(|| syscall(call::PROCESS_WAIT, processes.as_ptr() as u64, processes.len() as u64, &raw mut code as u64))?;
     Ok((index as usize, code))
 }
 
@@ -613,6 +649,25 @@ pub fn wait_any(processes: &[Handle]) -> Result<(usize, i64), Error> {
 /// code will be abi::STOPPED.
 pub fn kill(process: Handle) -> Result<(), Error> {
     abi::decode(syscall(call::PROCESS_KILL, process, 0, 0)).map(|_| ())
+}
+
+/// How this process takes signals (abi::call::SIGNAL_SETUP): libc's
+/// business. A Rust program that never calls it is ended by any signal
+/// not ignored by default - Ctrl+C among them.
+pub fn signal_setup(entry: u64, caught: u64, ignored: u64) -> Result<(), Error> {
+    abi::decode(syscall(call::SIGNAL_SETUP, entry, caught, ignored)).map(|_| ())
+}
+
+/// SIGALRM to this process `nanoseconds` from now, in place of any alarm
+/// set before (0: none); the nanoseconds the one before had left.
+pub fn alarm(nanoseconds: u64) -> Result<u64, Error> {
+    abi::decode(syscall(call::ALARM, nanoseconds, 0, 0))
+}
+
+/// Sends `signal` to `process` (a handle with the KILL right, or
+/// abi::signal::SELF).
+pub fn signal_send(process: Handle, signal: u64) -> Result<(), Error> {
+    abi::decode(syscall(call::SIGNAL_SEND, process, signal, 0)).map(|_| ())
 }
 
 /// A new memory object of at least `size` bytes, zeroed.
@@ -652,7 +707,7 @@ pub fn set_thread_pointer(value: u64) -> Result<(), Error> {
 /// the tick count reaches `deadline` (0: no deadline). Err(Changed) at
 /// once if it does not hold `expected`; Err(TimedOut) at the deadline.
 pub fn futex_wait(word: &AtomicU32, expected: u32, deadline: u64) -> Result<(), Error> {
-    abi::decode(syscall(call::FUTEX_WAIT, word as *const AtomicU32 as u64, u64::from(expected), deadline)).map(|_| ())
+    restarting(|| syscall(call::FUTEX_WAIT, word as *const AtomicU32 as u64, u64::from(expected), deadline)).map(|_| ())
 }
 
 /// Wakes up to `count` threads waiting on `word`; how many it woke.

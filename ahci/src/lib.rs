@@ -201,6 +201,10 @@ pub mod ata {
     /// 128 GiB, 256 sectors a command).
     pub const READ_DMA: u8 = 0xC8;
     pub const WRITE_DMA: u8 = 0xCA;
+    /// "Put what is in your cache on the medium", no data either way -
+    /// in its 48-bit form and the older one.
+    pub const FLUSH_CACHE_EXT: u8 = 0xEA;
+    pub const FLUSH_CACHE: u8 = 0xE7;
 
     /// FIS type: register, host to device - a command.
     pub const FIS_H2D: u8 = 0x27;
@@ -598,6 +602,13 @@ impl<H: Hba> Disk<H> {
         self.issue(command, sector, count, count * SECTOR as u32, write)
     }
 
+    /// Everything the disk was given onto the medium: FLUSH CACHE (EXT).
+    /// A disk with no write cache has nothing to do, and says so at once.
+    pub fn flush(&mut self) -> Result<(), Failure> {
+        let command = if self.identity.lba48 { ata::FLUSH_CACHE_EXT } else { ata::FLUSH_CACHE };
+        self.issue(command, 0, 0, 0, false)
+    }
+
     /// Puts one command in slot 0, issues it and waits for its end.
     fn issue(&mut self, command: u8, lba: u64, count: u32, bytes: u32, write: bool) -> Result<(), Failure> {
         let at = |offset| port::register(self.port, offset);
@@ -605,8 +616,12 @@ impl<H: Hba> Disk<H> {
         let fis = command_fis(command, lba, count, self.identity.lba48 || command == ata::IDENTIFY);
         self.dma.zero(layout::COMMAND_TABLE, 0x80);
         self.dma.write_bytes(layout::COMMAND_TABLE, &fis);
-        self.dma.write_words(layout::PRDT, &prd(self.dma.physical(layout::DATA), bytes));
-        self.dma.write_words(layout::COMMAND_LIST, &command_header(write, 1, table));
+        // A command that moves no data (FLUSH CACHE) has no PRD entry.
+        let prds = u16::from(bytes > 0);
+        if bytes > 0 {
+            self.dma.write_words(layout::PRDT, &prd(self.dma.physical(layout::DATA), bytes));
+        }
+        self.dma.write_words(layout::COMMAND_LIST, &command_header(write, prds, table));
         // Everything above is in memory before the HBA is told: on a CPU
         // that may reorder stores to memory and to devices, a barrier.
         fence(Ordering::SeqCst);

@@ -25,5 +25,5 @@ pub mod partition;
 pub mod volume;
 
 pub use cache::Cache;
-pub use device::{BlockDevice, DeviceError, MemDevice};
+pub use device::{BlockDevice, CachingDisk, DeviceError, MemDevice};
 pub use volume::{format as format_volume, Error, FileInfo, Volume};

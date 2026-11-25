@@ -33,6 +33,7 @@
 //!   what a file *is*                               (status.rs)
 //!   nanosleep, getpid, sysconf, getrlimit, and
 //!   fork, exec and wait, which say they cannot     (system.rs)
+//!   alarm, pause, and the kernel's half of signal.c (signals.rs)
 //!   errno, strerror, strerror_r                    (errno.rs)
 //!   malloc, free, calloc, realloc, strdup          (memory.rs)
 //!   strcmp, strcpy, strchr, strstr and the others  (string.rs)
@@ -86,6 +87,7 @@ pub mod string;
 pub mod words;
 pub mod sh;
 pub mod sh_system;
+pub mod signals;
 pub mod system;
 pub mod threads;
 

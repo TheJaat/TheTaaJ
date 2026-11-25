@@ -199,10 +199,19 @@ pub mod block {
     pub const SECTOR: usize = 512;
     /// Feature bit: the disk is read-only.
     pub const FEATURE_READ_ONLY: u32 = 1 << 5;
+    /// Feature bit: the disk may keep written sectors in a cache, and
+    /// takes FLUSH requests to put them on the medium. A driver that
+    /// does not accept it gets a disk that writes through - each write
+    /// on the medium before it is answered - which is safe and slow:
+    /// QEMU then has its host write every request out at once.
+    pub const FEATURE_FLUSH: u32 = 1 << 9;
 
     /// Request types.
     pub const READ: u32 = 0;
     pub const WRITE: u32 = 1;
+    /// Everything written so far onto the medium. No data buffer: the
+    /// header and the status byte only.
+    pub const FLUSH: u32 = 4;
     /// Status the device writes in the request's last byte.
     pub const OK: u8 = 0;
     pub const IO_ERROR: u8 = 1;

@@ -37,6 +37,10 @@ pub trait Device {
     /// The first `length` bytes of the data buffer, which holds at
     /// least block::SECTORS_MAX sectors.
     fn data(&mut self, length: usize) -> &mut [u8];
+    /// Everything written so far, out of the disk's cache and onto the
+    /// medium (block::FLUSH). Returns a block status. No default: each
+    /// driver must say how its disk does it - or why it need not.
+    fn flush(&mut self) -> u8;
     /// Whether there is a disk at all: a driver for removable ones may
     /// have none. Every request is then answered NO_MEDIUM.
     fn present(&self) -> bool {
@@ -101,7 +105,7 @@ fn answer(device: &mut impl Device, request: &[u8], reply: &mut [u8], may_write:
         return 1;
     }
     let op = request.first().copied();
-    if matches!(op, Some(block::WRITE | block::WRITE_MANY)) && !may_write {
+    if matches!(op, Some(block::WRITE | block::WRITE_MANY | block::FLUSH)) && !may_write {
         reply[0] = block::READ_ONLY;
         return 1;
     }
@@ -118,6 +122,7 @@ fn answer(device: &mut impl Device, request: &[u8], reply: &mut [u8], may_write:
     }
     let sector = request.get(1..9).and_then(|b| b.try_into().ok()).map(u64::from_le_bytes);
     let (status, length) = match (op, sector) {
+        (Some(block::FLUSH), _) if request.len() == 1 => (device.flush(), 0),
         (Some(block::INFO), _) => {
             reply[1..9].copy_from_slice(&device.sectors().to_le_bytes());
             reply[9] = u8::from(device.read_only());

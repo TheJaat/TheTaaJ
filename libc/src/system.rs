@@ -120,25 +120,22 @@ pub struct Timeval {
     tv_usec: c_long,
 }
 
-/// Seconds and microseconds since TheTaaJ started. There is no clock
-/// that knows the date yet - no driver for the PC's real-time clock or
-/// AArch64's - so "the epoch" here is the moment the system booted, not
-/// 1 January 1970, and a program that prints the date gets a day in
-/// January 1970.
-fn since_boot() -> (u64, u64) {
-    let ticks = taaj::ticks();
-    let per_second = abi::TICKS_PER_SECOND;
-    (ticks / per_second, ticks % per_second * (1_000_000 / per_second))
+/// Seconds and microseconds since 1 January 1970, UTC: the kernel's
+/// clock, which the machine's real-time clock set at boot (on a machine
+/// without one, 1970 is when the system started).
+fn since_epoch() -> (u64, u64) {
+    let nanoseconds = taaj::realtime_ns();
+    (nanoseconds / 1_000_000_000, nanoseconds % 1_000_000_000 / 1000)
 }
 
-/// `time(t)`: seconds since the epoch (see `since_boot`), also stored in
+/// `time(t)`: seconds since the epoch (see `since_epoch`), also stored in
 /// `*t` if `t` is not null.
 ///
 /// # Safety
 /// `t` must be null or valid for writing.
 #[no_mangle]
 pub unsafe extern "C" fn time(t: *mut c_long) -> c_long {
-    let seconds = since_boot().0 as c_long;
+    let seconds = since_epoch().0 as c_long;
     if !t.is_null() {
         // SAFETY: the caller's promise.
         unsafe { t.write(seconds) };
@@ -146,15 +143,15 @@ pub unsafe extern "C" fn time(t: *mut c_long) -> c_long {
     seconds
 }
 
-/// `gettimeofday(tv, tz)`: the time to the tick (10 ms), as seconds and
-/// microseconds. The time zone, an argument that POSIX itself says to
+/// `gettimeofday(tv, tz)`: the time of day, as seconds and
+/// microseconds since 1970. The time zone, an argument that POSIX itself says to
 /// pass as null, is ignored.
 ///
 /// # Safety
 /// `tv` must be null or valid for writing.
 #[no_mangle]
 pub unsafe extern "C" fn gettimeofday(tv: *mut Timeval, _tz: *mut u8) -> c_int {
-    let (seconds, microseconds) = since_boot();
+    let (seconds, microseconds) = since_epoch();
     if !tv.is_null() {
         // SAFETY: the caller's promise.
         unsafe { tv.write(Timeval { tv_sec: seconds as c_long, tv_usec: microseconds as c_long }) };
@@ -169,32 +166,36 @@ pub struct Timespec {
     tv_nsec: c_long,
 }
 
-/// The two clocks time.h names; both are the time since boot.
+/// The two clocks time.h names: the time of day, and the time since
+/// boot.
 const CLOCK_REALTIME: c_int = 0;
 const CLOCK_MONOTONIC: c_int = 1;
 /// timespec_get's one time base.
 const TIME_UTC: c_int = 1;
 
-/// The time since boot as a timespec.
-fn now() -> Timespec {
-    let (seconds, microseconds) = since_boot();
-    Timespec { tv_sec: seconds as c_long, tv_nsec: (microseconds * 1000) as c_long }
+/// Nanoseconds as a timespec.
+fn timespec(nanoseconds: u64) -> Timespec {
+    Timespec { tv_sec: (nanoseconds / 1_000_000_000) as c_long, tv_nsec: (nanoseconds % 1_000_000_000) as c_long }
 }
 
-/// `clock_gettime(clock, t)`: the time on CLOCK_REALTIME or
-/// CLOCK_MONOTONIC, which here are the same clock - since boot, never
-/// set back. 0, or -1 with errno EINVAL for any other clock.
+/// `clock_gettime(clock, t)`: the time on CLOCK_REALTIME (since 1970)
+/// or CLOCK_MONOTONIC (since boot), to the nanosecond. 0, or -1 with
+/// errno EINVAL for any other clock.
 ///
 /// # Safety
 /// `t` must be valid for writing.
 #[no_mangle]
 pub unsafe extern "C" fn clock_gettime(clock: c_int, t: *mut Timespec) -> c_int {
-    if clock != CLOCK_REALTIME && clock != CLOCK_MONOTONIC {
-        crate::errno::errno.store(crate::errno::EINVAL, core::sync::atomic::Ordering::Relaxed);
-        return -1;
-    }
+    let nanoseconds = match clock {
+        CLOCK_REALTIME => taaj::realtime_ns(),
+        CLOCK_MONOTONIC => taaj::monotonic_ns(),
+        _ => {
+            crate::errno::errno.store(crate::errno::EINVAL, core::sync::atomic::Ordering::Relaxed);
+            return -1;
+        }
+    };
     // SAFETY: the caller's promise.
-    unsafe { t.write(now()) };
+    unsafe { t.write(timespec(nanoseconds)) };
     0
 }
 
@@ -209,7 +210,7 @@ pub unsafe extern "C" fn timespec_get(t: *mut Timespec, base: c_int) -> c_int {
         return 0;
     }
     // SAFETY: the caller's promise.
-    unsafe { t.write(now()) };
+    unsafe { t.write(timespec(taaj::realtime_ns())) };
     base
 }
 
@@ -219,8 +220,7 @@ pub unsafe extern "C" fn timespec_get(t: *mut Timespec, base: c_int) -> c_int {
 /// and subtracted, is at least an upper bound on the time used between.
 #[no_mangle]
 pub extern "C" fn clock() -> c_long {
-    let (seconds, microseconds) = since_boot();
-    (seconds * 1_000_000 + microseconds) as c_long
+    (taaj::monotonic_ns() / 1000) as c_long
 }
 
 /// `execvp(file, argv)`: replacing the running program with another is
@@ -231,12 +231,18 @@ pub extern "C" fn execvp(_file: *const c_char, _argv: *const *const c_char) -> c
     crate::descriptors::fail(ENOSYS)
 }
 
-/// `nanosleep(wanted, left)`: sleeps for at least `*wanted`, in whole
-/// ticks of the system's clock (abi::TICKS_PER_SECOND a second),
-/// rounded up so that it is never shorter. Nothing can wake the program
-/// early - there are no signals - so `*left` is always zero. 0, or -1
-/// with EINVAL if the time is negative or its nanoseconds are not
-/// below a second.
+/// `nanosleep(wanted, left)`: sleeps for at least `*wanted` - unless a
+/// signal handler runs meanwhile: then -1 with EINTR, and the time not
+/// slept in `*left`. 0, or -1 with EINVAL if the time is negative or its
+/// nanoseconds are not below a second.
+///
+/// The kernel sleeps in ticks, and "n ticks" means until its tick count
+/// is n more than it is now - which, called a moment before a tick, is
+/// barely n - 1 ticks of time. So the sleep is worked out from the
+/// counter instead: the end is now plus `wanted`; the tick to wake at
+/// is the first one at or after it (tick k is when k ticks' time has
+/// passed since boot, clock.rs); and if the program wakes before the
+/// end all the same, it sleeps again.
 ///
 /// # Safety
 /// `wanted` must be valid for reading, `left` null or valid for writing.
@@ -247,16 +253,31 @@ pub unsafe extern "C" fn nanosleep(wanted: *const Timespec, left: *mut Timespec)
     if wanted.tv_sec < 0 || !(0..1_000_000_000).contains(&wanted.tv_nsec) {
         return crate::descriptors::fail(crate::errno::EINVAL);
     }
-    let tick = 1_000_000_000 / abi::TICKS_PER_SECOND;
-    let ticks = (wanted.tv_sec as u64) * abi::TICKS_PER_SECOND + (wanted.tv_nsec as u64).div_ceil(tick);
-    if ticks > 0 {
-        taaj::sleep(ticks);
-    }
+    let length = (wanted.tv_sec as u64).saturating_mul(1_000_000_000).saturating_add(wanted.tv_nsec as u64);
+    let end = taaj::monotonic_ns().saturating_add(length);
+    let whole = sleep_until(end);
     if !left.is_null() {
+        let rest = end.saturating_sub(taaj::monotonic_ns());
+        let rest = if whole { 0 } else { rest };
         // SAFETY: the caller's promise, and it is not null.
-        unsafe { left.write(Timespec { tv_sec: 0, tv_nsec: 0 }) };
+        unsafe { left.write(timespec(rest)) };
     }
-    0
+    if whole { 0 } else { crate::descriptors::fail(crate::errno::EINTR) }
+}
+
+/// Sleeps until the time since boot is at least `end` nanoseconds.
+/// False if a signal's handler ran first, and the sleep was cut short.
+pub(crate) fn sleep_until(end: u64) -> bool {
+    let tick = 1_000_000_000 / abi::TICKS_PER_SECOND;
+    // The kernel's longest sleep, ten minutes; a longer one is a few.
+    let longest = 10 * 60 * abi::TICKS_PER_SECOND;
+    while taaj::monotonic_ns() < end {
+        let wake_at = end.div_ceil(tick);
+        if !taaj::sleep_unless_signalled(wake_at.saturating_sub(taaj::ticks()).clamp(1, longest)) {
+            return false;
+        }
+    }
+    true
 }
 
 /// `sched_yield()`: lets the kernel run something else now.

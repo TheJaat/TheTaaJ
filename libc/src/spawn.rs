@@ -764,16 +764,20 @@ fn ask_init(
 }
 
 /// What waitpid says of a child that ended with `code`: its exit code
-/// in the second byte, or the signal Unix would have stopped it with in
-/// the first - SIGSEGV for a program the kernel killed for breaking a
-/// rule, SIGKILL for one stopped on request (Ctrl+C, `kill`), SIGPIPE
-/// for one whose reader went away.
+/// in the second byte, or the signal that ended it in the first - the
+/// one it was sent (abi::signal::exit_code), or the one Unix would have
+/// stopped it with: SIGSEGV for a program the kernel killed for
+/// breaking a rule, SIGKILL for one stopped on request (the shell's
+/// `kill`), SIGPIPE for one whose reader went away.
 fn status_of(code: i64) -> c_int {
     match code {
         abi::KILLED => 11,
         abi::STOPPED => 9,
         abi::NO_READER => 13,
-        code => ((code & 0xff) as c_int) << 8,
+        code => match abi::signal::of_exit_code(code) {
+            Some(signal) => signal as c_int,
+            None => ((code & 0xff) as c_int) << 8,
+        },
     }
 }
 
@@ -807,6 +811,25 @@ pub unsafe extern "C" fn waitpid(process: c_int, status: *mut c_int, options: c_
         unsafe { status.write(status_of(code)) };
     }
     id
+}
+
+/// `__taaj_signal_child(id, signal)` (for signal.c's kill): `signal` to
+/// the child numbered `id` - 0 only asks whether there is one. 0, or an
+/// error number: EPERM if this program started no such child (it may
+/// be anyone's; TheTaaJ gives a program no way to reach a process it
+/// was not handed, and so no way to know).
+#[no_mangle]
+pub extern "C" fn __taaj_signal_child(id: c_int, signal: c_int) -> c_int {
+    let Some(handle) = children(|list| list.iter().find(|&&(other, _)| other == id).map(|&(_, handle)| handle)) else {
+        return EPERM;
+    };
+    if signal == 0 {
+        return 0;
+    }
+    match taaj::signal_send(handle, signal as u64) {
+        Ok(()) => 0,
+        Err(_) => crate::errno::EINVAL,
+    }
 }
 
 /// `wait(status)`: waitpid for any child.

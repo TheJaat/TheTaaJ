@@ -113,6 +113,20 @@ impl Device for Nvme {
         }
     }
 
+    fn flush(&mut self) -> u8 {
+        match self.disk.flush() {
+            Ok(()) => block::OK,
+            Err(Failure::Status(status)) => {
+                println!("[nvme] flush failed: status type {}, code {:#04x}", status >> 8, status & 0xFF);
+                block::IO_ERROR
+            }
+            Err(Failure::TimedOut | Failure::Fatal) => {
+                println!("[nvme] flush: no answer - the controller was reset");
+                block::IO_ERROR
+            }
+        }
+    }
+
     fn data(&mut self, length: usize) -> &mut [u8] {
         let (base, size) = self.disk.data();
         // SAFETY: the data buffer, inside the DMA memory; the controller

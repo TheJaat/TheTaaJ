@@ -260,6 +260,10 @@ impl Job {
             match code {
                 Some(abi::STOPPED) => return String::from("stopped"),
                 Some(abi::KILLED) => return alloc::format!("{name} was killed by the kernel"),
+                Some(code) if abi::signal::of_exit_code(*code) == Some(abi::signal::SIGINT) => return String::from("stopped"),
+                Some(code) if let Some(signal) = abi::signal::of_exit_code(*code) => {
+                    return alloc::format!("{name} was ended by {}", abi::signal::name(signal));
+                }
                 // A writer whose reader left has finished, as far as
                 // anyone cares.
                 Some(0) | Some(abi::NO_READER) | None => {}
@@ -1399,6 +1403,11 @@ impl Shell {
         match code {
             Ok(abi::KILLED) => tell!(self, "{name} was killed by the kernel (it broke a rule)\n"),
             Ok(abi::STOPPED) => tell!(self, "{name} was stopped\n"),
+            // Ctrl+C: stopped, as far as the person who pressed it knows.
+            Ok(code) if abi::signal::of_exit_code(code) == Some(abi::signal::SIGINT) => tell!(self, "{name} was stopped\n"),
+            Ok(code) if let Some(signal) = abi::signal::of_exit_code(code) => {
+                tell!(self, "{name} was ended by signal {signal} ({})\n", abi::signal::name(signal))
+            }
             // Its reader went away and it stopped writing: in `yes |
             // given` that is how things are meant to end.
             Ok(abi::NO_READER) => {}
@@ -1758,8 +1767,12 @@ impl Shell {
                                 // One that ended a moment ago, and has
                                 // not been noticed here yet, cannot be
                                 // stopped: nothing to say about that.
+                                // SIGINT, which a program may catch - to
+                                // tidy up before it ends, or not to end.
+                                // One that does not catch it ends as if
+                                // killed (`kill` below always kills).
                                 if job.codes[n].is_none() {
-                                    let _ = taaj::kill(process);
+                                    let _ = taaj::signal_send(process, abi::signal::SIGINT);
                                 }
                             }
                         }

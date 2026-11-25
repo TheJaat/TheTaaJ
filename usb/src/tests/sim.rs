@@ -765,6 +765,10 @@ pub struct Disk {
     pub sector_size: u32,
     pub write_protected: bool,
     pub no_medium: bool,
+    /// It has a write cache, and knows SYNCHRONIZE CACHE; how many times
+    /// it was told to empty it. Without one it calls the command invalid.
+    pub cache: bool,
+    pub synchronized: u32,
     /// TEST UNIT READY fails ("unit attention") this many more times.
     pub unit_attention: u32,
     /// The next data-in step stalls, and the command fails.
@@ -875,6 +879,7 @@ impl Disk {
                 data_in = Some((a, 0));
             }
             0x1A => data_in = Some((std::vec![3, 0, if self.write_protected { 0x80 } else { 0 }, 0], 0)),
+            0x35 if self.cache => self.synchronized += 1,
             0x28 | 0x88 => {
                 let (first, count) = if cdb[0] == 0x28 {
                     (u64::from(be32(&cdb[2..6])), u64::from(u16::from_be_bytes([cdb[7], cdb[8]])))

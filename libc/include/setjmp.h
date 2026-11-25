@@ -28,6 +28,23 @@ typedef long jmp_buf[8];
 int setjmp(jmp_buf buffer);
 _Noreturn void longjmp(jmp_buf buffer, int value);
 
+/* sigsetjmp(buffer, save) is setjmp that, if save is not 0, also keeps
+ * the blocked signals; siglongjmp(buffer, value) puts them back before
+ * it jumps. The way out of a signal handler: the handler's signal is
+ * blocked while it runs, and a jump out of it with plain longjmp leaves
+ * it blocked. A macro, because setjmp must be called by the function
+ * that is to be returned to, not by one in between. */
+typedef struct {
+    jmp_buf jump;
+    int saved;
+    unsigned long mask;
+} sigjmp_buf[1];
+
+void __taaj_sigjmp_save(unsigned long *mask);
+#define sigsetjmp(buffer, save) \
+    ((buffer)->saved = (save) != 0, (save) ? __taaj_sigjmp_save(&(buffer)->mask) : (void)0, setjmp((buffer)->jump))
+_Noreturn void siglongjmp(sigjmp_buf buffer, int value);
+
 #ifdef __cplusplus
 }
 #endif

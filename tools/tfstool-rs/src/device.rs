@@ -77,4 +77,14 @@ impl BlockDevice for FileDevice {
         // occurs - a short write cannot slip through unnoticed.
         self.file.write_all(buffer).map_err(&error)
     }
+
+    /// Nothing: the image is a file on the host, and what was written
+    /// is in the host's hands once `write_all` returns - it survives
+    /// this program ending, which is all an image being built needs.
+    /// Making it survive the host losing power too (`sync_data`) would
+    /// cost a host disk flush at every commit, thousands in a test run,
+    /// for images that are thrown away.
+    fn flush(&mut self) -> Result<(), DeviceError> {
+        Ok(())
+    }
 }

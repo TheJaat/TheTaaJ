@@ -71,10 +71,11 @@ struct timespec {
     long tv_nsec;
 };
 
-/* clock_gettime(clock, t): the time on one of two clocks - both count
- * from when the system started, to the tick (10 ms), and neither is
- * ever set back. 0, or -1 with errno EINVAL for another clock.
- * (system.rs) */
+/* clock_gettime(clock, t): the time on one of two clocks, to the
+ * nanosecond the CPU's counter gives: CLOCK_REALTIME, since 1970 (UTC,
+ * from the real-time clock at boot), or CLOCK_MONOTONIC, since the
+ * system started. Neither is ever set back. 0, or -1 with errno EINVAL
+ * for another clock. (system.rs) */
 typedef int clockid_t;
 #define CLOCK_REALTIME  0
 #define CLOCK_MONOTONIC 1

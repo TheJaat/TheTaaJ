@@ -332,6 +332,20 @@ impl block_service::Device for Driver {
         }
     }
 
+    fn flush(&mut self) -> u8 {
+        let Some(slot) = self.disk else { return abi::block::NO_MEDIUM };
+        let Some(storage) = self.devices[usize::from(slot) - 1].as_mut().and_then(|d| d.attached.storage.as_mut()) else {
+            return abi::block::NO_MEDIUM;
+        };
+        match storage.synchronize(&mut self.controller) {
+            Ok(()) => abi::block::OK,
+            Err(error) => {
+                println!("[usb] the disk: flushing: {}", error.describe());
+                abi::block::IO_ERROR
+            }
+        }
+    }
+
     fn data(&mut self, length: usize) -> &mut [u8] {
         self.controller.storage_data_mut(length)
     }

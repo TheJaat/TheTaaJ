@@ -662,17 +662,27 @@ pub struct Timespec {
     tv_nsec: c_long,
 }
 
-/// A CLOCK_REALTIME time as a tick count. TheTaaJ's real-time clock is
-/// the time since boot, in ticks (system.rs), so the two are the same
-/// clock: rounded up, so that a deadline is never early.
-fn ticks_at(time: &Timespec) -> Option<u64> {
+/// A CLOCK_REALTIME time as the kernel's tick count, which counts from
+/// boot: `boot` is the time of day boot was at, in nanoseconds since
+/// 1970. Tick n is when the time since boot reaches n ticks, so the
+/// deadline is rounded up - never early. At least 1: 0 is "no deadline"
+/// to the kernel.
+fn ticks_at(time: &Timespec, boot: u64) -> Option<u64> {
     if !(0..1_000_000_000).contains(&time.tv_nsec) {
         return None;
     }
-    let per_second = abi::TICKS_PER_SECOND;
-    let seconds = u64::try_from(time.tv_sec).unwrap_or(0);
-    let parts = (time.tv_nsec as u64 * per_second).div_ceil(1_000_000_000);
-    Some(seconds.saturating_mul(per_second).saturating_add(parts).max(1))
+    let at = u64::try_from(time.tv_sec).unwrap_or(0).saturating_mul(1_000_000_000).saturating_add(time.tv_nsec as u64);
+    let tick = 1_000_000_000 / abi::TICKS_PER_SECOND;
+    Some(at.saturating_sub(boot).div_ceil(tick).max(1))
+}
+
+/// The time of day at boot, in nanoseconds since 1970. Read as the time
+/// of day first, then the time since boot: the second read is a little
+/// later, so this comes out a little early - and a deadline worked out
+/// from it a little late, never early.
+fn boot_time() -> u64 {
+    let now = taaj::realtime_ns();
+    now.saturating_sub(taaj::monotonic_ns())
 }
 
 #[no_mangle]
@@ -682,7 +692,7 @@ pub unsafe extern "C" fn pthread_cond_timedwait(
     deadline: *const Timespec,
 ) -> c_int {
     // SAFETY: the caller's promise.
-    let Some(ticks) = ticks_at(unsafe { &*deadline }) else { return EINVAL };
+    let Some(ticks) = ticks_at(unsafe { &*deadline }, boot_time()) else { return EINVAL };
     if ticks <= taaj::ticks() {
         // SAFETY: the caller's promise.
         return if unsafe { (*mutex).owner() } == me() { ETIMEDOUT } else { EPERM };
@@ -946,13 +956,24 @@ mod tests {
 
     #[test]
     fn deadlines_round_up_to_ticks() {
-        let at = |s, ns| ticks_at(&Timespec { tv_sec: s, tv_nsec: ns });
+        let at = |s, ns| ticks_at(&Timespec { tv_sec: s, tv_nsec: ns }, 0);
         assert_eq!(at(2, 0), Some(200));
         assert_eq!(at(2, 1), Some(201), "never early");
         assert_eq!(at(2, 10_000_000), Some(201));
         assert_eq!(at(0, 0), Some(1), "0 means no deadline to the kernel");
         assert_eq!(at(1, 1_000_000_000), None);
         assert_eq!(at(1, -1), None);
+    }
+
+    #[test]
+    fn deadlines_count_from_boot() {
+        // Booted at 2026-11-25 13:45:30.25 UTC.
+        let boot = 1_795_614_330 * 1_000_000_000 + 250_000_000;
+        let at = |s, ns| ticks_at(&Timespec { tv_sec: s, tv_nsec: ns }, boot);
+        assert_eq!(at(1_795_614_331, 250_000_000), Some(100), "a second after boot");
+        assert_eq!(at(1_795_614_331, 250_000_001), Some(101));
+        assert_eq!(at(1_795_614_330, 0), Some(1), "before boot: due at once");
+        assert_eq!(at(0, 0), Some(1));
     }
 }
 

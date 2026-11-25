@@ -86,6 +86,25 @@ fn past_the_end_fails_with_the_devices_reason() {
 }
 
 #[test]
+fn a_stick_is_told_to_empty_its_cache_and_one_without_is_fine() {
+    let mut stick = make::stick(64);
+    stick.disk.as_mut().unwrap().cache = true;
+    let (sim, mut controller, attached) = with(stick);
+    let mut storage = attached.storage.unwrap();
+    write(&mut controller, &mut storage, 3, &pattern(3, 1)).expect("written");
+    storage.synchronize(&mut controller).expect("synchronized");
+    assert_eq!(disk(&sim).synchronized, 1);
+    assert_eq!(disk(&sim).commands.last(), Some(&0x35));
+
+    // No cache: the command is "illegal" - nothing to do, not a failure.
+    let (sim, mut controller, attached) = with(make::stick(64));
+    let mut storage = attached.storage.unwrap();
+    storage.synchronize(&mut controller).expect("nothing to synchronize");
+    assert_eq!(disk(&sim).synchronized, 0);
+    assert!(disk(&sim).commands.ends_with(&[0x35, 0x03]), "asked, refused, and the reason asked");
+}
+
+#[test]
 fn a_write_protected_stick_says_so_and_refuses_writes() {
     let mut stick = make::stick(64);
     stick.disk.as_mut().unwrap().write_protected = true;

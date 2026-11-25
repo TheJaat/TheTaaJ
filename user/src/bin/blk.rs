@@ -136,6 +136,10 @@ struct Disk {
     interrupt: Option<Handle>,
     sectors: u64,
     read_only: bool,
+    /// Whether the disk has a write cache (FEATURE_FLUSH, accepted):
+    /// writes are answered before they are on the medium, and `flush`
+    /// puts them there. Without it, every write is.
+    cache: bool,
 }
 
 impl Disk {
@@ -152,9 +156,10 @@ impl Disk {
             out8(register(legacy::STATUS), legacy::ACKNOWLEDGE);
             out8(register(legacy::STATUS), legacy::ACKNOWLEDGE | legacy::DRIVER);
 
-            // Features: none are needed - but read-only must be noticed.
+            // Features: read-only must be noticed; a write cache is
+            // taken if offered (see `flush`).
             let offered = in32(register(legacy::HOST_FEATURES));
-            out32(register(legacy::GUEST_FEATURES), 0);
+            out32(register(legacy::GUEST_FEATURES), offered & virtio::block::FEATURE_FLUSH);
 
             out16(register(legacy::QUEUE_SELECT), 0);
             if info.msix {
@@ -190,6 +195,7 @@ impl Disk {
                 interrupt,
                 sectors,
                 read_only: offered & virtio::block::FEATURE_READ_ONLY != 0,
+                cache: offered & virtio::block::FEATURE_FLUSH != 0,
             })
         }
     }
@@ -233,7 +239,7 @@ impl Disk {
             write(mmio::HOST_FEATURES_SELECT, 0);
             let offered = read(mmio::HOST_FEATURES);
             write(mmio::GUEST_FEATURES_SELECT, 0);
-            write(mmio::GUEST_FEATURES, 0);
+            write(mmio::GUEST_FEATURES, offered & virtio::block::FEATURE_FLUSH);
 
             write(mmio::GUEST_PAGE_SIZE, 4096);
             write(mmio::QUEUE_SELECT, 0);
@@ -258,6 +264,7 @@ impl Disk {
                 interrupt,
                 sectors,
                 read_only: offered & virtio::block::FEATURE_READ_ONLY != 0,
+                cache: offered & virtio::block::FEATURE_FLUSH != 0,
             })
         }
     }
@@ -277,6 +284,32 @@ impl Device for Disk {
     /// out of the DATA buffer, as one request to the device.
     fn transfer(&mut self, write: bool, sector: u64, count: u32) -> u8 {
         let kind = if write { virtio::block::WRITE } else { virtio::block::READ };
+        let at = |offset: usize| self.physical + offset as u64;
+        let data = Buffer { physical: at(DATA), length: count * block::SECTOR as u32, device_writes: !write };
+        self.request(kind, sector, Some(data))
+    }
+
+    /// Everything written onto the medium: a FLUSH request, if the disk
+    /// has a cache to empty; if not, there is nothing to do.
+    fn flush(&mut self) -> u8 {
+        if !self.cache {
+            return block::OK;
+        }
+        self.request(virtio::block::FLUSH, 0, None)
+    }
+
+    /// The first `length` bytes of the DATA buffer.
+    fn data(&mut self, length: usize) -> &mut [u8] {
+        // SAFETY: inside the DMA memory (length is at most DATA_MAX),
+        // not in the device's hands between requests.
+        unsafe { core::slice::from_raw_parts_mut(self.memory.add(DATA), length.min(DATA_MAX)) }
+    }
+}
+
+impl Disk {
+    /// One request to the device, start to finish: the header, the data
+    /// buffer if there is one, the status byte. Returns a block status.
+    fn request(&mut self, kind: u32, sector: u64, data: Option<Buffer>) -> u8 {
         let header = virtio::block::header(kind, sector);
         // SAFETY: inside the DMA memory, which this process mapped; the
         // device is not using these bytes between requests. Volatile:
@@ -288,12 +321,13 @@ impl Device for Disk {
             self.memory.add(STATUS).write_volatile(0xFF);
         }
         let at = |offset: usize| self.physical + offset as u64;
-        let buffers = [
-            Buffer { physical: at(HEADER), length: virtio::block::HEADER_SIZE as u32, device_writes: false },
-            Buffer { physical: at(DATA), length: count * block::SECTOR as u32, device_writes: !write },
-            Buffer { physical: at(STATUS), length: 1, device_writes: true },
-        ];
-        if self.queue.submit(&buffers).is_none() {
+        let header = Buffer { physical: at(HEADER), length: virtio::block::HEADER_SIZE as u32, device_writes: false };
+        let status = Buffer { physical: at(STATUS), length: 1, device_writes: true };
+        let submitted = match data {
+            Some(data) => self.queue.submit(&[header, data, status]),
+            None => self.queue.submit(&[header, status]),
+        };
+        if submitted.is_none() {
             return block::IO_ERROR; // cannot happen: one request at a time
         }
         self.transport.notify();
@@ -318,13 +352,6 @@ impl Device for Disk {
             _ => block::IO_ERROR,
         }
     }
-
-    /// The first `length` bytes of the DATA buffer.
-    fn data(&mut self, length: usize) -> &mut [u8] {
-        // SAFETY: inside the DMA memory (length is at most DATA_MAX),
-        // not in the device's hands between requests.
-        unsafe { core::slice::from_raw_parts_mut(self.memory.add(DATA), length.min(DATA_MAX)) }
-    }
 }
 
 /// The description is a PCI device's: its registers are I/O ports.
@@ -345,13 +372,14 @@ fn start_on_pci(info: &PciDeviceInfo, ports: Handle, dma: Handle, interrupt: Opt
         5
     })?;
     println!(
-        "[blk] virtio disk at {:02x}:{:02x}.{}: {} sectors ({} KiB){}, queue of {}, {}",
+        "[blk] virtio disk at {:02x}:{:02x}.{}: {} sectors ({} KiB){}{}, queue of {}, {}",
         info.bus,
         info.device,
         info.function,
         disk.sectors,
         disk.sectors / 2,
         if disk.read_only { ", read-only" } else { "" },
+        if disk.cache { ", a write cache (flushed on commit)" } else { "" },
         disk.queue.size(),
         if interrupt.is_some() { "MSI-X interrupts" } else { "polled" }
     );
@@ -393,11 +421,12 @@ fn start_in_memory(info: &MmioDeviceInfo, registers: Handle, dma: Handle, interr
         5
     })?;
     println!(
-        "[blk] virtio disk at {:#x}: {} sectors ({} KiB){}, queue of {}, {}",
+        "[blk] virtio disk at {:#x}: {} sectors ({} KiB){}{}, queue of {}, {}",
         info.registers,
         disk.sectors,
         disk.sectors / 2,
         if disk.read_only { ", read-only" } else { "" },
+        if disk.cache { ", a write cache (flushed on commit)" } else { "" },
         disk.queue.size(),
         if interrupt.is_some() { "interrupts" } else { "polled" }
     );

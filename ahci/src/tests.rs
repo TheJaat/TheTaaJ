@@ -26,6 +26,8 @@ struct State {
     time: u64,
     /// Commands carried out: (command, lba, sectors).
     done: Vec<(u8, u64, u32)>,
+    /// FLUSH CACHE commands that completed.
+    flushes: u32,
     /// The next command fails with this error byte.
     fail_next: Option<u8>,
     /// The next command never ends.
@@ -88,7 +90,8 @@ impl State {
         let header: Vec<u32> = (0..8).map(|i| self.word(list + 4 * i)).collect();
         assert_eq!(header[0] & 0x1F, 5, "the FIS is five words long");
         let write = header[0] & (1 << 6) != 0;
-        assert_eq!(header[0] >> 16, 1, "one PRD entry");
+        let prds = header[0] >> 16;
+        assert!(prds <= 1, "at most one PRD entry");
         let table = u64::from(header[2]) | u64::from(header[3]) << 32;
         assert_eq!(table % 128, 0, "a command table must be 128-byte aligned");
         let fis = self.at(table, 20).to_vec();
@@ -96,9 +99,14 @@ impl State {
         assert_eq!(fis[1], ata::FIS_COMMAND);
         let prd: Vec<u32> = (0..4).map(|i| self.word(table + 0x80 + 4 * i)).collect();
         let buffer = u64::from(prd[0]) | u64::from(prd[1]) << 32;
-        assert_eq!(buffer % 2, 0, "a PRD's address must be even");
-        assert_eq!(prd[3] & 1, 1, "a PRD's length must be even (stored minus one)");
-        let bytes = (prd[3] & 0x3F_FFFF) as usize + 1;
+        // No PRD entry: no data moves (FLUSH CACHE).
+        let bytes = if prds == 0 {
+            0
+        } else {
+            assert_eq!(buffer % 2, 0, "a PRD's address must be even");
+            assert_eq!(prd[3] & 1, 1, "a PRD's length must be even (stored minus one)");
+            (prd[3] & 0x3F_FFFF) as usize + 1
+        };
 
         if self.hang_next {
             self.hang_next = false;
@@ -123,6 +131,11 @@ impl State {
         }
         let error = match command {
             _ if self.fail_next.is_some() => self.fail_next.take(),
+            ata::FLUSH_CACHE_EXT | ata::FLUSH_CACHE => {
+                assert!(!write && bytes == 0, "a flush moves no data");
+                self.flushes += 1;
+                None
+            }
             ata::IDENTIFY => {
                 assert!(!write && bytes == SECTOR);
                 let identify = self.identify.clone();
@@ -498,8 +511,24 @@ fn a_28_bit_disk_gets_the_old_commands() {
     assert!(!disk.identity.lba48);
     disk.transfer(false, 0x0ABC, 3).unwrap();
     disk.transfer(true, 5, 1).unwrap();
+    disk.flush().unwrap();
     let done = sim.0.borrow().done.clone();
-    assert_eq!(&done[1..], &[(ata::READ_DMA, 0x0ABC, 3), (ata::WRITE_DMA, 5, 1)]);
+    assert_eq!(&done[1..], &[(ata::READ_DMA, 0x0ABC, 3), (ata::WRITE_DMA, 5, 1), (ata::FLUSH_CACHE, 0, 0)]);
+}
+
+#[test]
+fn a_flush_is_a_command_with_no_data() {
+    let sim = machine(Some(0));
+    let mut disk = start(&sim, true).unwrap();
+    disk.transfer(true, 7, 1).unwrap();
+    disk.flush().unwrap();
+    assert_eq!(sim.0.borrow().flushes, 1);
+    assert_eq!(sim.0.borrow().done.last(), Some(&(ata::FLUSH_CACHE_EXT, 0, 0)));
+    // A disk that fails it: the error comes back, and the port recovers.
+    sim.0.borrow_mut().fail_next = Some(0x04);
+    assert!(matches!(disk.flush(), Err(Failure::Disk { .. })));
+    disk.flush().unwrap();
+    assert_eq!(sim.0.borrow().flushes, 2);
 }
 
 #[test]

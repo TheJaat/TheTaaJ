@@ -1,25 +1,26 @@
-/* signal.h - signals, as far as a program on TheTaaJ has them.
- *
- * On Unix a signal is the kernel interrupting a program: Ctrl+C is
- * SIGINT, a bad pointer SIGSEGV, a timer SIGALRM. TheTaaJ's kernel
- * sends programs no signals: Ctrl+C and a crash end the program outright
- * (the shell and the kernel say so).
- *
- * What is here is the part that is the program's own business, and it
- * works as POSIX says:
+/* signal.h - signals: the kernel interrupting a program, as on Unix.
+ * Ctrl+C is SIGINT, a bad pointer SIGSEGV, an alarm SIGALRM.
  *
  *   signal, sigaction   set what a signal does: a handler, SIG_DFL or
- *                       SIG_IGN
- *   raise, kill(self)   send one to this program: the handler runs, or
- *                       the default - end the program, with exit code
- *                       128 + the signal's number, as a shell shows a
- *                       program killed by it - or nothing, if ignored
- *   sigprocmask         block signals: one raised while blocked waits,
- *                       and is delivered when it is unblocked
- *   sigset_t and its functions
+ *                       SIG_IGN. A handler runs on the thread the kernel
+ *                       interrupted, on its own stack, and the program
+ *                       goes on where it was when it returns
+ *   raise, kill         send one: to this program, or to a child it
+ *                       started (another is EPERM: TheTaaJ gives a
+ *                       program no way to reach a process it was not
+ *                       handed). One not caught does what it does by
+ *                       default - ends the program, which a shell then
+ *                       reports as ended by that signal; or nothing,
+ *                       for SIGCHLD and its kin
+ *   sigprocmask         block signals: one that comes while blocked
+ *                       waits, and is delivered when it is unblocked
+ *   sigpending, sigsuspend, and sigset_t and its functions
+ *   alarm, pause        (unistd.h)
  *
- * kill of another process fails with EPERM, and alarm never rings: both
- * would need the kernel to send signals. The numbers are Linux's. */
+ * A call that waits - for input, a child, a lock - and is interrupted
+ * by a handler goes on waiting afterwards (POSIX's SA_RESTART, always);
+ * only nanosleep, pause and sigsuspend return EINTR. The mask is the
+ * process's, not each thread's. The numbers are Linux's. */
 
 #ifndef _SIGNAL_H
 #define _SIGNAL_H
@@ -117,6 +118,8 @@ int sigaddset(sigset_t *set, int signal);
 int sigdelset(sigset_t *set, int signal);
 int sigismember(const sigset_t *set, int signal);
 int sigprocmask(int how, const sigset_t *set, sigset_t *old);
+int sigpending(sigset_t *set);
+int sigsuspend(const sigset_t *mask);
 int pthread_sigmask(int how, const sigset_t *set, sigset_t *old);
 
 #ifdef __cplusplus

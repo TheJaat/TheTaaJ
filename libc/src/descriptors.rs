@@ -725,9 +725,11 @@ pub extern "C" fn dup2(fd: c_int, to: c_int) -> c_int {
     })
 }
 
-/// `fsync(fd)`: every write has reached the file service before it
-/// returned, so there is nothing left to write out. 0 for an open
-/// descriptor; EBADF otherwise.
+/// `fsync(fd)`: every write was committed by the file service before it
+/// returned - and a commit flushes the disk's cache, before and after
+/// its superblock (TaajFS's Volume::commit) - so there is nothing left
+/// to write out: it is on the medium already. 0 for an open descriptor;
+/// EBADF otherwise.
 #[no_mangle]
 pub extern "C" fn fsync(fd: c_int) -> c_int {
     with(|state| match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {

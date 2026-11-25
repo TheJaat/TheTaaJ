@@ -128,6 +128,10 @@ impl BlockDevice for DiskDevice {
         self.window.bytes()[..BLOCK_SIZE].copy_from_slice(buffer);
         self.disk.write_many(&mut self.window, first, SECTORS_PER_BLOCK as u32).map_err(device_error("disk write"))
     }
+
+    fn flush(&mut self) -> Result<(), DeviceError> {
+        self.disk.flush().map_err(device_error("disk flush"))
+    }
 }
 
 /// The volume on the disk, if there is one this service can use.

@@ -3573,3 +3573,54 @@ make test64
 **4. R0, on the host (optional, takes about 20 minutes and 15 GB)**: `build/r0/` holds the rustc source and the scripts, outside git. With cmake and ninja on the PATH, `./x.py build --stage 1 compiler/rustc` in `build/r0/rustc-1.100.0-src`; then `build/r0/measure-all.sh` builds our crates with it and writes each crate's memory and time to `build/r0/measure-*.log`.
 
 Automated: make bigmem64-test, make aarch64-bigmem-test, make test64
+
+---
+
+## 097 · The core basics: the date, a finer clock, signals, and writes that reach the disk
+
+[The entry](journal/097-core-basics.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`. It puts `basics` on the disk.
+
+| Type | You should see |
+|---|---|
+| (at boot, in the terminal) | `[clock] the CMOS clock says <today's date and time, UTC>; time is counted from here at N Hz` |
+| `basics date` | today's date and time in UTC, e.g. `Wednesday 25 November 2026, 15:32:46 UTC; up 4.333 s` |
+| `with programs basics` | `basics: the date is ...`, a few seconds of alarms, then `basics: 33 checks, all passed`. In the terminal, four children: `ended by signal 15 (SIGTERM)`, `exited with code 7`, `ended by signal 6 (SIGABRT)`, `killed: page fault` |
+| `basics catch`, then Ctrl+C | `basics: waiting for a line (Ctrl+C to interrupt)`, then `basics: caught SIGINT while waiting for a line - tidying up` |
+| `forever`, then Ctrl+C | `forever was stopped`; in the terminal `ended by signal 2 (SIGINT)` |
+| `with files basics speed` | `basics: 4 MiB in 64 writes took N ms` (a few hundred) |
+| `clib assert` | `libc/programs/clib.c:461: main: assertion failed: number == 2`, then `clib was ended by signal 6 (SIGABRT)` (it was `exited with code 134`) |
+
+In the terminal, `[blk] virtio disk at ...: ..., a write cache (flushed on commit), ...`.
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1. At boot: `[clock] the PL031 says ...`, at 62500000 Hz.
+
+**3. The tests by themselves**
+
+```
+make basics64-test
+make aarch64-basics-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `the core basics (x86_64): the date read at boot is the host's (N s apart); 33 checks of the clock, signals and fsync passed; Ctrl+C reached a waiting program's handler; 4 MiB written with flushes` | every part above; the same for aarch64 |
+| `test64: all passed` | every part, the new two included |
+
+Automated: make basics64-test, make aarch64-basics-test, make test64

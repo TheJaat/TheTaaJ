@@ -217,6 +217,11 @@ impl State {
         } else {
             let active = self.namespaces.clone().unwrap_or(vec![1]);
             assert!(active.contains(&namespace), "I/O to namespace {namespace}, which is not active");
+            if opcode == io::FLUSH {
+                assert_eq!((prp1, prp2), (0, 0), "a flush has no data");
+                self.done.push((opcode, namespace, 0, 0));
+                return 0;
+            }
             let lba = u64::from(c[10]) | u64::from(c[11]) << 32;
             let blocks = (c[12] & 0xFFFF) + 1;
             let bytes = (blocks as usize) << self.block_shift;
@@ -415,6 +420,9 @@ fn every_shape_of_transfer_goes_and_comes_back() {
     assert_eq!(data(&mut disk, SECTOR), &disk_bytes(&sim, BLOCKS - 1, 1)[..]);
     let done = sim.0.borrow().done.clone();
     assert_eq!(done.last(), Some(&(io::READ, 1, BLOCKS - 1, 1)));
+    // And a flush: a command of its own, for the namespace, with no data.
+    disk.flush().unwrap();
+    assert_eq!(sim.0.borrow().done.last(), Some(&(io::FLUSH, 1, 0, 0)));
 }
 
 #[test]

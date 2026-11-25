@@ -106,6 +106,20 @@ impl Device for Sata {
         }
     }
 
+    fn flush(&mut self) -> u8 {
+        match self.disk.flush() {
+            Ok(()) => block::OK,
+            Err(Failure::Disk { status, error, interrupt_status }) => {
+                println!("[ahci] flush failed: status {status:#04x}, error {error:#04x}, port status {interrupt_status:#010x}");
+                block::IO_ERROR
+            }
+            Err(Failure::TimedOut) => {
+                println!("[ahci] flush: no answer");
+                block::IO_ERROR
+            }
+        }
+    }
+
     fn data(&mut self, length: usize) -> &mut [u8] {
         let (base, size) = self.disk.data();
         // SAFETY: the data buffer, inside the DMA memory; the controller

@@ -186,11 +186,14 @@ pub fn format<D: BlockDevice>(device: &mut D, total_blocks: u32) -> Result<()> {
         return Err(Error::BadSize);
     }
     device.write_block(FIRST_DATA, &DirBlock::new(Vec::new(), 0).to_block())?;
+    // The empty directory before the superblock naming it (see commit).
+    device.flush()?;
     device.write_block(
         SUPER_A,
         &Superblock::new(total_blocks, 1, FIRST_DATA).to_block(),
     )?;
     device.write_block(SUPER_B, &empty_block())?;
+    device.flush()?;
     Ok(())
 }
 
@@ -280,6 +283,10 @@ impl<D: BlockDevice> Volume<D> {
 
     fn write(&mut self, number: u32, block: &Block) -> Result<()> {
         Ok(self.device.write_block(number, block)?)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        Ok(self.device.flush()?)
     }
 
     fn read_dir_block(&mut self, number: u32) -> Result<DirBlock> {
@@ -573,7 +580,15 @@ impl<D: BlockDevice> Volume<D> {
             ..self.sb
         }
         .sealed();
+        // Every block of the new tree on the medium before the
+        // superblock that points to it: a disk with a cache may write
+        // what it holds in any order, and a superblock that landed
+        // before its tree would point at blocks that never arrived.
+        self.flush()?;
         self.write(target, &sb.to_block())?;
+        // And the superblock itself: a change is committed when it
+        // would survive the power going, not when the disk has it.
+        self.flush()?;
 
         let old_root = self.sb.root_dir;
         self.sb = sb;
@@ -1242,7 +1257,7 @@ impl<D: BlockDevice> Volume<D> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device::MemDevice;
+    use crate::device::{CachingDisk, MemDevice};
     use crate::format::VERSION;
 
     const TOTAL: u32 = 512;
@@ -1265,7 +1280,7 @@ mod tests {
             .collect()
     }
 
-    fn contents(volume: &mut Volume<MemDevice>, name: &str) -> Vec<u8> {
+    fn contents<D: BlockDevice>(volume: &mut Volume<D>, name: &str) -> Vec<u8> {
         let file = volume.lookup(name).unwrap();
         volume.read_all(&file).unwrap()
     }
@@ -1907,6 +1922,48 @@ mod tests {
 
         // Make sure the loop really exercised failures, not just success.
         assert!(cuts > 5, "only {cuts} cut points were tried");
+    }
+
+    /// The same property on a disk with a write cache, which writes it
+    /// out in whatever order it likes (CachingDisk): a commit must
+    /// flush the new tree before writing the superblock that points to
+    /// it, and flush the superblock before saying it is done.
+    ///
+    /// Cut the power at every request - each write, and each flush - and
+    /// each time let the worst thing
+    /// happen to the cache - only the superblocks in it reached the
+    /// medium (a superblock without its tree), or nothing did (a change
+    /// said to be done, gone). The volume must mount, with the old
+    /// state or the new; and a change that returned Ok must be there.
+    #[test]
+    fn a_disk_that_reorders_its_cache_still_leaves_old_or_new_state() {
+        let mut base = MemDevice::new(TOTAL);
+        format(&mut base, TOTAL).unwrap();
+        let mut v = Volume::mount(base).unwrap();
+        v.put("old", b"before").unwrap();
+        let base = v.into_device();
+        let new_data = pattern(3 * BLOCK_SIZE + 7, 9);
+
+        for only_superblocks in [true, false] {
+            let mut cuts = 0;
+            for requests_allowed in 0.. {
+                let device = CachingDisk::new(base.blocks.clone(), Some(requests_allowed));
+                let mut v = Volume::mount(device).unwrap();
+                let finished = v.put("old", &new_data).is_ok();
+
+                let mut device = v.into_device();
+                device.lose_power(|n| only_superblocks && (n == SUPER_A || n == SUPER_B));
+                let mut v = Volume::mount(device).expect("volume must always mount");
+                let old = contents(&mut v, "old");
+                if finished {
+                    assert_eq!(old, new_data, "a change that returned Ok was lost (after {requests_allowed} requests)");
+                    break;
+                }
+                assert!(old == b"before" || old == new_data, "after {requests_allowed} requests: neither state");
+                cuts += 1;
+            }
+            assert!(cuts > 3, "only {cuts} cut points were tried");
+        }
     }
 
     /// The names in a directory, sorted, directories marked with a "/".

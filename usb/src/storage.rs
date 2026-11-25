@@ -32,7 +32,8 @@
 //!     size; READ CAPACITY(16) (0x9E) when the disk is too big for 32 bits;
 //!   - READ(10)/WRITE(10) (0x28/0x2A), READ(16)/WRITE(16) (0x88/0x8A)
 //!     past sector 2^32;
-//!   - MODE SENSE(6) (0x1A): whether the medium is write-protected.
+//!   - MODE SENSE(6) (0x1A): whether the medium is write-protected;
+//!   - SYNCHRONIZE CACHE(10) (0x35): what was written onto the medium.
 
 use crate::xhci::{self, layout, Bus, Controller, Failure};
 
@@ -215,6 +216,17 @@ impl Storage {
             return Err(Error::Transport("the device moved fewer bytes than asked"));
         }
         Ok(())
+    }
+
+    /// Everything written so far onto the medium: SYNCHRONIZE CACHE(10),
+    /// for the whole disk (sector 0, count 0 meaning "to the end").
+    /// Many sticks have no cache and do not know the command: "illegal
+    /// request" from one of them means there was nothing to do.
+    pub fn synchronize<B: Bus>(&mut self, controller: &mut Controller<B>) -> Result<(), Error> {
+        match self.command(controller, &[0x35, 0, 0, 0, 0, 0, 0, 0, 0, 0], Data::None) {
+            Ok(_) | Err(Error::Failed { key: 0x5, .. }) => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     /// One command: CBW, data, CSW, and what to do when any of them goes

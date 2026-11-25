@@ -6,7 +6,7 @@ KERNEL_DIR = kernel
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
-        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test \
+        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test \
         llvm64 llvm-aarch64 clang-tblgen llvm64-test clang64-test aarch64-clang-test aarch64-llvm-test llvm-put llvm-put-aarch64
 
 # Default target
@@ -246,7 +246,7 @@ ifeq ($(HAVE_CC),yes)
 C_PROGRAMS   = chello cmem cprint cfile cstdio cwords cask cprimes cnet cfloat clib sh
 ROOT_FILES   = 39
 C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret w i t h spc f i l e s spc c f i l e spc c h e c k ret c f i l e spc c a t spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc n o f i l e spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc w r i t e spc c n o spc x ret w i t h spc f i l e s spc c f i l e spc w r i t e spc c n o t e spc m a d e spc b y spc c ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc l o n g spc shift-dot spc c l o n g ret c f i l e spc c a t spc shift-comma spc l o n g spc shift-dot spc c l o n g 2 ret c f i l e ret c a s k ret a d a ret 4 0 ret x ret 2 ret ctrl-d c a s k spc o n e ret f i r s t ret e c h o spc a f t e r ret e c h o spc a d a spc shift-dot spc w h o ret c a s k spc o n e spc shift-comma spc w h o ret c a t spc l o n g spc shift-backslash spc c w o r d s spc minus n spc 3 ret w i t h spc r e a d o n l y spc c w o r d s spc minus n spc 2 5 spc c w o r d s spc l o n g spc shift-dot spc c w 1 ret c w o r d s spc minus n spc 5 spc shift-comma spc l o n g spc shift-dot spc c w 2 ret c w o r d s spc l o n g ret c w o r d s spc minus n spc n o n e ret c w o r d s spc minus x ret w i t h spc f i l e s spc c s t d i o spc c h e c k ret c s t d i o spc l i n e s spc w e l c o m e ret c s t d i o spc l i n e s spc shift-comma spc w e l c o m e ret w i t h spc r e a d o n l y spc c s t d i o spc l i n e s spc l o n g spc shift-dot spc c n u m ret w i t h spc f i l e s spc c s t d i o spc c o p y spc l o n g spc c c o p y ret c s t d i o spc o r d e r ret c s t d i o spc e n d spc shift-dot spc c e n d ret c s t d i o spc l o s t spc shift-dot spc c l o s t ret c s t d i o spc e n d ret c s t d i o ret c p r i n t spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c p r i n t spc l o n g spc shift-backslash spc w c ret c p r i n t spc shift-dot spc p o u t ret c m e m ret c m e m spc s o r t spc p e a r spc a p p l e spc f i g spc a p p l e ret c m e m spc h u g e ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret w i t h spc f i l e s spc c l i b ret c l i b spc a s s e r t ret c p r i m e s spc 1 0 0 ret ~ c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c p r i m e s spc 2 4 0 0 0 0 0 0 spc shift-7 ret c f l o a t spc 1 spc shift-7 ret c f l o a t spc 2 spc shift-7 ret c f l o a t spc 3 spc shift-7 ret c f l o a t spc 4 spc shift-7 ret t i m e spc w a i t ret ~~
-EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^files: 48 checks, all passed;^cfile: welcome: this program was not given the files;^cfile: nofile: no such file or directory;^cno: the files are read-only here;^cnote: 10 bytes;^usage: cfile cat;^hello, ada \(typed\);^cask: not a number: x;^total: 42;^one line: first \(typed\);^after\s*$$;^one line: ada \(from a file or another program\);^ +301  300\s*$$;^ +300  line\s*$$;^1200 words, 302 different;^cwords: long: this program was not given the files;^0 words, 0 different;^cwords: -n needs a number from 1 up, not .none.;^usage: cwords \[-n COUNT\];^streams: 52 checks, all passed;^cstdio: welcome: this program was not given the files;^   1  Hello from the host;^ccopy: 4692 bytes;^write was called second - printf was called first\s*$$;^no new line, and still here;^usage: cstdio lines;^printf: 42 -7 ff 0X2A \[   hi\] \[hi   \] \[00042\] x 100.\s*$$;^sizes: 18446744073709551615 -9223372036854775808\s*$$;^printf returned 6\s*$$;^snprintf: wanted 12, kept <hello, >;^argument 2 of 2: two words\s*$$;^puts: a line of its own\s*$$;^fputs and putchar\s*$$;^cprint: 9 lines went to standard output;^cprint: 7 lines went to standard output;^1 line, 1 word, 601 bytes;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes;^library: [0-9]+ checks, all passed;^library: atexit ran its handlers, newest first;^libc/programs/clib.c:[0-9]+: main: assertion failed: number == 2;^clib exited with code 134;^cprimes: 25 primes below 100\s*$$;^\[4\] cprimes 24000000;^cfloat 1: 30000000 rounds, 0 wrong;^cfloat 2: 30000000 rounds, 0 wrong;^cfloat 3: 30000000 rounds, 0 wrong;^cfloat 4: 30000000 rounds, 0 wrong;^took [0-9]+\.[0-9][0-9] s; the 4 CPUs worked for [0-9]+\.[0-9][0-9] s in all
+EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^files: 48 checks, all passed;^cfile: welcome: this program was not given the files;^cfile: nofile: no such file or directory;^cno: the files are read-only here;^cnote: 10 bytes;^usage: cfile cat;^hello, ada \(typed\);^cask: not a number: x;^total: 42;^one line: first \(typed\);^after\s*$$;^one line: ada \(from a file or another program\);^ +301  300\s*$$;^ +300  line\s*$$;^1200 words, 302 different;^cwords: long: this program was not given the files;^0 words, 0 different;^cwords: -n needs a number from 1 up, not .none.;^usage: cwords \[-n COUNT\];^streams: 52 checks, all passed;^cstdio: welcome: this program was not given the files;^   1  Hello from the host;^ccopy: 4692 bytes;^write was called second - printf was called first\s*$$;^no new line, and still here;^usage: cstdio lines;^printf: 42 -7 ff 0X2A \[   hi\] \[hi   \] \[00042\] x 100.\s*$$;^sizes: 18446744073709551615 -9223372036854775808\s*$$;^printf returned 6\s*$$;^snprintf: wanted 12, kept <hello, >;^argument 2 of 2: two words\s*$$;^puts: a line of its own\s*$$;^fputs and putchar\s*$$;^cprint: 9 lines went to standard output;^cprint: 7 lines went to standard output;^1 line, 1 word, 601 bytes;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes;^library: [0-9]+ checks, all passed;^library: atexit ran its handlers, newest first;^libc/programs/clib.c:[0-9]+: main: assertion failed: number == 2;^clib was ended by signal 6 \(SIGABRT\);^cprimes: 25 primes below 100\s*$$;^\[4\] cprimes 24000000;^cfloat 1: 30000000 rounds, 0 wrong;^cfloat 2: 30000000 rounds, 0 wrong;^cfloat 3: 30000000 rounds, 0 wrong;^cfloat 4: 30000000 rounds, 0 wrong;^took [0-9]+\.[0-9][0-9] s; the 4 CPUs worked for [0-9]+\.[0-9][0-9] s in all
 else
 C_PROGRAMS   =
 ROOT_FILES   = 27
@@ -374,7 +374,7 @@ EXPECT_QUOTE = ^quoted: 11 bytes;^plain: 10 bytes;^my docs/a file: 2 bytes;^/my 
 EXPECT_REDIR = ^first\s*$$;^second\s*$$;^6 lines, [0-9]+ words, [0-9]+ bytes;^long: 300 lines, 1200 words, 4692 bytes;^300 lines, 1200 words, 4692 bytes;^a > b\s*$$;^none: no such file or directory;^docs: is a directory;^there is a > with no file name after it;^unknown command: nosuch
 EXPECT_GIVEN = ^given: the screen, no files;^given: arguments .a. .b.\s*$$;^given: the screen, and the files \([0-9]+ of them\), to read and to change;^given: the screen, and the files \([0-9]+ of them\), to read only;^usage: with files COMMAND, with readonly COMMAND;^write: saved: the files are read-only here;^rm: saved: the files are read-only here;\[fs\] asked to stall;^fs: the file service will answer nothing for 6 s;\[init\] fs has not answered for 4 s - stopping it;\[process\] [0-9]+ .fs. stopped: killed by request;\[init\] fs ended with code -1001 - restarting it
 EXPECT_WATCH = \[blk\] asked to stall;\[init\] blk has not answered for 2 s - stopping it;\[init\] blk ended with code -1001 - restarting it;^during: 2 bytes;\[display\] asked to stall;\[init\] display has not answered for 2 s - stopping it;\[init\] display ended with code -1001 - restarting it;\[display\] the text on the screen was kept: [0-9]+ lines shown again;\[kbd\] F11: simulating a driver bug;\[init\] kbd has not answered for 2 s - stopping it;\[init\] kbd ended with code -1001 - restarting it;\[shell\] line: .echo keys.
-EXPECT_KILL  = ^forever: spin until stopped;^forever: wait until stopped;^forever: sleep until stopped;\[process\] [0-9]+ .forever. stopped: killed by request;^\^C;^forever was stopped
+EXPECT_KILL  = ^forever: spin until stopped;^forever: wait until stopped;^forever: sleep until stopped;\[process\] [0-9]+ .forever. ended by signal 2 \(SIGINT\);^\^C;^forever was stopped
 EXPECT_PIPE  = ^1 line, 3 words, 14 bytes;^301 lines, 1212 words;^given: arguments .xpipe.;^p . q\s*$$;^there is a . with no command on one side of it;^cd is one of the shell.s own commands;^unknown command: nosuch2;^only the last command of a pipeline
 EXPECT_JOBS  = ^\[1\] cat ls ls . cat > big4;^\[2\] forever sleep > flog;^\[3\] forever yield;^forever: yield until stopped;^\[2\] running  forever sleep > flog;^\[3\] running  forever yield;^\[3\] stopped  forever yield;^\[2\] stopped  forever sleep > flog;^kill: no job 9;^\[1\] done  cat ls ls . cat > big4;^no jobs;^echo is one of the shell.s own commands: it cannot run in the background;^a & can only end the line;^x & y\s*$$
 EXPECT_NAMES = \[registry\] ready;\[registry\] fs may ask for: disk\s*$$;\[registry\] shell may ask for: keys display init system files files.look disk.look;^keys display init system files files.look disk.look nic net windows\s*$$;^files: there for the shell;^disk: no such service - for the shell;\[registry\] shell asked for .disk.: it is not in its namespace;^nosuch: no such service - for the shell;\[registry\] asked to crash;\[init\] registry ended with code 1 - restarting it;^files.look: there for the shell
@@ -527,6 +527,8 @@ ifeq ($(HAVE_CC),yes)
 	@$(TFSTOOL_RS) rm $(RUN_DISK) threads > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) threads $(C_BIN)/threads > /dev/null
 	@clang $(TAAJ_CFLAGS) -c $(BIGMEM_C) -o $(C_BIN)/bigmem.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/bigmem.o $(LIBC_A) -o $(C_BIN)/bigmem
 	@$(TFSTOOL_RS) rm $(RUN_DISK) bigmem > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) bigmem $(C_BIN)/bigmem > /dev/null
+	@clang $(TAAJ_CFLAGS) -c $(BASICS_C) -o $(C_BIN)/basics.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/basics.o $(LIBC_A) -o $(C_BIN)/basics
+	@$(TFSTOOL_RS) rm $(RUN_DISK) basics > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) basics $(C_BIN)/basics > /dev/null
 endif
 	@$(TFSTOOL_RS) rm $(RUN_DISK) threadcheck > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) threadcheck $(USER_BIN)/threadcheck > /dev/null
 
@@ -1086,6 +1088,8 @@ ifeq ($(HAVE_CC),yes)
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) threads > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) threads $(C_A64_BIN)/threads > /dev/null
 	@clang $(TAAJ_A64_CFLAGS) -c $(BIGMEM_C) -o $(C_A64_BIN)/bigmem.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/bigmem.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/bigmem
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) bigmem > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) bigmem $(C_A64_BIN)/bigmem > /dev/null
+	@clang $(TAAJ_A64_CFLAGS) -c $(BASICS_C) -o $(C_A64_BIN)/basics.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/basics.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/basics
+	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) basics > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) basics $(C_A64_BIN)/basics > /dev/null
 endif
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) threadcheck > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) threadcheck $(A64_USER_BIN)/threadcheck > /dev/null
 
@@ -1553,6 +1557,32 @@ else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 bigmem boot is not run"
 endif
 
+# The core basics (journal entry 097): the date from the real-time
+# clock, a clock finer than a tick, signals from the kernel (handlers,
+# alarms, Ctrl+C, faults, children ended by them) and disk flushes.
+# basics.c (next to the test script) checks them.
+BASICS64_LOG   = $(BUILD_DIR)/basics64.log
+BASICS_A64_LOG = $(BUILD_DIR)/aarch64/basics.log
+BASICS_C       = $(KERNEL64_DIR)/scripts/basics.c
+basics64-test: iso64 user64 libc64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@clang $(TAAJ_CFLAGS) -c $(BASICS_C) -o $(C_BIN)/basics.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/basics.o $(LIBC_A) -o $(C_BIN)/basics
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/basics-test.sh x86_64 $(ISO64_IMG) $(BASICS64_LOG).disk $(BASICS64_LOG) $(C_BIN)/basics
+	@echo "basics64-test passed"
+else
+	@echo "FAIL: the basics test needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+
+aarch64-basics-test: kernel-aarch64 user-aarch64 tfstool-rs
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@clang $(TAAJ_A64_CFLAGS) -c $(BASICS_C) -o $(C_A64_BIN)/basics.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/basics.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/basics
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/basics-test.sh aarch64 $(KERNEL_A64_IMAGE) $(BASICS_A64_LOG).disk $(BASICS_A64_LOG) $(C_A64_BIN)/basics
+	@echo "aarch64-basics-test passed"
+else
+	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 basics boot is not run"
+endif
+
 aarch64-tcc-test: kernel-aarch64 user-aarch64 tcc-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
@@ -1784,7 +1814,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 12
-TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test
+TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared

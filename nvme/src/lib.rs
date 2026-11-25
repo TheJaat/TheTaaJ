@@ -127,6 +127,10 @@ pub mod admin {
 
 /// NVM commands, on an I/O queue.
 pub mod io {
+    /// Everything written so far onto the medium (a volatile write
+    /// cache emptied); no data. A controller without such a cache
+    /// completes it at once.
+    pub const FLUSH: u8 = 0x00;
     pub const WRITE: u8 = 0x01;
     pub const READ: u8 = 0x02;
 }
@@ -647,6 +651,21 @@ impl<B: Bus> Disk<B> {
                     return Err(failure);
                 }
             }
+        }
+        Ok(())
+    }
+
+    /// Everything written onto the medium: one FLUSH command for the
+    /// namespace. Reset after a timeout or fatal error, as `transfer`.
+    pub fn flush(&mut self) -> Result<(), Failure> {
+        let mut pair = self.io;
+        let result = self.run(&mut pair, io::FLUSH, self.namespace.id, (0, 0), [0; 6]);
+        self.io = pair;
+        if let Err(failure) = result {
+            if matches!(failure, Failure::TimedOut | Failure::Fatal) {
+                let _ = self.reset();
+            }
+            return Err(failure);
         }
         Ok(())
     }

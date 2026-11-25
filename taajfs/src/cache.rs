@@ -131,6 +131,12 @@ impl<D: BlockDevice> BlockDevice for Cache<D> {
         Ok(())
     }
 
+    /// Nothing waits here to be written (writes go through), so a flush
+    /// is the device's.
+    fn flush(&mut self) -> Result<(), DeviceError> {
+        self.device.flush()
+    }
+
     fn write_block(&mut self, number: u32, buffer: &Block) -> Result<(), DeviceError> {
         match self.device.write_block(number, buffer) {
             Ok(()) => {
@@ -182,6 +188,9 @@ mod tests {
         fn write_block(&mut self, number: u32, buffer: &Block) -> Result<(), DeviceError> {
             self.writes += 1;
             self.inner.write_block(number, buffer)
+        }
+        fn flush(&mut self) -> Result<(), DeviceError> {
+            self.inner.flush()
         }
     }
 

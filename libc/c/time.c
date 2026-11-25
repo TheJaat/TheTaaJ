@@ -1,10 +1,9 @@
 /* time.c - calendar time from seconds and back: gmtime, localtime,
  * mktime, difftime; and as text: strftime, asctime, ctime.
  *
- * time() itself is in the Rust half (libc/src/system.rs): TheTaaJ has
- * no clock that knows the date yet, so its seconds count from the
- * moment the system started, and the dates made here from them fall in
- * January 1970. There are no time zones either: localtime is gmtime. */
+ * time() itself is in the Rust half (libc/src/system.rs): seconds since
+ * 1970 from the kernel's clock, which the machine's real-time clock set
+ * at boot. There are no time zones: localtime is gmtime, UTC. */
 
 #include <stdio.h>
 #include <string.h>

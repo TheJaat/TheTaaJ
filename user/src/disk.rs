@@ -146,6 +146,13 @@ impl Disk {
         }
     }
 
+    /// Everything written so far onto the medium (block::FLUSH): when this
+    /// returns Ok, a power cut no longer loses it.
+    pub fn flush(&self) -> Result<(), DiskError> {
+        let mut reply = [0u8; REPLY_MAX];
+        self.call(&[block::FLUSH], &mut reply).map(|_| ())
+    }
+
     /// A request as raw bytes, with whatever handle the caller chooses
     /// to lend - for checking that the driver refuses wrong ones.
     pub fn raw(&self, request: &[u8], lent: Option<Handle>) -> Result<(), DiskError> {
