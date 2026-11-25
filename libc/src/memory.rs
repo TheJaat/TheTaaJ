@@ -59,6 +59,29 @@ use core::alloc::Layout;
 use core::ffi::{c_char, c_void};
 use core::ptr;
 
+/// `__taaj_reserve(size)` (for mmap.c): `size` bytes of reserved memory
+/// (MEMORY_RESERVE), readable and writable, each page zeroed when first
+/// touched; null if the address space would not have it.
+#[no_mangle]
+pub extern "C" fn __taaj_reserve(size: usize) -> *mut c_void {
+    taaj::memory_reserve(size as u64, true).map_or(ptr::null_mut(), |start| start.cast())
+}
+
+/// `__taaj_unmap(start)` (for mmap.c): gives reserved memory back,
+/// every page it took. 0, or -1 if nothing was reserved there.
+#[no_mangle]
+pub extern "C" fn __taaj_unmap(start: *mut c_void) -> core::ffi::c_int {
+    if taaj::memory_unmap(start.cast()).is_ok() { 0 } else { -1 }
+}
+
+/// `__taaj_memory_used()`: the bytes the kernel counts against this
+/// program now (MEMORY_USED) - for tests and reports; getrlimit says
+/// what it may.
+#[no_mangle]
+pub extern "C" fn __taaj_memory_used() -> u64 {
+    taaj::memory_used()
+}
+
 /// The bytes in front of every block of malloc's, where its size and
 /// alignment are kept.
 const HEADER: usize = 16;

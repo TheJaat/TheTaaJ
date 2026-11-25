@@ -669,8 +669,32 @@ pub fn memory_size(memory: Handle) -> Result<u64, Error> {
     abi::decode(syscall(call::MEMORY_SIZE, memory, 0, 0))
 }
 
+/// Removes a mapping, or reserved memory, given where it starts. Its
+/// pages go back to the kernel (an object's once nothing else holds it).
 pub fn memory_unmap(address: *mut u8) -> Result<(), Error> {
     abi::decode(syscall(call::MEMORY_UNMAP, address as u64, 0, 0)).map(|_| ())
+}
+
+/// Reserves `size` bytes of address space; returns where. Each page
+/// gets zeroed memory when first touched, counted against this
+/// program's limit then; touching one past the limit ends the program.
+/// Given back by `memory_unmap`.
+pub fn memory_reserve(size: u64, writable: bool) -> Result<*mut u8, Error> {
+    abi::decode(syscall(call::MEMORY_RESERVE, size, u64::from(writable), 0)).map(|a| a as *mut u8)
+}
+
+/// Lowers this program's memory limit to `bytes` if that is lower (0
+/// only asks); the limit now, in bytes. Programs it starts later start
+/// with it.
+pub fn memory_limit(bytes: u64) -> u64 {
+    abi::decode(syscall(call::MEMORY_LIMIT, bytes, 0, 0)).unwrap_or(0)
+}
+
+/// The bytes counted against this program now: its loaded file, the
+/// pages of its stack and reserved memory it has touched, and memory
+/// objects it made.
+pub fn memory_used() -> u64 {
+    abi::decode(syscall(call::MEMORY_USED, 0, 0, 0)).unwrap_or(0)
 }
 
 static STARTUP_HANDLES: AtomicU64 = AtomicU64::new(0);

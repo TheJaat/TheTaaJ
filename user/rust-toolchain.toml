@@ -2,6 +2,11 @@
 # first time cargo runs here, installs the bare-metal target below - so a
 # fresh checkout needs no manual `rustup target add`.
 [toolchain]
-channel = "stable"
+# Exactly 1.100.0, not "stable": Era 9 compares what this compiler
+# makes with what the same rustc makes on TheTaaJ, byte for byte, and
+# "stable" would move under it every six weeks. Raised only on purpose,
+# in all three files at once (user/, libc/, kernel/kernel64/).
+channel = "1.100.0"
 targets = ["x86_64-unknown-none", "aarch64-unknown-none-softfloat"]
 profile = "minimal"
+components = ["clippy"]

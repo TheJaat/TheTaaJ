@@ -1,7 +1,7 @@
 //! heapcheck: proves a user program's heap works.
 //!
-//! Collections grow past several regions (each a memory object mapped
-//! by a system call), big alignments are honoured, freed memory is
+//! Collections grow past several regions (each memory reserved by a
+//! system call), big alignments are honoured, freed memory is
 //! reused rather than growing again, and every byte read back is what
 //! was written. Exits 0 if all of it held; a broken check panics, which
 //! exits -2.
@@ -64,9 +64,29 @@ fn main() -> i64 {
     assert_eq!(again[256 * 1024 - 1], 256 * 1024 - 1);
     assert_eq!(taaj::heap_usage().1, total, "freed memory was reused");
 
-    // Larger than one memory object may be: refused, not a crash.
-    let refused = Vec::<u8>::new().try_reserve_exact(abi::MEMORY_MAX as usize + 1).is_err();
+    // Larger than any reservation may be: refused, not a crash.
+    let refused = Vec::<u8>::new().try_reserve_exact(abi::RESERVE_MAX as usize + 1).is_err();
     assert!(refused, "an impossible allocation fails cleanly");
+
+    // Reserved memory nobody has touched, filled by the kernel itself:
+    // a message received straight into it, across a page boundary. The
+    // kernel finds the pages missing as it copies, and fills them as
+    // the program's own access would have.
+    let (a, b) = taaj::channel_create().expect("a channel");
+    let message: Vec<u8> = (0..1000u32).map(|n| (n % 251) as u8 + 1).collect();
+    taaj::send(a, &message, &[]).expect("sent");
+    let before = taaj::memory_used();
+    let reserved = taaj::memory_reserve(2 * 4096, true).expect("two pages reserved");
+    assert_eq!(taaj::memory_used(), before, "reserving took nothing");
+    // SAFETY: reserved above, writable, 8 KiB; nothing else uses it.
+    let into = unsafe { core::slice::from_raw_parts_mut(reserved.add(4096 - 500), 1000) };
+    assert_eq!(taaj::receive(b, into, &mut []).map(|(n, _)| n), Ok(1000), "received into untouched pages");
+    assert_eq!(into, &message[..], "what the kernel wrote there");
+    assert_eq!(taaj::memory_used(), before + 2 * 4096, "the two pages the kernel filled were counted");
+    let _ = taaj::close(a);
+    let _ = taaj::close(b);
+    taaj::memory_unmap(reserved).expect("given back");
+    assert_eq!(taaj::memory_used(), before, "and given back");
 
     println!("[heapcheck] heap of {} KiB: grew, aligned, freed and reused", total / 1024);
     0

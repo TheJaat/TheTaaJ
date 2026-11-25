@@ -1,11 +1,15 @@
 /* sys/resource.h - limits on what a program may use, and what it has
  * used.
  *
- * Only the number of descriptors has a limit here (32, RLIMIT_NOFILE);
- * every other is "infinite" (RLIM_INFINITY), as Linux says of a limit
- * nobody set: the stack is the size the program was linked to ask for,
- * and memory is what there is. setrlimit changes nothing - asking for
- * what is already so succeeds, anything else is EPERM. TheTaaJ does
+ * Two limits are real here: the number of descriptors (32,
+ * RLIMIT_NOFILE), and memory (RLIMIT_AS and RLIMIT_DATA, both the
+ * kernel's memory limit for the process: what it may take, counted as
+ * pages are touched). Memory's can be lowered with setrlimit - and the
+ * programs this one starts afterwards get it too - but never raised
+ * (EPERM). Every other limit is "infinite" (RLIM_INFINITY), as Linux
+ * says of a limit nobody set: the stack is the size the program was
+ * linked to ask for. setrlimit changes nothing else - asking for what
+ * is already so succeeds, anything else is EPERM. TheTaaJ does
  * not tell a program its own use of the processor yet: there is no
  * getrusage. The numbers are Linux's. */
 

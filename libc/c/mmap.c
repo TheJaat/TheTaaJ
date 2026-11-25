@@ -1,7 +1,16 @@
-/* mmap.c - memory mappings as copies (sys/mman.h says what that means
- * and what it cannot do). */
+/* mmap.c - memory mappings (sys/mman.h says what they are here and
+ * what they cannot do).
+ *
+ * Every mapping is reserved memory from the kernel (MEMORY_RESERVE,
+ * through __taaj_reserve in memory.rs): address space whose pages get
+ * zeroed memory only when first touched. So a program may map 1 GiB
+ * and pay for the pages it uses - what allocators and compilers that
+ * mmap big arenas count on - and munmap gives every page back. A file
+ * is read into such memory: a private copy. */
 
 #include <errno.h>
+#include <pthread.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
@@ -9,8 +18,13 @@
 
 #define PAGE 4096
 
+void *__taaj_reserve(size_t size);
+int __taaj_unmap(void *start);
+
 /* The mappings made, so that munmap knows a start from any other
- * pointer and frees only what mmap gave. */
+ * pointer and how long each is. Threads may map and unmap at once:
+ * the list is theirs one at a time. */
+static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 static struct mapping {
     void *start;
     size_t length;
@@ -19,18 +33,25 @@ static size_t mapping_count, mapping_room;
 
 static int remember(void *start, size_t length)
 {
+    pthread_mutex_lock(&lock);
+    int result = 0;
     if (mapping_count == mapping_room) {
         size_t room = mapping_room ? mapping_room * 2 : 16;
         struct mapping *more = realloc(mappings, room * sizeof *more);
         if (more == NULL)
-            return -1;
-        mappings = more;
-        mapping_room = room;
+            result = -1;
+        else {
+            mappings = more;
+            mapping_room = room;
+        }
     }
-    mappings[mapping_count].start = start;
-    mappings[mapping_count].length = length;
-    mapping_count++;
-    return 0;
+    if (result == 0) {
+        mappings[mapping_count].start = start;
+        mappings[mapping_count].length = length;
+        mapping_count++;
+    }
+    pthread_mutex_unlock(&lock);
+    return result;
 }
 
 void *mmap(void *address, size_t length, int protection, int flags, int fd, off_t offset)
@@ -54,19 +75,20 @@ void *mmap(void *address, size_t length, int protection, int flags, int fd, off_
         errno = ENOMEM;
         return MAP_FAILED;
     }
-    char *memory = aligned_alloc(PAGE, rounded);
+    char *memory = __taaj_reserve(rounded);
     if (memory == NULL) {
         errno = ENOMEM;
         return MAP_FAILED;
     }
-    memset(memory, 0, rounded);
     if (!(flags & MAP_ANONYMOUS)) {
         /* Read through the descriptor and put its place back, so that
-         * mapping a file does not move where the program reads it. */
+         * mapping a file does not move where the program reads it. The
+         * pages read into are touched, and so taken; the rest of the
+         * mapping - past the end of the file - stays untouched zeros. */
         off_t was = lseek(fd, 0, SEEK_CUR);
         if (was < 0 || lseek(fd, offset, SEEK_SET) < 0) {
             int why = errno;
-            free(memory);
+            __taaj_unmap(memory);
             errno = why == ESPIPE ? ENODEV : why;
             return MAP_FAILED;
         }
@@ -76,7 +98,7 @@ void *mmap(void *address, size_t length, int protection, int flags, int fd, off_
             if (n < 0) {
                 int why = errno;
                 lseek(fd, was, SEEK_SET);
-                free(memory);
+                __taaj_unmap(memory);
                 errno = why;
                 return MAP_FAILED;
             }
@@ -87,7 +109,7 @@ void *mmap(void *address, size_t length, int protection, int flags, int fd, off_
         lseek(fd, was, SEEK_SET);
     }
     if (remember(memory, rounded) != 0) {
-        free(memory);
+        __taaj_unmap(memory);
         errno = ENOMEM;
         return MAP_FAILED;
     }
@@ -100,15 +122,18 @@ int munmap(void *address, size_t length)
         errno = EINVAL;
         return -1;
     }
+    pthread_mutex_lock(&lock);
     for (size_t i = 0; i < mapping_count; i++) {
         if (mappings[i].start == address) {
-            if (length < mappings[i].length)
-                return 0; /* part of a mapping: it stays, whole (sys/mman.h) */
-            free(address);
-            mappings[i] = mappings[--mapping_count];
-            return 0;
+            /* Less than the whole: it stays, whole (sys/mman.h). */
+            if (length >= mappings[i].length) {
+                __taaj_unmap(address);
+                mappings[i] = mappings[--mapping_count];
+            }
+            break;
         }
     }
+    pthread_mutex_unlock(&lock);
     /* Not a mapping's start: POSIX lets unmapping what is not mapped
      * succeed; but memory mmap never gave is not this one's to free. */
     return 0;

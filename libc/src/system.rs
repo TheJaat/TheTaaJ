@@ -409,14 +409,17 @@ pub struct Rlimit {
 }
 
 const RLIM_INFINITY: u64 = u64::MAX;
+const RLIMIT_DATA: c_int = 2;
 const RLIMIT_NOFILE: c_int = 7;
+const RLIMIT_AS: c_int = 9;
 
 /// `getrlimit(resource, limit)`: how much of something this program may
-/// use. Descriptors: the library's table of 32. Nothing else has a limit
-/// that can be raised or lowered: the stack is the size the program
-/// asked for when it was linked (the kernel reads it from the ELF
-/// file), and memory is what there is. Those are "infinite" here, as
-/// Linux says of a limit nobody set.
+/// use. Descriptors: the library's table of 32. Memory (RLIMIT_AS and
+/// RLIMIT_DATA, the same thing here): the kernel's memory limit for this
+/// process (MEMORY_LIMIT). Nothing else has a limit: the stack is the
+/// size the program asked for when it was linked (the kernel reads it
+/// from the ELF file). Those are "infinite" here, as Linux says of a
+/// limit nobody set.
 ///
 /// # Safety
 /// `limit` must be valid for writing.
@@ -424,6 +427,10 @@ const RLIMIT_NOFILE: c_int = 7;
 pub unsafe extern "C" fn getrlimit(resource: c_int, limit: *mut Rlimit) -> c_int {
     let (current, maximum) = match resource {
         RLIMIT_NOFILE => (32, 32),
+        RLIMIT_AS | RLIMIT_DATA => {
+            let bytes = taaj::memory_limit(0);
+            (bytes, bytes)
+        }
         0..=15 => (RLIM_INFINITY, RLIM_INFINITY),
         _ => return crate::descriptors::fail(crate::errno::EINVAL),
     };
@@ -432,8 +439,10 @@ pub unsafe extern "C" fn getrlimit(resource: c_int, limit: *mut Rlimit) -> c_int
     0
 }
 
-/// `setrlimit(resource, limit)`: the limits cannot be changed - asking
-/// for what they already are succeeds, anything else is EPERM.
+/// `setrlimit(resource, limit)`: memory's limit can be lowered (and
+/// then programs this one starts get it too), never raised - EPERM.
+/// The other limits cannot be changed: asking for what they already are
+/// succeeds, anything else is EPERM.
 ///
 /// # Safety
 /// `limit` must be valid for reading.
@@ -446,6 +455,17 @@ pub unsafe extern "C" fn setrlimit(resource: c_int, limit: *const Rlimit) -> c_i
     }
     // SAFETY: the caller's promise.
     let wanted = unsafe { limit.read() };
+    if resource == RLIMIT_AS || resource == RLIMIT_DATA {
+        if wanted.current > wanted.maximum {
+            return crate::descriptors::fail(crate::errno::EINVAL);
+        }
+        if wanted.current > now.current {
+            return crate::descriptors::fail(crate::errno::EPERM);
+        }
+        // Rounded down to whole pages, at least one.
+        taaj::memory_limit(wanted.current.max(4096));
+        return 0;
+    }
     if wanted.current == now.current && wanted.maximum == now.maximum {
         0
     } else {

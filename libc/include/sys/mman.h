@@ -1,10 +1,14 @@
-/* sys/mman.h - memory mappings, as copies.
+/* sys/mman.h - memory mappings.
  *
  * On Unix, mmap puts a file's pages straight into a program's memory,
- * or gives it fresh zeroed pages. TheTaaJ's kernel maps memory objects,
- * not files, and the file service is a separate program. So here:
+ * or gives it fresh zeroed pages. TheTaaJ's kernel reserves address
+ * space whose pages get zeroed memory when first touched (MEMORY_
+ * RESERVE), and maps memory objects; the file service is a separate
+ * program, so files are not mapped. So here:
  *
- *   MAP_ANONYMOUS      fresh zeroed memory, page-aligned
+ *   MAP_ANONYMOUS      fresh zeroed memory, page-aligned, reserved: a
+ *                      page takes memory only once touched, so mapping
+ *                      1 GiB and using 1 MiB costs 1 MiB
  *   a file, MAP_PRIVATE
  *                      the file's bytes from `offset`, read into such
  *                      memory: a copy, which the program may change
@@ -19,11 +23,13 @@
  *                      own file
  *   MAP_FIXED          fails (EINVAL): the place cannot be chosen
  *
- * munmap with a mapping's start and its whole length takes it back;
- * asked for less, it leaves the mapping whole (memory is given back a
- * whole mapping at a time). mprotect cannot make pages read-only (the
- * memory is ordinary heap): it refuses PROT_EXEC and otherwise changes
- * nothing. The numbers are Linux's. */
+ * munmap with a mapping's start and its whole length gives every page
+ * of it back; asked for less, it leaves the mapping whole (memory is
+ * given back a whole mapping at a time). Pages are always readable and
+ * writable: PROT_READ alone, or PROT_NONE, is not enforced, and
+ * mprotect refuses PROT_EXEC and otherwise changes nothing. Memory
+ * touched past the program's limit (setrlimit's RLIMIT_AS) ends the
+ * program, "out of memory". The numbers are Linux's. */
 
 #ifndef _SYS_MMAN_H
 #define _SYS_MMAN_H

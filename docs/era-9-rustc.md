@@ -33,6 +33,19 @@ What is missing (measured on the host, 2026-11-25, rustc 1.100.0):
 | The BIOS bootloader | `nasm` and `i686-elf-gcc` | Neither runs on TheTaaJ |
 | The image | `xorriso` writes the ISO | No ISO writer |
 
+### What R0 found (entry 096)
+
+Measured on the host with rustc 1.100.0 built from its source tarball, `rustc_driver` changed from a `dylib` to an `rlib` (one line in `compiler/rustc_driver/Cargo.toml`), LLVM linked in statically:
+
+- **rustc can be one program.** The result is a single 182 MB file (144 MB stripped; 141 MB of it code), needing only libc, libm, libz and libgcc_s. **No dynamic loader is needed**: the shared-library row in the table above falls away, and so does R0's `ld.so` question.
+- **It is the same compiler as rustup's**, once `build.description = ""` is set. Without that, the source tarball's build adds "(built from a source tarball)" to its version, and every crate rustup's 1.100.0 built is refused (E0514).
+- **Peak memory, one thread** (`-Z threads=1`, `-C codegen-units=1`): the kernel binary 426 MB in 5 s, libc's crate 272 MB, every program under 190 MB. 512 MB was never going to be enough; 4 GB is plenty.
+- **Byte for byte**: built single-threaded by this rustc and by rustup's, all 53 programs, `libc.a` and the kernel are identical. One difference was found: inside an `.rlib`'s LLVM bitcode, LLVM names its anonymous globals `anon.<hash>.N`, and the hash differs, though the modules' contents and their own hashes are the same. Linked programs are unaffected; R6 compares what is linked, and will look at this if it matters.
+- **LLVM is 23, not 18.** rustc 1.100.0 bundles LLVM 23.1.5 and refuses anything older than 21. TheTaaJ's LLVM port (entries 073–076) is 18.1.3, so R4 builds LLVM 23 for TheTaaJ, as part of rustc, with the same recipe.
+- **What rustc asks of the system.** Of the 422 C library functions the official rustc and its LLVM import, our libc lacks 190. Most are glibc's own names (`*64`, `__xstat`, `_l` locale variants) that a `taaj` target won't ask for. The real gaps, for R3: `dlopen`/`dlsym`/`dladdr` and `dl_iterate_phdr` (backtraces; answered "none"), `getaddrinfo`, `getrandom`, `sigaltstack`, `poll`, `pthread_getattr_np` and `pthread_attr_getstack` (stack guard), `posix_spawn_file_actions_addchdir`, `sched_getaffinity`, `statx`, `copy_file_range`, the wide-character functions, iconv, and zlib (`compress2`, `crc32`, `uncompress`) for compressed metadata.
+- **Memory**: the kernel already used all of 4 GB on both architectures (4092 MiB free on x86, the top frame written and read back). What was missing was in the programs' memory, which R1 adds.
+- The toolchain is pinned to 1.100.0 in the three `rust-toolchain.toml` files.
+
 ## The steps
 
 Grouped into a few big steps, each with its own journal entry, tests and testing note. Each one is useful on its own, not only for rustc.

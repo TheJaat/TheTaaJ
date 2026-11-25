@@ -3,20 +3,22 @@
 //! The allocator is the kernel's own (the `heap` crate); only where its
 //! memory comes from differs. The kernel maps frames into its heap area
 //! itself. A user program asks for memory the way it asks for anything:
-//! a system call. It creates a memory object and maps it, and hands the
-//! mapping to the heap as a new region.
+//! a system call. It reserves address space (MEMORY_RESERVE) and hands
+//! it to the heap as a new region; the kernel gives each page a frame
+//! when it is first touched, so a region costs what is used of it.
 //!
-//! Each region is a separate mapping, and the kernel puts a guard page
-//! after every mapping, so regions never touch and never merge. To keep
-//! their number small, each one is at least as big as the heap already
-//! is (doubling it), between 64 KiB and the 128 MiB a memory object may
-//! be - or, when that much is not free, just what was asked for.
+//! Each region is a separate reservation, and the kernel puts a guard
+//! page after every one, so regions never touch and never merge. To
+//! keep their number small, each one is at least as big as the heap
+//! already is (doubling it), between 1 MiB and 4 GiB.
 //!
-//! The memory object's handle is closed straight after mapping: the
-//! mapping keeps the object alive, and the handle would only take a
-//! slot in the handle table. Memory is not given back to the kernel
-//! while the program runs - like most allocators - but all of it is when
-//! the program exits, with its address space.
+//! Since pages are taken only when touched, running out shows then, not
+//! here: a program past its memory limit is ended at the page that
+//! would pass it (with "out of memory" in the log), as Linux does with
+//! overcommitted memory. What fails here is only address space.
+//! Memory is not given back to the kernel while the program runs - like
+//! most allocators - but all of it is when the program exits, with its
+//! address space.
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr;
@@ -25,8 +27,8 @@ use crate::sync::Lock;
 
 use heap::Heap;
 
-const REGION_MIN: u64 = 64 * 1024;
-const REGION_MAX: u64 = abi::MEMORY_MAX;
+const REGION_MIN: u64 = 1 << 20;
+const REGION_MAX: u64 = 4 << 30;
 const PAGE: u64 = 4096;
 
 struct UserHeap {
@@ -53,28 +55,15 @@ impl UserHeap {
     }
 }
 
-/// Maps a new region of at least `bytes` and gives it to `heap`.
+/// Reserves a new region of at least `bytes` and gives it to `heap`.
 fn grow(heap: &mut Heap, bytes: u64) -> bool {
-    let size = bytes.max(heap.total() as u64).clamp(REGION_MIN, REGION_MAX).next_multiple_of(PAGE);
-    if bytes > size {
-        return false; // bigger than any one memory object can be
+    let Some(rounded) = bytes.checked_next_multiple_of(PAGE) else { return false };
+    let size = rounded.max(heap.total() as u64).clamp(REGION_MIN, REGION_MAX).max(rounded);
+    if size > abi::RESERVE_MAX {
+        return false; // bigger than any reservation can be
     }
-    // Doubling can ask for far more than this request needs: 128 MiB
-    // more for a heap of 128 MiB. When that much is not there, what the
-    // request needs may still be.
-    let exact = bytes.max(REGION_MIN).next_multiple_of(PAGE);
-    let (memory, size) = match crate::memory_create(size) {
-        Ok(memory) => (memory, size),
-        Err(_) if exact < size => match crate::memory_create(exact) {
-            Ok(memory) => (memory, exact),
-            Err(_) => return false,
-        },
-        Err(_) => return false,
-    };
-    let mapped = crate::memory_map(memory, true);
-    let _ = crate::close(memory); // the mapping keeps it alive
-    let Ok(start) = mapped else { return false };
-    // SAFETY: just mapped, writable, `size` bytes, used by nothing else.
+    let Ok(start) = crate::memory_reserve(size, true) else { return false };
+    // SAFETY: just reserved, writable, `size` bytes, used by nothing else.
     unsafe { heap.add_region(start as usize, size as usize) };
     true
 }

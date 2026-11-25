@@ -13,7 +13,10 @@
 //! words are the ones the AArch64 ABI keeps for the system). A
 //! `pthread_t` is the record's address.
 //!
-//! A thread's stack is a memory object mapped for it. The thread ends
+//! A thread's stack is memory reserved for it (MEMORY_RESERVE): a page
+//! takes memory only once touched, and the unmapped page the kernel
+//! leaves below every reservation makes an overflow fault instead of
+//! running into whatever lies under it. The thread ends
 //! with THREAD_EXIT naming its record's `running` word, which the
 //! kernel sets to 0 and wakes once the thread will run no more:
 //! `pthread_join` sleeps on that word, then unmaps the stack. A detached
@@ -51,10 +54,10 @@ const KEYS_MAX: usize = 128;
 /// remain (PTHREAD_DESTRUCTOR_ITERATIONS).
 const DESTRUCTOR_ROUNDS: usize = 4;
 /// pthread.h's PTHREAD_STACK_MIN, and the stack a thread gets if its
-/// attributes don't say: 1 MiB. (Memory objects are made whole, not
-/// page by page as touched, so this is memory taken, not reserved.)
+/// attributes don't say: 8 MiB, as glibc gives - reserved, so a thread
+/// that uses 20 KiB of it takes 20 KiB.
 const STACK_MIN: usize = 16 * 1024;
-const STACK_DEFAULT: usize = 1024 * 1024;
+const STACK_DEFAULT: usize = 8 * 1024 * 1024;
 
 type Start = extern "C" fn(*mut c_void) -> *mut c_void;
 type Destructor = unsafe extern "C" fn(*mut c_void);
@@ -289,10 +292,7 @@ pub unsafe extern "C" fn pthread_create(
     // SAFETY: the caller's promise: null or valid.
     let attr = unsafe { attr.as_ref() };
     let size = attr.map_or(STACK_DEFAULT, Attributes::stack_size).next_multiple_of(4096);
-    let Ok(memory) = taaj::memory_create(size as u64) else { return EAGAIN };
-    let mapped = taaj::memory_map(memory, true);
-    let _ = taaj::close(memory); // the mapping keeps it
-    let Ok(stack) = mapped else { return EAGAIN };
+    let Ok(stack) = taaj::memory_reserve(size as u64, true) else { return EAGAIN };
 
     let mut record = Box::new(Thread::new(NEXT_ID.fetch_add(1, Ordering::Relaxed)));
     record.start = start;

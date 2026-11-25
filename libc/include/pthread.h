@@ -5,7 +5,8 @@
  * to sleep on; the rest is in the program:
  *
  *   threads      pthread_create, join, detach, exit, self. A thread's
- *                stack is 1 MiB unless its attributes say otherwise
+ *                stack is 8 MiB unless its attributes say otherwise -
+ *                reserved: only the pages it touches take memory
  *   mutexes      normal, recursive and error-checking. One nobody else
  *                wants costs one atomic instruction to take and one to
  *                give back; a thread that has to wait sleeps in the

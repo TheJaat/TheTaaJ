@@ -6,7 +6,7 @@ KERNEL_DIR = kernel
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
-        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test \
+        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test \
         llvm64 llvm-aarch64 clang-tblgen llvm64-test clang64-test aarch64-clang-test aarch64-llvm-test llvm-put llvm-put-aarch64
 
 # Default target
@@ -525,6 +525,8 @@ ifeq ($(HAVE_CC),yes)
 	@$(TFSTOOL_RS) rm $(RUN_DISK) make > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) make $(C_BIN)/make > /dev/null
 	@clang $(TAAJ_CFLAGS) -femulated-tls -c $(THREADS_C) -o $(C_BIN)/threads.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/threads.o $(LIBC_A) -o $(C_BIN)/threads
 	@$(TFSTOOL_RS) rm $(RUN_DISK) threads > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) threads $(C_BIN)/threads > /dev/null
+	@clang $(TAAJ_CFLAGS) -c $(BIGMEM_C) -o $(C_BIN)/bigmem.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/bigmem.o $(LIBC_A) -o $(C_BIN)/bigmem
+	@$(TFSTOOL_RS) rm $(RUN_DISK) bigmem > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) bigmem $(C_BIN)/bigmem > /dev/null
 endif
 	@$(TFSTOOL_RS) rm $(RUN_DISK) threadcheck > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) threadcheck $(USER_BIN)/threadcheck > /dev/null
 
@@ -680,14 +682,18 @@ endif
 # How many CPUs `make run64` gives the machine: `make run64 RUN_CPUS=1`.
 RUN_CPUS ?= 4
 
+# How much memory `make run64` and `make run-aarch64` give it: `make
+# run64 RUN_MEMORY=4G` for programs that want a lot (bigmem big).
+RUN_MEMORY ?= 512M
+
 run64: iso64 run-disk
-	qemu-system-x86_64 -m 512M -smp $(RUN_CPUS) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS) $(RUN_NET) $(RUN_USB_ARGS)
+	qemu-system-x86_64 -m $(RUN_MEMORY) -smp $(RUN_CPUS) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS) $(RUN_NET) $(RUN_USB_ARGS)
 
 run64-uefi: iso64 run-disk
 ifneq ($(HAVE_CLANG),yes)
 	@echo "ERROR: no UEFI loader in the ISO - it needs clang and lld (sudo apt install clang lld)"; exit 1
 endif
-	qemu-system-x86_64 -m 512M -smp $(RUN_CPUS) -bios $(OVMF) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS) $(RUN_NET) $(RUN_USB_ARGS)
+	qemu-system-x86_64 -m $(RUN_MEMORY) -smp $(RUN_CPUS) -bios $(OVMF) -cdrom $(ISO64_IMG) -boot d -serial stdio $(RUN_DISK_ARGS) $(RUN_NET) $(RUN_USB_ARGS)
 
 # Booted from the USB stick (make stick64), with no CD and no other
 # disk: a USB keyboard and mouse beside it. The files written land in
@@ -695,10 +701,10 @@ endif
 RUN_STICK_ARGS = -device qemu-xhci,id=xhci -drive file=$(STICK64_IMG),format=raw,if=none,id=stick \
 	-device usb-storage,bus=xhci.0,drive=stick,bootindex=0 -device usb-kbd,bus=xhci.0 -device usb-mouse,bus=xhci.0
 run64-stick: stick64
-	qemu-system-x86_64 -m 512M -smp $(RUN_CPUS) -serial stdio $(RUN_STICK_ARGS) $(RUN_NET)
+	qemu-system-x86_64 -m $(RUN_MEMORY) -smp $(RUN_CPUS) -serial stdio $(RUN_STICK_ARGS) $(RUN_NET)
 
 run64-stick-uefi: stick64
-	qemu-system-x86_64 -m 512M -smp $(RUN_CPUS) -bios $(OVMF) -serial stdio $(RUN_STICK_ARGS) $(RUN_NET)
+	qemu-system-x86_64 -m $(RUN_MEMORY) -smp $(RUN_CPUS) -bios $(OVMF) -serial stdio $(RUN_STICK_ARGS) $(RUN_NET)
 
 # Boots the 64-bit kernel headless and checks what it printed. A start on
 # the "boot every architecture on every commit" rule from the roadmap.
@@ -1078,6 +1084,8 @@ ifeq ($(HAVE_CC),yes)
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) make > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) make $(C_A64_BIN)/make > /dev/null
 	@clang $(TAAJ_A64_CFLAGS) -femulated-tls -c $(THREADS_C) -o $(C_A64_BIN)/threads.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/threads.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/threads
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) threads > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) threads $(C_A64_BIN)/threads > /dev/null
+	@clang $(TAAJ_A64_CFLAGS) -c $(BIGMEM_C) -o $(C_A64_BIN)/bigmem.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/bigmem.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/bigmem
+	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) bigmem > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) bigmem $(C_A64_BIN)/bigmem > /dev/null
 endif
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) threadcheck > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) threadcheck $(A64_USER_BIN)/threadcheck > /dev/null
 
@@ -1092,7 +1100,7 @@ RUN_A64_DEVICES = -drive file=$(RUN_A64_DISK),if=none,format=raw,id=d0 -device v
                   -netdev user,id=n0 -device virtio-net-device,netdev=n0
 run-aarch64: kernel-aarch64 run-aarch64-disk
 	@echo "(to leave QEMU: Ctrl+A, then X)"
-	qemu-system-aarch64 -M virt -cpu cortex-a72 -smp 4 -m 512M -nographic -kernel $(KERNEL_A64_IMAGE) $(RUN_A64_DEVICES) $(RUN_A64)
+	qemu-system-aarch64 -M virt -cpu cortex-a72 -smp 4 -m $(RUN_MEMORY) -nographic -kernel $(KERNEL_A64_IMAGE) $(RUN_A64_DEVICES) $(RUN_A64)
 
 # The same machine with a screen: QEMU's window shows the ramfb screen,
 # and takes the keys (a virtio keyboard) and the pointer (a virtio
@@ -1102,7 +1110,7 @@ run-aarch64: kernel-aarch64 run-aarch64-disk
 #   make run-aarch64-screen RUN_A64_DISPLAY="-display sdl"
 RUN_A64_DISPLAY =
 run-aarch64-screen: kernel-aarch64 run-aarch64-disk
-	qemu-system-aarch64 -M virt -cpu cortex-a72 -smp 4 -m 512M -serial stdio $(RUN_A64_DISPLAY) -kernel $(KERNEL_A64_IMAGE) \
+	qemu-system-aarch64 -M virt -cpu cortex-a72 -smp 4 -m $(RUN_MEMORY) -serial stdio $(RUN_A64_DISPLAY) -kernel $(KERNEL_A64_IMAGE) \
 	    -device ramfb -device virtio-keyboard-device -device virtio-tablet-device $(RUN_A64_DEVICES) $(RUN_A64)
 
 # Boots on several machines, and one deliberate fault.
@@ -1520,6 +1528,31 @@ else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 threads boot is not run"
 endif
 
+# A bigger machine (Era 9, R1; journal entry 096): 4 GB, reserved memory
+# filled as it is touched, mmap, big stacks, a memory limit per process,
+# and a TLB shootdown. bigmem.c (next to the test script) uses it all.
+BIGMEM64_LOG   = $(BUILD_DIR)/bigmem64.log
+BIGMEM_A64_LOG = $(BUILD_DIR)/aarch64/bigmem.log
+BIGMEM_C       = $(KERNEL64_DIR)/scripts/bigmem.c
+bigmem64-test: iso64 user64 libc64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@clang $(TAAJ_CFLAGS) -c $(BIGMEM_C) -o $(C_BIN)/bigmem.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/bigmem.o $(LIBC_A) -o $(C_BIN)/bigmem
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/bigmem-test.sh x86_64 $(ISO64_IMG) $(BIGMEM64_LOG).disk $(BIGMEM64_LOG) $(C_BIN)/bigmem
+	@echo "bigmem64-test passed"
+else
+	@echo "FAIL: the bigmem test needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+
+aarch64-bigmem-test: kernel-aarch64 user-aarch64 tfstool-rs
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@clang $(TAAJ_A64_CFLAGS) -c $(BIGMEM_C) -o $(C_A64_BIN)/bigmem.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/bigmem.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/bigmem
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/bigmem-test.sh aarch64 $(KERNEL_A64_IMAGE) $(BIGMEM_A64_LOG).disk $(BIGMEM_A64_LOG) $(C_A64_BIN)/bigmem
+	@echo "aarch64-bigmem-test passed"
+else
+	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 bigmem boot is not run"
+endif
+
 aarch64-tcc-test: kernel-aarch64 user-aarch64 tcc-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
@@ -1751,7 +1784,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 12
-TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test
+TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared

@@ -1,7 +1,8 @@
 //! Threads for Rust programs: `spawn` a closure, `join` it.
 //!
 //! A thread is the kernel's (THREAD_CREATE); everything else is here.
-//! Its stack is a memory object mapped for it. It starts in
+//! Its stack is memory reserved for it, a page taken when touched,
+//! with an unmapped page below to catch an overflow. It starts in
 //! `trampoline`, which runs the closure and ends the thread with
 //! THREAD_EXIT, naming a word the kernel sets to 0 and wakes once the
 //! thread runs no more: `join` sleeps on that word, then unmaps the
@@ -14,8 +15,9 @@ use core::sync::atomic::{AtomicU32, Ordering};
 
 use abi::Error;
 
-/// The stack a thread gets unless asked otherwise: 256 KiB.
-pub const STACK_DEFAULT: usize = 256 * 1024;
+/// The stack a thread gets unless asked otherwise: 2 MiB, as Rust's
+/// std gives - of address space; it costs what is touched.
+pub const STACK_DEFAULT: usize = 2 * 1024 * 1024;
 
 struct Start {
     /// 1 while the thread runs; the kernel sets it to 0 at its end.
@@ -33,10 +35,7 @@ pub struct JoinHandle {
 /// Runs `work` on a new thread with a stack of `stack_size` bytes.
 pub fn spawn_with(stack_size: usize, work: impl FnOnce() + Send + 'static) -> Result<JoinHandle, Error> {
     let size = stack_size.max(16 * 1024).next_multiple_of(4096) as u64;
-    let memory = crate::memory_create(size)?;
-    let mapped = crate::memory_map(memory, true);
-    let _ = crate::close(memory); // the mapping keeps it
-    let stack = mapped?;
+    let stack = crate::memory_reserve(size, true)?;
     let start = Box::into_raw(Box::new(Start { running: AtomicU32::new(1), work: Some(Box::new(work)) }));
     let top = stack as u64 + size; // a whole number of pages: 16-byte aligned
     match crate::thread_create(trampoline as *const () as u64, top, start as u64, 0) {

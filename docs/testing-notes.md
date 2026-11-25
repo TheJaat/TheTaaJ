@@ -3520,3 +3520,56 @@ make test64
 | `test64: all passed` | every part |
 
 Automated: make thread64-test, make aarch64-thread-test, make test64
+
+---
+
+## 096 · A bigger machine: memory taken as it is touched, a limit for each program, and rustc measured
+
+[The entry](journal/096-bigger-machine.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64 RUN_MEMORY=4G
+```
+
+Close QEMU before `make run-disk`. It puts `bigmem` on the disk. `RUN_MEMORY` is new; it defaults to 512M as before.
+
+| Type | You should see |
+|---|---|
+| `with files bigmem` | `bigmem: limit 3836 MiB, 0 MiB used at the start`, then `bigmem: 60 threads, 480 MiB of stacks, took N KiB` (a few hundred) and `bigmem: 23 checks, all passed` |
+| `bigmem big` | after a few seconds, `bigmem: touched 3072 MiB in N s; it took 3072 MiB; every page kept its word: yes; after munmap: 0 MiB` |
+| `with programs bigmem limit` | `bigmem: limit lowered to 64 MiB, raising it refused`, `bigmem: my limit is 64 MiB`, `bigmem: 256 MiB mapped: yes; touching it all`, then `bigmem was killed by the kernel` and, on the serial console, `killed: out of memory - 64 MiB used, its limit is 64 MiB` |
+| `bigmem overflow` | `bigmem: a thread with 1 MiB of stack goes 2 MiB deep`, then `bigmem was killed by the kernel` (a page fault under its stack) |
+| `bigmem shoot` | `bigmem: unmapping the page another thread is reading`, then `bigmem was killed by the kernel` at once |
+| `bigmem report` | `bigmem: my limit is 3836 MiB` |
+| `threads speed` | as in entry 095: threads still work, now on 8 MiB stacks |
+
+With `make run64` (512 MB), `bigmem` says a limit of 476 MiB, and `bigmem big` touches what the limit allows.
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64 RUN_MEMORY=4G
+```
+
+The same as part 1, the limit 3837 MiB.
+
+**3. The tests by themselves**
+
+```
+make bigmem64-test
+make aarch64-bigmem-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `a bigger machine (x86_64, 4 GB): 23 checks of reserved memory, mmap and big stacks passed; ...` | every part above; the same for aarch64 |
+| `test64: all passed` | every part, the new two included |
+
+**4. R0, on the host (optional, takes about 20 minutes and 15 GB)**: `build/r0/` holds the rustc source and the scripts, outside git. With cmake and ninja on the PATH, `./x.py build --stage 1 compiler/rustc` in `build/r0/rustc-1.100.0-src`; then `build/r0/measure-all.sh` builds our crates with it and writes each crate's memory and time to `build/r0/measure-*.log`.
+
+Automated: make bigmem64-test, make aarch64-bigmem-test, make test64
