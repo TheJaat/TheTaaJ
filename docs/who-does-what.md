@@ -7,6 +7,55 @@ TheTaaJ is built on two machines. Both push to the same three repositories (TheT
 | **The-Jat** | An Ubuntu virtual machine inside VMware: 16 CPUs, 15 GB, no KVM (every QEMU boot is emulated) | Long builds (rustc, LLVM), work that doesn't need fast boots or real hardware |
 | **MaK** | The real PC: Ubuntu under WSL2, with KVM | Fast boots, `make test64` in less time, timing races that only show at full speed, the real hardware itself (USB stick boot, R7) |
 
+## The machines
+
+Measured on MaK on 2026-11-25. The-Jat's blanks are for The-Jat to fill in: above all its `make test64` time, the comparison this table is missing.
+
+### Hardware and setup
+
+| | **MaK** | **The-Jat** |
+|---|---|---|
+| Machine | A laptop: 13th Gen Intel Core i7-13620H | A VMware virtual machine |
+| CPU | 10 cores (6 performance + 4 efficient), 16 threads | 16 CPUs |
+| Vector instructions | AVX2, no AVX-512 | *(fill in)* |
+| Memory | 11 GiB given to WSL (WSL's default share; no `.wslconfig`) | 15 GB |
+| Disk | 1 TB virtual disk, 917 GB free | *(fill in)* |
+| Virtualization | KVM in WSL2 (VT-x, nested) | None: every QEMU boot is emulated |
+| OS | Ubuntu 26.04 on WSL2 (kernel 6.6) | Ubuntu 24.04 |
+| Host LLVM | 21 by default; Ubuntu 24.04's 18.1.3 unpacked locally for the byte-for-byte tests | 18.1.3, the reference |
+| Host glibc | 2.43 (newer than the reference) | 2.39, the reference |
+| AArch64 boots | Emulated | Emulated |
+
+### Measured times
+
+| Task | **MaK, KVM** | **MaK, emulated** | **The-Jat** |
+|---|---|---|---|
+| `make test64`, all 48 parts | 14 min 6 s | not measured | *(fill in)* |
+| `make test64`, the x86_64 parts only | 7 min 56 s | not measured | |
+| The ports (LLVM, Clang, lld, libc++ for both CPUs), first build | 39 min 3 s (compiling on the host: KVM doesn't change it) | | *(fill in)* |
+| The i686 cross compiler (`toolchain_i686.sh`) | about 12 min | | |
+| `smp64-test` | 14 s | 43 s | |
+| `thread64-test` | 25 s | 36 s | |
+| `bigmem64-test` | 33 s | 48 s | |
+| `boot64-test` (mostly typing keys and waiting) | 382 s | 385 s | |
+| Four `cprimes` copies at once (the busy part) | about 1.4 s | about 14 s | |
+
+The whole of `make test64` is about as long on both kinds of CPU, because its slowest parts are the AArch64 ones, emulated everywhere. KVM makes the x86_64 half several times faster.
+
+### What follows for the split
+
+| Kind of work | Better on | Why |
+|---|---|---|
+| Fast edit, boot and test loops on x86_64 | MaK | KVM: a busy boot is up to ten times faster |
+| Timing races, real-PC behaviour | MaK | KVM delivers interrupts in real time, as a PC does; it found the bootloader's protected-mode bug |
+| Real hardware (USB stick, R7) | MaK | It is the real PC |
+| Byte-for-byte comparisons with the host's tools (LLVM, Clang, glibc) | The-Jat | It has the reference versions; MaK's newer host needs local workarounds |
+| Long unattended builds (rustc, LLVM 23) | The-Jat | MaK is a laptop: it can sleep, run on battery or slow down when hot, and WSL stops when idle; and it has 4 GB less memory |
+| Big memory (building rustc, models of 1-3 GB) | The-Jat | 15 GB against 11 GiB |
+| AArch64 | Either | Emulated on both, about as fast |
+
+MaK's memory can grow: a `.wslconfig` gives WSL more of the laptop's memory, if the laptop has it to spare.
+
 ## How we work
 
 1. **One branch per step**, with the same name in every repository the step touches (for example `r3-std`, `usb-hubs`). Nobody commits straight to `main`.
