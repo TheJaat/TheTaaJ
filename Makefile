@@ -6,7 +6,7 @@ KERNEL_DIR = kernel
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
-        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test \
+        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test \
         llvm64 llvm-aarch64 clang-tblgen llvm64-test clang64-test aarch64-clang-test aarch64-llvm-test llvm-put llvm-put-aarch64
 
 # Default target
@@ -544,12 +544,14 @@ ifeq ($(HAVE_CC),yes)
 	    $(TFSTOOL_RS) put $(RUN_DISK) $$program $(CXX_X86_DIR)/bin/$$program > /dev/null || exit 1; \
 	done
 	@$(TFSTOOL_RS) rm $(RUN_DISK) make > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) make $(C_BIN)/make > /dev/null
-	@clang $(TAAJ_CFLAGS) -femulated-tls -c $(THREADS_C) -o $(C_BIN)/threads.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/threads.o $(LIBC_A) -o $(C_BIN)/threads
+	@clang $(TAAJ_CFLAGS) -c $(THREADS_C) -o $(C_BIN)/threads.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/threads.o $(LIBC_A) -o $(C_BIN)/threads
 	@$(TFSTOOL_RS) rm $(RUN_DISK) threads > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) threads $(C_BIN)/threads > /dev/null
 	@clang $(TAAJ_CFLAGS) -c $(BIGMEM_C) -o $(C_BIN)/bigmem.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/bigmem.o $(LIBC_A) -o $(C_BIN)/bigmem
 	@$(TFSTOOL_RS) rm $(RUN_DISK) bigmem > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) bigmem $(C_BIN)/bigmem > /dev/null
 	@clang $(TAAJ_CFLAGS) -c $(BASICS_C) -o $(C_BIN)/basics.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/basics.o $(LIBC_A) -o $(C_BIN)/basics
 	@$(TFSTOOL_RS) rm $(RUN_DISK) basics > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) basics $(C_BIN)/basics > /dev/null
+	@clang $(TAAJ_CFLAGS) -c $(GROUND_C) -o $(C_BIN)/ground.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/ground.o $(LIBC_A) -o $(C_BIN)/ground
+	@$(TFSTOOL_RS) rm $(RUN_DISK) ground > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) ground $(C_BIN)/ground > /dev/null
 endif
 	@$(TFSTOOL_RS) rm $(RUN_DISK) threadcheck > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) threadcheck $(USER_BIN)/threadcheck > /dev/null
 
@@ -1113,12 +1115,14 @@ ifeq ($(HAVE_CC),yes)
 	    $(TFSTOOL_RS) put $(RUN_A64_DISK) $$program $(CXX_A64_DIR)/bin/$$program > /dev/null || exit 1; \
 	done
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) make > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) make $(C_A64_BIN)/make > /dev/null
-	@clang $(TAAJ_A64_CFLAGS) -femulated-tls -c $(THREADS_C) -o $(C_A64_BIN)/threads.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/threads.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/threads
+	@clang $(TAAJ_A64_CFLAGS) -c $(THREADS_C) -o $(C_A64_BIN)/threads.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/threads.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/threads
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) threads > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) threads $(C_A64_BIN)/threads > /dev/null
 	@clang $(TAAJ_A64_CFLAGS) -c $(BIGMEM_C) -o $(C_A64_BIN)/bigmem.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/bigmem.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/bigmem
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) bigmem > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) bigmem $(C_A64_BIN)/bigmem > /dev/null
 	@clang $(TAAJ_A64_CFLAGS) -c $(BASICS_C) -o $(C_A64_BIN)/basics.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/basics.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/basics
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) basics > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) basics $(C_A64_BIN)/basics > /dev/null
+	@clang $(TAAJ_A64_CFLAGS) -c $(GROUND_C) -o $(C_A64_BIN)/ground.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/ground.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/ground
+	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) ground > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) ground $(C_A64_BIN)/ground > /dev/null
 endif
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) threadcheck > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) threadcheck $(A64_USER_BIN)/threadcheck > /dev/null
 
@@ -1537,14 +1541,15 @@ endif
 
 # Threads in a program (journal entry 095): threads.c (next to the test
 # script) checks pthreads on 4 CPUs, and that a program ends whichever
-# of its threads ends it. Compiled with -femulated-tls, as C++ is: its
-# _Thread_local variable is found through __emutls_get_address.
+# of its threads ends it. Its _Thread_local variable is a real one
+# since step B (journal entry 099): in the thread's own TLS block, found
+# from the thread pointer. (C++ is still compiled with -femulated-tls.)
 THREAD64_LOG   = $(BUILD_DIR)/thread64.log
 THREAD_A64_LOG = $(BUILD_DIR)/aarch64/thread.log
 THREADS_C      = $(KERNEL64_DIR)/scripts/threads.c
 thread64-test: iso64 user64 libc64 tfstool-rs
 ifeq ($(HAVE_CC),yes)
-	@clang $(TAAJ_CFLAGS) -femulated-tls -c $(THREADS_C) -o $(C_BIN)/threads.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/threads.o $(LIBC_A) -o $(C_BIN)/threads
+	@clang $(TAAJ_CFLAGS) -c $(THREADS_C) -o $(C_BIN)/threads.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/threads.o $(LIBC_A) -o $(C_BIN)/threads
 	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/thread-test.sh x86_64 $(ISO64_IMG) $(THREAD64_LOG).disk $(THREAD64_LOG) $(C_BIN)/threads $(USER_BIN)/threadcheck
 	@echo "thread64-test passed"
 else
@@ -1554,7 +1559,7 @@ endif
 aarch64-thread-test: kernel-aarch64 user-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
-	@clang $(TAAJ_A64_CFLAGS) -femulated-tls -c $(THREADS_C) -o $(C_A64_BIN)/threads.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/threads.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/threads
+	@clang $(TAAJ_A64_CFLAGS) -c $(THREADS_C) -o $(C_A64_BIN)/threads.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/threads.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/threads
 	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/thread-test.sh aarch64 $(KERNEL_A64_IMAGE) $(THREAD_A64_LOG).disk $(THREAD_A64_LOG) $(C_A64_BIN)/threads $(A64_USER_BIN)/threadcheck
 	@echo "aarch64-thread-test passed"
 else
@@ -1610,6 +1615,33 @@ ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@echo "aarch64-basics-test passed"
 else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 basics boot is not run"
+endif
+
+# Std's ground, part 1 (The-Jat's step B, journal entry 099): random
+# numbers from the kernel (getrandom), real thread-local storage, signal
+# stacks (sigaltstack, a stack overflow caught) and SIGCHLD with waitid.
+# ground.c (next to the test script) checks them; the test boots twice,
+# the second time on a CPU with a random instruction (-cpu max).
+GROUND64_LOG   = $(BUILD_DIR)/ground64.log
+GROUND_A64_LOG = $(BUILD_DIR)/aarch64/ground.log
+GROUND_C       = $(KERNEL64_DIR)/scripts/ground.c
+ground64-test: iso64 user64 libc64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@clang $(TAAJ_CFLAGS) -c $(GROUND_C) -o $(C_BIN)/ground.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/ground.o $(LIBC_A) -o $(C_BIN)/ground
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/ground-test.sh x86_64 $(ISO64_IMG) $(GROUND64_LOG).disk $(GROUND64_LOG) $(C_BIN)/ground
+	@echo "ground64-test passed"
+else
+	@echo "FAIL: the ground test needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+
+aarch64-ground-test: kernel-aarch64 user-aarch64 tfstool-rs
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@clang $(TAAJ_A64_CFLAGS) -c $(GROUND_C) -o $(C_A64_BIN)/ground.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/ground.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/ground
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/ground-test.sh aarch64 $(KERNEL_A64_IMAGE) $(GROUND_A64_LOG).disk $(GROUND_A64_LOG) $(C_A64_BIN)/ground
+	@echo "aarch64-ground-test passed"
+else
+	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 ground boot is not run"
 endif
 
 aarch64-tcc-test: kernel-aarch64 user-aarch64 tcc-aarch64 tfstool-rs
@@ -1843,7 +1875,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 12
-TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test
+TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared

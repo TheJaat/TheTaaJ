@@ -13,16 +13,82 @@
 //! the handler, or makes the signal wait if it is blocked - and then
 //! asks the kernel to put everything back (signal_return).
 
-use core::ffi::{c_int, c_uint};
+use core::ffi::{c_int, c_uint, c_void};
 
-use crate::errno::{errno, EINTR, EINVAL};
+use crate::errno::{errno, EFAULT, EINTR, EINVAL, ENOMEM, EPERM};
 use core::sync::atomic::Ordering;
 
-/// `__taaj_signal_setup(entry, caught, ignored)`: tells the kernel how
-/// this program takes signals (abi::call::SIGNAL_SETUP). 0, or -1.
+/// `__taaj_signal_setup(entry, caught, ignored, on_stack)`: tells the
+/// kernel how this program takes signals (abi::call::SIGNAL_SETUP) -
+/// `on_stack` the signals whose handler asked for SA_ONSTACK. 0, or -1.
 #[no_mangle]
-pub extern "C" fn __taaj_signal_setup(entry: u64, caught: u64, ignored: u64) -> c_int {
-    if taaj::signal_setup(entry, caught, ignored).is_ok() { 0 } else { -1 }
+pub extern "C" fn __taaj_signal_setup(entry: u64, caught: u64, ignored: u64, on_stack: u64) -> c_int {
+    if taaj::signal_setup(entry, caught, ignored, on_stack).is_ok() { 0 } else { -1 }
+}
+
+/// signal.h's stack_t, as Linux lays it out.
+#[repr(C)]
+pub struct StackT {
+    ss_sp: *mut c_void,
+    ss_flags: c_int,
+    ss_size: usize,
+}
+
+const SS_ONSTACK: c_int = 1;
+const SS_DISABLE: c_int = 2;
+/// signal.h's MINSIGSTKSZ: what the kernel asks for at least.
+const MINSIGSTKSZ: usize = abi::SIGNAL_STACK_MIN as usize;
+
+/// The stack pointer now, near enough: the address of a local.
+fn stack_pointer() -> usize {
+    let here = 0u8;
+    core::hint::black_box(&here) as *const u8 as usize
+}
+
+/// `sigaltstack(new, old)`: this thread's signal stack - where a signal
+/// whose handler was installed with SA_ONSTACK runs. The one place a
+/// handler can run when the thread's own stack has overflowed: the
+/// kernel has no room there for the signal's context.
+///
+/// `*old` says what it was: SS_DISABLE if none, SS_ONSTACK if this
+/// thread is running on it now. A `new` with SS_DISABLE removes it;
+/// otherwise it must be at least MINSIGSTKSZ bytes (ENOMEM), and it
+/// can't be changed while running on it (EPERM). EINVAL for other flags.
+///
+/// # Safety
+/// `new` and `old` null or valid; `new`'s memory the thread's to use.
+#[no_mangle]
+pub unsafe extern "C" fn sigaltstack(new: *const StackT, old: *mut StackT) -> c_int {
+    let (base, size) = crate::threads::signal_stack();
+    let on_it = size != 0 && (base..base + size).contains(&stack_pointer());
+    // SAFETY: the caller's promise.
+    if let Some(old) = unsafe { old.as_mut() } {
+        old.ss_sp = base as *mut c_void;
+        old.ss_size = size;
+        old.ss_flags = if size == 0 { SS_DISABLE } else if on_it { SS_ONSTACK } else { 0 };
+    }
+    // SAFETY: the caller's promise.
+    let Some(new) = (unsafe { new.as_ref() }) else { return 0 };
+    if new.ss_flags & !(SS_DISABLE | SS_ONSTACK) != 0 {
+        return crate::descriptors::fail(EINVAL);
+    }
+    if on_it {
+        return crate::descriptors::fail(EPERM);
+    }
+    let wanted = if new.ss_flags & SS_DISABLE != 0 {
+        (0, 0)
+    } else if new.ss_size < MINSIGSTKSZ {
+        return crate::descriptors::fail(ENOMEM);
+    } else {
+        (new.ss_sp as usize, new.ss_size)
+    };
+    match taaj::signal_stack(wanted.0 as u64, wanted.1 as u64) {
+        Ok(()) => {
+            crate::threads::set_signal_stack(wanted);
+            0
+        }
+        Err(_) => crate::descriptors::fail(EFAULT),
+    }
 }
 
 /// `__taaj_signal_self(signal)`: sends `signal` to this program, through

@@ -12,6 +12,10 @@ PHDRS
     text   PT_LOAD FLAGS(5);    /* R-X */
     rodata PT_LOAD FLAGS(4);    /* R-- */
     data   PT_LOAD FLAGS(6);    /* RW- */
+    /* The thread-local template: .tdata's initial bytes and .tbss's
+     * size, inside the data segment. libc's start makes each thread's
+     * copy from it (libc/src/threads.rs). */
+    tls    PT_TLS;
 }
 
 SECTIONS
@@ -40,6 +44,8 @@ SECTIONS
     } :rodata
 
     . = ALIGN(4K);
+    .tdata : { *(.tdata .tdata.*) } :data :tls
+    .tbss : { *(.tbss .tbss.*) *(.tcommon) } :data :tls
     .data : { *(.data .data.*) *(.got .got.*) } :data
     .bss : { *(.bss .bss.*) *(COMMON) } :data
 

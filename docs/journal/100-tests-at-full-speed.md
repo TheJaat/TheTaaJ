@@ -1,6 +1,6 @@
 # Tests at full speed: KVM for the test scripts, and the boot test's two typing races
 
-*Journal entry #99 · MaK's step A, item K19 (the race hunt), first part. Written on MaK. Until now the boot tests used KVM on MaK only through a wrapper outside the repository, and under KVM the two typed boot tests failed every time. Now the repository chooses the accelerator itself, the same way for `make run64` and for every test, and the typed boot tests pass under KVM and under emulation alike.*
+*Journal entry #100 · MaK's step A, item K19 (the race hunt), first part. Written on MaK as entry 099; The-Jat's step B was merged first and took that number (rule 5), so this is 100 - the commit in TheKernel (0016b7f) still says 099. Until now the boot tests used KVM on MaK only through a wrapper outside the repository, and under KVM the two typed boot tests failed every time. Now the repository chooses the accelerator itself, the same way for `make run64` and for every test, and the typed boot tests pass under KVM and under emulation alike.*
 
 ## Why
 
@@ -59,6 +59,8 @@ FAIL: four programs did not run at once: took 1.40 s; the 4 CPUs worked for 1.76
 ```
 
 `check-boot.sh` asks that, while the shell waited (`time wait`), the CPUs did at least 1.5 times the waited time in work: proof that the copies ran at once. Emulated, a copy at 24000000 runs long past the typing (took 14.66 s, worked 52.61 s: 3.6). Under KVM it runs several times faster and most of its work is done while the four `cfloat` lines and `time wait` are still being typed, so the wait sees only the end of it (1.76 / 1.40 = 1.26). Fixed by a bigger limit under KVM; measured at 48000000: took 8.33 s, worked 27.78 s, 3.3.
+
+**4. The testing notes would have left out every entry from 100 on.** `tools/testing-notes.py` collected `docs/journal/0[0-9][0-9]-*.md`: three digits, the first a 0. Found when this entry, renumbered from 099 to 100 at merge time, was missing from the rebuilt `docs/testing-notes.md`. Fixed by collecting `[0-9][0-9][0-9]-*.md`; entries 044 to 099 come out the same, and 100 follows 099.
 
 ## How I checked it
 

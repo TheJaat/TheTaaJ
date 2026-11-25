@@ -29,7 +29,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-int __taaj_signal_setup(uint64_t entry, uint64_t caught, uint64_t ignored);
+int __taaj_signal_setup(uint64_t entry, uint64_t caught, uint64_t ignored, uint64_t on_stack);
 int __taaj_signal_self(int signal);
 int __taaj_signal_child(int id, int signal);
 void __taaj_signal_entry(void);
@@ -72,7 +72,7 @@ static sigset_t load(sigset_t *set)
 /* Tells the kernel which signals to deliver here and which to drop. */
 static void tell_kernel(void)
 {
-    sigset_t caught = 0, ignored = 0;
+    sigset_t caught = 0, ignored = 0, on_stack = 0;
     sigset_t now_blocked = load(&blocked);
     for (int signal = 1; signal < NSIG; signal++) {
         sighandler_t handler = actions[signal].sa_handler;
@@ -80,8 +80,11 @@ static void tell_kernel(void)
             ignored |= bit(signal);
         else if (handler != SIG_DFL || (now_blocked & bit(signal)))
             caught |= bit(signal);
+        /* On the thread's signal stack (sigaltstack), if it has one. */
+        if (actions[signal].sa_flags & SA_ONSTACK)
+            on_stack |= bit(signal);
     }
-    __taaj_signal_setup((uint64_t)(uintptr_t)__taaj_signal_entry, caught, ignored);
+    __taaj_signal_setup((uint64_t)(uintptr_t)__taaj_signal_entry, caught, ignored, on_stack);
 }
 
 /* The program ends by `signal`, as if nothing had caught it: the kernel
@@ -119,7 +122,9 @@ static void deliver(int signal, void *context)
     if (extra & ~before)
         tell_kernel();
     if (action.sa_flags & SA_SIGINFO) {
-        siginfo_t info = {signal, 0, 0, getpid(), 0};
+        siginfo_t info = {0};
+        info.si_signo = signal;
+        info.si_pid = getpid();
         action.sa_sigaction(signal, &info, context);
     } else {
         action.sa_handler(signal);

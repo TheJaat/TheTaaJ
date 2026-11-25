@@ -5,13 +5,28 @@
 //! for each (THREAD_POINTER) and futexes (FUTEX_WAIT, FUTEX_WAKE).
 //! Everything else is here, in the program's own memory.
 //!
-//! **A thread** is a `Thread` record. Its thread pointer points at the
-//! record itself, so the running thread finds its own in one
-//! instruction: on x86_64 the record's first word holds its own address
-//! and `mov rax, fs:0` reads it (the x86_64 ELF ABI asks for exactly
-//! that word at FS:0); on AArch64 TPIDR_EL0 holds it (its first two
-//! words are the ones the AArch64 ABI keeps for the system). A
-//! `pthread_t` is the record's address.
+//! **A thread** is a `Thread` record, and an area of its own for its
+//! thread-local variables (C's `_Thread_local`, C++'s `thread_local`
+//! when not emulated, Rust's `#[thread_local]`). The program's file
+//! has a template for them - a PT_TLS program header: the initial
+//! bytes of `.tdata`, then the zeros of `.tbss` - which the compiler
+//! and linker placed relative to the thread pointer, each CPU's ELF ABI
+//! its own way:
+//!
+//! ```text
+//!  x86_64 (variant II)   [ TLS block ][ TCB: self, record ]
+//!                                     ^ FS base: `mov rax, fs:0` gives it back
+//!  AArch64 (variant I)   [ TCB: record, 0 ][ padding ][ TLS block ]
+//!                        ^ TPIDR_EL0
+//! ```
+//!
+//! The TCB (thread control block) is two words. On x86_64 its first
+//! word holds its own address, which the x86_64 ABI asks for at FS:0,
+//! and the second the record's; on AArch64 the first holds the record's
+//! (the ABI keeps both for the system). So the running thread finds
+//! its record in one or two instructions (`current`). The kernel tells
+//! where the template is (PROGRAM_HEADERS); `tls_area` makes a thread's
+//! area from it. A `pthread_t` is the record's address.
 //!
 //! A thread's stack is memory reserved for it (MEMORY_RESERVE): a page
 //! takes memory only once touched, and the unmapped page the kernel
@@ -39,6 +54,7 @@
 
 use alloc::boxed::Box;
 use alloc::vec::Vec;
+use core::alloc::Layout;
 use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_long, c_void};
 use core::ptr;
@@ -65,12 +81,15 @@ type Destructor = unsafe extern "C" fn(*mut c_void);
 /// A thread, as the C library knows it.
 #[repr(C)]
 pub struct Thread {
-    /// What the thread pointer points at (see the top of this file):
-    /// on x86_64 the record's own address, then nothing; on AArch64 two
-    /// words for the system.
-    block: [usize; 2],
+    /// Its thread-local area, with the TCB the thread pointer points at
+    /// (`tls_area`); null for none.
+    tls: *mut u8,
+    /// The area's layout, to give it back.
+    tls_layout: Layout,
     /// errno, this thread's.
     errno: c_int,
+    /// sigaltstack's stack: base and size; size 0, none.
+    signal_stack: (usize, usize),
     /// A small number, unique among the program's threads: a mutex
     /// holds its owner's (the main thread is 1).
     id: u32,
@@ -93,8 +112,10 @@ pub struct Thread {
 impl Thread {
     const fn new(id: u32) -> Thread {
         Thread {
-            block: [0; 2],
+            tls: ptr::null_mut(),
+            tls_layout: Layout::new::<u8>(),
             errno: 0,
+            signal_stack: (0, 0),
             id,
             running: AtomicU32::new(1),
             result: ptr::null_mut(),
@@ -131,30 +152,146 @@ static THREADS: Mutex<Records> = Mutex::new(Records(Vec::new()));
 /// Detached threads, freed once they have ended.
 static DETACHED: Mutex<Records> = Mutex::new(Records(Vec::new()));
 
-/// Called by `_start` before anything else: the main thread's thread
-/// pointer, so that `current` - and errno - work from the first line.
+// ---- thread-local storage ---------------------------------------------
+
+/// The program's thread-local template (its PT_TLS program header):
+/// where the initial bytes are, how many, the whole block's size, and
+/// its alignment. All 0 for a program with no thread-local variables.
+/// Set once, by `init`, before any other thread exists.
+struct Template {
+    address: usize,
+    file_size: usize,
+    memory_size: usize,
+    align: usize,
+}
+
+struct TemplateCell(UnsafeCell<Template>);
+// SAFETY: written only by `init`, before a second thread can exist.
+unsafe impl Sync for TemplateCell {}
+static TEMPLATE: TemplateCell = TemplateCell(UnsafeCell::new(Template { address: 0, file_size: 0, memory_size: 0, align: 1 }));
+
+const PT_TLS: u32 = 7;
+/// The TCB's size: two words.
+const TCB: usize = 16;
+
+/// Finds PT_TLS among the program's headers (the kernel copies them).
+fn read_template() -> Template {
+    let mut headers = [0u8; 56 * 32];
+    let mut found = Template { address: 0, file_size: 0, memory_size: 0, align: 1 };
+    let Ok(total) = taaj::program_headers(&mut headers) else { return found };
+    let word = |h: &[u8], at: usize| u64::from_le_bytes(h[at..at + 8].try_into().unwrap_or([0; 8])) as usize;
+    for h in headers[..total.min(headers.len())].chunks_exact(56) {
+        if u32::from_le_bytes(h[0..4].try_into().unwrap_or([0; 4])) == PT_TLS {
+            found = Template {
+                address: word(h, 16),
+                file_size: word(h, 32),
+                memory_size: word(h, 40),
+                align: word(h, 48).max(1),
+            };
+        }
+    }
+    found
+}
+
+/// A new thread-local area for `record`: the TCB filled in and the
+/// template copied. (the area, its layout, the thread pointer), or None
+/// with no memory for it.
+fn tls_area(record: *mut Thread) -> Option<(*mut u8, Layout, usize)> {
+    // SAFETY: set before any thread but the first existed; read-only since.
+    let t = unsafe { &*TEMPLATE.0.get() };
+    // The alignment the block needs, and the TCB's (two words, kept at 16).
+    let align = t.align.max(16).next_power_of_two();
+    // x86_64: the block ends where the TCB begins, the thread pointer;
+    // the linker placed each variable at a negative offset from it of
+    // the block's size rounded up to its alignment. AArch64: the block
+    // begins after the TCB, at 16 rounded up to its alignment.
+    let block = t.memory_size.next_multiple_of(t.align);
+    #[cfg(target_arch = "x86_64")]
+    let (size, tp_offset, block_offset) = {
+        let tp = block.next_multiple_of(align);
+        (tp + TCB, tp, tp - block)
+    };
+    #[cfg(target_arch = "aarch64")]
+    let (size, tp_offset, block_offset) = {
+        let start = TCB.next_multiple_of(t.align);
+        (start + block, 0, start)
+    };
+    let layout = Layout::from_size_align(size, align).ok()?;
+    // SAFETY: a non-zero size (the TCB at least).
+    let area = unsafe { alloc::alloc::alloc_zeroed(layout) };
+    if area.is_null() {
+        return None;
+    }
+    // SAFETY: the area is `size` bytes; the TCB and the block lie in it,
+    // and the template's bytes are the program's own, mapped.
+    unsafe {
+        if t.file_size > 0 {
+            ptr::copy_nonoverlapping(t.address as *const u8, area.add(block_offset), t.file_size);
+        }
+        let tp = area.add(tp_offset).cast::<usize>();
+        #[cfg(target_arch = "x86_64")]
+        {
+            tp.write(tp as usize);
+            tp.add(1).write(record as usize);
+        }
+        #[cfg(target_arch = "aarch64")]
+        tp.write(record as usize);
+    }
+    Some((area, layout, area as usize + tp_offset))
+}
+
+/// Called by `_start` before anything else: the program's thread-local
+/// template, and the main thread's area and thread pointer, so that
+/// `current` - errno - and the program's thread-local variables work
+/// from the first line.
 pub(crate) fn init() {
     let main = MAIN.0.get();
     // SAFETY: nothing else runs yet.
-    unsafe { (*main).block[0] = main as usize };
-    let _ = taaj::set_thread_pointer(main as u64);
+    unsafe { *TEMPLATE.0.get() = read_template() };
+    match tls_area(main) {
+        Some((area, layout, tp)) => {
+            // SAFETY: nothing else runs yet.
+            unsafe {
+                (*main).tls = area;
+                (*main).tls_layout = layout;
+            }
+            let _ = taaj::set_thread_pointer(tp as u64);
+        }
+        // No memory at all: the program cannot run, and saying so needs
+        // nothing thread-local.
+        None => taaj::exit(127),
+    }
 }
 
 /// The running thread's record.
 pub(crate) fn current() -> *mut Thread {
     let pointer: usize;
     // SAFETY: reads the thread pointer, which `init` and
-    // `pthread_create` point at a live record (x86_64: FS:0 holds the
-    // record's address).
+    // `pthread_create` point at a live TCB, whose word says where the
+    // record is (see the top of this file).
     #[cfg(target_arch = "x86_64")]
     unsafe {
-        core::arch::asm!("mov {}, fs:0", out(reg) pointer, options(nostack, readonly, preserves_flags))
+        core::arch::asm!("mov {}, fs:8", out(reg) pointer, options(nostack, readonly, preserves_flags))
     };
     #[cfg(target_arch = "aarch64")]
     unsafe {
-        core::arch::asm!("mrs {}, tpidr_el0", out(reg) pointer, options(nomem, nostack, preserves_flags))
-    };
+        let tp: usize;
+        core::arch::asm!("mrs {}, tpidr_el0", out(reg) tp, options(nomem, nostack, preserves_flags));
+        pointer = if tp == 0 { 0 } else { *(tp as *const usize) };
+    }
     if pointer == 0 { MAIN.0.get() } else { pointer as *mut Thread }
+}
+
+/// The running thread's signal stack (sigaltstack): base and size.
+pub(crate) fn signal_stack() -> (usize, usize) {
+    // SAFETY: the running thread's own record.
+    unsafe { (*current()).signal_stack }
+}
+
+/// Records the running thread's signal stack.
+pub(crate) fn set_signal_stack(stack: (usize, usize)) {
+    // SAFETY: the running thread's own record; only it writes this.
+    unsafe { (*current()).signal_stack = stack };
 }
 
 /// errno's home: the running thread's (errno.h:
@@ -193,6 +330,10 @@ unsafe fn free_thread(thread: *mut Thread) {
     let record = unsafe { Box::from_raw(thread) };
     if !record.stack.is_null() {
         let _ = taaj::memory_unmap(record.stack);
+    }
+    if !record.tls.is_null() {
+        // SAFETY: made by tls_area with this layout; the thread has ended.
+        unsafe { alloc::alloc::dealloc(record.tls, record.tls_layout) };
     }
 }
 
@@ -299,8 +440,16 @@ pub unsafe extern "C" fn pthread_create(
     record.argument = argument;
     record.stack = stack;
     let thread = Box::into_raw(record);
+    let Some((area, layout, tp)) = tls_area(thread) else {
+        // SAFETY: just made, never shared; this unmaps its stack too.
+        unsafe { free_thread(thread) };
+        return EAGAIN;
+    };
     // SAFETY: just made, not yet shared.
-    unsafe { (*thread).block[0] = thread as usize };
+    unsafe {
+        (*thread).tls = area;
+        (*thread).tls_layout = layout;
+    }
     THREADS.lock().0.push(thread);
     LIVE.fetch_add(1, Ordering::Relaxed);
     let detached = attr.is_some_and(Attributes::detached);
@@ -310,7 +459,7 @@ pub unsafe extern "C" fn pthread_create(
     // SAFETY: the caller's promise.
     unsafe { *out = thread as usize };
     let top = stack as u64 + size as u64;
-    match taaj::thread_create(begin as *const () as u64, top, thread as u64, thread as u64) {
+    match taaj::thread_create(begin as *const () as u64, top, thread as u64, tp as u64) {
         Ok(_) => 0,
         Err(_) => {
             if detached {

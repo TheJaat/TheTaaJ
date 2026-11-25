@@ -654,8 +654,33 @@ pub fn kill(process: Handle) -> Result<(), Error> {
 /// How this process takes signals (abi::call::SIGNAL_SETUP): libc's
 /// business. A Rust program that never calls it is ended by any signal
 /// not ignored by default - Ctrl+C among them.
-pub fn signal_setup(entry: u64, caught: u64, ignored: u64) -> Result<(), Error> {
-    abi::decode(syscall(call::SIGNAL_SETUP, entry, caught, ignored)).map(|_| ())
+pub fn signal_setup(entry: u64, caught: u64, ignored: u64, on_stack: u64) -> Result<(), Error> {
+    abi::decode(syscall5(call::SIGNAL_SETUP, entry, caught, ignored, on_stack, 0)).map(|_| ())
+}
+
+/// Fills `buffer` with random bytes from the kernel's generator (at
+/// most abi::RANDOM_MAX at a time). Never blocks.
+pub fn random(buffer: &mut [u8]) -> Result<(), Error> {
+    for chunk in buffer.chunks_mut(abi::RANDOM_MAX as usize) {
+        abi::decode(syscall(call::RANDOM, chunk.as_mut_ptr() as u64, chunk.len() as u64, 0))?;
+    }
+    Ok(())
+}
+
+/// This program's ELF program headers, copied into `buffer` as far as
+/// they fit; how many bytes they all take.
+pub fn program_headers(buffer: &mut [u8]) -> Result<usize, Error> {
+    abi::decode(syscall(call::PROGRAM_HEADERS, buffer.as_mut_ptr() as u64, buffer.len() as u64, 0)).map(|n| n as usize)
+}
+
+/// This thread's signal stack: `size` bytes from `base` (0: none).
+pub fn signal_stack(base: u64, size: u64) -> Result<(), Error> {
+    abi::decode(syscall(call::SIGNAL_STACK, base, size, 0)).map(|_| ())
+}
+
+/// `signal` to this process when `process` ends.
+pub fn process_notify(process: Handle, signal: u64) -> Result<(), Error> {
+    abi::decode(syscall(call::PROCESS_NOTIFY, process, signal, 0)).map(|_| ())
 }
 
 /// SIGALRM to this process `nanoseconds` from now, in place of any alarm

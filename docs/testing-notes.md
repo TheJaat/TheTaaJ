@@ -3666,9 +3666,57 @@ Automated: make libc-test, make test64
 
 ---
 
-## 099 · Tests at full speed: KVM for the test scripts, and the boot test's two typing races
+## 099 · Std's ground, part 1: random numbers, real thread-local storage, signal stacks, SIGCHLD
 
-[The entry](journal/099-tests-at-full-speed.md)
+[The entry](journal/099-std-ground-1.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`. It puts `ground` on the disk.
+
+| Type | You should see |
+|---|---|
+| (at boot, in the terminal) | `[random] seeded from 256 timings (no random instruction on this CPU)` |
+| `ground random` | `ground: random ` and 32 hex digits, different every time |
+| `with programs ground` | after a few seconds `ground: caught the stack overflow on the signal stack`, then `ground: 51 checks, all passed`; in the terminal, its children `exited with code 5`, `exited with code 0`, `ended by signal 15 (SIGTERM)`, `exited with code 3` and `killed: page fault`, then `"ground" exited with code 0` |
+| `with files threads` | `threads: 30 checks, all passed`, as before, now with real thread-local storage |
+
+To see the CPU's random instruction used, start QEMU yourself with `-cpu max` added to the `make run64` command line. The kernel then says `[random] seeded from 8 numbers from RDSEED and 256 timings`.
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1. With `-cpu max` instead of `cortex-a72`, the kernel says `... from RNDR ...`.
+
+**3. The tests by themselves**
+
+```
+make ground64-test
+make aarch64-ground-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `std's ground (x86_64): the kernel's random numbers seeded with and without a random instruction, different on two boots; 51 checks of getrandom, thread-local storage, signal stacks and SIGCHLD passed; a stack overflow caught on the signal stack` | every part above; the same for aarch64 |
+| `test64: all passed` | every part, the new two included |
+
+Automated: make ground64-test, make aarch64-ground-test, make test64
+
+---
+
+## 100 · Tests at full speed: KVM for the test scripts, and the boot test's two typing races
+
+[The entry](journal/100-tests-at-full-speed.md)
 
 On MaK (KVM):
 

@@ -321,9 +321,18 @@ pub(crate) fn run(path: &str, words: &[String], actions: &[Action], command: boo
     let name = words.first().cloned().unwrap_or_else(|| String::from(path));
     let standard = standard_for(actions)?;
     let process = start(path, &name, words.get(1..).unwrap_or(&[]), command, standard, environment)?;
+    Ok(adopt(process))
+}
+
+/// A child just started: numbered, listed for waitpid, and watched, so
+/// that its end sends this program SIGCHLD (which does nothing unless
+/// caught - signal.c). init started it, so it is not the kernel's idea
+/// of this program's child: the kernel is asked to tell (PROCESS_NOTIFY).
+pub(crate) fn adopt(process: Handle) -> c_int {
+    let _ = taaj::process_notify(process, abi::signal::SIGCHLD);
     let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     children(|list| list.push((id, process)));
-    Ok(id)
+    id
 }
 
 extern "C" {
@@ -813,6 +822,70 @@ pub unsafe extern "C" fn waitpid(process: c_int, status: *mut c_int, options: c_
     id
 }
 
+/// signal.h's siginfo_t, as waitid fills it.
+#[repr(C)]
+pub struct SigInfo {
+    si_signo: c_int,
+    si_errno: c_int,
+    si_code: c_int,
+    si_pid: c_int,
+    si_addr: *mut u8,
+    si_uid: u32,
+    si_status: c_int,
+}
+
+const P_ALL: c_int = 0;
+const P_PID: c_int = 1;
+const WNOHANG: c_int = 1;
+const WEXITED: c_int = 4;
+const WNOWAIT: c_int = 0x0100_0000;
+const CLD_EXITED: c_int = 1;
+const CLD_KILLED: c_int = 2;
+
+/// `waitid(type, id, info, options)`: waitpid, saying more. `type` is
+/// P_ALL (any child) or P_PID (child `id`); `options` must ask for
+/// WEXITED - the only way a child changes here - and may add WNOHANG
+/// (if none has ended: 0, with `info->si_pid` 0) and WNOWAIT (report the
+/// child, but leave it to be waited for again). `*info` says who
+/// (si_pid), how (si_code: CLD_EXITED, or CLD_KILLED by a signal) and
+/// with what (si_status: the exit code, or the signal). 0, or -1 with
+/// ECHILD (no such child) or EINVAL.
+///
+/// # Safety
+/// `info` must be valid for writing.
+#[no_mangle]
+pub unsafe extern "C" fn waitid(kind: c_int, id: u32, info: *mut SigInfo, options: c_int) -> c_int {
+    if (kind != P_ALL && kind != P_PID) || options & WEXITED == 0 || info.is_null() {
+        return crate::descriptors::fail(EINVAL);
+    }
+    let waiting: Vec<(c_int, Handle)> =
+        children(|list| list.iter().copied().filter(|&(child, _)| kind == P_ALL || child as u32 == id).collect());
+    if waiting.is_empty() {
+        return crate::descriptors::fail(ECHILD);
+    }
+    let handles: Vec<Handle> = waiting.iter().map(|&(_, handle)| handle).collect();
+    // SAFETY: the caller's promise.
+    let info = unsafe { &mut *info };
+    *info = SigInfo { si_signo: 0, si_errno: 0, si_code: 0, si_pid: 0, si_addr: core::ptr::null_mut(), si_uid: 0, si_status: 0 };
+    if options & WNOHANG != 0 && matches!(taaj::object_wait_until(&handles, 0), Ok(None)) {
+        return 0;
+    }
+    let Ok((index, code)) = taaj::wait_any(&handles) else {
+        return crate::descriptors::fail(ECHILD);
+    };
+    let (child, handle) = waiting[index];
+    if options & WNOWAIT == 0 {
+        children(|list| list.retain(|&(other, _)| other != child));
+        let _ = taaj::close(handle);
+    }
+    let status = status_of(code);
+    let signal = status & 0x7f;
+    info.si_signo = abi::signal::SIGCHLD as c_int;
+    info.si_pid = child;
+    (info.si_code, info.si_status) = if signal != 0 { (CLD_KILLED, signal) } else { (CLD_EXITED, (status >> 8) & 0xff) };
+    0
+}
+
 /// `__taaj_signal_child(id, signal)` (for signal.c's kill): `signal` to
 /// the child numbered `id` - 0 only asks whether there is one. 0, or an
 /// error number: EPERM if this program started no such child (it may
@@ -1059,11 +1132,7 @@ pub(crate) fn start_jobs(jobs: &[Job], input: Option<c_int>, mut output: Option<
         close_fd(writing);
         reading = next;
         match started {
-            Ok(process) => {
-                let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-                children(|list| list.push((id, process)));
-                ids.push(id);
-            }
+            Ok(process) => ids.push(adopt(process)),
             Err(EPERM) => {
                 failed = Some(Failed::Refused(EPERM));
                 break;

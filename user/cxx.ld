@@ -25,6 +25,10 @@ PHDRS
     text   PT_LOAD FLAGS(5);    /* R-X */
     rodata PT_LOAD FLAGS(4);    /* R-- */
     data   PT_LOAD FLAGS(6);    /* RW- */
+    /* The thread-local template: .tdata's initial bytes and .tbss's
+     * size, inside the data segment. libc's start makes each thread's
+     * copy from it (libc/src/threads.rs). */
+    tls    PT_TLS;
     /* No contents: its size is the stack the program wants, which the
      * kernel reads (64 KiB if it is 0). lld leaves it 0 when PHDRS is
      * written out like this, even with -z stack-size; a big program's
@@ -70,6 +74,8 @@ SECTIONS
     } :rodata
 
     . = ALIGN(4K);
+    .tdata : { *(.tdata .tdata.*) } :data :tls
+    .tbss : { *(.tbss .tbss.*) *(.tcommon) } :data :tls
     .data : { *(.data .data.*) *(.got .got.*) } :data
     .bss : { *(.bss .bss.*) *(COMMON) } :data
 
