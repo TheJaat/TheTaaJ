@@ -177,7 +177,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| Faster tests: next, e1000-64-test and the LLVM relinking (no branch yet) | - |
+| TheJat-WSL/ci: J94, a faster `make test64` - `e1000-64-test`'s boots, then the LLVM relinking | `j94-faster-tests` |
 
 ## The decided order
 
@@ -734,6 +734,7 @@ What is missing: **init itself and the registry** are restarted by nothing (if i
 | K144 | **`service` commands**: list, stop, start, restart, status - through init, with a capability for it | S | After K143 |
 | K145 | **A watchdog for every service that answers requests**, declared in its configuration | S | After K143; covers E3's shell and registry |
 | K146 | **State that survives a restart**: a service may keep what its clients depend on in a memory object init holds for it (as init keeps a driver's DMA memory) and find it again when it starts; for those that can't, a clear "your session was lost" to each client | L | `fs`, `net`, `display` first |
+| K?-blk-restart | **Files right after the disk driver is restarted**: when init stopped `blk` as hung (2 s) during `times` - a 301 MiB file being written - the program's file times came out wrong ("its time is a time of day", "is newer, to the nanosecond") and one file was missing (errno 2). Seen on `main` under load (entry NNN); `make test64` no longer provokes it (its disks are `cache=unsafe`), so it needs a test that stops the driver mid-write on purpose | M | Found by TheJat-WSL/ci; for `services` (or `taajfs`) |
 | K147 | **init and the registry restartable**: a small, fixed first process that only restarts init, or init and the registry each watching the other | M | The last supervisor must be the simplest |
 | K148 | **A request that crashes a service again and again is refused** after the second time, instead of crashing it forever | S | Is E2 |
 | K149 | **Shutdown in order**: every service asked to finish (disks flushed, files committed) in the reverse of the start order, with a time limit | S | Is K16 |
@@ -771,7 +772,7 @@ What is missing: **no CI** - tests run only when someone runs them, on their own
 |---|---|---|---|
 | J92 | **A clean build from a fresh clone**, in a container, with one documented command; the setup script (`tools/setup-wsl.sh`) checked by it | S | Is J54. First |
 | J93 | **Our own CI**: a machine of ours (TheJat-WSL suits it) that builds every pushed branch, runs the host tests and `make test64`, and posts the result where the branches are; no outside service gets the code to run | M | After J92. Never builds anyone else's pull request (rule) |
-| J94 | **A faster `make test64`**: parts run in parallel up to the machine's CPUs, one disk image built once and shared, the boot shortened; measured before and after | M | |
+| J94 | **A faster `make test64`**: parts run in parallel up to the machine's CPUs, one disk image built once and shared, the boot shortened; measured before and after | M | **Done (entry NNN)**: the shared builds not run again in the test phase (`make -o`), so LLVM's tools are linked once per run, not twice - 22% less CPU; `smp64-test` alone first; test disks `cache=unsafe`, Ctrl+C after a started program - two failures under load gone. Left: LLVM's tools still linked on every run in `test64-shared`; the suite is now bound by the machine's CPUs, not by waits - see the entry |
 | J95 | **No flaky tests**: every part run 50 times in CI; each that ever fails is fixed or its limits measured again (K50, K52) | M | After J93 |
 | J96 | **Coverage** of the host tests of the kernel's crates, kept in the journal; a floor that may only rise | S | |
 | J97 | **TheTaaJ builds itself**: libc and the C programs today (J45, J46), the kernel once Rust runs there (after R4) | L | After Era 9 |

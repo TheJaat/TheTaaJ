@@ -2063,10 +2063,25 @@ TEST64_PARTS = \
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared
-	@$(MAKE) --no-print-directory -j$(TEST_JOBS) --output-sync=target test64-parts
+	@$(MAKE) --no-print-directory smp64-test
+	@$(MAKE) --no-print-directory -j$(TEST_JOBS) --output-sync=target $(addprefix -o ,$(TEST64_SHARED) smp64-test) test64-parts
 	@echo "test64: all passed"
 
-test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64 aarch64-esp tcc64 tcc-aarch64 cxx64 cxx-aarch64 llvm64 llvm-aarch64 pdpmake64 pdpmake-aarch64
+# What test64-shared builds is then not built again: the second step is
+# told it is up to date (make -o). Most of it is .PHONY, so make would
+# otherwise run it again before each part that names it - relinking
+# LLVM's tools every time - and a part waiting for that is not started:
+# make fills its TEST_JOBS with the parts that are ready, and the long
+# AArch64 parts, needing llvm-aarch64, began last (journal entry NNN).
+# A part run alone (make clang64-test) still builds what it needs.
+#
+# smp64-test runs alone before the others, about 17 s. Its 20-CPU boot
+# needs 20 boot slots at once, and the typed boots wait for it (entry
+# 108); with every part ready at once, it found the slots taken and the
+# typed boots started 3 minutes late (journal entry NNN).
+TEST64_SHARED = build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64 aarch64-esp tcc64 tcc-aarch64 cxx64 cxx-aarch64 llvm64 llvm-aarch64 pdpmake64 pdpmake-aarch64
+
+test64-shared: $(TEST64_SHARED)
 
 test64-parts: $(TEST64_PARTS)
 
