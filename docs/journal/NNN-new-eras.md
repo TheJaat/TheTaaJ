@@ -1,6 +1,6 @@
-# Goals, Eras 13 to 19, and the network, threads, VFS, driver, memory, scheduler, security and desktop items
+# Goals, Eras 13 to 20, and the network, threads, VFS, driver, memory, scheduler, security, desktop, shell and libc items
 
-*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support, VFS, device drivers, memory management, the scheduler, security and the desktop are, for all the items found - IPC, TaajFS, network, threads, VFS, drivers, memory, scheduling, security, desktop - to be put into eras, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
+*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support, VFS, device drivers, memory management, the scheduler, security, the desktop, the shell and libc are, for all the items found - IPC, TaajFS, network, threads, VFS, drivers, memory, scheduling, security, desktop, command line - to be put into eras, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
 
 ## Why
 
@@ -77,6 +77,12 @@ The window server's design is right for a microkernel and close to Wayland's: a 
 
 As a desktop it is at the start. `display` is the compositor, window manager, terminal and console in one process; keys reach programs as terminal bytes; the font is ASCII at one size; no resizing, panel, launcher or clipboard; two programs with windows (`counter` and `edit`); a toolkit of a frame, text and buttons; CPU composition at the boot resolution; any program with `windows` may cover the screen, and no key always reaches the system; no notifications, accessibility or image formats; key-to-screen time never measured. Of the vision's "a desktop people can use daily", the furthest from done.
 
+## What the shell and libc review found
+
+libc is well built: the system half in Rust on the `taaj` runtime, shared with Rust programs; printf, stdio, math, locale and fenv in C; musl's libm; Linux's ABI values; host tests for both halves; proven by tcc, LLVM, clang and libc++. Its gaps: no `termios`, no `regex`, `iconv`, `wctype`, `threads.h` and others; the "C" locale only; a linked-list `malloc`; static linking only; no conformance suite ever run; and its own overview (`libc/src/lib.rs`) out of date, still saying a process has one thread.
+
+There are two shells. `sh` (`libc/src/sh.rs`) has nearly all of POSIX's language and 33 host tests, but no `&`; `shell`, at the keyboard, grants each program only its services and runs background jobs, but has no variables, `if` or `for`, and no history, Tab completion or arrow keys. Two parsers for two languages: a script that works in one doesn't in the other.
+
 ## What changed in `docs/who-does-what.md`
 
 - **Era 12 · Web** (its ground was already the "Network" section): an introduction to the section, and seven `K?-net-...` items - a benchmark, shared rings for frames, more sockets, a port filter, a routing table, offload, and sockets surviving a restart.
@@ -89,7 +95,8 @@ As a desktop it is at the start. `display` is the compositor, window manager, te
 - **Era 17 · Scheduling: contexts, classes and fairness**, new: nine items (`K?-sched-bench`, `-timers`, `-contexts`, `-donate`, `-classes`, `-groups`, `-cache`, `-cpus`, and `J?-sched-posix`), building on K20, K21, K24 and Era 13's queue, idle and IPC items. K?-ipc-priority notes that K?-sched-donate does its job if it comes first.
 - **Era 18 · Security: hardening, trust and people**, new: eleven `K?-sec-...` items (kernel objects counted against their creator, fuzzing, a manifest per program, signed programs, verified boot, users as capability sets, disk encryption, speculation mitigations, `DEBUG_WRITE` behind a capability, an `unsafe` audit with Miri, an audit log). K25, K26, K28, K29 and the security items of Eras 12 to 17 are pointed to, not moved.
 - **Era 19 · Desktop: applications people can use daily**, new: fourteen `K?-ui-...` items (a benchmark, `display` split into four programs, real key events, text for every language, a toolkit, a panel, a clipboard, the first applications, PNG and JPEG, virtio-gpu, native resolution and scaling, a trusted path and screen lock, notifications, accessibility). K39-K46 are pointed to.
-- **Later eras**: 13 to 19 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 20.
+- **Era 20 · The command line and libc**, new: eleven items (`J?-libc-docs`, `J?-cli-one-shell`, `J?-cli-line`, `J?-cli-bg`, `J?-libc-termios`, `J?-libc-headers`, `J?-libc-utf8`, `J?-libc-malloc`, `J?-libc-conform`, `J?-libc-shared`, `J?-cli-tools`). J43 and J44 note that `sh` has what they ask for and J?-cli-one-shell brings it to the keyboard; J32-J50, J57, K31, K33, K44 and K45 are pointed to.
+- **Later eras**: 13 to 20 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 21.
 
 ## Design decisions
 
@@ -107,6 +114,8 @@ As a desktop it is at the start. `display` is the compositor, window manager, te
 - **The desktop's milestone is a day without the terminal.** The vision is a desktop used daily; the test is whether a day's ordinary work - files, editing, copy and paste, another language, a locked screen - can be done in applications alone, quickly enough (the benchmark sets the key-to-screen limit).
 - **Split `display` first.** Four jobs in one process is the one thing about the desktop that goes against Modular and Reliable; every other item builds on the pieces it becomes.
 - **A trusted path.** A key combination that always reaches the system is what makes a screen lock and a login trustworthy when any program may draw anything in its window.
+- **One shell language, not two.** Rather than teach the keyboard's shell what `sh` already knows (J43, J44), the keyboard's shell uses `sh.rs` - one parser, one set of tests, scripts and typed lines the same. What only the keyboard's shell does (grants, jobs, the keyboard) stays in it.
+- **A conformance suite as libc's yardstick**, as the benchmarks are for speed: libc's coverage is measured, not guessed.
 - **The network items in Era 12, not a new era.** Era 12 was already the network's era; the new items are its scale and speed.
 - **Every era starts with a benchmark.** Each section's first item measures; the rest are judged by it.
 - **No owner given.** The eras are not put in either machine's decided order: that is for the user.
@@ -121,6 +130,7 @@ As a desktop it is at the start. `display` is the compositor, window manager, te
 - The scheduler claims: `SLICE`, the one `ready` queue and the `states` map, `tick`'s walk over every state and its `Vec`, `offer` and `pokes` (a `u64`) in `sched.rs`; `preempt_if_needed` from the timer interrupt and the preemption selftest; `HZ` from `abi::TICKS_PER_SECOND`. K21's branch (`k21-cpu-time`) exists unmerged; K20's is not pushed yet.
 - The security claims: the rights in `abi` (SEND to KILL), `PROCESS_KILL` and `SIGNAL_SEND` needing KILL, `PROCESS_SPAWN`'s launcher, `SYSTEM_INFO` and `PROCESS_LIST` needing the system handle, `DEBUG_WRITE` with no handle (`abi`, `syscall.rs`); the shell's grants by name (`user/src/bin/shell.rs`, `narrow`); what `account.rs` does not count; `random.rs`'s sources; no fuzz targets in the repository.
 - The desktop claims: what `display.rs` holds and its startup handles, the window protocol (`gui/src/protocol.rs`), the window manager (`gui/src/desktop.rs`), `gfx`'s font from `console`, `WINDOW_PROGRAMS` (`counter`) and `EDIT_PROGRAMS` (`edit`) in `user/src/bin/shell.rs`.
+- The shell and libc claims: `sh.rs`'s header and its refusal of `&`, its 33 tests; `shell.rs`'s header (jobs, grants, no history or completion found in it); `libc/src/lib.rs`'s overview against `threads.rs` and the missing `emutls.c`; the headers in `libc/include`; musl's libm in `libc/c/libm`.
 - Nothing was built or run: this changes only documents.
 
 ## What is still missing
@@ -153,4 +163,5 @@ grep -n '^## Goals\|^## Era\|kernel stays pure\|K?-\|J?-\|^| K27' docs/who-does-
 | `## Era 17 · Scheduling: contexts, classes and fairness` | 8 `K?-sched` items and `J?-sched-posix` |
 | `## Era 18 · Security: hardening, trust and people` | 11 `K?-sec` items |
 | `## Era 19 · Desktop: applications people can use daily` | 14 `K?-ui` items |
-| `## Later eras` | Eras 13 to 19, and the assistant as 20 |
+| `## Era 20 · The command line and libc` | 11 `J?-cli`/`J?-libc` items |
+| `## Later eras` | Eras 13 to 20, and the assistant as 21 |
