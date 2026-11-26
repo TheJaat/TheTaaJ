@@ -3992,3 +3992,113 @@ make test64
 |---|---|
 | `test64: all passed`, in about 10 minutes under KVM (before: about 16) | The suite no longer stands still |
 | `boot64-test passed` and `boot64-uefi-test passed` within seconds of each other, at the end | The two typed boots ran side by side |
+
+---
+
+## 109 · The typed boots wait for the right thing: test64 in 6½ minutes
+
+[The entry](journal/109-typed-boots.md)
+
+From the root of TheTaaJ, with nothing else booting on the machine:
+
+```
+make test64 2>&1 | tee build/test64.out
+grep "did not run" build/test64.out
+```
+
+| Look for | Meaning |
+|---|---|
+| `test64: all passed`, about 6½ minutes under KVM (before: about 10½) | The waits end when their lines have run |
+| Nothing from the `grep` | No typer waited out its time for a line |
+
+---
+
+## 110 · The IPC items: measuring and speeding up messages, and the cycle leak
+
+[The entry](journal/110-ipc-items.md)
+
+Nothing to boot: this changes only `docs/`. To see the items:
+
+```
+grep -n '^| K60 \|^| K66 ' docs/who-does-what.md
+```
+
+| Look for | You should see |
+|---|---|
+| `K60` ... `K66` | seven rows under "IPC: speed and the cycle leak", in Era 13 (entry 112 moved them there) |
+
+---
+
+## 111 · The TaajFS items: speed, scale and checking
+
+[The entry](journal/111-fs-items.md)
+
+Nothing to boot: this changes only `docs/`. To see the items:
+
+```
+grep -n '^| J70 \|^| J79 ' docs/who-does-what.md
+```
+
+| Look for | You should see |
+|---|---|
+| `J70` ... `J79` | ten rows under "TaajFS version 7", in Era 14 (entry 112 moved them there) |
+
+---
+
+## 112 · Goals, and Eras 13 to 29: every part of TheTaaJ reviewed and given an era
+
+[The entry](journal/112-new-eras.md)
+
+Nothing to boot: this changes only `docs/`. To see the eras and items:
+
+```
+grep -n '^## Goals\|^## Era\|kernel stays pure' docs/who-does-what.md
+```
+
+| Look for | You should see |
+|---|---|
+| `## Era 13 · A fast core` | the IPC section (7 items) and the threads section (9 items) |
+| `## Goals` | ten goals, before "The machines" |
+| `The kernel stays pure` | a line in "Before merging" |
+| `## Era 14 · Files: a VFS and TaajFS version 7` | 10 items (J60-J69), then 10 items (J70-J79) |
+| `K53` ... `K59` | 7 rows in "Network (Era 12's ground)", after K49 |
+| `## Era 15 · Devices: a device manager and confined drivers` | 9 items (K75-K83) and K27 |
+| `## Era 16 · Memory: sharing, reclaim and hardening` | 11 items (K84-K94) |
+| `## Era 17 · Scheduling: contexts, classes and fairness` | 8 items (K95-K102) and `J80` |
+| `## Era 18 · Security: hardening, trust and people` | 11 items (K103-K113) |
+| `## Era 19 · Desktop: applications people can use daily` | 14 items (K114-K127) |
+| `## Era 20 · The command line and libc` | 11 items (J81-J90 and J82-J91) |
+| `## Era 21 · Boot: recoverable, verified and unlimited` | 8 items (K128-K135), MaK-WSL's |
+| `## Era 22` ... `## Era 28` | Observability; Services, recovery and configuration; Protocols and the ABI; Build, toolchain and tests; Packages and updates; Time and power; Portability: every architecture (with its tiers table) |
+| `## Era 29 · Cryptography and encryption` | 10 items (K176-K185) |
+| `## Later eras` | Eras 13 to 29, and the assistant as 30 |
+
+---
+
+## 113 · Fourteen lanes: the eras worked in parallel, and a brief for every new session
+
+[The entry](journal/113-lanes.md)
+
+Nothing to boot: this changes `docs/` and adds two tools.
+
+```
+python3 tools/lanes-check.py
+sh tools/new-session.sh --help
+sh tools/new-session.sh nope
+sh tools/new-session.sh crypto
+git -C ../TheTaaJ-crypto status --short
+grep -n '^15\. \|^16\. ' docs/who-does-what.md
+```
+
+| Do | You should see |
+|---|---|
+| `python3 tools/lanes-check.py` | `270 open items; 258 rows in 14 lanes; 12 named as not in a lane`, then `lanes-check: every open item is in one lane` (the counts change as items are done or added) |
+| `sh tools/new-session.sh --help` | the script's comment: what it makes and why |
+| `sh tools/new-session.sh nope` | `no lane 'nope'`, then the fourteen lanes, `ipc` to `arch` |
+| `sh tools/new-session.sh crypto` | `Lane 'crypto' has its tree: .../TheTaaJ-crypto` and the next steps, or `already there` |
+| `git -C ../TheTaaJ-crypto status --short` | nothing |
+| the `grep` for rules 15 and 16 | "When `main` moved after `make test64` passed" and "Numbers in code are given at merge too" |
+| `docs/start-here.md` | eight parts, from "Who you are" to "When something is unclear" |
+| `docs/lanes.md` | "Starting a session", the machines and their lanes, "Across lanes", then fourteen lanes, each with a table of items and waves |
+
+Automated: none (`make test64` doesn't read these files).
