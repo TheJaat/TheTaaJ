@@ -4102,3 +4102,29 @@ grep -n '^15\. \|^16\. ' docs/who-does-what.md
 | `docs/lanes.md` | "Starting a session", the machines and their lanes, "Across lanes", then fourteen lanes, each with a table of items and waves |
 
 Automated: none (`make test64` doesn't read these files).
+
+---
+
+## 114 · CPU time: what each process has used, in `ps`, `clock()` and `CLOCK_PROCESS_CPUTIME_ID`
+
+[The entry](journal/114-cpu-time.md)
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `ps` | A CPU column: `init`, `shell` and the services with small times, each `N.NNN s` |
+| `cprimes 24000000 &` then, after a few seconds, `ps` | `cprimes` with a CPU time that grows each time you look |
+
+```
+make boot64-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `library: N checks, all passed` | clib's CPU-time checks passed with the rest |
+| `boot64-test passed` | `ps` printed the CPU column the test expects |
+
+Automated: `make test64`

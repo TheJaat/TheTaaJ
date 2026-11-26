@@ -384,7 +384,7 @@ TEST_TYPED   = Hi there
 # What those commands must print (grep patterns, separated by ";").
 # (Joined on one line: a continued line would start each pattern with a
 # space.)
-EXPECT_SHELL = unknown command: Hi;  PID  NAME;init +running;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
+EXPECT_SHELL = unknown command: Hi;  PID  NAME;init +running +[0-9]+\.[0-9]{3} s;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
 EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^ +dir  docs/;^2 directories, $(ROOT_FILES) files, [0-9]+ bytes;^cat: notes: no such file;^cat exited with code 1;^kept\s*$$;^Hello from the host;^saved: 5 bytes
 EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(4096 KiB\);^0000  4a 41 46 53 .*JAFS;^disk: sector 5: the disk is read-only;^disk: sector 99999: no such sector;^disk check: all 9 checks passed;^took [0-9]+\.[0-9][0-9] s;^line 300 of 300
 EXPECT_RUN   = \[init\] started primes for the shell, from a file;^primes below 50: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47;^primes exited with code 0;^error: welcome is not a program;^error: broken is not a program;^error: no such program;\[init\] started ls for the shell, from a file;^cat exited with code 0;^rm: notes: no such file;^rm: saved2: no such file;^rm exited with code 1;^usage: write FILE TEXT;^write exited with code 2;$(EXPECT_GIVEN);$(EXPECT_WATCH);$(EXPECT_KILL)
@@ -1198,7 +1198,10 @@ A64_BUSY_DISK   = $(BUILD_DIR)/aarch64/busy.disk
 # ticks).
 A64_BUSY_KEYS   = f o r e v e r spc shift-7 ret e c h o spc s t i l l spc h e r e ret \
                   c p r i m e s spc 1 0 0 spc shift-dot spc o u t spc shift-7 ret see:exited
-aarch64-keys-test: aarch64-test-disk
+# kernel-aarch64 too: the image it boots carries the user programs (the
+# shell among them), and without it, run on its own, this booted the last
+# image built - an old shell (journal entry 114).
+aarch64-keys-test: aarch64-test-disk kernel-aarch64
 ifeq ($(HAVE_A64),yes)
 	@echo "Booting the AArch64 kernel and typing at its serial port (log: $(A64_KEYS_LOG))..."
 	@KEYS="$(TEST_KEYS)" SLOTS=4 QEMU_ARGS="-smp 4 -drive file=$(A64_TEST_DISK),if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0" \
