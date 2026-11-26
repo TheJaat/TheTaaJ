@@ -1,6 +1,6 @@
 # The race hunt: twenty rounds under KVM, a SIGCHLD that came late, and tests that timed the host
 
-*Journal entry #105 · MaK's step A, item K19 (the race hunt), second part. Written on MaK as entry 101; The-Jat's steps C, D and G took 100 to 103 first (rule 5), so this is 105. Entry 104 made the tests choose KVM and fixed the typed boot test's typing races. Then the x86_64 half of `make test64` ran twenty times over under KVM. Four rounds failed, each in a different part. One failure was a real ordering bug in the kernel: a parent's `waitid` could return before its SIGCHLD handler had run. Two were checks that timed the host as well as TheTaaJ. One could not be explained, and its log was lost; the hunt now keeps the logs of a failed round.*
+*Journal entry #105 · MaK's step A, item K19 (the race hunt), second part. Written on MaK as entry 101; The-Jat's steps C, D and G took 100 to 103 first (rule 5), so this is 105. Entry 104 made the tests choose KVM and fixed the typed boot test's typing races. Then the x86_64 half of `make test64` ran twenty times over under KVM. Four rounds failed, each in a different part. One failure was a real ordering bug in the kernel: a parent's `waitid` could return before its SIGCHLD handler had run. Two were checks that timed the host as well as TheTaaJ. One could not be explained, and its log was lost; the hunt now keeps the logs of a failed round. And the full emulated `test64` then failed twice, though every boot in it was healthy: `qemu-boot.sh` counted its time limit from the start, not, as its usage says, as silence - and the firmware and the BIOS loader, silent on the serial line, take most of an emulated boot.*
 
 ## Why
 
@@ -78,7 +78,25 @@ Every check with a tight upper limit had the same weakness: the kill selftest (a
 
 **3. `bigmem64-test` once did not finish its steps.** Round 6: `FAIL: the steps did not all run`, QEMU stopped by `qemu-boot.sh` ("terminating on signal 15"). Its serial log was overwritten by round 7 39 seconds later, before it could be copied. Five runs under full CPU load passed, in 72 to 106 s instead of 33 (the waits it may use add up to 270 s for its big step). The likeliest cause is the host's memory and CPU both being short in that round - twelve machines, one of them touching 3 GiB, on 11 GiB - but that is a guess. Left open as K50; the hunt now keeps a failed round's files.
 
-**4. The first hunt script lost round 6's logs.** It saved only make's output. Rewritten (now `tools/race-hunt.sh`) to copy every file `build/` got during a failed round before the next one starts.
+**4. `qemu-boot.sh` stopped healthy boots: its limit counted time, not silence.** After the hunt, the full emulated `make test64` (`TAAJ_ACCEL=tcg`) failed twice on this branch, each time in three parts: `boot64-test` (`qemu-boot: no end of output after 20s - killed`, then `no greeting`, or a log ending in the middle of the selftests), `power64-test` (`the kernel did not start a second time`), and `net64-test` or `big64-test` (`no end of output after 40s`). Booting the same ISO emulated, measured on MaK:
+
+| Host | Boots | Reached the shell | Time each |
+|---|---|---|---|
+| Idle | 20 | 20 | 14-15 s |
+| Every host thread kept busy | 20 | 20 | 52-79 s |
+
+No boot hung; they were stopped. `qemu-boot.sh`'s usage says SECONDS "is only the limit for a kernel that hangs silently", but `wait_for` counted from the start, so a boot that was slow - with twelve emulated machines of up to four CPUs each sharing the host, as in `test64` - was stopped while it was still printing. The parts added since entry 097 (basics, ground, times, pages) make that load heavier, which is why it failed now and not before. Fixed: the count starts again whenever the log grows. The same in `aarch64-boot.sh`, whose usage says the same.
+
+**5. Before the kernel's first byte there is nothing to count.** With the silence rule alone, three boots on the busy host were still stopped after 35 s, their serial logs empty. The firmware and the BIOS loader print nothing on the serial line, and emulated they take most of a boot:
+
+| Host | First serial byte after | Shell after |
+|---|---|---|
+| Idle | 14.2, 14.4, 15.4 s | 17.5, 17.7, 18.7 s |
+| Busy | 56.1, 64.4, 59.4 s | 63.0, 73.6, 65.9 s |
+
+So that phase has its own allowance, `FIRMWARE_SECONDS` (default 90), and so has the `/` key, which after a `reboot` waits through the firmware and the loader again (it allowed 10 s). With both, four boots on the busy host passed with SECONDS 20 (42 to 83 s), and a hang is still caught: a machine paused from the start (`-S`) was stopped with `not a byte on the serial line in 5s (firmware or loader)` (FIRMWARE_SECONDS=5), one paused through the monitor after its first output with `nothing new on the serial line for 10s` (SECONDS=10). That the loader takes 14 s emulated, against well under one under KVM, is K51: stage2 goes back to real mode and out again for every `int 13h` read.
+
+**6. The first hunt script lost round 6's logs.** It saved only make's output. Rewritten (now `tools/race-hunt.sh`) to copy every file `build/` got during a failed round before the next one starts.
 
 ## How I checked it
 
@@ -87,9 +105,11 @@ Every check with a tight upper limit had the same weakness: the kill selftest (a
 - `bigmem64-test` five times under full host load: passed every time.
 - `make test64` under KVM and `make test64 TAAJ_ACCEL=tcg`: see the testing note; both must end `test64: all passed`.
 - `tools/race-hunt.sh 1`: one round, to check the tool itself.
+- `qemu-boot.sh`'s limits: twenty emulated boots idle and twenty busy, the first byte timed, a never-starting and a stopped machine (bugs 4 and 5).
 
 ## What is still missing
 
+- **K51**: the BIOS loader's 14 s, emulated (bug 5).
 - **K50**: why `bigmem64-test` once did not finish (round 6). The next failure's files will say.
 - **Upper limits still time the host a little**: three slow tries in a row on a very busy host would still fail. That has not been seen.
 - **The hunt has run under KVM only.** Under emulation (The-Jat, or `TAAJ_ACCEL=tcg`) other races may show.
@@ -100,6 +120,7 @@ Every check with a tight upper limit had the same weakness: the kill selftest (a
 - **"Before those waiting are woken" is not enough.** A waiter does not only wake when woken; it checks its condition whenever it runs. The order that matters is against what the condition reads: everything the waiter must find first, the condition last.
 - **One try of a race says little; a hundred in one boot say a lot.** The single SIGCHLD check failed once in twenty runs of `test64`; a hundred children in one boot failed every run with the old kernel.
 - **A test that times something in a virtual machine also times the host.** Lower limits are about the system; upper limits are partly about whoever else is using the machine.
+- **A limit must say what it measures.** "Hangs silently" and "took too long" are different things; the script said one and did the other.
 - **Keep the evidence first.** A failure seen once and then overwritten cannot be explained.
 
 ## Testing note
