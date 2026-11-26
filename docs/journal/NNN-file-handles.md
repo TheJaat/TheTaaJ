@@ -120,6 +120,7 @@ The descriptors that `dup` makes share one `File` through an `Arc` (Rust's count
 - **One protocol, the root as a directory.** The two request channels init gives every program are the root open twice. A Rust program or a libc that knows only path requests works unchanged, and a directory handed to a program works the same way rooted somewhere else. That is J62's mount table and J63's sandboxes, without a second protocol.
 - **`WAIT_HANDLES_MAX` raised from 32 to 256, not a port now.** The service waits on every open file in one `object_wait`, and the kernel's limit was 32. The right answer is a port, one wait queue that many channels report to, so the cost doesn't grow with the number of handles. That is kernel IPC work, the `ipc` lane's, so I added it there as `K?-port`. Until then the limit is 256, with the cost proportional to it (each wait joins every handle's queue). The file service keeps at most 200 open (`OPEN_MAX`) and answers `Busy` past that, which libc gives as `ENFILE`. A compile-time assertion in `fs.rs` checks that the root's two channels, the streams and the open files fit in one wait.
 - **The offset stays in the client.** As before, a descriptor's offset is libc's, and every read says where. The service would otherwise need a place per channel, and a child given the file would share it in ways POSIX only half promises. A child gets its own copy of where the parent had got to, as before.
+- **A file opened to read may still be stamped.** POSIX lets anyone who may write a file set its times to now, whatever the descriptor was opened for: `futimens(fd, NULL)` on an `O_RDONLY` descriptor works. So a node remembers one more thing, `may_touch`: whether the channel it was opened from could change files. If so, `TOUCH` is allowed on it even when it was opened to read. It is the only change such a node allows, and a file opened from a read-only channel can't even do that.
 - **Directories may be opened `WRITE`**, meaning "may change what is in it". libc never asks that (C opens directories only to read), but J63 will hand a program a writable directory.
 
 What the choices cost: an open is now one more channel per file, which holds kernel memory while the file is open (K103 will count it), and a file service with many open files waits on many queues (`K?-port`).
@@ -128,6 +129,9 @@ What the choices cost: an open is now one more channel per file, which holds ker
 
 - **A lock held across an assignment** (`libc/src/spawn.rs`). Making a stream from a file given as standard output took the file's lock, through a pattern that borrowed the table entry, and then replaced that same entry. Rust refused to compile it ("cannot assign to `*source` because it is borrowed"). The guard returned by `lock()` lives until the end of its block, and the borrow it holds keeps the entry borrowed. Putting the lock in a block of its own, so the guard is dropped first, made the order explicit: take what is needed, let go, then change the entry. In C this would have compiled, and been a bug only if the lock protected the entry.
 - **`fstat` read its answer under the descriptor table's lock** in the first version. A request to the service can wait (`patience`), and every other thread wanting a descriptor would have waited with it (`descriptors.rs`' rule: nothing that may wait is done holding the table). Rewritten so the table only hands out the shared file, and the service is asked after it is let go.
+
+- **`futimens` on a file opened to read** (`fileserver/src/nodes.rs`). The first full `make test64` failed in `tcc64-test`: `clib`, the C library's own checks compiled on TheTaaJ by tcc, printed `clib: FAILED: futimens`. It opens a file `O_RDONLY` and stamps it with `futimens(fd, NULL)`. Before this entry libc stamped the file by its name, on the root channel that may change files, so it worked. Now it goes through the file's own channel, opened to read, and the service refused it with `ReadOnly`. That is stricter than POSIX, which asks only that the caller may write the file, not that the descriptor was opened to write. The fix is `may_touch` (see Design decisions), with a host check both ways and a 45th check in `handles.c`. None of my own checks had stamped a file opened to read: the C library's older checks found what mine missed, and that is what running all of `make test64` is for.
+- **A clock check under load.** The same first run also failed one check in `basics64-test`: "the time of day and the time since boot move together", which allows 2 ms between two pairs of clock readings 50 ms apart. It has nothing to do with files and passed when run again on its own. Under `make test64` many QEMU machines share TheJat-VM, which has no KVM, so a machine can be paused for more than 2 ms between two readings. I note it here and leave it alone. If it fails again, its margin should be widened.
 
 ## How I checked it
 
@@ -143,7 +147,7 @@ What the choices cost: an open is now one more channel per file, which holds ker
   - paging through the root's listing one entry at a time, with the hidden directory in the middle;
   - the 200-file limit, and a freed slot used again.
 - `kernel/abi`'s 33 tests, one of them changed (a file's descriptor entry now has a handle).
-- **A boot test of its own**, `handles64-test` and `aarch64-handles-test`, which runs `handles.c` on TheTaaJ in one boot: 44 checks. They cover:
+- **A boot test of its own**, `handles64-test` and `aarch64-handles-test`, which runs `handles.c` on TheTaaJ in one boot: 45 checks. They cover:
   - writes after a rename;
   - `fstat`, `lseek(SEEK_END)`, `ftruncate` and `pread` after the file and then its directory were renamed;
   - a removed file still read, written and stat'ed, with `.taaj-removed` not listed and a new file at the old name;
@@ -183,7 +187,7 @@ make run64
 
 | Type | You should see |
 |---|---|
-| `with programs handles` | `handles: 44 checks, all passed` |
+| `with programs handles` | `handles: 45 checks, all passed` |
 | `ls` | no `.taaj-removed`, and none of the test's files (`a`, `b`, `d`, `doomed`, `x`, `moved`, `f`, `g`) left |
 | `echo hello > note` then `cat note` | `hello`: the shell's streams work as before |
 | `mv note memo` then `cat memo` | `hello` |

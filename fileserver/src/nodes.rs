@@ -25,7 +25,9 @@
 //! What a channel allows is fixed when it is opened: a node opened from
 //! a read-only channel, or without `open::WRITE`, refuses every change
 //! (ReadOnly) - so a program can be handed one file to read, and nothing
-//! else.
+//! else. One exception, POSIX's: a file opened to read from a channel
+//! that may change files may still be marked changed now (TOUCH), as
+//! anyone who may write a file may stamp it (futimens on O_RDONLY).
 //!
 //! The service stays the only one who knows the node's path, and keeps
 //! it right as names change:
@@ -74,6 +76,11 @@ pub struct Node {
     pub kind: Kind,
     /// What its channel allows.
     pub access: Access,
+    /// Whether it was opened from a channel that may change files: then
+    /// it may be marked changed now (TOUCH) even if it was opened only to
+    /// read, as POSIX lets anyone who may write a file stamp it
+    /// (futimens on a descriptor opened O_RDONLY).
+    pub may_touch: bool,
     /// A file removed while open: it waits in REMOVED.
     removed: bool,
     /// A directory that was removed: there is nothing here any more.
@@ -91,7 +98,7 @@ impl Nodes {
     /// The table, with the root open twice (ROOT, ROOT_READ_ONLY); and
     /// whatever a service that stopped left in REMOVED, removed.
     pub fn new(store: &mut impl Store) -> Nodes {
-        let root = |access| Some(Node { path: String::new(), kind: Kind::Directory, access, removed: false, gone: false });
+        let root = |access| Some(Node { path: String::new(), kind: Kind::Directory, access, may_touch: access == Access::ReadWrite, removed: false, gone: false });
         let nodes = Nodes { slots: alloc::vec![root(Access::ReadWrite), root(Access::ReadOnly)], next_removed: 0 };
         let mut left: Vec<String> = Vec::new();
         let _ = store.list(REMOVED, 0, &mut |name, _, _| {
@@ -153,7 +160,12 @@ impl Nodes {
 
     fn answer(&mut self, store: &mut impl Store, id: NodeId, message: &[u8], out: &mut [u8]) -> Result<usize, Status> {
         let request = Request::decode(message).ok_or(Status::BadRequest)?;
-        let (path, access) = self.resolve(id, request.name)?;
+        let (path, mut access) = self.resolve(id, request.name)?;
+        // A file's own channel, opened to read from one that may change
+        // files: it may still stamp the file.
+        if request.op == protocol::TOUCH && request.name.is_empty() && self.get(id).is_some_and(|node| node.kind == Kind::File && node.may_touch) {
+            access = Access::ReadWrite;
+        }
         let changes = matches!(request.op, protocol::REMOVE | protocol::RENAME);
         if changes && access == Access::ReadOnly {
             return Err(Status::ReadOnly);
@@ -245,8 +257,9 @@ impl Nodes {
             Err(status) => return Err(status),
         };
         // The new channel allows no more than the one it was asked on.
+        let may_touch = access == Access::ReadWrite;
         let access = if writes { access } else { Access::ReadOnly };
-        let node = Node { path, kind, access, removed: false, gone: false };
+        let node = Node { path, kind, access, may_touch, removed: false, gone: false };
         let length = crate::answer_request(store, access, &Request { op: protocol::STAT, name: &node.path, number: 0, data: &[] }, out, None)?;
         let id = match self.slots.iter().skip(2).position(Option::is_none) {
             Some(free) => {
@@ -534,6 +547,10 @@ mod tests {
         // What a channel allows.
         let reading = open_node(nodes, store, ROOT, "e/b", open::READ).unwrap();
         assert_eq!(write(nodes, store, reading, "", b"x"), Status::ReadOnly, "opened to read");
+        assert_eq!(ask(nodes, store, reading, protocol::TOUCH, "", 0, &[]).0, Status::Ok, "but it may be stamped: it could have been opened to write");
+        let only_reading = open_node(nodes, store, ROOT_READ_ONLY, "e/b", open::READ).unwrap();
+        assert_eq!(ask(nodes, store, only_reading, protocol::TOUCH, "", 0, &[]).0, Status::ReadOnly, "from a read-only channel, not even that");
+        nodes.close(store, only_reading);
         let from_read_only = open_node(nodes, store, ROOT_READ_ONLY, "e", open::DIRECTORY | open::WRITE);
         assert_eq!(from_read_only, Err(Status::ReadOnly), "a read-only channel gives no more");
         let readonly_dir = open_node(nodes, store, ROOT, "e", open::DIRECTORY).unwrap();
