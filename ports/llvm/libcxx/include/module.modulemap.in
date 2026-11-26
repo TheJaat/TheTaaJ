@@ -1610,6 +1610,7 @@ module std {
       textual header "__locale_dir/support/fuchsia.h"
       textual header "__locale_dir/support/linux.h"
       textual header "__locale_dir/support/llvm_libc.h"
+      textual header "__locale_dir/support/taaj.h"
       textual header "__locale_dir/support/netbsd.h"
       textual header "__locale_dir/support/no_locale/conversions.h"
       textual header "__locale_dir/support/no_locale/formatting.h"

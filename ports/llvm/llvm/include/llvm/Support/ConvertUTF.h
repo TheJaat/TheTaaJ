@@ -237,6 +237,10 @@ class StringRef;
 LLVM_ABI bool ConvertUTF8toWide(unsigned WideCharWidth, llvm::StringRef Source,
                                 char *&ResultPtr, const UTF8 *&ErrorPtr);
 
+// TheTaaJ: a C++ library without wide characters (libc++ built with
+// _LIBCPP_HAS_WIDE_CHARACTERS 0) has no std::wstring, and these three
+// are for the systems whose own interfaces take wide strings (Windows).
+#if !(defined(_LIBCPP_VERSION) && !_LIBCPP_HAS_WIDE_CHARACTERS)
 /**
 * Converts a UTF-8 StringRef to a std::wstring.
 * \return true on success.
@@ -254,6 +258,7 @@ LLVM_ABI bool ConvertUTF8toWide(const char *Source, std::wstring &Result);
  * \return true on success.
  */
 LLVM_ABI bool convertWideToUTF8(std::wstring_view Source, std::string &Result);
+#endif
 
 /**
  * Convert an Unicode code point to UTF8 sequence.

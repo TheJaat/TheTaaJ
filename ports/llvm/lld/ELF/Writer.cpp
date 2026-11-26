@@ -34,6 +34,7 @@
 #include "llvm/Support/TimeProfiler.h"
 #include "llvm/Support/xxhash.h"
 #include <climits>
+#include <chrono>
 
 #define DEBUG_TYPE "lld"
 
@@ -1043,7 +1044,17 @@ static void maybeShuffle(Ctx &ctx,
       // reliably.
       std::reverse(matched.begin(), matched.end());
     } else {
+#if (defined(_LIBCPP_VERSION) && !_LIBCPP_HAS_RANDOM_DEVICE)
+      // TheTaaJ: no std::random_device without a source of entropy. A
+      // seed of 0 asks for a different order each time, and the time
+      // gives that (as LLVM's LockFileManager.cpp does here).
+      std::mt19937 g(seed ? seed
+                          : uint32_t(std::chrono::steady_clock::now()
+                                         .time_since_epoch()
+                                         .count()));
+#else
       std::mt19937 g(seed ? seed : std::random_device()());
+#endif
       llvm::shuffle(matched.begin(), matched.end(), g);
     }
     size_t i = 0;

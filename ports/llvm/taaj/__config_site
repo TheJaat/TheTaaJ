@@ -1,47 +1,64 @@
 // __config_site - libc++'s configuration for TheTaaJ: what CMake would
 // write from libcxx/include/__config_site.in, written by hand
-// (tools/build-cxx.sh puts it beside the headers).
+// (tools/build-cxx.sh puts it beside the headers). Since libc++ 20 each
+// setting is a 0 or a 1 (#cmakedefine01), not defined-or-not.
 //
 // What TheTaaJ's C library cannot do yet is switched off here, and
 // libc++ leaves out what depends on it:
 //
-//   filesystem       no directories in libc: no <filesystem>
-//   random device    no source of entropy: no std::random_device (the
-//                    generators in <random> are all there)
+//   filesystem       libc has no opendir: no <filesystem>, no <fstream>
+//   random device    std::random_device is left out (getrandom is there
+//                    since entry 099; switching it on is a later step)
 //   wide characters  no wchar_t functions in libc: no std::wstring,
 //                    std::wcout and the like
 //   time zones       no tz database: no std::chrono::zoned_time
 //
 // Threads are on, through the C library's pthread (libc/include/
-// pthread.h), which is POSIX's interface with a program's one thread
-// behind it: <mutex> locks, <condition_variable> cannot wait (nobody
-// else could wake it) and std::thread's constructor throws, because no
-// second thread can be made. LLVM needs <mutex> even on one thread.
-// thread_local variables work through -femulated-tls (libc/c/emutls.c).
+// pthread.h): real threads, mutexes and condition variables.
+// thread_local variables are ELF thread-local storage, the thread
+// pointer's (entry 099) - since entry 104 C++ too, not -femulated-tls.
 //
 // Localization stays: <iostream>, <sstream>, <locale> work, with the
-// one locale TheTaaJ has, "C" (libc++'s fallbacks for a C library
-// without locales: __support/xlocale, chosen in <__locale> by __TAAJ__).
+// one locale TheTaaJ has, "C" (__locale_dir/support/taaj.h, chosen in
+// __locale_dir/locale_base_api.h by __TAAJ__).
 
 #ifndef _LIBCPP___CONFIG_SITE
 #define _LIBCPP___CONFIG_SITE
 
 #define _LIBCPP_ABI_VERSION 1
 #define _LIBCPP_ABI_NAMESPACE __1
-#define _LIBCPP_HAS_THREAD_API_PTHREAD
-#define _LIBCPP_HAS_NO_FILESYSTEM
-#define _LIBCPP_HAS_NO_RANDOM_DEVICE
-#define _LIBCPP_HAS_NO_WIDE_CHARACTERS
-#define _LIBCPP_HAS_NO_STD_MODULES
-#define _LIBCPP_HAS_NO_TIME_ZONE_DATABASE
-#define _LIBCPP_HAS_NO_VENDOR_AVAILABILITY_ANNOTATIONS
+#define _LIBCPP_ABI_FORCE_ITANIUM 0
+#define _LIBCPP_ABI_FORCE_MICROSOFT 0
+#define _LIBCPP_HAS_THREADS 1
+#define _LIBCPP_HAS_MONOTONIC_CLOCK 1
+#define _LIBCPP_HAS_MUSL_LIBC 0
+#define _LIBCPP_HAS_THREAD_API_PTHREAD 1
+#define _LIBCPP_HAS_THREAD_API_EXTERNAL 0
+#define _LIBCPP_HAS_THREAD_API_WIN32 0
+#define _LIBCPP_HAS_THREAD_API_C11 0
+#define _LIBCPP_HAS_VENDOR_AVAILABILITY_ANNOTATIONS 0
+#define _LIBCPP_HAS_FILESYSTEM 0
+#define _LIBCPP_HAS_RANDOM_DEVICE 0
+#define _LIBCPP_HAS_LOCALIZATION 1
+#define _LIBCPP_HAS_UNICODE 1
+#define _LIBCPP_HAS_WIDE_CHARACTERS 0
+#define _LIBCPP_HAS_TIME_ZONE_DATABASE 0
+#define _LIBCPP_INSTRUMENTED_WITH_ASAN 0
+
+#define _LIBCPP_PSTL_BACKEND_SERIAL
+
+// Numbers, as CMake writes them (__configuration/hardening.h): no
+// hardening (_LIBCPP_HARDENING_MODE_NONE, 2), and assertions doing what
+// the hardening mode says (_LIBCPP_ASSERTION_SEMANTIC_HARDENING_DEPENDENT, 2).
+#define _LIBCPP_HARDENING_MODE_DEFAULT 2
+#define _LIBCPP_ASSERTION_SEMANTIC_DEFAULT 2
+
+#define _LIBCPP_LIBC_PICOLIBC 0
+#define _LIBCPP_LIBC_NEWLIB 0
+#define _LIBCPP_LIBC_LLVM_LIBC 0
 
 // Which characters are letters, digits, spaces: libc++'s own table for
 // "C" (ctype<char>), since TheTaaJ's C library exports none.
 #define _LIBCPP_PROVIDES_DEFAULT_RUNE_TABLE
-
-#define _LIBCPP_PSTL_CPU_BACKEND_SERIAL
-
-#define _LIBCPP_HARDENING_MODE_DEFAULT _LIBCPP_HARDENING_MODE_NONE
 
 #endif // _LIBCPP___CONFIG_SITE

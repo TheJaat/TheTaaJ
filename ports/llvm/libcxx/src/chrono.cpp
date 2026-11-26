@@ -36,8 +36,10 @@
 
 // OpenBSD and GPU do not have a fully conformant suite of POSIX timers, but
 // it does have clock_gettime and CLOCK_MONOTONIC which is all we need.
+// So does TheTaaJ: clock_gettime with CLOCK_MONOTONIC, though not the
+// rest of what _POSIX_TIMERS promises (timer_create and the others).
 #if defined(__APPLE__) || defined(__gnu_hurd__) || defined(__OpenBSD__) || defined(__AMDGPU__) ||                      \
-    defined(__NVPTX__) || (defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0)
+    defined(__NVPTX__) || (defined(_POSIX_TIMERS) && _POSIX_TIMERS > 0) || defined(__TAAJ__)
 #  define _LIBCPP_HAS_CLOCK_GETTIME
 #endif
 

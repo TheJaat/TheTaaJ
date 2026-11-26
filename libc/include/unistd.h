@@ -170,6 +170,9 @@ int getopt(int argc, char *const argv[], const char *optstring);
 /* The session a process is in: there are no sessions, so each process
  * is its own, and the answer is its number. */
 pid_t getsid(pid_t process);
+/* setsid: the caller as a session of its own - which on TheTaaJ every
+ * process is: its number. */
+pid_t setsid(void);
 
 /* The user and group the program runs as: there are no users (pwd.h),
  * so always 0. */

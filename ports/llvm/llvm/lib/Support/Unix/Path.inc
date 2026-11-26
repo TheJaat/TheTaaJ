@@ -189,6 +189,11 @@ static char *getprogpath(char ret[PATH_MAX], const char *bin) {
 }
 #endif // __FreeBSD__ || __NetBSD__ || __FreeBSD_kernel__
 
+#if defined(__TAAJ__)
+// TheTaaJ's C library: the program's own file, or null.
+extern "C" const char *__taaj_executable(void);
+#endif
+
 /// GetMainExecutable - Return the path to the main executable, given the
 /// value of argv[0] from program startup.
 std::string getMainExecutable(const char *argv0, void *MainAddr) {
@@ -338,6 +343,15 @@ std::string getMainExecutable(const char *argv0, void *MainAddr) {
   char link_path[PATH_MAX];
   if (realpath(DLInfo.dli_fname, link_path))
     return link_path;
+#elif defined(__TAAJ__)
+  // TheTaaJ tells a program which file it was started from, as Linux
+  // does in /proc/self/exe; its C library hands it on (libc/src/lib.rs).
+  // A path from the root, with nothing left to resolve: TheTaaJ has no
+  // links.
+  (void)argv0;
+  (void)MainAddr;
+  if (const char *File = __taaj_executable())
+    return File;
 #else
 #error GetMainExecutable is not implemented on this host yet.
 #endif
@@ -518,6 +532,9 @@ static bool is_local_impl(struct STATVFS &Vfs) {
   return false;
 #elif defined(__Fuchsia__)
   // Fuchsia doesn't yet support remote filesystem mounts.
+  return true;
+#elif defined(__TAAJ__)
+  // TheTaaJ: there is one file system, on a disk of the machine's own.
   return true;
 #elif defined(__EMSCRIPTEN__)
   // Emscripten doesn't currently support remote filesystem mounts.

@@ -58,6 +58,40 @@ struct lconv {
 
 struct lconv *localeconv(void);
 
+/* Locale objects (POSIX 2008): a locale a program holds and hands to
+ * the *_l functions, or makes its thread's own with uselocale, instead
+ * of changing the whole program's with setlocale. There is one, "C",
+ * so newlocale gives the same object for "C", "POSIX" and "" (the
+ * user's locale, which is "C" too) and fails with ENOENT for any other
+ * name; freelocale has nothing to free. libc++ is built on these
+ * (ports/llvm/libcxx/include/__locale_dir/support/taaj.h). */
+typedef struct __locale *locale_t;
+
+#define LC_CTYPE_MASK    (1 << LC_CTYPE)
+#define LC_NUMERIC_MASK  (1 << LC_NUMERIC)
+#define LC_TIME_MASK     (1 << LC_TIME)
+#define LC_COLLATE_MASK  (1 << LC_COLLATE)
+#define LC_MONETARY_MASK (1 << LC_MONETARY)
+#define LC_MESSAGES_MASK (1 << LC_MESSAGES)
+#define LC_ALL_MASK      (LC_CTYPE_MASK | LC_NUMERIC_MASK | LC_TIME_MASK | \
+                          LC_COLLATE_MASK | LC_MONETARY_MASK | LC_MESSAGES_MASK)
+
+/* What uselocale returns for a thread using the program's locale, and
+ * takes to make it do so again. */
+#define LC_GLOBAL_LOCALE ((locale_t)-1)
+
+/* newlocale(parts, name, base): `base` with the parts in `parts` (a
+ * mask of LC_*_MASK) from the locale `name`; base 0 for a new one.
+ * EINVAL for a mask with other bits or no name, ENOENT for a locale
+ * there is not. On success `base` is not to be used again. */
+locale_t newlocale(int parts, const char *name, locale_t base);
+locale_t duplocale(locale_t locale);
+void freelocale(locale_t locale);
+/* uselocale(locale): makes `locale` the calling thread's (or, with
+ * LC_GLOBAL_LOCALE, the program's again) and returns the one before;
+ * with 0 only returns it. */
+locale_t uselocale(locale_t locale);
+
 #ifdef __cplusplus
 }
 #endif

@@ -13,7 +13,10 @@ extern "C" {
 
 #include <stddef.h>
 
+#ifndef _TIME_T_DEFINED
+#define _TIME_T_DEFINED
 typedef long time_t;
+#endif
 
 struct tm {
     int tm_sec;   /* 0 to 59 */
@@ -61,7 +64,10 @@ char *ctime(const time_t *when);
 /* The processor time the program has used, in units of CLOCKS_PER_SEC
  * a second. Here, the time since the system started: TheTaaJ does not
  * yet tell a program its own share. (system.rs) */
+#ifndef _CLOCK_T_DEFINED
+#define _CLOCK_T_DEFINED
 typedef long clock_t;
+#endif
 #define CLOCKS_PER_SEC 1000000L
 clock_t clock(void);
 

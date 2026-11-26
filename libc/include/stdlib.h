@@ -12,6 +12,9 @@ extern "C" {
 #endif
 
 #include <stddef.h>
+/* As glibc's does: programs written on Linux use off_t, pid_t and
+ * time_t having included no more than stdlib.h (LLVM, for one). */
+#include <sys/types.h>
 
 #define EXIT_SUCCESS 0
 #define EXIT_FAILURE 1

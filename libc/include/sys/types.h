@@ -29,6 +29,17 @@ typedef unsigned long nlink_t;
 typedef long blksize_t;
 typedef long blkcnt_t;
 
+/* Seconds since 1970, and processor time (time.h has them too, as C
+ * says; POSIX says here as well). */
+#ifndef _TIME_T_DEFINED
+#define _TIME_T_DEFINED
+typedef long time_t;
+#endif
+#ifndef _CLOCK_T_DEFINED
+#define _CLOCK_T_DEFINED
+typedef long clock_t;
+#endif
+
 #ifdef __cplusplus
 }
 #endif

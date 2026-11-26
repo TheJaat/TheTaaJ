@@ -57,7 +57,16 @@ private:
   duration MinWait;
   duration MaxWait;
   time_point EndTime;
+#if defined(_LIBCPP_VERSION) && !_LIBCPP_HAS_RANDOM_DEVICE
+  // TheTaaJ: no std::random_device (libc++ built without it). The waits
+  // only need to differ between processes waiting for the same thing,
+  // not to be unpredictable: the time each starts at does that (as
+  // LockFileManager.cpp did here before LLVM 20).
+  std::default_random_engine RandDev{static_cast<std::default_random_engine::result_type>(
+      std::chrono::steady_clock::now().time_since_epoch().count())};
+#else
   std::random_device RandDev;
+#endif
   int64_t CurrentMultiplier = 1;
 };
 

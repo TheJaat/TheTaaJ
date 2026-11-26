@@ -13,8 +13,7 @@
 Clang (ports/llvm/clang) is built the same way, beside LLVM: its
 libraries are found in its CMakeLists.txt files as LLVM's are, and
 its TableGen jobs are run with the host's clang-tblgen of the same
-release (CLANG_TBLGEN), which the Makefile builds from
-clang/utils/TableGen. A directory of Clang's is named here as LLVM's
+release (CLANG_TBLGEN), from tools/build-host-llvm.sh. A directory of Clang's is named here as LLVM's
 are, from ports/llvm/llvm: "../clang/lib/AST". lld (ports/llvm/lld)
 likewise, with only its ELF linker: "../lld/ELF".
 
@@ -52,9 +51,11 @@ LLVM = os.path.join(ROOT, "ports", "llvm", "llvm")
 TAAJ = os.path.join(ROOT, "ports", "llvm", "taaj")
 CLANG = os.path.join(ROOT, "ports", "llvm", "clang")
 LLD = os.path.join(ROOT, "ports", "llvm", "lld")
-TBLGEN = os.environ.get("LLVM_TBLGEN", "llvm-tblgen-18")
+LIBC = os.path.join(ROOT, "ports", "llvm", "libc")
+THIRD_PARTY = os.path.join(ROOT, "ports", "llvm", "third-party")
+TBLGEN = os.environ.get("LLVM_TBLGEN", "llvm-tblgen")
 CLANG_TBLGEN = os.environ.get("CLANG_TBLGEN", "clang-tblgen")
-AR = os.environ.get("LLVM_AR", "llvm-ar-18")
+AR = os.environ.get("LLVM_AR", "llvm-ar")
 JOBS = os.cpu_count() or 4
 
 # The libraries are found by reading LLVM's CMakeLists.txt files (see
@@ -63,9 +64,10 @@ JOBS = os.cpu_count() or 4
 # A tool's own list is its LLVM_LINK_COMPONENTS.
 #
 # llvm-tblgen is the one tool CMake builds differently, by hand-written
-# lines in utils/TableGen/CMakeLists.txt rather than components: its
-# backends are an OBJECT library (below), and its GlobalISel part is
-# added with target_link_libraries.
+# lines in utils/TableGen/CMakeLists.txt rather than components: since
+# LLVM 19 its own sources are the backends, and the code they share is
+# two OBJECT libraries (below), Basic and Common, added by
+# $<TARGET_OBJECTS:...>.
 TOOL_DIRECTORIES = {
     "llvm-tblgen": "utils/TableGen",
     "llvm-mc": "tools/llvm-mc",
@@ -77,14 +79,14 @@ TOOL_DIRECTORIES = {
 # lld's linkers for Windows, Apple and WebAssembly (TheTaaJ's lld.cpp
 # offers only the ELF one).
 LEFT_OUT = {"lldcoff", "lldmingw", "lldmacho", "lldwasm"}
-EXTRA_LIBRARIES = {"llvm-tblgen": ["TableGenGlobalISel", "TableGenCommon"]}
+EXTRA_LIBRARIES = {"llvm-tblgen": ["TableGenBasic", "TableGenCommon"]}
 
 # Libraries CMake makes OBJECT libraries: their objects are linked
-# into the tool one by one, not taken from an archive as needed. Each
+# into the tool one by one, not taken from an archive as needed. A
 # TableGen backend registers itself ("-gen-vt", ...) from a constructor
 # in its own file, and nothing refers to that file by name - from an
-# archive, the linker would leave every backend out.
-OBJECT_LIBRARIES = {"TableGenCommon"}
+# archive, the linker would leave such a backend out (Basic has some).
+OBJECT_LIBRARIES = {"TableGenBasic", "TableGenCommon"}
 
 # The directories whose CMakeLists.txt declare libraries.
 SCAN = ["lib", "utils/TableGen", "../clang/lib", "../lld/Common", "../lld/ELF"]
@@ -268,8 +270,13 @@ class Components:
             parts = sections(words[1:])
             component = (parts.get("COMPONENT_NAME") or [name[4:] if name.startswith("LLVM") else name])[0]
             group = (parts.get("ADD_TO_COMPONENT") or [None])[0]
+            links = parts.get("LINK_COMPONENTS", [])
+            # add_llvm_library (TableGen's) takes LLVM's parts from the
+            # variable too, as a tool does.
+            if call == "add_llvm_library":
+                links = links + variables.get("LLVM_LINK_COMPONENTS", [])
             library = Component(component, directory, files(directory, parts[""]),
-                                parts.get("LINK_COMPONENTS", []), parts.get("DEPENDS", []), group)
+                                links, parts.get("DEPENDS", []), group)
             # Known by its component name (Scalar) and its library's
             # name without "LLVM" (ScalarOpts): tools use both.
             self.by_name[component.lower()] = library
@@ -345,7 +352,13 @@ def tablegen_jobs(directory):
             if not os.path.isabs(definitions):
                 definitions = os.path.join(LLVM, directory, definitions)
         elif call == "tablegen" and arguments and arguments[0] == "LLVM":
-            jobs.append((definitions, arguments[1], arguments[2:]))
+            # Since 19 a job may name directories to search after
+            # EXTRA_INCLUDES (the TargetParser's, a target's).
+            flags = [a.replace("${PROJECT_SOURCE_DIR}", LLVM) for a in arguments[2:]]
+            if "EXTRA_INCLUDES" in flags:
+                at = flags.index("EXTRA_INCLUDES")
+                flags = flags[:at] + [w for d in flags[at + 1:] for w in ("-I", d)]
+            jobs.append((definitions, arguments[1], flags))
     return jobs
 
 
@@ -353,7 +366,8 @@ def clang_tablegen_jobs(directory):
     """The TableGen jobs of one of Clang's directories, as (td file,
     output, flags), for clang-tblgen. Clang writes them three ways:
     clang_tablegen(out.inc -gen-... SOURCE x.td TARGET Name), the macro
-    clang_diag_gen(Component) for each part's diagnostics, and in
+    clang_diag_gen(Component) for each part's diagnostics (read from the
+    file: since 21 it writes four files for each), and in
     lib/Headers clang_generate_header(-gen-... x.td out.h) for the
     headers made from .td files (arm_neon.h, ...). The definitions of
     the macro and the function themselves are not jobs: their output
@@ -363,16 +377,47 @@ def clang_tablegen_jobs(directory):
     def word(w):
         return w.replace("${CMAKE_CURRENT_SOURCE_DIR}", here).replace("${CLANG_SOURCE_DIR}", CLANG)
 
+    path = os.path.join(here, "CMakeLists.txt")
+    # The macros the file defines (clang_diag_gen): their parameters and
+    # the calls in their bodies, which a call of the macro runs with the
+    # parameters replaced.
+    with open(path) as f:
+        text = re.sub(r"#[^\n]*", "", f.read())
+    macros = {}
+    for m in re.finditer(r"macro\((\w+)((?:\s+\w+)*)\)(.*?)endmacro", text, re.S):
+        macros[m.group(1)] = (m.group(2).split(), m.group(3))
+
+    def calls_of(text):
+        found = []
+        for match in re.finditer(r"([A-Za-z_][A-Za-z0-9_]*)\s*\(", text):
+            depth, i = 1, match.end()
+            while depth and i < len(text):
+                depth += {"(": 1, ")": -1}.get(text[i], 0)
+                i += 1
+            found.append((match.group(1), [a.replace('"', '') for a in text[match.end():i - 1].split()]))
+        return found
+
+    calls = []
+    for call, arguments in cmake_calls(path):
+        if call in macros and call not in ("macro", "endmacro"):
+            parameters, body = macros[call]
+            for name, value in zip(parameters, arguments):
+                body = body.replace("${" + name + "}", value)
+            calls += calls_of(body)
+        else:
+            calls.append((call, arguments))
+
     jobs = []
-    for call, arguments in cmake_calls(os.path.join(here, "CMakeLists.txt")):
+    for call, arguments in calls:
         if call == "clang_tablegen" and arguments and "$" not in arguments[0]:
             output, rest = arguments[0], [word(a) for a in arguments[1:]]
             flags = rest[:rest.index("SOURCE")]
             td = rest[rest.index("SOURCE") + 1]
+            # EXTRA_INCLUDES dir...: more to search (since 19).
+            if "EXTRA_INCLUDES" in flags:
+                at = flags.index("EXTRA_INCLUDES")
+                flags = flags[:at] + [w for d in flags[at + 1:] for w in ("-I", os.path.normpath(d))]
             jobs.append((os.path.normpath(os.path.join(here, td)), output, flags))
-        elif call == "clang_diag_gen" and arguments:
-            jobs.append((os.path.join(here, "Diagnostic.td"), f"Diagnostic{arguments[0]}Kinds.inc",
-                         ["-gen-clang-diags-defs", f"-clang-component={arguments[0]}"]))
         elif call == "clang_generate_header" and len(arguments) == 3 and "$" not in arguments[2]:
             basic = os.path.join(CLANG, "include", "clang", "Basic")
             jobs.append((os.path.join(basic, arguments[1]), arguments[2], [arguments[0], "-I", basic]))
@@ -495,7 +540,7 @@ def main():
     values["LLVM_DEFAULT_TARGET_TRIPLE"] = f"{arch}-unknown-taaj"
     values["LLVM_NATIVE_ARCH"] = "X86" if arch == "x86_64" else "AArch64"
     config = os.path.join(LLVM, "include", "llvm", "Config")
-    for name in ("config.h", "llvm-config.h", "abi-breaking.h"):
+    for name in ("config.h", "llvm-config.h", "abi-breaking.h", "Targets.h"):
         configure(os.path.join(config, name + ".cmake"), os.path.join(gen, "include/llvm/Config", name), values)
     targets = ["X86", "AArch64"]
     for kind, macro, enum in (("Targets", "TARGET", "TARGETS"), ("AsmPrinters", "ASM_PRINTER", "ASM_PRINTERS"),
@@ -506,6 +551,14 @@ def main():
         configure(os.path.join(config, kind + ".def.in"), os.path.join(gen, "include/llvm/Config", kind + ".def"),
                   values)
     write_if_changed(os.path.join(gen, "include/llvm/Support/VCSRevision.h"), "#undef LLVM_REVISION\n")
+    # The instrumentor's runtime helper, a header pasted into a string
+    # (since 23: include/llvm/CMakeLists.txt reads it, configure_file
+    # puts it in).
+    ipo = os.path.join(LLVM, "include", "llvm", "Transforms", "IPO")
+    with open(os.path.join(ipo, "InstrumentorRuntimeHelper.h")) as f:
+        configure(os.path.join(ipo, "InstrumentorVariables.inc.in"),
+                  os.path.join(gen, "include/llvm/Transforms/IPO/InstrumentorVariables.inc"),
+                  {"LLVM_INSTRUMENTOR_RUNTIME_HELPER": f.read()})
     # The extensions linked into LLVM's tools (Polly, ...): none.
     write_if_changed(os.path.join(gen, "include/llvm/Support/Extension.def"),
                      "//extension handlers\n#undef HANDLE_EXTENSION\n")
@@ -557,6 +610,10 @@ def main():
                 if "CMakeLists.txt" not in names:
                     continue
                 directory = os.path.relpath(here, CLANG)
+                # CIR's (MLIR's) jobs: CMake visits them only with
+                # CLANG_ENABLE_CIR, which is off (clang-config.txt).
+                if "/CIR" in "/" + directory:
+                    continue
                 jobs = clang_tablegen_jobs(os.path.relpath(here, LLVM))
                 if jobs:
                     clang_directories.append(directory)
@@ -613,7 +670,14 @@ def main():
         path = os.path.join(LLVM, source)
         if source.endswith(".c"):
             return ["clang", *cflags, *common, *BLAKE3_FLAGS, *includes]
-        command = ["clang++", *cxxflags, *common, *includes, "-I", os.path.join(LLVM, directory)]
+        # <cctype> and <ctime> before everything: LLVM's sources use
+        # isdigit, tolower, struct tm... without including them, as on
+        # Linux they arrive through other headers (libc++'s <cwchar>,
+        # which a libc++ without wide characters has not; glibc's).
+        # Without <ctime> first, `struct tm` in MCAsmParser.h would
+        # even declare a new type, llvm::tm.
+        command = ["clang++", *cxxflags, *common, "-include", "cctype", "-include", "ctime", *includes,
+                   "-I", os.path.join(LLVM, directory)]
         # A target's files include each other from the target's top
         # ("MCTargetDesc/X86BaseInfo.h"), as CMake lets them.
         m = re.match(r"(lib/Target/\w+)", directory)
@@ -621,14 +685,19 @@ def main():
             command += ["-I", os.path.join(LLVM, m.group(1)), "-I", os.path.join(gen, m.group(1))]
         if directory.startswith("utils/TableGen"):
             command += ["-I", os.path.join(LLVM, "utils/TableGen")]
+        # Support's own (its target_include_directories): SipHash, from
+        # third-party/, and LLVM libc's shared headers, which APFloat's
+        # correctly rounded math comes from.
+        if directory == "lib/Support":
+            command += ["-I", os.path.join(THIRD_PARTY, "siphash", "include"), "-isystem", LIBC]
         if directory.startswith("../") and directory in directories:
             command += ["-I", os.path.join(gen, directory)]
-        # Who made this clang, in front of "clang version 18.1.3", as
+        # Who made this clang, in front of "clang version 23.1.5", as
         # LLVM's tools say "TheTaaJ LLVM version" (CMake's CLANG_VENDOR,
         # PACKAGE_VENDOR unless set).
         if directory.startswith("../clang"):
             command.append(f'-DCLANG_VENDOR="{values["PACKAGE_VENDOR"]} "')
-        # And lld's: "TheTaaJ LLD 18.1.3" (CMake's LLD_VENDOR).
+        # And lld's: "TheTaaJ LLD 23.1.5" (CMake's LLD_VENDOR).
         if directory.startswith("../lld"):
             command.append(f'-DLLD_VENDOR="{values["PACKAGE_VENDOR"]}"')
         return command
@@ -711,7 +780,7 @@ def main():
 
     # 3b. The headers clang brings with it (stddef.h, stdarg.h, the
     # intrinsics: lib/Headers, and those made from .td files), in
-    # OUT/lib/clang/18/include, where a clang in OUT/bin looks for them.
+    # OUT/lib/clang/23/include, where a clang in OUT/bin looks for them.
     if "clang" in tools:
         resource = os.path.join(out, "lib", "clang", read_values("clang-config.txt")["CLANG_VERSION_MAJOR"], "include")
         os.makedirs(resource, exist_ok=True)

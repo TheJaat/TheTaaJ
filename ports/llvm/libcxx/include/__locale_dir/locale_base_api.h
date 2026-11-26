@@ -122,6 +122,8 @@
 #    include <__locale_dir/support/fuchsia.h>
 #  elif _LIBCPP_LIBC_LLVM_LIBC
 #    include <__locale_dir/support/llvm_libc.h>
+#  elif defined(__TAAJ__)
+#    include <__locale_dir/support/taaj.h>
 #  elif defined(__linux__)
 #    include <__locale_dir/support/linux.h>
 #  elif _LIBCPP_LIBC_NEWLIB

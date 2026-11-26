@@ -5558,9 +5558,27 @@ void Driver::BuildJobs(Compilation &C) const {
                        /*TargetDeviceOffloadKind*/ Action::OFK_None);
   }
 
+#if defined(__TAAJ__)
+  // TheTaaJ: a C program cannot start another yet, so with more than one
+  // job (clang -c a.c b.c) every job still runs in this process, one
+  // after the other. Each frees its memory when it is done - no
+  // -disable-free, which a compiler alone in its process uses to skip the
+  // freeing at exit - or eleven compiles would hold eleven compiles'
+  // memory at the end. What they write is the same.
+  if (C.getJobs().size() > 1)
+    for (auto &J : C.getJobs()) {
+      llvm::opt::ArgStringList Arguments;
+      for (const char *Argument : J.getArguments())
+        if (StringRef(Argument) != "-disable-free")
+          Arguments.push_back(Argument);
+      J.replaceArguments(Arguments);
+    }
+  if (CCPrintProcessStats)
+#else
   // If we have more than one job, then disable integrated-cc1 for now. Do this
   // also when we need to report process execution statistics.
   if (C.getJobs().size() > 1 || CCPrintProcessStats)
+#endif
     for (auto &J : C.getJobs())
       J.InProcess = false;
 

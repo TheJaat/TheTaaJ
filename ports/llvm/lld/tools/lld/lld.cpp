@@ -66,11 +66,21 @@ static unsigned inTestVerbosity() {
   return v;
 }
 
+#if defined(__TAAJ__)
+// TheTaaJ: only the linker for ELF files, the one kind TheTaaJ has, is
+// built (ports/llvm/UPSTREAM). Asked for another flavor, lld says it
+// does not have it.
+LLD_HAS_DRIVER(elf)
+#undef LLD_ALL_DRIVERS
+#define LLD_ALL_DRIVERS                                                        \
+  { {lld::Gnu, &lld::elf::link} }
+#else
 LLD_HAS_DRIVER(coff)
 LLD_HAS_DRIVER(elf)
 LLD_HAS_DRIVER(mingw)
 LLD_HAS_DRIVER(macho)
 LLD_HAS_DRIVER(wasm)
+#endif
 
 int lld_main(int argc, char **argv, const llvm::ToolContext &) {
   sys::Process::UseANSIEscapeCodes(true);

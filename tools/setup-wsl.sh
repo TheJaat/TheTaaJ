@@ -16,10 +16,12 @@
 #   6. builds the i686 cross compiler (toolchain/i686, ~20-30 minutes)
 #   7. builds the 64-bit ISO and says what to run next
 #
-# Ubuntu 24.04 because its LLVM is 18.1.3: the LLVM, Clang and lld tests
-# check that TheTaaJ's tools write byte for byte what the host's write,
-# and the host's must be that release. Another release still builds and
-# boots; those tests then fail. `--any-release` goes on anyway.
+# Ubuntu 24.04, the release TheTaaJ is built and tested on. The LLVM,
+# Clang and lld tests check that TheTaaJ's tools write byte for byte
+# what the host's of the same release (23.1.5) write; that LLVM is not
+# Ubuntu's but built from source by tools/build-host-llvm.sh (an hour or
+# two, the first time `make llvm64` or `make test64` runs). Another
+# Ubuntu release may well work too: `--any-release` goes on anyway.
 
 set -euo pipefail
 
@@ -50,14 +52,14 @@ fi
 note "$PRETTY_NAME"
 if [ "${VERSION_ID:-}" != "$RELEASE" ]; then
     if [ "$ANY_RELEASE" = yes ]; then
-        note "not Ubuntu $RELEASE: going on, but the LLVM/Clang/lld tests will fail"
+        note "not Ubuntu $RELEASE: going on (untested)"
     else
         fail "this is Ubuntu ${VERSION_ID:-?}, not $RELEASE.
-   TheTaaJ's LLVM, Clang and lld tests compare with the host's LLVM 18.1.3,
-   which is Ubuntu $RELEASE's. Install that release next to this one, in
+   TheTaaJ is built and tested on Ubuntu $RELEASE. Install that release
+   next to this one, in
    PowerShell:   wsl --install -d Ubuntu-$RELEASE
    then run this script in it. Or run again with --any-release to set up
-   here anyway (everything but those tests works)."
+   here anyway."
     fi
 fi
 case "$(pwd)" in
@@ -72,8 +74,9 @@ PACKAGES=(
     # building
     build-essential git curl wget ca-certificates python3 pkg-config
     nasm xorriso mtools dosfstools
-    # Clang and LLVM 18: C programs, the UEFI loaders, the LLVM ports
-    clang lld llvm llvm-18 llvm-18-dev zlib1g-dev libzstd-dev
+    # Clang and LLVM: Ubuntu's, until tools/build-host-llvm.sh has built
+    # LLVM 23.1.5 (with cmake and ninja), which the Makefile then uses
+    clang lld llvm zlib1g-dev libzstd-dev cmake ninja-build
     # QEMU and its firmware, both machines
     qemu-system-x86 qemu-system-arm qemu-utils ovmf qemu-efi-aarch64
     # the tests: nc -U -N types keys into QEMU's monitor
@@ -180,13 +183,13 @@ fi
 
 ACCEL=tcg
 [ -r /dev/kvm ] && [ -w /dev/kvm ] && ACCEL=kvm
-LLVM=$(llvm-config-18 --version 2>/dev/null || echo none)
+LLVM=$("$ROOT/host-tools/llvm-23.1.5/bin/llvm-config" --version 2>/dev/null || echo "not built yet")
 
 say "Done"
 cat <<EOF
    Checkout:   $ROOT
    QEMU:       $(qemu-system-x86_64 --version | head -1) (-accel $ACCEL)
-   LLVM:       $LLVM$( [ "$LLVM" = 18.1.3 ] || echo "  (not 18.1.3: the LLVM/Clang/lld tests will fail)")
+   LLVM:       $LLVM$( [ "$LLVM" = 23.1.5 ] || echo "  (make host-llvm builds it: an hour or two)")
    Rust:       $(rustc --version)
 
    Next, in a new terminal (so PATH and the kvm group apply):

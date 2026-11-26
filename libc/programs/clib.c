@@ -302,6 +302,19 @@ static void for_cxx(void)
 
     check(strcmp(setlocale(LC_ALL, ""), "C") == 0 && setlocale(LC_ALL, "fr_FR") == NULL, "setlocale");
     check(strcmp(localeconv()->decimal_point, ".") == 0 && strcoll("a", "b") < 0, "localeconv and strcoll");
+    /* Locale objects (entry 104): one for "C", "POSIX" and "", none
+     * for another name; a thread's own locale and back. */
+    locale_t c = newlocale(LC_ALL_MASK, "C", 0), user = newlocale(LC_NUMERIC_MASK, "", 0);
+    check(c != 0 && user != 0 && newlocale(LC_ALL_MASK, "POSIX", c) != 0, "newlocale of C, POSIX and \"\"");
+    errno = 0;
+    check(newlocale(LC_ALL_MASK, "fr_FR", 0) == 0 && errno == ENOENT, "newlocale of a locale there is not: ENOENT");
+    errno = 0;
+    check(newlocale(1 << 20, "C", 0) == 0 && errno == EINVAL, "newlocale with a mask of no part: EINVAL");
+    check(uselocale(0) == LC_GLOBAL_LOCALE && uselocale(c) == LC_GLOBAL_LOCALE && uselocale(0) == c
+              && uselocale(LC_GLOBAL_LOCALE) == c && uselocale(0) == LC_GLOBAL_LOCALE,
+          "uselocale: a thread's locale and back to the program's");
+    freelocale(user);
+    freelocale(c);
 }
 
 static int caught;

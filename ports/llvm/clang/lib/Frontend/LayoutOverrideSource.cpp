@@ -11,7 +11,12 @@
 #include "clang/AST/Type.h"
 #include "clang/Basic/CharInfo.h"
 #include "llvm/Support/raw_ostream.h"
+#if (defined(_LIBCPP_VERSION) && !_LIBCPP_HAS_FILESYSTEM)
+#include "llvm/Support/MemoryBuffer.h"
+#include <sstream>
+#else
 #include <fstream>
+#endif
 #include <string>
 
 using namespace clang;
@@ -41,9 +46,19 @@ static bool parseUnsigned(StringRef &S, unsigned long long &ULL) {
 }
 
 LayoutOverrideSource::LayoutOverrideSource(StringRef Filename) {
+#if (defined(_LIBCPP_VERSION) && !_LIBCPP_HAS_FILESYSTEM)
+  // TheTaaJ: a C++ library without <fstream> (libc++ built with
+  // _LIBCPP_HAS_FILESYSTEM 0). The file is read whole, and its lines
+  // taken from a string stream instead.
+  auto Buffer = llvm::MemoryBuffer::getFile(Filename);
+  if (!Buffer)
+    return;
+  std::istringstream Input((*Buffer)->getBuffer().str());
+#else
   std::ifstream Input(Filename.str().c_str());
   if (!Input.is_open())
     return;
+#endif
 
   // Parse the output of -fdump-record-layouts.
   std::string CurrentType;

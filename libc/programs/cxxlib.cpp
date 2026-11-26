@@ -31,6 +31,7 @@
 #include <iomanip>
 #include <iostream>
 #include <list>
+#include <locale>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -400,6 +401,29 @@ static void streams()
     check(count == 3, "getline");
 }
 
+// Locales by name (libc's newlocale since entry 104): TheTaaJ has one,
+// "C", also called "POSIX" and "" (the user's), and no other.
+static void locales()
+{
+    std::locale c("C"), posix("POSIX"), user("");
+    check(c.name() == "C" && posix.name() == "POSIX", "std::locale made by name");
+    check(std::use_facet<std::numpunct<char>>(user).decimal_point() == '.', "the user's locale writes a point");
+    const char a[] = "a", b[] = "b";
+    check(std::use_facet<std::collate<char>>(c).compare(a, a + 1, b, b + 1) < 0,
+          "a locale's collate orders letters by their codes");
+    bool refused = false;
+    try {
+        std::locale german("de_DE.UTF-8");
+    } catch (const std::runtime_error &) {
+        refused = true;
+    }
+    check(refused, "a locale there is not throws runtime_error");
+    std::ostringstream out;
+    out.imbue(c);
+    out << 1234567.5;
+    check(out.str() == "1.23457e+06", "a stream imbued with \"C\" writes as before");
+}
+
 static void the_rest()
 {
     std::optional<int> maybe;
@@ -447,9 +471,9 @@ static void threads()
     recursive.unlock();
     recursive.unlock();
 
-    // Its first use makes it, from its starting value (-femulated-tls:
-    // __emutls_get_address, libc/src/threads.rs), and it then keeps
-    // what is put in it.
+    // ELF thread-local storage, as in C (entry 104; before it
+    // -femulated-tls): each thread's copy is beside its thread pointer,
+    // made from the program's TLS image, and keeps what is put in it.
     per_thread += 1;
     check(per_thread == 8, "a thread_local variable");
 
@@ -540,6 +564,7 @@ int main(int argc, char **argv)
     strings();
     containers();
     streams();
+    locales();
     the_rest();
     threads();
     std::cout << "c++: " << checks << " checks, " << (failures ? "some FAILED" : "all passed") << std::endl;

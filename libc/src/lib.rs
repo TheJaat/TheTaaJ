@@ -131,7 +131,7 @@ static EXECUTABLE: core::sync::atomic::AtomicPtr<c_char> = core::sync::atomic::A
 /// The program's own file - "/clang" - or null: what a program on Linux
 /// learns from /proc/self/exe. LLVM's sys::fs::getMainExecutable asks
 /// (ports/llvm/llvm/lib/Support/Unix/Path.inc), and with it clang finds
-/// the headers it brings (/lib/clang/18/include beside /clang). Not part
+/// the headers it brings (/lib/clang/23/include beside /clang). Not part
 /// of any standard: declared where it is used.
 #[no_mangle]
 pub extern "C" fn __taaj_executable() -> *const c_char {

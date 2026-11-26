@@ -340,6 +340,15 @@ pub extern "C" fn getsid(process: c_int) -> c_int {
     }
 }
 
+/// `setsid()`: makes the caller a session of its own, with no
+/// controlling terminal. On TheTaaJ every process already is one (see
+/// getsid) and no terminal is anyone's, so there is nothing to change:
+/// its number, as a new session's would be.
+#[no_mangle]
+pub extern "C" fn setsid() -> c_int {
+    getpid()
+}
+
 /// `gethostname(name, size)`: the machine's name, which is "taaj" -
 /// there is no way to name it anything else yet. 0; or -1 with
 /// ENAMETOOLONG if it does not fit with its zero.

@@ -7,7 +7,7 @@
 #   /llvm-mc
 #   /clang
 #   /ld.lld                            lld (it picks the linker by name)
-#   /lib/clang/18/include/...          the headers clang brings with it
+#   /lib/clang/23/include/...          the headers clang brings with it
 #                                      (all but the few whose names are
 #                                      longer than TaajFS takes)
 #   /include/...                       the C library's headers
@@ -85,10 +85,10 @@ put_tree() { # put_tree FROM TO
         [ "$(basename "$f" | wc -c)" -gt 65 ] || put "$2/$f" "$1/$f"
     done
 }
-for d in lib lib/clang lib/clang/18 lib/clang/18/include include libc libc/programs tmp; do
+for d in lib lib/clang lib/clang/23 lib/clang/23/include include libc libc/programs tmp; do
     directory $d
 done
-put_tree "$BIN_DIR/../lib/clang/18/include" lib/clang/18/include
+put_tree "$BIN_DIR/../lib/clang/23/include" lib/clang/23/include
 put_tree "$ROOT/libc/include" include
 for f in "$ROOT"/libc/programs/*.c; do
     put "libc/programs/$(basename "$f")" "$f"

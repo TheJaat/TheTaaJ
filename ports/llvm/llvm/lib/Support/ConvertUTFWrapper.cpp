@@ -239,6 +239,7 @@ static_assert(sizeof(wchar_t) == 1 || sizeof(wchar_t) == 2 ||
                   sizeof(wchar_t) == 4,
               "Expected wchar_t to be 1, 2, or 4 bytes");
 
+#if !(defined(_LIBCPP_VERSION) && !_LIBCPP_HAS_WIDE_CHARACTERS) // TheTaaJ: see ConvertUTF.h
 template <typename TResult>
 static inline bool ConvertUTF8toWideInternal(llvm::StringRef Source,
                                              TResult &Result) {
@@ -303,6 +304,7 @@ bool convertWideToUTF8(std::wstring_view Source, std::string &Result) {
         "Control should never reach this point; see static_assert further up");
   }
 }
+#endif
 
 bool IsSingleCodeUnitUTF8Codepoint(unsigned V) { return V <= 0x7F; }
 

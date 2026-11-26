@@ -4,18 +4,20 @@
 # NAME=VALUE; a name not here, or with nothing after the =, is "no" (or
 # the empty string, for a #define with quotes around it).
 
-CLANG_VERSION=18.1.3
-CLANG_VERSION_MAJOR=18
+CLANG_VERSION=23.1.5
+CLANG_VERSION_MAJOR=23
 CLANG_VERSION_MINOR=1
-CLANG_VERSION_PATCHLEVEL=3
+CLANG_VERSION_PATCHLEVEL=5
+# The newest -fclang-abi-compat= there is: this release.
+MAX_CLANG_ABI_COMPAT_VERSION=23
 BUG_REPORT_URL=https://github.com/llvm/llvm-project/issues/
 
 # Where clang finds its own headers (stddef.h, stdarg.h, ...), from the
-# directory clang is in. Unset, it is ../lib/clang/18, for a clang in
+# directory clang is in. Unset, it is ../lib/clang/23, for a clang in
 # bin/. On TheTaaJ clang is /clang - commands are the files in the root
-# - and the root has nothing above it, so: lib/clang/18, which makes
-# /lib/clang/18/include.
-CLANG_RESOURCE_DIR=lib/clang/18
+# - and the root has nothing above it, so: lib/clang/23, which makes
+# /lib/clang/23/include.
+CLANG_RESOURCE_DIR=lib/clang/23
 CLANG_INSTALL_LIBDIR_BASENAME=lib
 
 # No compiler-wide defaults: no system include directories, no
@@ -32,9 +34,10 @@ GCC_INSTALL_PREFIX=
 # not as a second program: TheTaaJ's C library cannot start one.
 CLANG_SPAWN_CC1=0
 
-# Not built: the static analyser, the ARC migrator, the Objective-C
-# rewriter (see ports/llvm/UPSTREAM).
-CLANG_ENABLE_ARCMT=0
+# Not built: the static analyser, CIR, the Objective-C rewriter (see
+# ports/llvm/UPSTREAM). The constant interpreter is the usual one.
+CLANG_ENABLE_CIR=0
+CLANG_USE_EXPERIMENTAL_CONST_INTERP=0
 CLANG_ENABLE_OBJC_REWRITER=0
 CLANG_ENABLE_STATIC_ANALYZER=0
 

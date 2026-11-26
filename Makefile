@@ -7,7 +7,7 @@ KERNEL_DIR = kernel
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
         pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test times64-test aarch64-times-test pages64-test aarch64-pages-test zlib64 zlib-aarch64 \
-        llvm64 llvm-aarch64 clang-tblgen llvm64-test clang64-test aarch64-clang-test aarch64-llvm-test llvm-put llvm-put-aarch64
+        llvm64 llvm-aarch64 host-llvm llvm64-test clang64-test aarch64-clang-test aarch64-llvm-test llvm-put llvm-put-aarch64
 
 # Default target
 all: $(BUILD_DIR) build-bootloader build-kernel iso disk tfsdisk
@@ -170,6 +170,16 @@ KERNEL64_DIR = kernel/kernel64
 # only in shells started after the install. Prepend it here so the build
 # works from any shell; `export` passes it on to scripts and sub-makes.
 export PATH := $(HOME)/.cargo/bin:$(PATH)
+# The host's own LLVM, the release TheTaaJ's port is (journal entry
+# 104): clang, ld.lld, llvm-ar, the tblgens, llc and llvm-mc, from
+# tools/build-host-llvm.sh. First on PATH, so everything C and C++ is
+# built by it; libc++ 23's headers need a clang of 21 or later, and the
+# byte-for-byte checks the same release on both sides.
+HOST_LLVM_VERSION = 23.1.5
+HOST_LLVM := $(CURDIR)/host-tools/llvm-$(HOST_LLVM_VERSION)
+ifneq ($(wildcard $(HOST_LLVM)/bin/clang),)
+export PATH := $(HOST_LLVM)/bin:$(PATH)
+endif
 KERNEL64_ELF = $(KERNEL64_DIR)/target/x86_64-unknown-none/release/kernel64
 ISO64_DIR    = $(BUILD_DIR)/iso64
 ISO64_IMG    = $(BUILD_DIR)/image64.iso
@@ -208,7 +218,7 @@ CWORDS_HOST  = $(C_BIN)/host-cwords
 CPRIMES_HOST = $(C_BIN)/host-cprimes
 CPRIMES_LIMIT = 24000000
 LIBC_A       = $(C_BIN)/libc.a
-LIBC_C       = format stdio fcntl ctype stdlib inet float setjmp time abort fp128 math scan locale atexit signal mmap users unix \
+LIBC_C       = format stdio fcntl ctype stdlib inet float setjmp time abort fp128 math scan locale fenv atexit signal mmap users unix \
                $(addprefix libm/,$(LIBM))
 # libc/c/libm: musl's sin, exp, log, pow and the rest (journal entry 074),
 # and floats.c, TheTaaJ's float versions of them. Each its own file, as
@@ -1767,11 +1777,12 @@ CXX_SOURCES  := $(shell find ports/llvm/libcxx ports/llvm/libcxxabi ports/llvm/l
                 ports/llvm/taaj/__config_site tools/build-cxx.sh
 # Not freestanding, as the C programs are: C++'s library is the hosted
 # one. __TAAJ__ says which system it is for (libc++'s locale choice, its
-# clock), as tcc on TheTaaJ says it of itself.
+# clock), as tcc on TheTaaJ says it of itself. thread_local is ELF
+# thread-local storage, as in C (entry 104; -femulated-tls before).
 TAAJ_CXX_BASE     = --target=x86_64-unknown-none-elf -std=c++20 -O2 -fno-stack-protector -fno-pic -mno-red-zone \
-                    -nostdlibinc -D__TAAJ__ -femulated-tls -ffunction-sections -fdata-sections
+                    -nostdlibinc -D__TAAJ__ -ffunction-sections -fdata-sections
 TAAJ_A64_CXX_BASE = --target=aarch64-unknown-none-elf -std=c++20 -O2 -fno-stack-protector -fno-pic \
-                    -nostdlibinc -D__TAAJ__ -femulated-tls -ffunction-sections -fdata-sections
+                    -nostdlibinc -D__TAAJ__ -ffunction-sections -fdata-sections
 # C++'s headers first: libc++'s <stdlib.h> wraps the C library's.
 TAAJ_CXXFLAGS     = $(TAAJ_CXX_BASE) -Wall -Wextra -Werror -nostdinc++ -isystem $(CXX_X86_DIR)/include/c++/v1 \
                     -isystem $(CXX_X86_DIR)/include -isystem $(LIBC_DIR)/include
@@ -1837,7 +1848,8 @@ endif
 # compiled for TheTaaJ by tools/build-llvm.py, which does what LLVM's
 # CMake build would for this configuration: the configured headers
 # (values in ports/llvm/taaj/llvm-config.txt), TableGen with the host's
-# llvm-tblgen of the same release, the libraries and the tools. Only
+# llvm-tblgen and clang-tblgen of the same release (tools/build-host-
+# llvm.sh), the libraries and the tools. Only
 # what changed is built again; the first build compiles some 230 files.
 #
 # C++17, LLVM's own standard; without exceptions or RTTI, as LLVM is
@@ -1845,11 +1857,8 @@ endif
 LLVM_X86_DIR  = $(BUILD_DIR)/llvm/x86_64
 LLVM_A64_DIR  = $(BUILD_DIR)/llvm/aarch64
 LLVM_TOOLS    = llvm-tblgen llvm-mc llc clang lld
-# Clang's tables are written by clang-tblgen, which Ubuntu does not
-# package: it is built for the host from ports/llvm/clang
-# (tools/build-clang-tblgen.sh), against the host's LLVM 18.1.3.
-CLANG_TBLGEN  = $(BUILD_DIR)/clang-tblgen/clang-tblgen
-LLVM_TBLGEN  := $(shell command -v llvm-tblgen || ls /usr/bin/llvm-tblgen-* /usr/lib/llvm-*/bin/llvm-tblgen 2>/dev/null | sort -V | tail -1)
+CLANG_TBLGEN  = $(HOST_LLVM)/bin/clang-tblgen
+LLVM_TBLGEN   = $(HOST_LLVM)/bin/llvm-tblgen
 LLVM64_LOG    = $(BUILD_DIR)/llvm64.log
 LLVM_A64_LOG  = $(BUILD_DIR)/aarch64/llvm.log
 TAAJ_LLVM_CXXFLAGS     = $(TAAJ_CXX_BASE) -std=c++17 -fno-rtti -fno-exceptions -w -nostdinc++ \
@@ -1861,12 +1870,12 @@ TAAJ_LLVM_CFLAGS       = --target=x86_64-unknown-none-elf -std=c11 -O2 -fno-stac
 TAAJ_A64_LLVM_CFLAGS   = --target=aarch64-unknown-none-elf -std=c11 -O2 -fno-stack-protector -fno-pic \
                          -nostdlibinc -isystem $(LIBC_DIR)/include -w
 
-clang-tblgen:
-	@sh tools/build-clang-tblgen.sh $(dir $(CLANG_TBLGEN))
+# The host's LLVM, if it is not built yet (an hour or two, once).
+host-llvm:
+	@sh tools/build-host-llvm.sh
 
-llvm64: cxx64 clang-tblgen
+llvm64: cxx64 host-llvm
 ifeq ($(HAVE_CC),yes)
-	@[ -n "$(LLVM_TBLGEN)" ] || { echo "llvm-tblgen not found (sudo apt install llvm-18)"; exit 1; }
 	@LLVM_TBLGEN=$(LLVM_TBLGEN) CLANG_TBLGEN=$(abspath $(CLANG_TBLGEN)) LLVM_AR=$(LLVM_AR) \
 	    TAAJ_LLVM_LINK="ld.lld $(TAAJ_CXX_LDFLAGS) {objects} $(CXX_X86_DIR)/libc++.a $(LIBC_A) -o {output}" \
 	    python3 tools/build-llvm.py x86_64 $(LLVM_X86_DIR) "$(TAAJ_LLVM_CXXFLAGS)" "$(TAAJ_LLVM_CFLAGS)" $(LLVM_TOOLS)
@@ -1874,9 +1883,8 @@ else
 	@echo "Clang or lld not found: no LLVM (sudo apt install clang lld)"
 endif
 
-llvm-aarch64: cxx-aarch64 clang-tblgen
+llvm-aarch64: cxx-aarch64 host-llvm
 ifeq ($(HAVE_CC),yes)
-	@[ -n "$(LLVM_TBLGEN)" ] || { echo "llvm-tblgen not found (sudo apt install llvm-18)"; exit 1; }
 	@LLVM_TBLGEN=$(LLVM_TBLGEN) CLANG_TBLGEN=$(abspath $(CLANG_TBLGEN)) LLVM_AR=$(LLVM_AR) \
 	    TAAJ_LLVM_LINK="ld.lld $(TAAJ_A64_CXX_LDFLAGS) {objects} $(CXX_A64_DIR)/libc++.a $(C_A64_BIN)/libc.a -o {output}" \
 	    python3 tools/build-llvm.py aarch64 $(LLVM_A64_DIR) "$(TAAJ_A64_LLVM_CXXFLAGS)" "$(TAAJ_A64_LLVM_CFLAGS)" $(LLVM_TOOLS)

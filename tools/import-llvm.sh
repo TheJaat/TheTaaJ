@@ -42,25 +42,31 @@ copy libunwind/include libunwind/src libunwind/LICENSE.TXT
 copy libc/shared libc/hdr libc/include/llvm-libc-macros libc/include/llvm-libc-types libc/src/__support libc/LICENSE.TXT
 rm -f "$PORT/libc/src/__support/ryu_long_double_constants.h"
 
+# SipHash, the hash LLVM's Support uses for pointer authentication,
+# from third-party/ (one header).
+copy third-party/siphash
+
 # LLVM: every library, but of the targets only X86 and AArch64 (and the
-# files common to all), and RISC-V's .td files - the TargetParser is
-# written from RISCV.td whatever the targets.
+# files common to all), and the .td files of ARM, PowerPC and RISC-V -
+# the TargetParser is written from ARM.td, PPC.td and RISCV.td whatever
+# the targets.
 copy llvm/include llvm/lib llvm/tools/llc llvm/tools/llvm-mc llvm/utils/TableGen llvm/LICENSE.TXT
 for target in "$PORT"/llvm/lib/Target/*/; do
     case $(basename "$target") in
     X86 | AArch64) ;;
-    RISCV) find "$target" -type f ! -name '*.td' -delete ;;
+    ARM | PowerPC | RISCV) find "$target" -type f ! -name '*.td' -delete ;;
     *) rm -rf "$target" ;;
     esac
 done
-find "$PORT/llvm/lib/Target/RISCV" -type d -empty -delete
+find "$PORT/llvm/lib/Target/ARM" "$PORT/llvm/lib/Target/PowerPC" "$PORT/llvm/lib/Target/RISCV" -type d -empty -delete
 
 # Clang: the libraries the clang program is made of - not the static
-# analyser, the interpreter, CIR, the dependency scanner, the install
-# API, the other tools' libraries; of Tooling only Core and Inclusions.
+# analyser, the interpreter, CIR, the directory watcher, the other
+# tools' libraries; of Tooling only Core and Inclusions. (Since 23 the
+# driver needs the dependency scanner, and the front end the scalable
+# static analysis and what it is built on: they stay.)
 copy clang/CMakeLists.txt clang/include clang/lib clang/tools/driver clang/utils/TableGen clang/LICENSE.TXT
-for library in CIR CrossTU DependencyScanning DirectoryWatcher IndexSerialization InstallAPI Interpreter \
-    ScalableStaticAnalysis StaticAnalyzer Testing UnifiedSymbolResolution; do
+for library in CIR CrossTU DirectoryWatcher IndexSerialization Interpreter StaticAnalyzer Testing; do
     rm -rf "$PORT/clang/lib/$library"
 done
 for tool in "$PORT"/clang/lib/Tooling/*; do
