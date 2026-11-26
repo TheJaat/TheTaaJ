@@ -918,6 +918,8 @@ All of it stays out of the kernel but the random generator (there already) and s
 | U4 | Be at the real PC for K1 (R7) | |
 | U5 | Era 8, the AI engine: agree its plan (`docs/ai-assistant.md`) before any work | Then it splits: the engine (SIMD, tensors, GGUF) suits TheJat-VM's long runs; testing speed on the real CPU suits MaK-WSL |
 | U6 | Raspberry Pi and RISC-V: only if you want them | |
+| U7 | **J51: the kernel's program self-tests, at every boot or only in tests?** The test programs (about 300 KiB of the image's ~580 KiB left under 3 MiB) are there for `selftest::user`, `ipc`, `files` and `kill`, which check at every boot, before anything else runs, that no frame and no channel leaks. On the test disk they would run as a user program in the tests only, in a live system (other services allocate too), and that program needs a new `with system` grant to read `SYSTEM_INFO`. Or leave it to K130 (the `boot` lane), which ends the 3 MiB wall | Asked by TheJat-WSL/ci (entry 117's lane); `ci` goes on with its second wave meanwhile |
+| U8 | **J92 needs a container on TheJat-WSL**: either `sudo apt install uidmap` (then `tools/clean-build.sh` can make a rootless Ubuntu 24.04 container with `unshare`, no Docker), or Docker Desktop's WSL integration switched on for this distro | Asked by TheJat-WSL/ci; J93 (our CI) waits for J92 |
 
 ## Later eras
 
