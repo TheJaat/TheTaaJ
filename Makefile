@@ -6,7 +6,7 @@ KERNEL_DIR = kernel
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
-        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test zlib64 zlib-aarch64 \
+        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test times64-test aarch64-times-test zlib64 zlib-aarch64 \
         llvm64 llvm-aarch64 clang-tblgen llvm64-test clang64-test aarch64-clang-test aarch64-llvm-test llvm-put llvm-put-aarch64
 
 # Default target
@@ -288,7 +288,7 @@ TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
                c p spc w e l c o m e spc d o c s ret c p spc l o n g spc d o c s slash l o n g 2 ret \
                m v spc d o c s slash d e e p spc t o o l s ret c a t spc t o o l s slash d e e p slash n o t e ret \
                m v spc t o o l s slash d e e p spc d o c s slash d e e p ret \
-               m v spc d o c s spc d o c s ret m v spc r o o t e d spc w e l c o m e ret m v spc n o n e spc x ret \
+               m v spc d o c s spc d o c s ret m v spc d o c s spc r o o t e d ret m v spc n o n e spc x ret \
                c p spc d o c s spc x ret c p spc r o o t e d spc w e l c o m e ret m v spc o n e ret \
                w i t h spc r e a d o n l y spc m v spc r o o t e d spc x ret \
                c d spc d o c s ret m v spc h o u s e spc dot dot slash c o t t a g e ret c d ret \
@@ -369,7 +369,7 @@ EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(409
 EXPECT_RUN   = \[init\] started primes for the shell, from a file;^primes below 50: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47;^primes exited with code 0;^error: welcome is not a program;^error: broken is not a program;^error: no such program;\[init\] started ls for the shell, from a file;^cat exited with code 0;^rm: notes: no such file;^rm: saved2: no such file;^rm exited with code 1;^usage: write FILE TEXT;^write exited with code 2;$(EXPECT_GIVEN);$(EXPECT_WATCH);$(EXPECT_KILL)
 EXPECT_DIRS  = ^ +23  readme;^1 file, 23 bytes;^Read me, from the host;^docs/deep/note: 7 bytes;^docs:;^ +dir  deep/;^1 directory, 1 file, 23 bytes;^docs/deep:;^ +7  note;^rm: docs: the directory is not empty;^mkdir: docs: there is already something with that name;^cat: docs: is a directory;^write: welcome/x: not a directory;^ls: work: no such file or directory;\[init\] started tools/given for the shell, from a file;^mkdir: x: the files are read-only here
 EXPECT_CD    = ^/\s*$$;^/docs\s*$$;^here: 7 bytes;^1 directory, 2 files, 30 bytes;^/docs/deep\s*$$;^inside\s*$$;^/docs/here: 12 bytes;\[init\] started \./given for the shell, from a file;^given: started in /tools;^cd: /welcome: not a directory;^cd: nowhere: no such file or directory;^usage: cd \[DIR\];^ls: \.: no such file or directory;^rooted: 4 bytes;^home: 4 bytes
-EXPECT_MOVE  = ^yes\s*$$;^ +4  docs/house;^docs/welcome: 20 bytes;^docs/long2: [0-9]+ bytes;^nested\s*$$;^mv: docs to docs/docs: a directory cannot be moved into itself;^mv: rooted to welcome: there is already something with that name;^mv: none to x: no such file or directory;^cp: docs: is a directory;^cp: welcome: there is already something with that name;^usage: mv FROM TO;^mv: rooted to x: the files are read-only here
+EXPECT_MOVE  = ^yes\s*$$;^ +4  docs/house;^docs/welcome: 20 bytes;^docs/long2: [0-9]+ bytes;^nested\s*$$;^mv: docs to docs/docs: a directory cannot be moved into itself;^mv: docs to rooted: not a directory;^mv: none to x: no such file or directory;^cp: docs: is a directory;^cp: welcome: there is already something with that name;^usage: mv FROM TO;^mv: rooted to x: the files are read-only here
 EXPECT_QUOTE = ^quoted: 11 bytes;^plain: 10 bytes;^my docs/a file: 2 bytes;^/my docs\s*$$;^ +2  a file;^given: arguments .a b. .c. ..\s*$$;^ab cd\s*$$;^the line has a . that is never closed;^the line ends in a . with nothing after it
 EXPECT_REDIR = ^first\s*$$;^second\s*$$;^6 lines, [0-9]+ words, [0-9]+ bytes;^long: 300 lines, 1200 words, 4692 bytes;^300 lines, 1200 words, 4692 bytes;^a > b\s*$$;^none: no such file or directory;^docs: is a directory;^there is a > with no file name after it;^unknown command: nosuch
 EXPECT_GIVEN = ^given: the screen, no files;^given: arguments .a. .b.\s*$$;^given: the screen, and the files \([0-9]+ of them\), to read and to change;^given: the screen, and the files \([0-9]+ of them\), to read only;^usage: with files COMMAND, with readonly COMMAND;^write: saved: the files are read-only here;^rm: saved: the files are read-only here;\[fs\] asked to stall;^fs: the file service will answer nothing for 6 s;\[init\] fs has not answered for 4 s - stopping it;\[process\] [0-9]+ .fs. stopped: killed by request;\[init\] fs ended with code -1001 - restarting it
@@ -1682,6 +1682,32 @@ else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 ground2 boot is not run"
 endif
 
+# TaajFS version 6 (The-Jat's step D, journal entry 101): file times,
+# a volume and a file over 256 MiB, a rename that replaces, programs in
+# /bin. times.c checks them in one boot on a 320 MiB disk; the host's
+# tool then reads what TheTaaJ wrote and writes a file of its own.
+TIMES_LOG     = $(BUILD_DIR)/times-64.log
+TIMES_A64_LOG = $(BUILD_DIR)/aarch64/times.log
+TIMES_C       = $(KERNEL64_DIR)/scripts/times.c
+times64-test: iso64 user64 libc64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@clang $(TAAJ_CFLAGS) -c $(TIMES_C) -o $(C_BIN)/times.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/times.o $(LIBC_A) -o $(C_BIN)/times
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/times-test.sh x86_64 $(ISO64_IMG) $(TIMES_LOG).disk $(TIMES_LOG) $(C_BIN)/times $(USER_BIN)/ls
+	@echo "times64-test passed"
+else
+	@echo "FAIL: the times test needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+
+aarch64-times-test: kernel-aarch64 user-aarch64 tfstool-rs
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@clang $(TAAJ_A64_CFLAGS) -c $(TIMES_C) -o $(C_A64_BIN)/times.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/times.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/times
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/times-test.sh aarch64 $(KERNEL_A64_IMAGE) $(TIMES_A64_LOG).disk $(TIMES_A64_LOG) $(C_A64_BIN)/times user/target/$(KERNEL_A64_TARGET)/release/ls
+	@echo "aarch64-times-test passed"
+else
+	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 times boot is not run"
+endif
+
 aarch64-tcc-test: kernel-aarch64 user-aarch64 tcc-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
@@ -1913,7 +1939,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 12
-TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test
+TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test times64-test aarch64-times-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared

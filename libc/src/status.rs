@@ -68,16 +68,28 @@ pub fn inode(path: &str) -> u64 {
 /// and never less than 1 - `make` takes 0 to mean there is no file. A
 /// file not changed since stamping began (stamp 0) is 1, older than any
 /// stamped one: a commit's stamp is at least 2 (sys/stat.h).
-fn time_of(stamp: u64) -> Time {
+///
+/// A file with a time of its own (TaajFS version 6: nanoseconds since
+/// 1970, from the clock of whoever wrote it) is told that instead: a
+/// real date, for `ls -l` and for people. The two kinds order rightly
+/// against each other: every file with a time was written after every
+/// file with only a stamp (seconds since 1970 that small are before
+/// any clock TheTaaJ has read), and the volume never gives a newer
+/// change an older time.
+fn time_of(stamp: u64, time: u64) -> Time {
+    if time != 0 {
+        let seconds = c_long::try_from(time / 1_000_000_000).unwrap_or(c_long::MAX);
+        return Time { seconds, nanoseconds: (time % 1_000_000_000) as c_long };
+    }
     Time { seconds: c_long::try_from(stamp.max(1)).unwrap_or(c_long::MAX), nanoseconds: 0 }
 }
 
-fn describe(path: &str, kind: Kind, size: u64, stamp: u64) -> Stat {
+fn describe(path: &str, kind: Kind, size: u64, stamp: u64, time: u64) -> Stat {
     let size = i64::try_from(size).unwrap_or(i64::MAX);
     Stat {
-        st_atim: time_of(stamp),
-        st_mtim: time_of(stamp),
-        st_ctim: time_of(stamp),
+        st_atim: time_of(stamp, time),
+        st_mtim: time_of(stamp, time),
+        st_ctim: time_of(stamp, time),
         st_dev: 1,
         st_ino: inode(path),
         st_nlink: 1,
@@ -106,8 +118,8 @@ pub unsafe extern "C" fn stat(path: *const c_char, out: *mut Stat) -> c_int {
     };
     let found = with(|state| {
         let files = state.files().ok_or(EACCES)?;
-        let (kind, size, stamp) = files.stat_stamped(name).map_err(reason)?;
-        Ok(describe(&format!("/{}", files.resolve(name)), kind, size, stamp))
+        let (kind, size, stamp, time) = files.stat_timed(name).map_err(reason)?;
+        Ok(describe(&format!("/{}", files.resolve(name)), kind, size, stamp, time))
     });
     match found {
         Ok(status) => {
@@ -156,8 +168,8 @@ pub unsafe extern "C" fn fstat(fd: c_int, out: *mut Stat) -> c_int {
             None => return Err(EBADF),
         };
         let files = state.files().ok_or(EBADF)?;
-        let (kind, size, stamp) = files.stat_stamped(&path).map_err(reason)?;
-        Ok(describe(&path, kind, size, stamp))
+        let (kind, size, stamp, time) = files.stat_timed(&path).map_err(reason)?;
+        Ok(describe(&path, kind, size, stamp, time))
     });
     match found {
         Ok(status) => {

@@ -3754,3 +3754,43 @@ make test64
 | `test64: all passed` | every part, the new two included |
 
 Automated: make ground2-64-test, make aarch64-ground2-test, make test64
+
+---
+
+## 101 · TaajFS version 6: file times, volumes and files over 256 MiB, a rename that replaces, and programs found in /bin
+
+[The entry](journal/101-taajfs-6.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`.
+
+| Type | You should see |
+|---|---|
+| `write t one` then `ls -l` | `t` with its size and today's date and time (UTC) |
+| `write u two` then `ls -l` | `u` a little later than `t` |
+| `mv u t` then `ls` | only `t`: the rename replaced it; `cat t` says `two` |
+| `mkdir d` then `mv d t` | `mv: d to t: not a directory`: a directory does not replace a file |
+| `mv t d` then `ls d` | `t` went into `d` (a directory as TO means "into it", as before) |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make times64-test
+make aarch64-times-test
+make test64
+```

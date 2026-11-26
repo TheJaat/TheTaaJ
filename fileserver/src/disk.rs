@@ -70,15 +70,22 @@ impl<D: BlockDevice> DiskStore<D> {
     /// Mounts the volume on `device`. The error says why not - most
     /// often, that there is no TaajFS volume there.
     ///
-    /// The volume is made one whose files carry change stamps (version
-    /// 4, `Volume::allow_stamps`), so that `make` can tell what changed
-    /// last. If that cannot be written the volume is used as it is: the
+    /// The volume is made one whose files carry change stamps and
+    /// times (version 6, `Volume::allow_times`; stamps came with
+    /// version 4), so that `make` can tell what changed last and `ls -l`
+    /// when. If that cannot be written the volume is used as it is: the
     /// disk is then refusing writes anyway, and a cut partway leaves it
     /// as safe to use as before (see `raise_version`).
     pub fn mount(device: D) -> Result<DiskStore<D>, Error> {
         let mut volume = Volume::mount(device)?;
-        let _ = volume.allow_stamps();
+        let _ = volume.allow_times();
         Ok(DiskStore { volume })
+    }
+
+    /// Where the times of files written from now on come from:
+    /// nanoseconds since 1970 (the machine's clock, on TheTaaJ).
+    pub fn set_clock(&mut self, clock: fn() -> u64) {
+        self.volume.set_clock(clock);
     }
 
     pub fn free_blocks(&self) -> u32 {
@@ -132,6 +139,11 @@ impl<D: BlockDevice> Store for DiskStore<D> {
     fn stamp(&mut self, path: &str) -> Result<u64, Status> {
         let file = self.volume.lookup(check_directory(path)?).map_err(status)?;
         self.volume.stamp(&file).map_err(status)
+    }
+
+    fn time(&mut self, path: &str) -> Result<u64, Status> {
+        let file = self.volume.lookup(check_directory(path)?).map_err(status)?;
+        self.volume.time(&file).map_err(status)
     }
 
     fn touch(&mut self, name: &str) -> Result<(), Status> {
@@ -190,7 +202,8 @@ impl<D: BlockDevice> Store for DiskStore<D> {
     }
 
     fn rename(&mut self, from: &str, to: &str) -> Result<(), Status> {
-        // TaajFS does it in one commit: see Volume::rename.
+        // TaajFS does it in one commit, replacing what was there if
+        // POSIX allows it: see Volume::rename.
         self.volume.rename(check(from)?, check(to)?).map_err(status)
     }
 }
@@ -298,11 +311,40 @@ mod tests {
     }
 
     #[test]
+    fn a_rename_replaces_a_file_on_a_disk() {
+        let mut s = fresh();
+        s.write("new", 0, b"the new one").unwrap();
+        s.write("old", 0, &[7; 9000]).unwrap();
+        let free = s.free_blocks();
+        s.rename("new", "old").unwrap();
+        assert_eq!(contents(&mut s, "old"), b"the new one");
+        assert_eq!(s.stat("new"), Err(Status::NotFound));
+        assert_eq!(s.free_blocks(), free + 4, "the old file's three blocks and its inode are free");
+        assert_eq!(contents(&mut remount(s), "old"), b"the new one");
+    }
+
+    fn at_1700000000() -> u64 {
+        1_700_000_000_000_000_000
+    }
+
+    #[test]
+    fn a_disk_says_when_a_file_changed() {
+        let mut s = fresh();
+        s.set_clock(at_1700000000);
+        s.write("f", 0, b"x").unwrap();
+        assert_eq!(s.time("f"), Ok(1_700_000_000_000_000_000));
+        s.write("g", 0, b"y").unwrap();
+        assert_eq!(s.time("g"), Ok(1_700_000_000_000_000_001), "the same clock: a nanosecond on");
+        assert_eq!(s.time(""), Ok(0), "a directory has none");
+    }
+
+    #[test]
     fn renaming_on_a_disk() {
         let mut s = fresh();
         s.make_directory("docs").unwrap();
         s.make_directory("docs/notes").unwrap();
         s.write("docs/notes/today", 0, b"deep").unwrap();
+        s.write("docs/stay", 0, b"s").unwrap();
         s.write("top", 0, b"t").unwrap();
         let free = s.free_blocks();
         let call = |s: &mut DiskStore<MemDevice>, access: Access, from: &str, to: &str| {
@@ -318,7 +360,9 @@ mod tests {
         assert_eq!(call(&mut s, rw, "top", "bottom"), Status::Ok);
         assert_eq!(call(&mut s, rw, "bottom", "docs/notes/bottom"), Status::Ok);
         assert_eq!(call(&mut s, rw, "docs/notes", "notes"), Status::Ok);
-        assert_eq!(call(&mut s, rw, "notes", "docs"), Status::Exists);
+        assert_eq!(call(&mut s, rw, "notes", "docs"), Status::NotEmpty);
+        assert_eq!(call(&mut s, rw, "notes", "docs/stay"), Status::NotDirectory);
+        assert_eq!(call(&mut s, rw, "docs/stay", "notes"), Status::IsDirectory);
         assert_eq!(call(&mut s, rw, "notes", "notes/inside"), Status::IntoItself);
         assert_eq!(call(&mut s, rw, "nothing", "x"), Status::NotFound);
         assert_eq!(call(&mut s, rw, "notes", "nowhere/x"), Status::NotFound);

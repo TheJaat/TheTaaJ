@@ -172,7 +172,12 @@ fn mount(disk: Handle) -> Option<DiskStore<Cache<DiskDevice>>> {
         }
     };
     match DiskStore::mount(Cache::new(DiskDevice { disk, window, start, sectors }, CACHE_BLOCKS)) {
-        Ok(store) if u64::from(store.total_blocks()) * SECTORS_PER_BLOCK <= sectors => Some(store),
+        Ok(mut store) if u64::from(store.total_blocks()) * SECTORS_PER_BLOCK <= sectors => {
+            // A file's time is the machine's (TaajFS version 6): the
+            // real-time clock at boot, and the counter since.
+            store.set_clock(taaj::realtime_ns);
+            Some(store)
+        }
         Ok(store) => {
             println!("[fs] the volume says it has {} blocks; the disk is smaller - not using it", store.total_blocks());
             None

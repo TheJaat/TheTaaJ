@@ -650,9 +650,11 @@ pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
 }
 
 /// `rename(from, to)`: gives a file or a directory a new name, a new
-/// directory, or both. Unlike Unix, it replaces nothing: if `to` is
-/// already there, that is the failure (EEXIST) - the file service will
-/// not make a file vanish as a side effect of moving another.
+/// directory, or both. As on Unix, what is already called `to` is
+/// replaced, in the same step (TaajFS version 6): a file by a file, an
+/// empty directory by a directory. A directory with things in it is
+/// ENOTEMPTY; a directory onto a file ENOTDIR, a file onto a directory
+/// EISDIR.
 ///
 /// # Safety
 /// Both must be null or point to strings that end in a zero byte.

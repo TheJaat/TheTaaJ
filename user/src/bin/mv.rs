@@ -5,8 +5,10 @@
 //! otherwise TO is its new path. Nothing is copied: the file service
 //! gives the same blocks another name, in one step that happens wholly
 //! or not at all - so a directory moves, with everything in it, as fast
-//! as a file does. And nothing is replaced: if TO names a file, mv
-//! says so and stops.
+//! as a file does. As on Unix, a file already called TO is replaced
+//! (in the same step: there is never a moment with neither), and so is
+//! an empty directory when FROM is a directory; a directory with things
+//! in it is not, and a file and a directory never replace each other.
 
 #![no_std]
 #![no_main]

@@ -74,7 +74,8 @@ pub fn dump<D: BlockDevice, W: Write>(device: &mut D, out: &mut W) -> io::Result
             2 => "directories",
             3 => "directories and big files",
             4 => "directories, big files and change stamps",
-            _ => "directories, big files, change stamps and names of up to 64 bytes",
+            5 => "directories, big files, change stamps and names of up to 64 bytes",
+            _ => "directories, big files, change stamps, long names and file times",
         };
         writeln!(out, "format version {}: may hold {holds}", live.version)?;
     }
@@ -178,7 +179,11 @@ impl Walk {
                     inode.block_count,
                     // Only a stamped inode says more than the C tool's
                     // dump, which knows none.
-                    if inode.is_stamped() { format!("  stamp {}", inode.stamp) } else { String::new() },
+                    match (inode.is_timed(), inode.is_stamped()) {
+                        (true, _) => format!("  stamp {}  time {}", inode.stamp, inode.time),
+                        (false, true) => format!("  stamp {}", inode.stamp),
+                        _ => String::new(),
+                    },
                     if inode.is_valid() { "" } else { "   [BAD INODE MAGIC]" }
                 )?;
                 if inode.size != entry.size {

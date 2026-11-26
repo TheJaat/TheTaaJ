@@ -94,7 +94,7 @@ The items most others wait for, most first. This is why the order below is what 
 | **J14 LLVM 23** | J15 R3, J21 R4 | The-Jat, step E |
 | **J1 ELF thread-local storage** | J15 R3 | The-Jat, step B |
 | **J3 `poll`** | J15 R3, K33 non-blocking sockets | The-Jat, step C |
-| **J17-J20 TaajFS version 4** | J7 `stat` with times, J21 (rustc's big files), E1 `fsck` (written for the new format) | The-Jat, step D |
+| **J17-J20 TaajFS version 6** | J7 `stat` with times, J21 (rustc's big files), E1 `fsck` (written for the new format) | **Done (entry 101)** |
 | **K1 R7, the real PC** | K3 a day on it, K4 its fixes, MaK's step C drivers | MaK, step B |
 | **K13 AML interpreter** | K14 `_PRT`, K15 power button, K17 battery, K18 suspend | MaK, step E |
 | **J43 shell variables and `if`** | J45 rebuilding only what changed, J25 R6's build scripts | The-Jat, filler |
@@ -108,7 +108,7 @@ Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 
 | Machine | Step | Branch |
 |---|---|---|
-| The-Jat | D: TaajFS version 4 | `taajfs-4` |
+| The-Jat | D: TaajFS version 6 | `taajfs-6` |
 | MaK | A: the scheduler and timing step | `timing` |
 
 ## The decided order
@@ -122,7 +122,7 @@ Each step below is one branch, one journal entry and one test64 run. The items a
 | **A** Merge the core basics | entry 097 | **Done (entry 097)**, merged 2026-11-26 |
 | **B** Std's ground, part 1: randomness, real thread-local storage, signals std uses | J2 `getrandom`, J1 ELF TLS, J4 `sigaltstack`, J10 `waitid` and SIGCHLD | **Done (entry 099)** |
 | **C** Std's ground, part 2: libc calls std uses | J3 `poll`, J5 `dl_iterate_phdr`, J6 pthread attributes, J7 `stat`, J8 `realpath` and `getcwd`, J9 `posix_spawn` with fd 3+, J12 `dlopen` stubs, J13 zlib, J37 environment, J38 `execvp` and `/bin`, J39 the real `argv[0]` | **Done (entry 100)** |
-| **D** TaajFS version 4 | J17 file times, J18 files over 256 MiB, J19 long names, J20 faster writes, J35 a replacing `rename`, J55 `/bin` | One format change instead of four |
+| **D** TaajFS version 6 (versions 4 and 5 came in Era 6) | J17 file times, J18 files over 256 MiB, J19 long names (entry 094), J20 faster writes (entry 093), J35 a replacing `rename`, J55 `/bin` | **Done (entry 101)**; J55's moving of the programs stays open |
 | **E** LLVM 23 | J14, and C++ (libc++, the LLVM port) moved from emulated to real thread-local storage | Long; runs unattended on The-Jat; it rebuilds the ports anyway |
 | **F** R3 Rust's std | J15, J16 | Needs B-E |
 | **G** Memory for big programs | J26-J31 | Before rustc's 182 MB runs |
@@ -163,7 +163,6 @@ The order matters here: each item is needed by the ones after it.
 | J4 | **`sigaltstack`** and running a handler on it; SIGSEGV on a stack overflow reaches that handler | S | **Done (entry 099)** |
 | J5 | **`dl_iterate_phdr`** (for the program itself only, no shared libraries) | S | **Done (entry 100)**, with `getauxval` |
 | J6 | **`pthread_getattr_np`**, `pthread_attr_getstack`, `pthread_sigmask` | S | **Done (entry 100)**: glibc's 56-byte `pthread_attr_t`, `pthread_attr_setstack`, `pthread_getattr_np` (the main thread's too); `pthread_sigmask` was already there |
-| J7 | **`statx` or a full `stat`**: sizes, types, times (once TaajFS has them, see J17) | S | **Done** before this list (`stat`, `fstat`, `lstat` with types, sizes, a modification time); more times wait for J17 |
 | J8 | **`realpath`, `getcwd`, `fchdir`, `opendir` on handles** | S | **Done (entry 100)**: `realpath` and `getcwd` were there; `open` with O_DIRECTORY, `fchdir`, `fdopendir`, `dirfd` added |
 | J9 | **`posix_spawn` file actions for fd 3+** (E11 left over from Era 6) | M | **Done**: entry 092 (E11) for spawn; entry 100 checks it through exec too |
 | J10 | **`waitid`, `WNOHANG` everywhere, SIGCHLD** | S | **Done (entry 099)**: PROCESS_NOTIFY; WNOHANG and WNOWAIT |
@@ -178,10 +177,6 @@ The order matters here: each item is needed by the ones after it.
 |---|---|---|---|
 | J15 | **R3 Rust's std**: `x86_64-unknown-taaj` and `aarch64-unknown-taaj`, std over our libc, `panic = "abort"` first | L | Done when files, env, `Command`, threads and time work on both arches |
 | J16 | **R3b unwinding**, if rustc needs it (libunwind for TheTaaJ, `.eh_frame_hdr`) | M | |
-| J17 | **TaajFS metadata**: modification times (now there is a real clock), sizes in directory entries, `ls -l` | M | Needs a format version 4; `tfstool` follows |
-| J18 | **TaajFS files over 256 MiB** (one more level of indirection) | M | LLVM 23 and rustc may outgrow it |
-| J19 | **TaajFS names over 27 bytes** | M | Some AArch64 `.td` files are 28 |
-| J20 | **Faster writes**: a write buffer per open file, one commit per `fsync`/close instead of per `write()` | M | rustc writes many small pieces |
 | J21 | **R4 rustc runs on TheTaaJ**, cross-built with `x.py`; `taajfs.rlib` byte for byte as the host's | L | |
 | J22 | **R5 a Makefile driving rustc without cargo**, checked against cargo on the host | L | |
 | J23 | **R5 nasm ported**; the BIOS loader built with clang (`--target=i686-elf`) | M | The bootloader change itself is MaK's (rule 5); The-Jat ports nasm |
@@ -206,7 +201,6 @@ The order matters here: each item is needed by the ones after it.
 | J32 | `scanf`/`fscanf` from streams | S | Only `sscanf` today |
 | J33 | `%a` in printf; long double done properly (`strtold`, `%Lf`) | M | |
 | J34 | `erf`, `erfc`, `tgamma`, `lgamma` and the long double math | S | Declared, not defined |
-| J35 | `rename` replaces an existing file atomically | S | TaajFS operation |
 | J36 | libc descriptors follow the file, not the name (rename/remove of an open file) | M | |
 | J37 | `getenv`/`setenv` with a real environment passed to children | S | **Done** before this list (`environ`, posix_spawn's envp; checked through exec in entry 100) |
 | J38 | `execvp`, `PATH` search; a `/bin` directory | S | **Done (entry 100)**: the exec family as spawn-and-wait with the exact exit code; PATH, or `/` then `/bin`. The `/bin` directory itself waits for step D |
@@ -236,7 +230,7 @@ The order matters here: each item is needed by the ones after it.
 | J52 | A test that fails when rule 1 or rule 3 of `threads.rs` is broken | S | Known gap |
 | J53 | A test for the ticks mutation from entry 097 (late timer interrupts) | S | Perhaps by stopping a CPU for a while |
 | J54 | A fresh `git clone --recurse-submodules` builds and passes (in a clean container) | S | Never tried |
-| J55 | Programs in a `/bin` directory on the disk (the search already looks there, entry 100) | S | With step D: the disk tools and every test put programs in the root |
+| J55 | Programs moved into `/bin` on the run disks (libc's exec and the shell both look there, entries 100 and 101) | S | The disk recipes and every test put programs in the root and look for them there |
 | J56 | zlib (and later other libraries) installed on TheTaaJ's disk with its header, for programs compiled there | S | With step E, when there is a place for libraries on the disk |
 | J57 | exec without the go-between: signals sent to it passed on to the program it started, and a keyboard handed on | M | Entry 100's exec is spawn-and-wait |
 
