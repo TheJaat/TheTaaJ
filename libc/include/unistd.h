@@ -51,6 +51,8 @@ off_t lseek(int fd, off_t offset, int whence);
 
 /* Removes a file. */
 int unlink(const char *path);
+/* unlink, or rmdir with AT_REMOVEDIR, from the directory dirfd. */
+int unlinkat(int dirfd, const char *path, int flags);
 
 /* Sleeps for at least that many microseconds (nanosleep, time.h). */
 int usleep(unsigned microseconds);
@@ -71,10 +73,12 @@ int ftruncate(int fd, off_t length);
 int link(const char *from, const char *to);
 int symlink(const char *target, const char *path);
 ssize_t readlink(const char *path, char *buffer, size_t size);
+ssize_t readlinkat(int dirfd, const char *path, char *buffer, size_t size);
 
 /* Files have no owners: these change nothing, and succeed for what is
  * there. */
 int chown(const char *path, uid_t owner, gid_t group);
+int fchownat(int dirfd, const char *path, uid_t owner, gid_t group, int flags);
 int fchown(int fd, uid_t owner, gid_t group);
 
 /* Removes an empty directory. */
@@ -88,6 +92,7 @@ int rmdir(const char *path);
 #define W_OK 2
 #define R_OK 4
 int access(const char *path, int mode);
+int faccessat(int dirfd, const char *path, int mode, int flags);
 
 /* 1 if the descriptor is the screen; 0 if it is a file or another
  * program (errno ENOTTY), or not open at all (EBADF). */

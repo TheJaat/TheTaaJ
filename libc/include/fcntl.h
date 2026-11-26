@@ -27,11 +27,15 @@ extern "C" {
 #define O_CLOEXEC   02000000
 #define O_NOCTTY    0400
 
-/* For the ...at calls (utimensat): a path from the current directory.
- * Directories are not opened as descriptors here, so it is the one
- * directory such a call takes. */
+/* For the ...at calls (openat, fstatat, mkdirat, unlinkat, renameat,
+ * faccessat, utimensat; journal entry 120): a name is taken from the
+ * directory the descriptor is open on - that directory, wherever it has
+ * moved - or, with AT_FDCWD, from the current directory. */
 #define AT_FDCWD -100
-#define AT_SYMLINK_NOFOLLOW 0x100
+#define AT_SYMLINK_NOFOLLOW 0x100 /* no symbolic links: changes nothing */
+#define AT_REMOVEDIR 0x200        /* unlinkat: remove a directory */
+#define AT_EACCESS 0x200          /* faccessat: changes nothing */
+#define AT_EMPTY_PATH 0x1000      /* fstatat: "" is the descriptor itself */
 
 /* Opens the file at path. Returns a descriptor - the lowest number
  * not in use - or -1, with the reason in errno.
@@ -41,6 +45,8 @@ extern "C" {
  * program may do to files is decided by what it was started with
  * (`with files`, `with readonly`), not by the file. */
 int open(const char *path, int flags, ...);
+/* open, with path taken from the directory dirfd is open on. */
+int openat(int dirfd, const char *path, int flags, ...);
 
 /* fcntl(fd, command, ...): asks about or changes a descriptor.
  *

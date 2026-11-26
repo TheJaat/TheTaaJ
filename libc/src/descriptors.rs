@@ -370,6 +370,18 @@ pub const NAME_MAX: usize = taaj::files::COMPONENT_MAX;
 /// `path` must be null or point to a string that ends in a zero byte.
 #[no_mangle]
 pub unsafe extern "C" fn __taaj_open(path: *const c_char, flags: c_int) -> c_int {
+    // SAFETY: the caller's promise, passed on.
+    unsafe { __taaj_openat(crate::at::AT_FDCWD, path, flags) }
+}
+
+/// `openat(dirfd, path, flags)`: open, with `path` taken from the
+/// directory `dirfd` is open on (at.rs) - what the C function `openat`
+/// calls (libc/c/fcntl.c).
+///
+/// # Safety
+/// `path` must be null or point to a string that ends in a zero byte.
+#[no_mangle]
+pub unsafe extern "C" fn __taaj_openat(dirfd: c_int, path: *const c_char, flags: c_int) -> c_int {
     // SAFETY: the caller's promise.
     let name = match unsafe { text(path) } {
         Ok(name) => name,
@@ -384,14 +396,27 @@ pub unsafe extern "C" fn __taaj_open(path: *const c_char, flags: c_int) -> c_int
     }
     with(|state| {
         let Some(slot) = state.free_slot() else { return fail(EMFILE) };
-        let Some(files) = state.files() else {
-            return fail(EACCES);
+        let place = match crate::at::place(state, dirfd, name) {
+            Ok(place) => place,
+            Err(code) => return fail(code),
         };
         // One request does all of it - the checks, making, emptying - in
         // the service, so nothing can change in between.
-        let opened = files.open(name, open_flags(flags)).map(|handle| File {
+        // A directory is opened to read it, but what it gives is the
+        // right to name things in it (the *at calls): to change them too,
+        // if this program may - POSIX asks only what the program may do,
+        // never how the directory was opened.
+        let wanted = open_flags(flags);
+        let opened = match flags & O_DIRECTORY {
+            0 => place.files.open(&place.name, wanted),
+            _ => match place.files.open(&place.name, wanted | taaj::files::open::WRITE) {
+                Err(FileError::Refused(taaj::files::Status::ReadOnly)) => place.files.open(&place.name, wanted),
+                opened => opened,
+            },
+        };
+        let opened = opened.map(|handle| File {
             file: handle,
-            path: format!("/{}", files.resolve(name)),
+            path: place.shown.clone(),
             offset: 0,
             flags: flags & !O_CLOEXEC,
         });
@@ -710,25 +735,42 @@ const PATH_MAX: usize = 4096;
 /// `path` must be null or point to a string that ends in a zero byte.
 #[no_mangle]
 pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
+    // SAFETY: the caller's promise, passed on.
+    unsafe { unlinkat(crate::at::AT_FDCWD, path, 0) }
+}
+
+/// `unlinkat(dirfd, path, flags)`: unlink, or with AT_REMOVEDIR rmdir,
+/// with `path` taken from the directory `dirfd` is open on (at.rs).
+///
+/// # Safety
+/// `path` must be null or point to a string that ends in a zero byte.
+#[no_mangle]
+pub unsafe extern "C" fn unlinkat(dirfd: c_int, path: *const c_char, flags: c_int) -> c_int {
+    use crate::at::AT_REMOVEDIR;
     // SAFETY: the caller's promise.
     let name = match unsafe { text(path) } {
         Ok(name) => name,
         Err(code) => return fail(code),
     };
-    with(|state| {
-        let Some(files) = state.files() else {
-            return fail(EACCES);
-        };
-        match files.stat(name) {
-            Ok((Kind::Directory, _)) => return fail(EISDIR),
-            Ok((Kind::File, _)) => {}
-            Err(error) => return fail(reason(error)),
-        }
-        match files.remove(name) {
-            Ok(()) => 0,
-            Err(error) => fail(reason(error)),
-        }
-    })
+    if flags & !AT_REMOVEDIR != 0 {
+        return fail(EINVAL);
+    }
+    let place = match with(|state| crate::at::place(state, dirfd, name)) {
+        Ok(place) => place,
+        Err(code) => return fail(code),
+    };
+    // Asked with the table let go: the service may take its time.
+    let directory = flags & AT_REMOVEDIR != 0;
+    match place.files.stat(&place.name) {
+        Ok((Kind::Directory, _)) if !directory => return fail(EISDIR),
+        Ok((Kind::File, _)) if directory => return fail(crate::errno::ENOTDIR),
+        Ok(_) => {}
+        Err(error) => return fail(reason(error)),
+    }
+    match place.files.remove(&place.name) {
+        Ok(()) => 0,
+        Err(error) => fail(reason(error)),
+    }
 }
 
 /// `rename(from, to)`: gives a file or a directory a new name, a new
@@ -747,15 +789,54 @@ pub unsafe extern "C" fn rename(from: *const c_char, to: *const c_char) -> c_int
         (Ok(from), Ok(to)) => (from, to),
         (Err(code), _) | (_, Err(code)) => return fail(code),
     };
-    with(|state| {
-        let Some(files) = state.files() else {
-            return fail(EACCES);
-        };
-        match files.rename(from, to) {
-            Ok(()) => 0,
-            Err(error) => fail(reason(error)),
+    // SAFETY: the strings are ones; passed on as they came.
+    unsafe { rename_places(crate::at::AT_FDCWD, from, crate::at::AT_FDCWD, to) }
+}
+
+/// `renameat(fromfd, from, tofd, to)`: rename, each name taken from its
+/// own directory descriptor (at.rs). Both on one directory's channel -
+/// the same descriptor, or AT_FDCWD for both - is one request there;
+/// anything else goes by name, in the namespace, where `Files::rename`
+/// says EXDEV for two mounts.
+///
+/// # Safety
+/// Both names must be null or point to strings that end in a zero byte.
+#[no_mangle]
+pub unsafe extern "C" fn renameat(fromfd: c_int, from: *const c_char, tofd: c_int, to: *const c_char) -> c_int {
+    // SAFETY: the caller's promise, for each.
+    let (from, to) = match unsafe { (text(from), text(to)) } {
+        (Ok(from), Ok(to)) => (from, to),
+        (Err(code), _) | (_, Err(code)) => return fail(code),
+    };
+    // SAFETY: as above.
+    unsafe { rename_places(fromfd, from, tofd, to) }
+}
+
+/// The two names placed, and the rename asked where both are.
+///
+/// # Safety
+/// Nothing but the names, which are Rust's.
+unsafe fn rename_places(fromfd: c_int, from: &str, tofd: c_int, to: &str) -> c_int {
+    let places = with(|state| Ok((crate::at::place(state, fromfd, from)?, crate::at::place(state, tofd, to)?)));
+    let (from, to) = match places {
+        Ok(places) => places,
+        Err(code) => return fail(code),
+    };
+    // One place - the namespace for both, or one directory's channel
+    // for both: one request there.
+    let done = if from.on == to.on {
+        from.files.rename(&from.name, &to.name)
+    } else {
+        // Two places: by their names, in the namespace.
+        match with(|state| state.files().cloned()) {
+            Some(files) => files.rename(&from.shown, &to.shown),
+            None => return fail(EACCES),
         }
-    })
+    };
+    match done {
+        Ok(()) => 0,
+        Err(error) => fail(reason(error)),
+    }
 }
 
 /// `isatty(fd)`: 1 if the descriptor is the screen - somebody is

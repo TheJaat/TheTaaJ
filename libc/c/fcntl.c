@@ -13,11 +13,17 @@
 #include <sys/file.h>
 
 int __taaj_open(const char *path, int flags);
+int __taaj_openat(int dirfd, const char *path, int flags);
 int __taaj_fcntl(int fd, int command, long argument);
 
 int open(const char *path, int flags, ...)
 {
     return __taaj_open(path, flags);
+}
+
+int openat(int dirfd, const char *path, int flags, ...)
+{
+    return __taaj_openat(dirfd, path, flags);
 }
 
 int fcntl(int fd, int command, ...)

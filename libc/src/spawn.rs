@@ -83,6 +83,10 @@ pub(crate) enum Action {
     Close(c_int),
     /// `to` a copy of `from`.
     Dup2 { from: c_int, to: c_int },
+    /// The new program's whole tree is the directory `path` names
+    /// (posix_spawn_file_actions_addroot_np, J63): not an action on a
+    /// descriptor, but on its namespace.
+    Root(String),
 }
 
 /// `posix_spawnattr_t` (spawn.h).
@@ -144,6 +148,7 @@ unsafe fn add(actions: *mut FileActions, action: Action) -> c_int {
         Action::Open { descriptor, .. } => bad(*descriptor),
         Action::Close(fd) => bad(*fd),
         Action::Dup2 { from, to } => bad(*from) || bad(*to),
+        Action::Root(_) => false,
     } {
         return EBADF;
     }
@@ -208,6 +213,47 @@ pub unsafe extern "C" fn posix_spawn_file_actions_addclose(actions: *mut FileAct
 pub unsafe extern "C" fn posix_spawn_file_actions_adddup2(actions: *mut FileActions, from: c_int, to: c_int) -> c_int {
     // SAFETY: the caller's promise.
     unsafe { add(actions, Action::Dup2 { from, to }) }
+}
+
+/// `posix_spawn_file_actions_addroot_np(actions, path)` (spawn.h,
+/// TheTaaJ's own, as glibc's addchdir_np is glibc's): the new program's
+/// whole tree is the directory `path` names - "/" is that directory,
+/// its current directory too - and nothing else (J63, a sandbox).
+///
+/// It is a sandbox because of what the program is given, not because of
+/// what it is asked not to do: the directory's channel, mounted at "/"
+/// (J62), and a registry without "files" or "files.look" in it, so it
+/// holds no channel to anything outside that directory, whatever it
+/// does - a program written without libc included. The service lets no
+/// name on a directory's channel out of it (".." is refused there). The
+/// directory is mounted to change, if this program may change it, and
+/// to read otherwise. Its other services and its descriptors it gets as
+/// any program would: what it is handed, it has.
+///
+/// # Safety
+/// `actions` made by posix_spawn_file_actions_init; `path` a string.
+#[no_mangle]
+pub unsafe extern "C" fn posix_spawn_file_actions_addroot_np(actions: *mut FileActions, path: *const c_char) -> c_int {
+    if path.is_null() {
+        return EINVAL;
+    }
+    // SAFETY: the caller's promise: a string.
+    let path = unsafe { CStr::from_ptr(path) }.to_string_lossy().into_owned();
+    // SAFETY: the caller's promise.
+    unsafe { add(actions, Action::Root(path)) }
+}
+
+/// The directory a Root action names, open: to change if it may be,
+/// to read if not. ENOTDIR, ENOENT and the rest as open says them.
+fn open_root(path: &str) -> Result<taaj::files::File, c_int> {
+    use taaj::files::{open, FileError, Status};
+    let files = with(|state| state.files().cloned()).ok_or(EACCES)?;
+    let wanted = open::DIRECTORY | open::READ;
+    match files.open(path, wanted | open::WRITE) {
+        Err(FileError::Refused(Status::ReadOnly)) => files.open(path, wanted),
+        opened => opened,
+    }
+    .map_err(reason)
 }
 
 /// `posix_spawnattr_init(attributes)`: none. 0.
@@ -321,8 +367,13 @@ unsafe fn spawn(
 /// (posix_spawn, and system and popen, which build their own actions.)
 pub(crate) fn run(path: &str, words: &[String], actions: &[Action], command: bool, environment: &[u8]) -> Result<c_int, c_int> {
     let name = words.first().cloned().unwrap_or_else(|| String::from(path));
+    // The last Root action, if any: the new program's tree.
+    let root = match actions.iter().rev().find_map(|action| if let Action::Root(path) = action { Some(path) } else { None }) {
+        Some(path) => Some(open_root(path)?),
+        None => None,
+    };
     let standard = standard_for(actions)?;
-    let process = start(path, &name, words.get(1..).unwrap_or(&[]), command, standard, environment)?;
+    let process = start(path, &name, words.get(1..).unwrap_or(&[]), command, standard, environment, root)?;
     Ok(adopt(process))
 }
 
@@ -467,6 +518,8 @@ fn standard_for(actions: &[Action]) -> Result<Standard, c_int> {
         };
         for action in actions {
             match action {
+                // The namespace's, done by `run`.
+                Action::Root(_) => {}
                 Action::Close(fd) => set(&mut table, *fd, None),
                 Action::Dup2 { from, to } => {
                     let source = table.iter().find(|(n, _, _)| n == from).map(|(_, source, _)| source.clone());
@@ -642,7 +695,15 @@ fn descriptors_channel(rest: Vec<(u8, Given)>, mounts: Vec<(String, Handle)>) ->
 
 /// Reads the program and asks init to start it: the new process, or an
 /// error number.
-fn start(path: &str, name: &str, arguments: &[String], command: bool, standard: Standard, environment: &[u8]) -> Result<Handle, c_int> {
+fn start(
+    path: &str,
+    name: &str,
+    arguments: &[String],
+    command: bool,
+    standard: Standard,
+    environment: &[u8],
+    root: Option<taaj::files::File>,
+) -> Result<Handle, c_int> {
     // The file, as a path from the root ("" is the root): a command is
     // a file in the root; anything else is a path from here.
     let search = command && !path.contains('/');
@@ -685,7 +746,11 @@ fn start(path: &str, name: &str, arguments: &[String], command: bool, standard: 
         }
     });
     match found {
-        Ok((file, directory, memory)) => ask_init(&file, &directory, memory, name, arguments, standard, environment),
+        // In its own tree, it starts at its root.
+        Ok((file, directory, memory)) => {
+            let directory = if root.is_some() { String::new() } else { directory };
+            ask_init(&file, &directory, memory, name, arguments, standard, environment, root.as_ref())
+        }
         Err(code) => {
             standard.close();
             Err(code)
@@ -712,6 +777,18 @@ fn search_path() -> Vec<String> {
     }
 }
 
+/// A registry for a program in a tree of its own: this program's names,
+/// each meaning what it means here, but "files" and "files.look" - the
+/// way out of the tree. None if nothing is left.
+fn sandbox_registry(services: &taaj::services::Services, name: &str) -> Result<Option<Handle>, c_int> {
+    let names = services.list().map_err(|_| EPERM)?;
+    let kept: Vec<(&str, &str)> = names.iter().map(String::as_str).filter(|name| !matches!(*name, "files" | "files.look")).map(|name| (name, name)).collect();
+    if kept.is_empty() {
+        return Ok(None);
+    }
+    services.narrow(name, &kept).map(Some).map_err(|_| EPERM)
+}
+
 /// The request to init, with the image and the handles handed down
 /// (abi::init); init's reply comes on a channel of this request's own
 /// (abi::init::REPLY), so that it is not some other program's.
@@ -723,6 +800,7 @@ fn ask_init(
     arguments: &[String],
     standard: Standard,
     environment: &[u8],
+    root: Option<&taaj::files::File>,
 ) -> Result<Handle, c_int> {
     use abi::startup::{SCREEN, SERVICES, STDERR, STDIN, STDOUT};
     let mut given = alloc::vec![image];
@@ -743,7 +821,20 @@ fn ask_init(
     };
     // A copy to hand down, which the new program may hand down again.
     use taaj::rights::{DUPLICATE, SEND, TRANSFER};
-    let registry = taaj::duplicate(services.handle(), SEND | DUPLICATE | TRANSFER).ok();
+    let registry = match root {
+        None => taaj::duplicate(services.handle(), SEND | DUPLICATE | TRANSFER).ok(),
+        // In a tree of its own: every name this program has, but the
+        // files. None at all if those were all.
+        Some(_) => match sandbox_registry(&services, name) {
+            Ok(registry) => registry,
+            Err(code) => {
+                close_given(&given);
+                standard.close();
+                let _ = taaj::close(init);
+                return Err(code);
+            }
+        },
+    };
     let Standard { input, output, error, screen, rest } = standard;
     let mut flags = 0u8;
     // In the order of their bits: stdout, services, stdin, stderr.
@@ -759,15 +850,19 @@ fn ask_init(
     // This program's mounts, each directory's channel shared: the child
     // sees the same names (J62). A mount whose channel can't be copied
     // is left out.
-    let mounts = with(|state| state.files().cloned())
-        .map(|files| {
-            files
-                .mounts()
-                .iter()
-                .filter_map(|mount| mount.directory.share().ok().map(|handle| (alloc::format!("/{}", mount.at), handle)))
-                .collect()
-        })
-        .unwrap_or_default();
+    let mounts = match root {
+        // Its tree: the one directory, at "/".
+        Some(root) => root.share().ok().map(|handle| (String::from("/"), handle)).into_iter().collect(),
+        None => with(|state| state.files().cloned())
+            .map(|files| {
+                files
+                    .mounts()
+                    .iter()
+                    .filter_map(|mount| mount.directory.share().ok().map(|handle| (alloc::format!("/{}", mount.at), handle)))
+                    .collect()
+            })
+            .unwrap_or_default(),
+    };
     // Then the descriptors from 3 on, and the mounts, if there are any:
     // one channel.
     let descriptors = match descriptors_channel(rest, mounts) {
@@ -1290,7 +1385,7 @@ pub(crate) fn start_jobs(jobs: &[Job], input: Option<c_int>, mut output: Option<
                 complain(&alloc::format!("{who}: {name}: a redirection's file cannot be opened: {}\n", describe(code)));
             })
             .and_then(|standard| {
-                start(&job.path, name, &job.words[1..], true, standard, &job.environment).inspect_err(|&code| {
+                start(&job.path, name, &job.words[1..], true, standard, &job.environment, None).inspect_err(|&code| {
                     // system says nothing of EPERM: its -1 says it.
                     if code != EPERM || who != "system" {
                         complain(&alloc::format!("{who}: {name}: {}\n", describe(code)));
