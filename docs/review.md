@@ -15,7 +15,7 @@ What the reviewer checks before it gives `review:pass`. The flow, the labels and
   - locks are taken in the documented order, and not held across a switch that the code doesn't say holds it;
   - a wait has its condition re-checked, and a wait that can be cut short (kill, signal) is checked by its caller.
 - **Untrusted input is checked** before it is used: system call arguments, what a device or a disk says, a file being loaded.
-- **The ABI stays in step**: a change to `abi` is matched in the kernel, `user/` and libc in the same item.
+- **The ABI stays in step**: a change to `kernel/abi` is matched in the kernel, `user/` and libc in the same item.
 - **Errors are handled** or passed on, not dropped; no `unwrap` where the value can really be missing.
 - **Both architectures**: x86_64 and AArch64 both build, and both are tested where the change can matter.
 
@@ -43,7 +43,7 @@ Every change is documented (rule 10 of `who-does-what.md`), a small fix too:
 - Commit author **`The-Jat`**; no other author lines or trailers - no `Co-Authored-By`, nothing that names the tools used to write the change.
 - Nothing machine-local committed: `kernel/headers/revision.h`, `bootloader/headers/revision.h`, `toolchain/`, a worker's own settings or notes.
 - TheBootloader changed only by its owner (MaK), or with that written down in `who-does-what.md`.
-- Shared files (`Makefile`, `README.md`, `docs/testing-notes.md`, `libc/`, `kernel64/src/syscall*`) changed as little as the item needs.
+- Shared files (`Makefile`, `README.md`, `docs/testing-notes.md`, `libc/`, `kernel/kernel64/src/syscall*`; paths are from TheTaaJ's root) changed as little as the item needs.
 
 ## The verdict
 

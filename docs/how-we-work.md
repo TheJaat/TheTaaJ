@@ -9,7 +9,7 @@ The three repositories - TheTaaJ, TheKernel and TheBootloader - are **public**. 
 | Role | Who | Does |
 |---|---|---|
 | **Worker** | The-Jat, MaK, any machine that joins | Takes the next item of its lane (`who-does-what.md`), works on a branch, documents it, opens a pull request. Never merges into `main` |
-| **Reviewer** | One session, in WSL on The-Jat's laptop (Ubuntu 24.04, the reference toolchain) | Reviews every pull request against `review.md`, tests it, posts the verdict, and merges once the user has said so |
+| **Reviewer** | One session, in WSL on the laptop with KVM (MaK's machine in `who-does-what.md`: Ubuntu 26.04). Its whole `make test64` needs a built tree and LLVM 18.1.3 unpacked for the byte-for-byte tests, since the host's LLVM is 21 | Reviews every pull request against `review.md`, tests it, posts the verdict, and merges once the user has said so |
 | **The user** | The project's owner | Decides what is worked on, and says "merge" with the `merge-ok` label |
 
 Any account may run any role: what a role does is written here and in `review.md`, not in anyone's private notes. A worker that is also the reviewer for a while follows both, and still never merges its own pull request without `merge-ok`.
@@ -25,6 +25,7 @@ Any account may run any role: what a role does is written here and in `review.md
 7. **Merge** - by the reviewer only:
    - merge `main` into the branch (every repository it touches);
    - give the journal entry the next free number: rename `NNN-name.md`, fix its title, its README row, `who-does-what.md` and any comment that says `NNN`;
+   - run `python3 tools/testing-notes.py` again: it reads only numbered entries, so the new entry's testing note joins `docs/testing-notes.md` only now;
    - run `make test64` on the result; it must end `test64: all passed`;
    - merge and push, TheKernel and TheBootloader first, TheTaaJ last, then the journal row's commit hashes;
    - close the pull requests, delete the branches, and say so in TheTaaJ's pull request.
