@@ -109,7 +109,7 @@ Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 | Machine | Step | Branch |
 |---|---|---|
 | The-Jat | E: LLVM 23 | `llvm-23` |
-| MaK | A: the scheduler and timing step, one branch per item: now K19's second part, the race hunt | `k19-race-hunt-2` |
+| MaK | A: the scheduler and timing step, one branch per item: now K20, priorities and the CPU a thread runs on | `k20-priorities` |
 
 ## The decided order
 
@@ -319,6 +319,7 @@ The order matters here: each item is needed by the ones after it.
 | K48 | WAV playback, then a microphone recorded to a file | M | |
 | K50 | **`bigmem64-test` once did not finish its steps** under KVM (race hunt round 6 of 20, entry 105); not seen in 5 runs under full CPU load; its log was lost | S | Likeliest: host memory and CPU both short with 12 test machines on 11 GiB. `tools/race-hunt.sh` now keeps a failed round's files, so run it again and read them |
 | K51 | **The BIOS loader is slow emulated**: 14 of an 18 s boot pass before the kernel's first byte (idle host, TCG; under KVM well under a second) - stage2 reads the kernel through `int 13h`, back to real mode and out again for each read | S | Measured in entry 105. Read more per `int 13h` call, or stay in real mode for the whole read. The bootloader is MaK's (rule 7) |
+| K52 | **`aarch64-tcp-test` expects no segment for a closed connection**: once, in a full emulated `test64` on a busy host, `netinfo` counted 1 answered "no such connection" (41 segments sent again; alone, 0 of 3 runs, with 1-4 sent again) | S | Likely a late retransmission from the host after TheTaaJ closed passively (correct TCP answers it). Check what segment it was, then either allow it or keep the connection longer (entry 105) |
 
 ---
 

@@ -110,6 +110,7 @@ So that phase has its own allowance, `FIRMWARE_SECONDS` (default 90), and so has
 ## What is still missing
 
 - **K51**: the BIOS loader's 14 s, emulated (bug 5).
+- **K52**: in the last full emulated `test64` (the one these fixes passed), `aarch64-tcp-test` failed once: `netinfo did not count the segments` - one segment answered "no such connection", with 41 sent again on a busy host. Run alone three times it passed, with 1 to 4 sent again; it passed in this branch's KVM run too. This branch changes nothing in the network or on AArch64 but the boot script's limit, so it was merged; the check is K52.
 - **K50**: why `bigmem64-test` once did not finish (round 6). The next failure's files will say.
 - **Upper limits still time the host a little**: three slow tries in a row on a very busy host would still fail. That has not been seen.
 - **The hunt has run under KVM only.** Under emulation (The-Jat, or `TAAJ_ACCEL=tcg`) other races may show.
