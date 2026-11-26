@@ -4167,3 +4167,27 @@ cd fileserver && cargo test
 | the last line | `test result: ok. 48 passed` |
 
 Automated: `make handles64-test aarch64-handles-test`, and `make test64`.
+
+---
+
+## 116 · The threads and scheduling benchmark: what a switch, a wake-up and a fair share cost today
+
+[The entry](journal/116-sched-bench.md)
+
+```
+make schedbench64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `schedbench (kvm):` or `schedbench (tcg):` and a table | A column for 1, 2 and 4 CPUs, every row filled |
+| The last row, `4 busy programs, 2 s: CPU each` | About 500 ms each with 1 CPU, 1000 with 2, 2000 with 4 |
+| `schedbench64-test passed` | Every measurement ran and every program ended cleanly |
+
+By hand, after `make schedbench64-test` has put `schedbench` on its disk (or with `schedbench` on your own disk):
+
+| Type | You should see |
+|---|---|
+| `with programs schedbench all 4` | One `schedbench:` line per measurement, ending `schedbench: done in N ms, M ms cpu` |
+
+Automated: `make test64`

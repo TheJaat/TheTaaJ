@@ -1578,6 +1578,22 @@ else
 	@echo "FAIL: the threads test needs clang and lld (sudo apt install clang lld)"; exit 1
 endif
 
+# The threads and scheduling benchmark (MaK-WSL/sched's K67 and K95, journal
+# entry 116): boots with 1, 2 and 4 CPUs and measures a switch, a futex
+# hand-off, thread and program creation, wake-to-run latency, scaling and
+# fairness. It checks that every measurement ran, never how fast: the
+# numbers are in $(SCHEDBENCH64_LOG).summary, for the journal.
+SCHEDBENCH64_LOG = $(BUILD_DIR)/schedbench64.log
+SCHEDBENCH_C     = $(KERNEL64_DIR)/scripts/schedbench.c
+schedbench64-test: iso64 user64 libc64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@clang $(TAAJ_CFLAGS) -c $(SCHEDBENCH_C) -o $(C_BIN)/schedbench.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/schedbench.o $(LIBC_A) -o $(C_BIN)/schedbench
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/schedbench-test.sh $(ISO64_IMG) $(SCHEDBENCH64_LOG).disk $(SCHEDBENCH64_LOG) $(C_BIN)/schedbench
+	@echo "schedbench64-test passed"
+else
+	@echo "FAIL: the scheduling benchmark needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+
 aarch64-thread-test: kernel-aarch64 user-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
@@ -2080,6 +2096,7 @@ TEST64_PARTS = \
 	pipe64-test \
 	aarch64-pipe-test \
 	thread64-test \
+	schedbench64-test \
 	aarch64-thread-test \
 	bigmem64-test \
 	aarch64-bigmem-test \
