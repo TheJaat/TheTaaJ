@@ -1,0 +1,107 @@
+# /tmp in memory
+
+*Journal entry #NNN · J64 of Era 14: a second file service, its files in memory, mounted at `/tmp` in every program's namespace. Written on TheJat-VM/files, on the branch `j64-tmp` in TheTaaJ and TheKernel.*
+
+## Why
+
+Every Unix-like system has a `/tmp`: a place for files that matter only while a program runs. Compilers write their object files there between steps, shells write here-documents there, editors write swap files there. Two things make it different from the rest of the tree:
+
+- **Nothing in it has to survive.** Linux usually mounts `tmpfs` there: files in memory, gone at shutdown. Writing them to a disk costs time and wears the disk, for files nobody will read after a reboot.
+- **It is often a separate file system.** Programs that `rename` from `/tmp` into a real directory must already handle `EXDEV` and copy instead, because on most systems the two are different file systems.
+
+TheTaaJ had everything needed except the service itself:
+
+- the `fileserver` crate already had `RamStore`, a store in memory, which the `fs` program falls back to when it has no disk;
+- entry 118 gave each program a namespace with mounts;
+- entry 120 made a directory a channel that works the same wherever it comes from.
+
+So `/tmp` is not new code in the file service. It is the same `fs` program started a second time, with no disk, and mounted.
+
+## What it is
+
+- **A service called `tmp`.** `init` starts the `fs` program a second time, under the name `tmp`, with two request channels of its own (grants 51 and 53, the requests that may change files and the ones that may only read) and **no registry**. With no registry it can't ask for `disk`, so it serves a `RamStore`: its files are in its own memory.
+- **Two names in the registry**: `tmp` (grant 52, may change files) and `tmp.look` (grant 54, may only read). They are made the same way as `files` and `files.look`.
+- **Mounted at `/tmp` in every program that has it.** `taaj::file_service()`, which builds each program's `Files` at start, asks the registry for `tmp`. If it is there, it mounts that channel at `/tmp` (entry 118's `Files::mounted`). C programs get it through libc, Rust programs through `taaj`, with no code of their own.
+- **The shell grants it with `files`.** Every program the shell may give `files` to also gets `tmp`. Every program that gets `files=files.look` (read-only) also gets `tmp=tmp.look`. A program trusted with the disk's files is trusted with `/tmp`, and a read-only one stays read-only in `/tmp` too. The shell's own `Files` mount it the same way, so `echo hi > /tmp/x` works from the prompt.
+- **A program in a box has no `/tmp`.** `posix_spawn_file_actions_addroot_np` (entry 120) narrows the child's registry. It now takes away `tmp` and `tmp.look` along with `files` and `files.look`. A sandbox gets one directory, not one directory plus a shared scratch space.
+- **Stopped before `fs` at shutdown, and restarted empty** if it ever ends, as `/tmp` is after a reboot.
+
+## How it works
+
+```
+init:   channels tmp_in/tmp_out, tmp_look_in/tmp_look_out
+        start "fs" as service "tmp" with [tmp_in, tmp_look_in], no registry
+              -> fs: no "disk" to ask for -> RamStore
+        registry: "tmp" = tmp_out, "tmp.look" = tmp_look_out (both DELEGABLE)
+
+program start (taaj::file_service):
+        files = Files::in_directory(lookup("files"), directory)
+        if lookup("tmp") is there:  files.mounted("/tmp", that channel)
+
+open("/tmp/a")  -> route: the deepest mount for "/tmp/a" is "/tmp" -> "a" on tmp's channel
+open("/docs/x") -> route: "/" -> the disk's fs
+rename("/tmp/c", "/c") -> two mounts -> EXDEV (entry 118)
+```
+
+`ls /` shows `tmp`. The listing of a directory that has a mount in it adds the mount's name, as entry 118 already did.
+
+## Design decisions
+
+- **The same program twice, not a new one.** `fs` with no disk was already a memory file system: it is how the kernel's self-test runs it. A second `tmpfs` program would be a second copy of the protocol to keep in step. `init` launches `fs` under the service name `tmp`, so the watchdog, restarts and shutdown treat it as a service of its own.
+- **A separate service, not a directory on the disk with a flag.** A separate process is what a microkernel is for. A program that fills `/tmp` fills `tmp`'s memory, not the disk's cache, and a crash in it loses only `/tmp`. It also makes `rename` out of `/tmp` say `EXDEV`, as it does on Linux with `tmpfs`, so ported programs see what they expect.
+- **Granted with `files`, not to everyone.** In a capability system "every program has `/tmp`" would be a channel nobody decided to give. Tying it to `files` means the decision already made for the disk's files is the one for `/tmp`. A program given no files (a sandbox, a network-only tool) has no `/tmp` either.
+- **One `/tmp` shared by all.** As on Unix. A private `/tmp` per program (systemd's `PrivateTmp`) would be one more service per program, or a directory per program inside `tmp`, and a namespace that mounts it. That is easy now, but nothing needs it yet.
+
+## Bugs met
+
+- **A file called `tmp` would be hidden.** The test program was first going to be called `tmp`, a file in the root. With `/tmp` mounted, `tmp` in `/` is the mount, so the program could never be started by name. It is called `tmptest`.
+- **A label that was wrong elsewhere.** I first made `fs` print `[tmp] ready` when it had no registry. The kernel's self-test also starts `fs` without one, so the label was wrong there. It was removed; `init`'s `[init] started: ... fs tmp ...` line already shows the service.
+- **Tests that list the shell's names.** `boot64-test` checks the names the shell may ask for, and what it gives each program (`[registry] shell gave ls: files=files.look`). Both now include `tmp`, and the root's listing now has three directories (`docs/`, `tools/` and `tmp/`), so those expectations changed with it.
+
+## How I checked it
+
+- **The `files` lane's boot test**, `handles64-test` and `aarch64-handles-test`, still one boot per architecture, now runs `tmp.c` (11 checks) after `handles.c`, `namespace.c` and `at.c`:
+  - `/tmp` is a directory, and `ls /` lists it;
+  - a file and a directory in `/tmp`, and a rename inside it;
+  - a rename out of `/tmp`: `EXDEV`;
+  - `chdir("/tmp")` and a plain name from there;
+  - a child sees the same `/tmp` (the file its parent wrote);
+  - a child in a tree of its own (`addroot_np`) has no `/tmp`;
+  - cleanup.
+- Then the shell itself: `echo tmp-says-hello > /tmp/s`, and `tmptest show /tmp/s` prints it, so what the shell writes there a program reads.
+- Then the disk, from the host, after the boot: `tfstool ls DISK tmp` must fail. `tmptest` leaves `/tmp/a` behind on purpose, and none of it is on the disk.
+- `boot64-test`'s registry and grant lines, with `tmp`.
+- `make test64`: see the testing note's last line.
+- **Not tested**: `tmp` crashing and being restarted empty. The watchdog doesn't watch it (it has no ping channel), so only an exit restarts it.
+
+## What is still missing
+
+- **No limit on `/tmp`'s size.** A program can fill `tmp`'s memory until it fails to allocate. `tmpfs` has a `size=` option; here it would be a limit in `RamStore`.
+- **The watchdog doesn't ping `tmp`.** It would need a ping channel like `fs`'s.
+- **No private `/tmp` per program** (see Design decisions).
+- `/dev` (J65) and `/proc` (J66) come next, mounted the same way.
+
+## What I learned
+
+- **A mount table makes a new file system cheap.** Entry 118 took the work; this one is mostly `init` lines. The file service didn't change at all. That is the point of having the namespace in the client: the server doesn't know or care where it is mounted.
+- **Reusing a program under another name is a microkernel's version of a kernel module option.** Linux's `tmpfs` is a file system type inside the kernel. Here it is "the file service, started without a disk", which needed no code in the service.
+- **Rust's `Option` combinators keep the "maybe there is a /tmp" case short.** `services.lookup("tmp").ok().and_then(|tmp| File::from_handle(tmp).ok())` turns two calls that can fail into one `Option<File>`: `.ok()` turns a `Result` into an `Option` (the error is dropped), and `.and_then` runs the next step only if there was a value. Then a `match` on it mounts it or keeps `files` as it was. Nothing can be half-done: either `/tmp` is mounted or the program runs as before.
+
+## Testing note
+
+Start TheTaaJ:
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `with programs tmptest` | `tmp: 11 checks, all passed` |
+| `echo hi > /tmp/x` then `ls /tmp` | `x` (and `a`, which `tmptest` leaves there) |
+| `ls /` | `tmp/` among the directories |
+| reboot, then `ls /tmp` | empty: nothing in `/tmp` survives |
+
+The same on AArch64 with `make run-aarch64`: `with programs tmptest` gives the same line.
+
+Automated: `make handles64-test aarch64-handles-test`, and `make test64`.

@@ -1472,16 +1472,18 @@ impl Shell {
         // same name.)
         let on_disk = |list: &[&str]| image.is_some() && list.contains(&name);
         let names: &[(&str, &str)] = match grant {
-            Grant::Files => &[("files", "files")],
-            Grant::Programs => &[("files", "files"), ("init", "init")],
-            Grant::ReadOnly => &[("files", "files.look")],
-            Grant::Usual if on_disk(CHANGE_PROGRAMS) => &[("files", "files")],
-            Grant::Usual if on_disk(LOOK_PROGRAMS) => &[("files", "files.look")],
+            // With the files, /tmp (J64): to change if the files may be
+            // changed, to read if not.
+            Grant::Files => &[("files", "files"), ("tmp", "tmp")],
+            Grant::Programs => &[("files", "files"), ("tmp", "tmp"), ("init", "init")],
+            Grant::ReadOnly => &[("files", "files.look"), ("tmp", "tmp.look")],
+            Grant::Usual if on_disk(CHANGE_PROGRAMS) => &[("files", "files"), ("tmp", "tmp")],
+            Grant::Usual if on_disk(LOOK_PROGRAMS) => &[("files", "files.look"), ("tmp", "tmp.look")],
             Grant::Usual if on_disk(CARD_PROGRAMS) => &[("nic", "nic")],
             Grant::Usual if on_disk(NET_PROGRAMS) => &[("net", "net")],
-            Grant::Usual if on_disk(WEB_PROGRAMS) => &[("net", "net"), ("files", "files.look")],
+            Grant::Usual if on_disk(WEB_PROGRAMS) => &[("net", "net"), ("files", "files.look"), ("tmp", "tmp.look")],
             Grant::Usual if on_disk(WINDOW_PROGRAMS) => &[("windows", "windows")],
-            Grant::Usual if on_disk(EDIT_PROGRAMS) => &[("windows", "windows"), ("files", "files")],
+            Grant::Usual if on_disk(EDIT_PROGRAMS) => &[("windows", "windows"), ("files", "files"), ("tmp", "tmp")],
             Grant::Usual => &[],
         };
         // The registry makes a channel on which only those names exist,
@@ -2052,6 +2054,14 @@ fn close_all(handles: impl IntoIterator<Item = Handle>) {
     }
 }
 
+/// `files` with /tmp's service mounted at /tmp (J64), if there is one.
+fn with_tmp(files: Files, tmp: Option<Handle>) -> Files {
+    match tmp.and_then(|tmp| taaj::files::File::from_handle(tmp).ok()) {
+        Some(tmp) => files.mounted("/tmp", tmp).unwrap_or(files),
+        None => files,
+    }
+}
+
 fn main() -> i64 {
     // Everything the shell works with, asked for by name. Only the
     // keyboard is needed: without the others there is less it can do,
@@ -2072,9 +2082,12 @@ fn main() -> i64 {
         screen: service("display"),
         init: service("init"),
         system: service("system"),
-        files: service("files").map(Files::new),
+        // Each with /tmp mounted (J64), to change or to read, as the
+        // programs it starts have it: `cd /tmp`, `ls /tmp` here mean
+        // what they mean there.
+        files: service("files").map(|files| with_tmp(Files::new(files), service("tmp"))),
         disk: service("disk.look").map(Disk::new),
-        look: service("files.look").map(Files::new),
+        look: service("files.look").map(|look| with_tmp(Files::new(look), service("tmp.look"))),
         directory: RefCell::new(String::new()),
         redirection: RefCell::new(Redirection::default()),
         jobs: RefCell::new(Vec::new()),

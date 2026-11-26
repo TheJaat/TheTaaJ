@@ -417,6 +417,11 @@ fn main() -> i64 {
     let Ok((files_in, files_out)) = taaj::channel_create() else { return 2 };
     // And a second: requests on it may read files, not change them.
     let Ok((files_look_in, files_look_out)) = taaj::channel_create() else { return 2 };
+    // /tmp's (J64): a second file service, with no disk - its files in
+    // memory, gone when it ends - and the same two channels. Every
+    // program's namespace mounts it at /tmp (taaj::file_service).
+    let Ok((tmp_in, tmp_out)) = taaj::channel_create() else { return 2 };
+    let Ok((tmp_look_in, tmp_look_out)) = taaj::channel_create() else { return 2 };
     // The disk's: its description for each new driver, and requests.
     let Ok((disk_info_tx, disk_info_rx)) = taaj::channel_create() else { return 2 };
     // Two request channels: reads and writes for fs, which owns what is
@@ -536,9 +541,14 @@ fn main() -> i64 {
         Grant { handle: usb_info_rx, rights: RECEIVE },       // 48: its description, for usb
         Grant { handle: usb_ping_rx, rights: RECEIVE },       // 49: pings, for usb
         Grant { handle: usb_interrupt, rights: RECEIVE },     // 50: its interrupt
+        Grant { handle: tmp_in, rights: RECEIVE },            // 51: requests, for tmp
+        Grant { handle: tmp_out, rights: SEND | DELEGABLE },  // 52: requests, to tmp
+        Grant { handle: tmp_look_in, rights: RECEIVE },       // 53: read-only requests, for tmp
+        Grant { handle: tmp_look_out, rights: SEND | DELEGABLE }, // 54: read-only requests, to tmp
     ];
-    // Only the shell's screen and files can be copied and passed on.
-    debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21)));
+    // Only the shell's screen and the files (the disk's and /tmp's) can
+    // be copied and passed on.
+    debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21 | 52 | 54)));
 
     // The watchdog's pings: for fs, "what does this channel allow?" on
     // the read-only channel; for blk, "what disk is this?". fs gets the
@@ -580,7 +590,7 @@ fn main() -> i64 {
     // services: a name, and which grant it means - the handle, and the
     // rights a client's copy gets. (The shell's old startup handles,
     // now asked for by name; and the disk, for fs.)
-    let registered: [(&str, usize); 11] = [
+    let registered: [(&str, usize); 13] = [
         // The keys come from the drivers straight to the shell where the
         // terminal is a serial port; from the window server where it is
         // a window.
@@ -590,6 +600,8 @@ fn main() -> i64 {
         ("system", 9),
         ("files", 11),
         ("files.look", 21),
+        ("tmp", 52),
+        ("tmp.look", 54),
         ("disk", 16),
         ("disk.look", 19),
         ("nic", 32),
@@ -602,7 +614,7 @@ fn main() -> i64 {
     let namespaces: [(&str, Handle, &[&str]); 3] = [
         // (The shell has the network card itself only for the program
         // that tests its driver. Everything else uses "net".)
-        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "disk.look", "nic", "net", "windows"]),
+        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "tmp", "tmp.look", "disk.look", "nic", "net", "windows"]),
         ("fs", fs_names_rx, &["disk"]),
         ("net", net_names_rx, &["nic"]),
     ];
@@ -645,6 +657,10 @@ fn main() -> i64 {
             watch: display_watch,
         },
         Service { name: "fs", grants: &[10, 20, 27], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: fs_watch },
+        // /tmp: the fs program, given no registry and so no disk - its
+        // files in memory (fs.rs). Restarted empty, as /tmp is after a
+        // reboot.
+        Service { name: "tmp", grants: &[51, 53], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
         Service {
             name: disk_driver,
             grants: match disk {
@@ -771,7 +787,9 @@ fn main() -> i64 {
         for (n, &g) in service.grants.iter().enumerate() {
             list[n] = &grants[g];
         }
-        let process = start(launcher, service.name, &list[..service.grants.len()], 0)?;
+        // tmp is the fs program, under another name.
+        let program = if service.name == "tmp" { "fs" } else { service.name };
+        let process = start(launcher, program, &list[..service.grants.len()], 0)?;
         // Each new display needs to be told what it is drawing on.
         if let (Some(fb), "display") = (framebuffer, service.name) {
             let mut info = [0u8; 1 + FramebufferInfo::SIZE];
@@ -1208,7 +1226,7 @@ fn shut_down(services: &mut [Service], action: u8, power: Handle, files_look: Ha
     // usb stops with the keyboards - unless it is the disk's driver,
     // which waits for fs.
     let usb = if disk_driver == "usb" { "" } else { "usb" };
-    let order = ["shell", "hid", usb, "kbd", "serial", "net", card_driver, "fs", disk_driver, "display", "registry"];
+    let order = ["shell", "hid", usb, "kbd", "serial", "net", card_driver, "tmp", "fs", disk_driver, "display", "registry"];
     for name in order {
         let Some(service) = services.iter_mut().find(|s| s.name == name && !s.given_up) else { continue };
         let between = name != "fs" || between_requests(files_look);

@@ -946,7 +946,8 @@ pub fn services() -> Option<services::Services> {
 /// given mean what they meant to whoever typed them. The directory
 /// arrives as one message, like the arguments: call this once.
 pub fn file_service() -> Option<files::Files> {
-    let channel = services()?.lookup("files").ok()?;
+    let services = services()?;
+    let channel = services.lookup("files").ok()?;
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
     let length = match flagged_handle(abi::startup::DIRECTORY).map(|from| receive(from, &mut message, &mut [])) {
         Some(Ok((length, _))) => length,
@@ -955,7 +956,15 @@ pub fn file_service() -> Option<files::Files> {
     // Not text? Then the root: a wrong directory would send every name
     // somewhere the user did not mean.
     let directory = core::str::from_utf8(&message[..length]).unwrap_or("");
-    Some(files::Files::in_directory(channel, directory))
+    let files = files::Files::in_directory(channel, directory);
+    // /tmp (J64), if this program was given it: another file service,
+    // its files in memory, mounted at /tmp in this program's namespace
+    // (J62). Without it, /tmp is whatever the disk has there.
+    let tmp = services.lookup("tmp").ok().and_then(|tmp| files::File::from_handle(tmp).ok());
+    Some(match tmp {
+        Some(tmp) => files.mounted("/tmp", tmp).unwrap_or(files),
+        None => files,
+    })
 }
 
 /// Startup handle `n` (counting from 0), if the parent gave that many.

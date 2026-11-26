@@ -222,7 +222,7 @@ pub unsafe extern "C" fn posix_spawn_file_actions_adddup2(actions: *mut FileActi
 ///
 /// It is a sandbox because of what the program is given, not because of
 /// what it is asked not to do: the directory's channel, mounted at "/"
-/// (J62), and a registry without "files" or "files.look" in it, so it
+/// (J62), and a registry without "files", "files.look" or /tmp's "tmp" in it, so it
 /// holds no channel to anything outside that directory, whatever it
 /// does - a program written without libc included. The service lets no
 /// name on a directory's channel out of it (".." is refused there). The
@@ -778,11 +778,12 @@ fn search_path() -> Vec<String> {
 }
 
 /// A registry for a program in a tree of its own: this program's names,
-/// each meaning what it means here, but "files" and "files.look" - the
-/// way out of the tree. None if nothing is left.
+/// each meaning what it means here, but the file services - "files",
+/// "files.look", and /tmp's "tmp" and "tmp.look" (J64): every way out
+/// of the tree. None if nothing is left.
 fn sandbox_registry(services: &taaj::services::Services, name: &str) -> Result<Option<Handle>, c_int> {
     let names = services.list().map_err(|_| EPERM)?;
-    let kept: Vec<(&str, &str)> = names.iter().map(String::as_str).filter(|name| !matches!(*name, "files" | "files.look")).map(|name| (name, name)).collect();
+    let kept: Vec<(&str, &str)> = names.iter().map(String::as_str).filter(|name| !matches!(*name, "files" | "files.look" | "tmp" | "tmp.look")).map(|name| (name, name)).collect();
     if kept.is_empty() {
         return Ok(None);
     }
