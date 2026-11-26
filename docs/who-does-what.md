@@ -319,6 +319,20 @@ The order matters here: each item is needed by the ones after it.
 | K23 | The faster boots: measure boot time on KVM and on the real PC, cut the slow parts | S | |
 | K24 | Timer: alarms and sleeps finer than a 10 ms tick (one-shot timer, `setitimer`, `timer_create`) | M | |
 
+### IPC: speed and the cycle leak (entry NNN)
+
+The design - channels, handles with rights, bounded inboxes, handles carried in messages, memory objects for bulk data, `PeerClosed` when a service dies - is sound, and secure by construction. What it costs is not yet looked at: a request and its reply are four system calls and two context switches, and each message is copied twice through a kernel allocation. Every file and network operation is such a request. Measure first, then change what the numbers show.
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| K?-ipc-bench | **An IPC benchmark**: round-trip time of a small request and reply, and bulk throughput through messages and through a shared memory object; on both CPUs, under KVM and emulated; the numbers kept in the journal | S | First: the items below are measured against it |
+| K?-ipc-call | **`channel_call`**: send a request and wait for its reply in one system call, switching straight to the server's waiting thread and back (as L4, seL4 and Zircon do) | M | After K?-ipc-bench |
+| K?-ipc-copy | One copy per message: straight from the sender into a receiver that is already waiting, and no kernel allocation for each message | M | After K?-ipc-bench |
+| K?-ipc-big | Bigger messages (today 1 KiB; 4 to 64 KiB) or shared rings for streams - fs and net cut streams into 1023-byte pieces | M | After K?-ipc-bench; changes the `abi` with the services and libc in step |
+| K?-ipc-send-wait | Waiting until a channel can be sent to (`object_wait` for "writable"), instead of each sender retrying on `QueueFull` | S | |
+| K?-ipc-priority | Priority inheritance across a call: a server works at the priority of the client it answers | M | After K20 and K?-ipc-call |
+| K?-ipc-cycles | **Channel cycles leak**: end A in B's inbox and B in A's keep both alive once their owners close every handle (`ipc.rs` says so; only the one-step cycle is refused) - a cycle collector, or a rule that stops cycles forming | M | A process can make kernel memory it can't give back |
+
 ### Security
 
 | # | Item | Size | Notes |
