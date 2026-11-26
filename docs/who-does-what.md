@@ -1,34 +1,37 @@
-# Who does what: The-Jat and MaK
+# Who does what: TheJat-VM, MaK-WSL and TheJat-WSL
 
-TheTaaJ is built on two machines. Both push to the same three repositories (TheTaaJ, TheKernel, TheBootloader), so this file says which machine does which work. Each machine reads it after every `git pull`.
+TheTaaJ is built on three machines. All push to the same three repositories (TheTaaJ, TheKernel, TheBootloader), so this file says which machine does which work. Each machine reads it after every `git pull`.
+
+**Names.** Every commit's author is `The-Jat` (rule 3); the machine is told apart by its name: **TheJat-VM**, **MaK-WSL**, **TheJat-WSL**. A machine that runs several sessions at once names each one after the machine and its lane, for example `MaK-WSL/kernel` or `TheJat-WSL/docs`. A journal entry says which machine or session wrote it ("Written on TheJat-WSL"), and "Now" lists each one's branch.
 
 | Machine | What it is | Good at |
 |---|---|---|
-| **The-Jat** | An Ubuntu virtual machine inside VMware: 16 CPUs, 15 GB, no KVM (every QEMU boot is emulated) | Long builds (rustc, LLVM), work that doesn't need fast boots or real hardware |
-| **MaK** | The real PC: Ubuntu under WSL2, with KVM | Fast boots, `make test64` in less time, timing races that only show at full speed, the real hardware itself (USB stick boot, R7) |
+| **TheJat-VM** | An Ubuntu virtual machine inside VMware: 16 CPUs, 15 GB, no KVM (every QEMU boot is emulated) | Long builds (rustc, LLVM), work that doesn't need fast boots or real hardware |
+| **MaK-WSL** | The real PC: Ubuntu under WSL2, with KVM | Fast boots, `make test64` in less time, timing races that only show at full speed, the real hardware itself (USB stick boot, R7) |
+| **TheJat-WSL** | Ubuntu under WSL2 on the PC that runs TheJat-VM, with KVM: 24 CPUs, 15 GiB | Fast boots like MaK-WSL, with more CPUs; not yet built or measured (2026-11-26) |
 
 ## The machines
 
-Measured on MaK on 2026-11-25 and on The-Jat on 2026-11-26.
+Measured on MaK-WSL on 2026-11-25 and on TheJat-VM on 2026-11-26. TheJat-WSL's hardware was read on 2026-11-26; its times aren't measured yet (no built tree).
 
 ### Hardware and setup
 
-| | **MaK** | **The-Jat** |
-|---|---|---|
-| Machine | A laptop: 13th Gen Intel Core i7-13620H | A VMware virtual machine on an Intel Core Ultra 9 275HX |
-| CPU | 10 cores (6 performance + 4 efficient), 16 threads | 16 virtual CPUs |
-| Vector instructions | AVX2, no AVX-512 | AVX2, no AVX-512 |
-| Memory | 11 GiB given to WSL (WSL's default share; no `.wslconfig`) | 15 GB |
-| Disk | 1 TB virtual disk, 917 GB free | 167 GB, 103 GB free |
-| Virtualization | KVM in WSL2 (VT-x, nested) | None: every QEMU boot is emulated |
-| OS | Ubuntu 26.04 on WSL2 (kernel 6.6) | Ubuntu 24.04.4 (kernel 7.0) |
-| Host LLVM | 21 by default; Ubuntu 24.04's 18.1.3 unpacked locally for the byte-for-byte tests | 18.1.3, the reference |
-| Host glibc | 2.43 (newer than the reference) | 2.39, the reference |
-| AArch64 boots | Emulated | Emulated |
+| | **MaK-WSL** | **TheJat-VM** | **TheJat-WSL** |
+|---|---|---|---|
+| Machine | A laptop: 13th Gen Intel Core i7-13620H | A VMware virtual machine on an Intel Core Ultra 9 275HX | WSL2 on the Intel Core Ultra 9 275HX that also runs TheJat-VM |
+| CPU | 10 cores (6 performance + 4 efficient), 16 threads | 16 virtual CPUs | 24 CPUs |
+| Vector instructions | AVX2, no AVX-512 | AVX2, no AVX-512 | AVX2, no AVX-512 |
+| Memory | 11 GiB given to WSL (WSL's default share; no `.wslconfig`) | 15 GB | 15 GiB given to WSL (no `.wslconfig`) |
+| Disk | 1 TB virtual disk, 917 GB free | 167 GB, 103 GB free | 1 TB virtual disk, 912 GB free |
+| Virtualization | KVM in WSL2 (VT-x, nested) | None: every QEMU boot is emulated | KVM in WSL2 |
+| OS | Ubuntu 26.04 on WSL2 (kernel 6.6) | Ubuntu 24.04.4 (kernel 7.0) | Ubuntu 26.04 on WSL2 (kernel 6.6) |
+| Host LLVM | 21 by default; Ubuntu 24.04's 18.1.3 unpacked locally for the byte-for-byte tests | 18.1.3, the reference | 21 (clang 21.1.8); no 18.1.3 yet, so the byte-for-byte tests need it unpacked first |
+| Host glibc | 2.43 (newer than the reference) | 2.39, the reference | 2.43 (newer than the reference) |
+| AArch64 boots | Emulated | Emulated | Emulated |
 
 ### Measured times
 
-| Task | **MaK, KVM** | **MaK, emulated** | **The-Jat** |
+| Task | **MaK-WSL, KVM** | **MaK-WSL, emulated** | **TheJat-VM** |
 |---|---|---|---|
 | `make test64`, all 48 parts | 14 min 6 s | not measured | 13 min 55 s |
 | `make test64`, the x86_64 parts only | 7 min 56 s | not measured | not measured |
@@ -40,48 +43,76 @@ Measured on MaK on 2026-11-25 and on The-Jat on 2026-11-26.
 | `boot64-test` (mostly typing keys and waiting) | 382 s | 385 s | not measured |
 | Four `cprimes` copies at once (the busy part) | about 1.4 s | about 14 s | not measured |
 
-The-Jat's emulated boots are a little faster than MaK's emulated ones (a newer CPU, and nothing else on it). The whole of `make test64` is about as long on both machines, because its slowest parts are the AArch64 ones, emulated everywhere. KVM makes the x86_64 half several times faster.
+TheJat-VM's emulated boots are a little faster than MaK-WSL's emulated ones (a newer CPU, and nothing else on it). The whole of `make test64` is about as long on both machines, because its slowest parts are the AArch64 ones, emulated everywhere. KVM makes the x86_64 half several times faster.
 
 ### What follows for the split
 
 | Kind of work | Better on | Why |
 |---|---|---|
-| Fast edit, boot and test loops on x86_64 | MaK | KVM: a busy boot is up to ten times faster |
-| Timing races, real-PC behaviour | MaK | KVM delivers interrupts in real time, as a PC does; it found the bootloader's protected-mode bug |
-| Real hardware (USB stick, R7) | MaK | It is the real PC |
-| Byte-for-byte comparisons with the host's tools (LLVM, Clang, glibc) | The-Jat | It has the reference versions; MaK's newer host needs local workarounds |
-| Long unattended builds (rustc, LLVM 23) | The-Jat | MaK is a laptop: it can sleep, run on battery or slow down when hot, and WSL stops when idle; and it has 4 GB less memory |
-| Big memory (building rustc, models of 1-3 GB) | The-Jat | 15 GB against 11 GiB |
+| Fast edit, boot and test loops on x86_64 | MaK-WSL | KVM: a busy boot is up to ten times faster |
+| Timing races, real-PC behaviour | MaK-WSL | KVM delivers interrupts in real time, as a PC does; it found the bootloader's protected-mode bug |
+| Real hardware (USB stick, R7) | MaK-WSL | It is the real PC |
+| Byte-for-byte comparisons with the host's tools (LLVM, Clang, glibc) | TheJat-VM | It has the reference versions; MaK-WSL's newer host needs local workarounds |
+| Long unattended builds (rustc, LLVM 23) | TheJat-VM | MaK-WSL is a laptop: it can sleep, run on battery or slow down when hot, and WSL stops when idle; and it has 4 GB less memory |
+| Big memory (building rustc, models of 1-3 GB) | TheJat-VM | 15 GB against 11 GiB |
 | AArch64 | Either | Emulated on both, about as fast |
 
-MaK's memory can grow: a `.wslconfig` gives WSL more of the laptop's memory, if the laptop has it to spare.
+MaK-WSL's memory can grow: a `.wslconfig` gives WSL more of the laptop's memory, if the laptop has it to spare.
 
 ## How we work
 
 **This file is the one place for the work items.** Every item, its owner, its order, what it depends on and whether it is done is written here and nowhere else. Each machine reads it after every `git pull` and changes it in the same branch as the work. How an item was built goes in its journal entry; this file only points to it.
 
-### Rules for both machines
+### Rules for every machine
 
 1. **A separate branch for everything**: every step, fix or document change, with the same name in every repository it touches (for example `r3-std`, `usb-hubs`). Nothing is committed straight to `main`.
-2. **Nothing is merged into `main` without asking the user first**, and only after full testing:
+2. **Nothing is merged into `main` without asking the user first**, and only after full testing. The one who did the work merges it:
    - pull `main` and merge it into the branch;
    - `make test64` passes on the branch with `main` merged in;
    - the step's own new tests pass, and its testing note was checked by a scripted boot;
+   - the checklist below ("Before merging") is gone through;
    - the user is asked and says yes;
+   - the numbers and the journal row are given (rule 5);
    - then merge and push, TheKernel and TheBootloader first, TheTaaJ last.
-3. **The same commit author on both machines: `The-Jat`**, with the same email. Set it once in each repository (`git config user.name "The-Jat"`, and the email the user gives). Nothing else goes in a commit message's author or trailers: no `Co-Authored-By` line, nothing that names the tools used to write the change.
+
+   If `main` moved while `make test64` ran, merge it in again. Run the whole `make test64` again only if the new commits change something outside `docs/`. If a push is refused because someone else merged first, pull, merge, take the next free number and push again: git's refusal is what keeps two merges apart.
+3. **The same commit author on every machine: `The-Jat`**, with the same email. Set it once in each repository (`git config user.name "The-Jat"`, and the email the user gives). Nothing else goes in a commit message's author or trailers: no `Co-Authored-By` line, nothing that names the tools used to write the change.
 4. **Work follows the dependencies.** An item is started only when the items it depends on are done. Among the items that are ready, the one that most other items wait for goes first (see "What waits for what" below). If an item turns out to block more work than this file says, move it up and write down why.
-5. **Journal numbers are taken at merge time.** Whoever merges into `main` first takes the next number. The other renumbers their entry (file name, title, README row) before merging.
+5. **Anything numbered, and anything added to a shared list, is done at merge** - that is where two machines collide:
+   - a branch's journal entry is `docs/journal/NNN-name.md`, its title says `#NNN`, and its Notes say `NNN`; at merge it takes the next free number (file name, title, Notes, any comment that says `NNN`);
+   - the entry's row in `docs/journal/README.md` is added only at merge, with its number;
+   - new work items on a branch are `K?` or `J?` (with a word to tell them apart, for example `K?-hubs`) and take the next free number at merge;
+   - `docs/testing-notes.md` is generated: never edited by hand, and never merged by hand. Run `python3 tools/testing-notes.py` at merge, after the numbering; on a conflict in it, take either side and run it again;
+   - commit messages on a branch say "entry NNN"; pushed commits are not rewritten, and the merge commit and the journal row carry the number.
 6. **Keep this file current**, in the step's own branch:
-   - when a step starts, put it and its branch under "Now";
+   - when a step starts, put it and its branch in **your own** "Now" table (each machine edits only its own);
    - when an item is done, write **Done (entry NNN)** in its Notes;
-   - when something new is found to do, add it to the right list with a new number (numbers are never reused);
+   - when something new is found to do, add it to the right list as `K?` or `J?` (rule 5; numbers are never reused);
    - when a dependency is found, add it to "What waits for what".
-7. **Only the bootloader's owner (MaK) changes TheBootloader.** If The-Jat needs a change there, it's written down here and MaK does it.
-8. **Files both machines touch often**, such as `Makefile`, `README.md`, `docs/testing-notes.md`, `libc/` and `kernel64/src/syscall*`: keep changes small and merge `main` in often, so conflicts stay small.
+7. **Only the bootloader's owner (MaK-WSL) changes TheBootloader.** If TheJat-VM needs a change there, it's written down here and MaK-WSL does it.
+8. **Files every machine touches often**, such as `Makefile`, `README.md`, `libc/` and `kernel/kernel64/src/syscall*`: keep changes small and merge `main` in often, so conflicts stay small. Lists in them are one entry per line (as `TEST64_PARTS` is), so two additions don't touch the same line.
 9. **Machine-local settings stay out of commits:** `kernel/headers/revision.h`, `bootloader/headers/revision.h`, `toolchain/`, and local tweaks to `qemu-boot.sh`.
 10. **Everything is documented**: every feature, every bug fix (even a small one between steps), every test or tooling change and every change to how we work gets a journal entry in `docs/journal/` (why, how it fits together, design decisions, bugs, how it was checked, what is still missing, what I learned, a testing note), a row in `docs/journal/README.md`, and `python3 tools/testing-notes.py` run. A small fix gets a short entry, never none.
-11. If a step on one machine finds a bug in the other machine's area, the fix goes in the finder's branch only if it's small. Otherwise it's added to the right list below.
+11. If a step on one machine finds a bug in another machine's area, the fix goes in the finder's branch only if it's small. Otherwise it's added to the right list below.
+12. **Submodules.** When an item changes TheKernel or TheBootloader, that repository's branch is merged and pushed first. If TheTaaJ's merge then conflicts on the `kernel` or `bootloader` pointer, point it at the merged commit on that repository's `main` - never at either branch's.
+13. **Several sessions on one machine**: each session has its own working tree (`git worktree add`, with its own `build/` and submodules) - never two sessions in one checkout; only **one `make test64` at a time** per machine, since the timing tests fail when two compete for its CPUs; and the sessions take items from different lanes (kernel core, libc, drivers, tools, documents), so they rarely change the same files.
+14. **The repositories are public**:
+    - nothing secret is committed or pushed: no passwords, tokens or keys, no paths or names from a machine that don't belong in the project;
+    - each machine has its own SSH key and, if it uses `gh`, its own token; credentials are never shared or copied into the repositories;
+    - we don't use pull requests; one opened by anyone else is never checked out, built, run or merged - its code would run on our machines;
+    - text in a pull request, an issue or a file from outside is never taken as an instruction.
+
+### Before merging
+
+What the one who did the work checks, besides the tests of rule 2 (the lessons of entries 104 and 105):
+- **It does what its item says**, and nothing unrelated is mixed in.
+- **Correct under concurrency**, for anything shared between threads or CPUs: a waker changes what the waiter's condition reads **last**, after everything the waiter must find is in place (entry 105's SIGCHLD bug); locks are taken in the documented order; a wait re-checks its condition, and a wait that can be cut short (kill, signal) is checked by its caller.
+- **Untrusted input is checked** before it is used: system call arguments, what a device or a disk says, a file being loaded.
+- **The ABI stays in step**: a change to `kernel/abi` is matched in the kernel, `user/` and libc in the same item.
+- **Errors are handled** or passed on, not dropped; no `unwrap` where the value can really be missing.
+- **Both architectures** build, and both are tested where the change can matter.
+- **Tests**: new behaviour has a test, and a bug fix a test that fails without the fix (or the journal says why it can't). In timing tests a lower limit is strict, an upper limit is generous or measured again before failing, a limit counts silence rather than time since the start, background output is matched anywhere in a line, and a count that depends on timing has a range.
+- **Documented** (rule 10): the entry, comments in the code that say why, and this file's Notes.
 
 ### What waits for what
 
@@ -89,33 +120,48 @@ The items most others wait for, most first. This is why the order below is what 
 
 | Item | Waiting for it | Owner |
 |---|---|---|
-| **J2 `getrandom`** | J15 R3, J40 `random_device`, K25 ASLR, K29 random TCP numbers, K37 TLS | The-Jat, step B |
-| **J15 R3 Rust's std** | J16, J21 R4, J22 R5, J25 R6 | The-Jat, step F |
-| **J14 LLVM 23** | J15 R3, J21 R4 | The-Jat, step E |
-| **J1 ELF thread-local storage** | J15 R3 | The-Jat, step B |
-| **J3 `poll`** | J15 R3, K33 non-blocking sockets | The-Jat, step C |
+| **J2 `getrandom`** | J15 R3, J40 `random_device`, K25 ASLR, K29 random TCP numbers, K37 TLS | TheJat-VM, step B |
+| **J15 R3 Rust's std** | J16, J21 R4, J22 R5, J25 R6 | TheJat-VM, step F |
+| **J14 LLVM 23** | J15 R3, J21 R4 | TheJat-VM, step E |
+| **J1 ELF thread-local storage** | J15 R3 | TheJat-VM, step B |
+| **J3 `poll`** | J15 R3, K33 non-blocking sockets | TheJat-VM, step C |
 | **J17-J20 TaajFS version 6** | J7 `stat` with times, J21 (rustc's big files), E1 `fsck` (written for the new format) | **Done (entry 101)** |
-| **K1 R7, the real PC** | K3 a day on it, K4 its fixes, MaK's step C drivers | MaK, step B |
-| **K13 AML interpreter** | K14 `_PRT`, K15 power button, K17 battery, K18 suspend | MaK, step E |
-| **J43 shell variables and `if`** | J45 rebuilding only what changed, J25 R6's build scripts | The-Jat, filler |
-| **K44 pseudo-terminals** | K45 job control | MaK, step H |
-| **K11 GPT** | K12 the installer | MaK, step B |
-| **J51 test programs out of the kernel image** | Every kernel feature, once the image nears its 3 MiB limit (about 680 KiB left) | The-Jat, filler; it moves to the front if less than 200 KiB is left |
+| **K1 R7, the real PC** | K3 a day on it, K4 its fixes, MaK-WSL's step C drivers | MaK-WSL, step B |
+| **K13 AML interpreter** | K14 `_PRT`, K15 power button, K17 battery, K18 suspend | MaK-WSL, step E |
+| **J43 shell variables and `if`** | J45 rebuilding only what changed, J25 R6's build scripts | TheJat-VM, filler |
+| **K44 pseudo-terminals** | K45 job control | MaK-WSL, step H |
+| **K11 GPT** | K12 the installer | MaK-WSL, step B |
+| **J51 test programs out of the kernel image** | Every kernel feature, once the image nears its 3 MiB limit (about 680 KiB left) | TheJat-VM, filler; it moves to the front if less than 200 KiB is left |
 
 Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 
 ## Now
 
-| Machine | Step | Branch |
-|---|---|---|
-| The-Jat | E: LLVM 23 | `llvm-23` |
-| MaK | A: the scheduler and timing step, one branch per item: now K20, priorities and the CPU a thread runs on | `k20-priorities` |
+Each machine (or session) has its own table and changes only its own, so two machines never edit the same lines.
+
+### Now: TheJat-VM
+
+| Step | Branch |
+|---|---|
+| E: LLVM 23 | `llvm-23` |
+
+### Now: MaK-WSL
+
+| Step | Branch |
+|---|---|
+| A: the scheduler and timing step, one branch per item: now K20, priorities and the CPU a thread runs on | `k20-priorities` |
+
+### Now: TheJat-WSL
+
+| Step | Branch |
+|---|---|
+| How we work: back to branches, conflicts avoided at merge, three machines named | `back-to-branches` |
 
 ## The decided order
 
 Each step below is one branch, one journal entry and one test64 run. The items are grouped into big steps, as the project does. When a step is merged, the machine takes its next one.
 
-### The-Jat
+### TheJat-VM
 
 | Step | Items | Why in this order |
 |---|---|---|
@@ -123,15 +169,15 @@ Each step below is one branch, one journal entry and one test64 run. The items a
 | **B** Std's ground, part 1: randomness, real thread-local storage, signals std uses | J2 `getrandom`, J1 ELF TLS, J4 `sigaltstack`, J10 `waitid` and SIGCHLD | **Done (entry 099)** |
 | **C** Std's ground, part 2: libc calls std uses | J3 `poll`, J5 `dl_iterate_phdr`, J6 pthread attributes, J7 `stat`, J8 `realpath` and `getcwd`, J9 `posix_spawn` with fd 3+, J12 `dlopen` stubs, J13 zlib, J37 environment, J38 `execvp` and `/bin`, J39 the real `argv[0]` | **Done (entry 100)** |
 | **D** TaajFS version 6 (versions 4 and 5 came in Era 6) | J17 file times, J18 files over 256 MiB, J19 long names (entry 094), J20 faster writes (entry 093), J35 a replacing `rename`, J55 `/bin` | **Done (entry 101)**; J55's moving of the programs stays open |
-| **E** LLVM 23 | J14, and C++ (libc++, the LLVM port) moved from emulated to real thread-local storage | Long; runs unattended on The-Jat; it rebuilds the ports anyway. libc++ 23 needs a host clang of 21 or later, so a host LLVM 23.1.5 is built first (`tools/build-host-llvm.sh`, with cmake and ninja) |
+| **E** LLVM 23 | J14, and C++ (libc++, the LLVM port) moved from emulated to real thread-local storage | Long; runs unattended on TheJat-VM; it rebuilds the ports anyway. libc++ 23 needs a host clang of 21 or later, so a host LLVM 23.1.5 is built first (`tools/build-host-llvm.sh`, with cmake and ninja) |
 | **F** R3 Rust's std | J15, J16 | Needs B-E |
 | **G** Memory for big programs | J26-J31 | Before rustc's 182 MB runs. **Part 1 done (entry 102)**: J26, J27, J30, J31; **part 2 done (entry 103)**: J28. J29 needs sealed memory objects first (J58). Done before E because E waits |
 | **H** R4 rustc on TheTaaJ | J21 | |
-| **I** R5 the build without cargo | J22, J23 (nasm; the bootloader change is MaK's) | |
+| **I** R5 the build without cargo | J22, J23 (nasm; the bootloader change is MaK-WSL's) | |
 | **J** R6 the milestone | J24, J25 | |
 | Fillers, between big steps | J32-J34, J36, J40-J54 | When a long build runs, or for a short break |
 
-### MaK
+### MaK-WSL
 
 | Step | Items | Why in this order |
 |---|---|---|
@@ -140,7 +186,7 @@ Each step below is one branch, one journal entry and one test64 run. The items a
 | **C** Drivers the real PC needs | K2 USB hubs, K5 Intel I219, K6 Realtek, and whatever B found | After B shows which ones matter |
 | **D** Network for real networks | K30 DHCP, K31 DNS, K32 link state, K33 loopback and UDP from C, K34 | DHCP is needed on any real network |
 | **E** ACPI | K13 AML, K14 `_PRT`, K15 the power button, K16 a clean shutdown, K28 who may switch off | Real PCs need `_PRT` for many cards |
-| **F** Security | K25 ASLR, K26 stack protector, K29 random TCP numbers | Needs The-Jat's B (`getrandom`) |
+| **F** Security | K25 ASLR, K26 stack protector, K29 random TCP numbers | Needs TheJat-VM's B (`getrandom`) |
 | **G** Disks | K8 NVMe, K9 AHCI, K10 a queue per disk, K12 an installer | |
 | **H** Desktop | K40-K46 | |
 | **I** Later | K17, K18, K27, K35-K38, K47-K48 | TLS waits for `getrandom`; sound is Era 10 |
@@ -149,7 +195,7 @@ The E list (either machine) is taken by whoever finishes a step and is waiting f
 
 ---
 
-## The-Jat: the road to rustc on TheTaaJ (Era 9), and what it needs
+## TheJat-VM: the road to rustc on TheTaaJ (Era 9), and what it needs
 
 The order matters here: each item is needed by the ones after it.
 
@@ -165,7 +211,7 @@ The order matters here: each item is needed by the ones after it.
 | J6 | **`pthread_getattr_np`**, `pthread_attr_getstack`, `pthread_sigmask` | S | **Done (entry 100)**: glibc's 56-byte `pthread_attr_t`, `pthread_attr_setstack`, `pthread_getattr_np` (the main thread's too); `pthread_sigmask` was already there |
 | J8 | **`realpath`, `getcwd`, `fchdir`, `opendir` on handles** | S | **Done (entry 100)**: `realpath` and `getcwd` were there; `open` with O_DIRECTORY, `fchdir`, `fdopendir`, `dirfd` added |
 | J9 | **`posix_spawn` file actions for fd 3+** (E11 left over from Era 6) | M | **Done**: entry 092 (E11) for spawn; entry 100 checks it through exec too |
-| J10 | **`waitid`, `WNOHANG` everywhere, SIGCHLD** | S | **Done (entry 099)**: PROCESS_NOTIFY; WNOHANG and WNOWAIT. MaK fixed an ordering bug in it (entry 105): the exit code is now published after the watchers' signals, so SIGCHLD's handler has run when `waitid` returns |
+| J10 | **`waitid`, `WNOHANG` everywhere, SIGCHLD** | S | **Done (entry 099)**: PROCESS_NOTIFY; WNOHANG and WNOWAIT. MaK-WSL fixed an ordering bug in it (entry 105): the exit code is now published after the watchers' signals, so SIGCHLD's handler has run when `waitid` returns |
 | J11 | **Wide characters**: `wchar_t` functions, `mbrtowc`, `wcrtomb` in UTF-8 | M | Also helps libc++'s missing parts |
 | J12 | **`dlopen`/`dlsym` stubs answering "unsupported"** honestly | S | **Done (entry 100)**: `dlopen(NULL)` works, `dlsym` says no, `dlerror` says why |
 | J13 | **zlib** ported (for rustc's metadata compression) | S | **Done (entry 100)**: zlib 1.3.2 in `ports/zlib`, `make zlib64`/`zlib-aarch64` |
@@ -179,7 +225,7 @@ The order matters here: each item is needed by the ones after it.
 | J16 | **R3b unwinding**, if rustc needs it (libunwind for TheTaaJ, `.eh_frame_hdr`) | M | |
 | J21 | **R4 rustc runs on TheTaaJ**, cross-built with `x.py`; `taajfs.rlib` byte for byte as the host's | L | |
 | J22 | **R5 a Makefile driving rustc without cargo**, checked against cargo on the host | L | |
-| J23 | **R5 nasm ported**; the BIOS loader built with clang (`--target=i686-elf`) | M | The bootloader change itself is MaK's (rule 5); The-Jat ports nasm |
+| J23 | **R5 nasm ported**; the BIOS loader built with clang (`--target=i686-elf`) | M | The bootloader change itself is MaK-WSL's (rule 5); TheJat-VM ports nasm |
 | J24 | **R6 our own ISO 9660 / El Torito writer** (a Rust program) | M | |
 | J25 | **R6 the milestone**: `make` on TheTaaJ builds everything, the image boots and passes test64, and builds itself again to the same bytes | L | |
 
@@ -232,7 +278,7 @@ The order matters here: each item is needed by the ones after it.
 
 ---
 
-## MaK: real hardware, speed, and the machine itself
+## MaK-WSL: real hardware, speed, and the machine itself
 
 ### Real hardware first (Era 7's milestone)
 
@@ -318,7 +364,7 @@ The order matters here: each item is needed by the ones after it.
 | K47 | Intel HD Audio driver and an audio service | L | Testable in QEMU (`-device intel-hda`) |
 | K48 | WAV playback, then a microphone recorded to a file | M | |
 | K50 | **`bigmem64-test` once did not finish its steps** under KVM (race hunt round 6 of 20, entry 105); not seen in 5 runs under full CPU load; its log was lost | S | Likeliest: host memory and CPU both short with 12 test machines on 11 GiB. `tools/race-hunt.sh` now keeps a failed round's files, so run it again and read them |
-| K51 | **The BIOS loader is slow emulated**: 14 of an 18 s boot pass before the kernel's first byte (idle host, TCG; under KVM well under a second) - stage2 reads the kernel through `int 13h`, back to real mode and out again for each read | S | Measured in entry 105. Read more per `int 13h` call, or stay in real mode for the whole read. The bootloader is MaK's (rule 7) |
+| K51 | **The BIOS loader is slow emulated**: 14 of an 18 s boot pass before the kernel's first byte (idle host, TCG; under KVM well under a second) - stage2 reads the kernel through `int 13h`, back to real mode and out again for each read | S | Measured in entry 105. Read more per `int 13h` call, or stay in real mode for the whole read. The bootloader is MaK-WSL's (rule 7) |
 | K52 | **`aarch64-tcp-test` expects no segment for a closed connection**: once, in a full emulated `test64` on a busy host, `netinfo` counted 1 answered "no such connection" (41 segments sent again; alone, 0 of 3 runs, with 1-4 sent again) | S | Likely a late retransmission from the host after TheTaaJ closed passively (correct TCP answers it). Check what segment it was, then either allow it or keep the connection longer (entry 105) |
 
 ---
@@ -342,9 +388,9 @@ The order matters here: each item is needed by the ones after it.
 |---|---|---|
 | U1 | Era 5's milestone: write one journal entry by hand in `edit` on TheTaaJ | |
 | U2 | Merge `core-basics` into `main` (after test64 passes) | |
-| U3 | Go-ahead for Era 9's R3 on The-Jat | |
+| U3 | Go-ahead for Era 9's R3 on TheJat-VM | |
 | U4 | Be at the real PC for K1 (R7) | |
-| U5 | Era 8, the AI engine: agree its plan (`docs/ai-assistant.md`) before any work | Then it splits: the engine (SIMD, tensors, GGUF) suits The-Jat's long runs; testing speed on the real CPU suits MaK |
+| U5 | Era 8, the AI engine: agree its plan (`docs/ai-assistant.md`) before any work | Then it splits: the engine (SIMD, tensors, GGUF) suits TheJat-VM's long runs; testing speed on the real CPU suits MaK-WSL |
 | U6 | Raspberry Pi and RISC-V: only if you want them | |
 
 ## Later eras, as drafted in `docs/ai-assistant.md`

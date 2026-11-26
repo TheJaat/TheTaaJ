@@ -23,7 +23,7 @@ ROUNDS=${1:-20}
 FIRST=${2:-1}
 D=build/race-hunt
 mkdir -p "$D"
-PARTS=$(sed -n 's/^TEST64_PARTS = //p' Makefile)
+PARTS=$(make -s --no-print-directory test64-list)
 [ "${ALL:-0}" = 1 ] || PARTS=$(echo "$PARTS" | tr ' ' '\n' | grep -v '^aarch64-' | tr '\n' ' ')
 ACCEL=${TAAJ_ACCEL:+TAAJ_ACCEL=$TAAJ_ACCEL}
 echo "race-hunt: rounds $FIRST-$((FIRST + ROUNDS - 1)) of $(echo $PARTS | wc -w) parts ${ACCEL:-(accelerator chosen by the Makefile)}" >> "$D/summary.txt"

@@ -1994,7 +1994,65 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 12
-TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test times64-test aarch64-times-test pages64-test aarch64-pages-test
+TEST64_PARTS = \
+	boot64-test \
+	boot64-uefi-test \
+	ahci64-test \
+	nvme64-test \
+	power64-test \
+	aarch64-power-test \
+	aarch64-keys-test \
+	clang64-test \
+	aarch64-clang-test \
+	llvm64-test \
+	aarch64-llvm-test \
+	aarch64-tcc-test \
+	tcc64-test \
+	make64-test \
+	aarch64-make-test \
+	libmake64-test \
+	aarch64-libmake-test \
+	kernel64-test \
+	smp64-test \
+	big64-test \
+	fault64-test \
+	aarch64-test \
+	aarch64-uefi-test \
+	net64-test \
+	e1000-64-test \
+	usb64-test \
+	stick64-test \
+	aarch64-net-test \
+	ip64-test \
+	aarch64-ip-test \
+	tcp64-test \
+	aarch64-tcp-test \
+	http64-test \
+	aarch64-http-test \
+	screen64-test \
+	aarch64-screen-test \
+	gui64-test \
+	aarch64-gui-test \
+	edit64-test \
+	aarch64-edit-test \
+	cxx64-test \
+	aarch64-cxx-test \
+	pipe64-test \
+	aarch64-pipe-test \
+	thread64-test \
+	aarch64-thread-test \
+	bigmem64-test \
+	aarch64-bigmem-test \
+	basics64-test \
+	aarch64-basics-test \
+	ground64-test \
+	aarch64-ground-test \
+	ground2-64-test \
+	aarch64-ground2-test \
+	times64-test \
+	aarch64-times-test \
+	pages64-test \
+	aarch64-pages-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared
@@ -2004,6 +2062,11 @@ test64:
 test64-shared: build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64 aarch64-esp tcc64 tcc-aarch64 cxx64 cxx-aarch64 llvm64 llvm-aarch64 pdpmake64 pdpmake-aarch64
 
 test64-parts: $(TEST64_PARTS)
+
+# The list of parts, for tools/race-hunt.sh (TEST64_PARTS is one part per
+# line, so a script can't read it with sed).
+test64-list:
+	@echo $(TEST64_PARTS)
 
 # Clean everything
 clean:
