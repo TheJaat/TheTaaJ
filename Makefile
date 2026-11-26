@@ -6,7 +6,7 @@ KERNEL_DIR = kernel
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
-        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test times64-test aarch64-times-test pages64-test aarch64-pages-test zlib64 zlib-aarch64 \
+        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test handles64-test aarch64-handles-test times64-test aarch64-times-test pages64-test aarch64-pages-test zlib64 zlib-aarch64 \
         llvm64 llvm-aarch64 clang-tblgen llvm64-test clang64-test aarch64-clang-test aarch64-llvm-test llvm-put llvm-put-aarch64
 
 # Default target
@@ -384,7 +384,7 @@ TEST_TYPED   = Hi there
 # What those commands must print (grep patterns, separated by ";").
 # (Joined on one line: a continued line would start each pattern with a
 # space.)
-EXPECT_SHELL = unknown command: Hi;  PID  NAME;init +running;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
+EXPECT_SHELL = unknown command: Hi;  PID  NAME;init +running +[0-9]+\.[0-9]{3} s;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
 EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^ +dir  docs/;^2 directories, $(ROOT_FILES) files, [0-9]+ bytes;^cat: notes: no such file;^cat exited with code 1;^kept\s*$$;^Hello from the host;^saved: 5 bytes
 EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(4096 KiB\);^0000  4a 41 46 53 .*JAFS;^disk: sector 5: the disk is read-only;^disk: sector 99999: no such sector;^disk check: all 9 checks passed;^took [0-9]+\.[0-9][0-9] s;^line 300 of 300
 EXPECT_RUN   = \[init\] started primes for the shell, from a file;^primes below 50: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47;^primes exited with code 0;^error: welcome is not a program;^error: broken is not a program;^error: no such program;\[init\] started ls for the shell, from a file;^cat exited with code 0;^rm: notes: no such file;^rm: saved2: no such file;^rm exited with code 1;^usage: write FILE TEXT;^write exited with code 2;$(EXPECT_GIVEN);$(EXPECT_WATCH);$(EXPECT_KILL)
@@ -554,6 +554,8 @@ ifeq ($(HAVE_CC),yes)
 	@$(TFSTOOL_RS) rm $(RUN_DISK) ground > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) ground $(C_BIN)/ground > /dev/null
 	@clang $(TAAJ_CFLAGS) $(ZLIB_CFLAGS) -c $(GROUND2_C) -o $(C_BIN)/ground2.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/ground2.o $(C_BIN)/libz.a $(LIBC_A) -o $(C_BIN)/ground2
 	@$(TFSTOOL_RS) rm $(RUN_DISK) ground2 > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) ground2 $(C_BIN)/ground2 > /dev/null
+	@clang $(TAAJ_CFLAGS) -c $(HANDLES_C) -o $(C_BIN)/handles.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/handles.o $(LIBC_A) -o $(C_BIN)/handles
+	@$(TFSTOOL_RS) rm $(RUN_DISK) handles > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) handles $(C_BIN)/handles > /dev/null
 	@clang $(TAAJ_CFLAGS) -c $(PAGES_C) -o $(C_BIN)/pages.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/pages.o $(LIBC_A) -o $(C_BIN)/pages
 	@$(TFSTOOL_RS) rm $(RUN_DISK) pages > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) pages $(C_BIN)/pages > /dev/null
 endif
@@ -1136,6 +1138,8 @@ ifeq ($(HAVE_CC),yes)
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) ground > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) ground $(C_A64_BIN)/ground > /dev/null
 	@clang $(TAAJ_A64_CFLAGS) $(ZLIB_CFLAGS) -c $(GROUND2_C) -o $(C_A64_BIN)/ground2.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/ground2.o $(C_A64_BIN)/libz.a $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/ground2
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) ground2 > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) ground2 $(C_A64_BIN)/ground2 > /dev/null
+	@clang $(TAAJ_A64_CFLAGS) -c $(HANDLES_C) -o $(C_A64_BIN)/handles.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/handles.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/handles
+	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) handles > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) handles $(C_A64_BIN)/handles > /dev/null
 	@clang $(TAAJ_A64_CFLAGS) -c $(PAGES_C) -o $(C_A64_BIN)/pages.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/pages.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/pages
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) pages > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) pages $(C_A64_BIN)/pages > /dev/null
 endif
@@ -1194,7 +1198,10 @@ A64_BUSY_DISK   = $(BUILD_DIR)/aarch64/busy.disk
 # ticks).
 A64_BUSY_KEYS   = f o r e v e r spc shift-7 ret e c h o spc s t i l l spc h e r e ret \
                   c p r i m e s spc 1 0 0 spc shift-dot spc o u t spc shift-7 ret see:exited
-aarch64-keys-test: aarch64-test-disk
+# kernel-aarch64 too: the image it boots carries the user programs (the
+# shell among them), and without it, run on its own, this booted the last
+# image built - an old shell (journal entry 114).
+aarch64-keys-test: aarch64-test-disk kernel-aarch64
 ifeq ($(HAVE_A64),yes)
 	@echo "Booting the AArch64 kernel and typing at its serial port (log: $(A64_KEYS_LOG))..."
 	@KEYS="$(TEST_KEYS)" SLOTS=4 QEMU_ARGS="-smp 4 -drive file=$(A64_TEST_DISK),if=none,format=raw,id=d0 -device virtio-blk-device,drive=d0" \
@@ -1717,6 +1724,32 @@ else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 ground2 boot is not run"
 endif
 
+# Open files as handles (J60, J61, journal entry 115): open gives a
+# channel to the file itself, so a descriptor follows its file through a
+# rename, keeps it after a removal or a replacing rename, and is handed
+# to a child as the file. handles.c checks it in one boot.
+HANDLES_LOG     = $(BUILD_DIR)/handles-64.log
+HANDLES_A64_LOG = $(BUILD_DIR)/aarch64/handles.log
+HANDLES_C       = $(KERNEL64_DIR)/scripts/handles.c
+handles64-test: iso64 user64 libc64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@clang $(TAAJ_CFLAGS) -c $(HANDLES_C) -o $(C_BIN)/handles.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/handles.o $(LIBC_A) -o $(C_BIN)/handles
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/handles-test.sh x86_64 $(ISO64_IMG) $(HANDLES_LOG).disk $(HANDLES_LOG) $(C_BIN)/handles
+	@echo "handles64-test passed"
+else
+	@echo "FAIL: the handles test needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+
+aarch64-handles-test: kernel-aarch64 user-aarch64 tfstool-rs
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@clang $(TAAJ_A64_CFLAGS) -c $(HANDLES_C) -o $(C_A64_BIN)/handles.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/handles.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/handles
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/handles-test.sh aarch64 $(KERNEL_A64_IMAGE) $(HANDLES_A64_LOG).disk $(HANDLES_A64_LOG) $(C_A64_BIN)/handles
+	@echo "aarch64-handles-test passed"
+else
+	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 handles boot is not run"
+endif
+
 # TaajFS version 6 (The-Jat's step D, journal entry 101): file times,
 # a volume and a file over 256 MiB, a rename that replaces, programs in
 # /bin. times.c checks them in one boot on a 320 MiB disk; the host's
@@ -2056,6 +2089,8 @@ TEST64_PARTS = \
 	aarch64-ground-test \
 	ground2-64-test \
 	aarch64-ground2-test \
+	handles64-test \
+	aarch64-handles-test \
 	times64-test \
 	aarch64-times-test \
 	pages64-test \

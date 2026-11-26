@@ -166,12 +166,13 @@ Each machine has its own table and changes only its own, so two machines never e
 | Step | Branch |
 |---|---|
 | E: LLVM 23 - **paused**: a work-in-progress commit on `llvm-23` in TheTaaJ and TheKernel, to be finished later (what is left is in its commit message) | `llvm-23` |
+| TheJat-VM/files: J62, a namespace per process (J60 and J61 merged, entry 115) | `j62-namespaces` |
 
 ### Now: MaK-WSL
 
 | Step | Branch |
 |---|---|
-| A: the scheduler and timing step, one branch per item: now K20, priorities and the CPU a thread runs on | `k20-priorities` |
+| MaK-WSL/sched: K21, CPU time per process in `ps`; then K20 | `k21-cpu-time` |
 
 ### Now: TheJat-WSL
 
@@ -267,7 +268,7 @@ The order matters here: each item is needed by the ones after it.
 | J32 | `scanf`/`fscanf` from streams | S | Only `sscanf` today |
 | J33 | `%a` in printf; long double done properly (`strtold`, `%Lf`) | M | |
 | J34 | `erf`, `erfc`, `tgamma`, `lgamma` and the long double math | S | Declared, not defined |
-| J36 | libc descriptors follow the file, not the name (rename/remove of an open file) | M | |
+| J36 | libc descriptors follow the file, not the name (rename/remove of an open file) | M | **Done (entry 115)**, by J60 |
 | J37 | `getenv`/`setenv` with a real environment passed to children | S | **Done** before this list (`environ`, posix_spawn's envp; checked through exec in entry 100) |
 | J38 | `execvp`, `PATH` search; a `/bin` directory | S | **Done (entry 100)**: the exec family as spawn-and-wait with the exact exit code; PATH, or `/` then `/bin`. The `/bin` directory itself waits for step D |
 | J39 | `argv[0]` is the program's real name (not "program") | S | **Done**: argv[0] is the parent's (checked in entry 100) |
@@ -338,7 +339,7 @@ The order matters here: each item is needed by the ones after it.
 |---|---|---|---|
 | K19 | **Run `make test64` under KVM repeatedly** (say 20 times) and fix every race found | M | **Done (entries 104, 105)**: the tests choose KVM themselves, the typed boot test's typing races; twenty rounds under KVM (`tools/race-hunt.sh`): SIGCHLD before `waitid` returns fixed in the kernel, upper time limits retried; one failure left open as K50 |
 | K20 | Process priorities and choosing a thread's CPU (affinity) | M | Four busy programs make typing sluggish |
-| K21 | CPU time per process in `ps` | S | |
+| K21 | CPU time per process in `ps` | S | **Done (entry 114)**: the kernel counts each process's CPU time at every switch and tick (`clock::PROCESS_CPU`, one more word in `ProcessEntry`); `ps` has a CPU column; libc's `clock()` and `CLOCK_PROCESS_CPUTIME_ID` give it |
 | K22 | A transmit-interrupt serial writer (AArch64 output capped at ~3200 bytes/s) | S | |
 | K23 | The faster boots: measure boot time on KVM and on the real PC, cut the slow parts | S | |
 | K24 | Timer: alarms and sleeps finer than a 10 ms tick (one-shot timer, `setitimer`, `timer_create`) | M | |
@@ -421,6 +422,7 @@ The design - channels, handles with rights, bounded inboxes, handles carried in 
 | K63 | Bigger messages (today 1 KiB; 4 to 64 KiB) or shared rings for streams - fs and net cut streams into 1023-byte pieces | M | After K60; changes the `abi` with the services and libc in step |
 | K64 | Waiting until a channel can be sent to (`object_wait` for "writable"), instead of each sender retrying on `QueueFull` | S | |
 | K65 | Priority inheritance across a call: a server works at the priority of the client it answers | M | After K20 and K61; done by Era 17's K98 if that comes first |
+| K?-port | **A port**: one wait queue for many channels' readiness, so a service with hundreds of open files (J60) or sockets waits at a cost that does not grow with them; then `WAIT_HANDLES_MAX` (256 since entry 115) stops being a limit on open files | M | Generic: it knows channels, never files |
 | K66 | **Channel cycles leak**: end A in B's inbox and B in A's keep both alive once their owners close every handle (`ipc.rs` says so; only the one-step cycle is refused) - a cycle collector, or a rule that stops cycles forming | M | A process can make kernel memory it can't give back |
 
 ### Threads and several CPUs
@@ -458,8 +460,8 @@ The design is Fuchsia's and Plan 9's, not Linux's:
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J60 | **Open files and directories as handles**: `open` returns a channel to that file or directory, served by its service; reads and writes go on it, without the path | L | First. Fixes J36 (a descriptor follows its file through a rename or a removal); lets an open file be passed to another program |
-| J61 | **One file protocol** every file service speaks (today's 15 operations, made per handle), and **one client library** that `taaj::Files` and libc both use | M | With J60. libc's descriptor becomes "a handle that speaks the protocol", plus the few local kinds - an open list, not a closed one |
+| J60 | **Open files and directories as handles**: `open` returns a channel to that file or directory, served by its service; reads and writes go on it, without the path | L | **Done (entry 115)**: `OPEN` gives a channel per file or directory (fileserver's `nodes`), paths kept by the service through renames, a removed open file kept in a hidden `.taaj-removed` until its last close (emptied at start after a crash); libc descriptors and `fstat`, `ftruncate`, `futimens` use it; a descriptor is handed to a child as its channel. Up to 200 open at once per service (`OPEN_MAX`), which needed `WAIT_HANDLES_MAX` raised to 256 - K?-port is the way past it |
+| J61 | **One file protocol** every file service speaks (today's 15 operations, made per handle), and **one client library** that `taaj::Files` and libc both use | M | **Done (entry 115)** with J60: one protocol on every channel - the service's request channels are the root directory, open to change and to read - and `taaj::files::File`, which libc uses. Left: libc's `Open` is still a closed list of kinds (J62 opens it) |
 | J62 | **A namespace per process** in libc: path prefixes to directory handles, given by the parent at `posix_spawn`; `..` and symbolic links across a mount resolved by the client; `rename` across mounts is `EXDEV`, as on Unix | M | After J60. No kernel change |
 | J63 | The `openat` family (`openat`, `mkdirat`, `unlinkat`, `fstatat`, `renameat`), and a program given **only one directory** - a sandbox from capabilities, with no permission checks | M | After J62 |
 | J64 | **`/tmp` in memory**: the `fileserver` crate's `RamStore` as a service of its own | S | After J62 |

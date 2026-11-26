@@ -43,6 +43,15 @@
 //! closes. Before any request is answered, every output stream is
 //! emptied into its file: a program that waited for another to end, and
 //! then reads what it wrote, finds all of it there.
+//!
+//! Open files (protocol::OPEN, J60): a client may open a file or a
+//! directory, and gets a channel of its own to it - this service keeps
+//! the other end, and watches it with the rest. Which node each channel
+//! stands for, and the paths that follow renames and removals, are the
+//! `fileserver` crate's (`Nodes`); here a channel is only matched to its
+//! node, and a node let go when its channel closes. The two request
+//! channels above are the root, open to change and open to read: every
+//! channel speaks the same protocol.
 
 #![no_std]
 #![no_main]
@@ -52,7 +61,8 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use fileserver::protocol::{self, Request, Status, MESSAGE_MAX};
-use fileserver::{Access, DiskStore, RamStore, Store, Stream};
+use fileserver::nodes::{NodeId, ROOT, ROOT_READ_ONLY};
+use fileserver::{DiskStore, Nodes, RamStore, Store, Stream};
 use taaj::disk::{Disk, Window};
 use taaj::services::{ServiceError, Services};
 use taaj::{println, Error, Handle};
@@ -234,26 +244,26 @@ fn main() -> i64 {
 /// client sent. The reply, or None if the message was not a READ_INTO
 /// or the object cannot be mapped for writing (then there is no answer
 /// worth sending: the client sees its reply channel closed).
-fn read_into(store: &mut impl Store, message: &[u8], memory: Handle, reply: &mut [u8; MESSAGE_MAX]) -> Option<usize> {
+fn read_into(store: &mut impl Store, nodes: &Nodes, node: NodeId, message: &[u8], memory: Handle, reply: &mut [u8; MESSAGE_MAX]) -> Option<usize> {
     let size = usize::try_from(taaj::memory_size(memory).ok()?).ok()?;
     let base = taaj::memory_map(memory, true).ok()?;
     // SAFETY: the mapping is `size` bytes long, writable, and ours until
     // it is unmapped below; nothing else in this program touches it.
     let into = unsafe { core::slice::from_raw_parts_mut(base, size) };
-    let length = fileserver::serve_into(store, message, into, reply);
+    let length = nodes.serve_into(store, node, message, into, reply);
     let _ = taaj::memory_unmap(base);
     length
 }
 
 /// A WRITE_FROM: the bytes, straight from the memory object the client
 /// sent. The reply, or None if the object cannot be mapped.
-fn write_from(store: &mut impl Store, access: Access, message: &[u8], memory: Handle, reply: &mut [u8; MESSAGE_MAX]) -> Option<usize> {
+fn write_from(store: &mut impl Store, nodes: &Nodes, node: NodeId, message: &[u8], memory: Handle, reply: &mut [u8; MESSAGE_MAX]) -> Option<usize> {
     let size = usize::try_from(taaj::memory_size(memory).ok()?).ok()?;
     let base = taaj::memory_map(memory, false).ok()?;
     // SAFETY: the mapping is `size` bytes long and ours until it is
     // unmapped below; it is only read.
     let from = unsafe { core::slice::from_raw_parts(base, size) };
-    let length = fileserver::serve_from(store, access, message, from, reply);
+    let length = nodes.serve_from(store, node, message, from, reply);
     let _ = taaj::memory_unmap(base);
     length
 }
@@ -274,11 +284,13 @@ const STREAM_TURN: usize = 64;
 fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 {
     let mut message = [0u8; MESSAGE_MAX];
     let mut reply = [0u8; MESSAGE_MAX];
+    let mut nodes = Nodes::new(store);
     // The channels watched: requests that may change files, then -
     // while anyone holds its other end - requests that may only look,
-    // then the streams.
+    // then the streams, then the open files and directories.
     let mut look = look;
     let mut streams: Vec<Open> = Vec::new();
+    let mut opened: Vec<(Handle, NodeId)> = Vec::new();
     let mut watched: Vec<Handle> = Vec::new();
     loop {
         send_inputs(store, &mut streams, &mut message);
@@ -287,6 +299,8 @@ fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 
         watched.extend(look);
         let first_stream = watched.len();
         watched.extend(streams.iter().map(|open| open.channel));
+        let first_node = watched.len();
+        watched.extend(opened.iter().map(|&(channel, _)| channel));
         // An input stream waiting for room is tried again a tick later:
         // the kernel has no "wake me when there is room".
         let ready = if streams.iter().any(|open| open.full) {
@@ -302,12 +316,16 @@ fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 
                 return 2;
             }
         };
-        if from >= first_stream {
+        if (first_stream..first_node).contains(&from) {
             take_from(store, &mut streams, from - first_stream, &mut message);
             continue;
         }
         empty_outputs(store, &mut streams, &mut message);
-        let access = if from == 0 { Access::ReadWrite } else { Access::ReadOnly };
+        let node = match from {
+            0 => ROOT,
+            _ if from < first_stream => ROOT_READ_ONLY,
+            _ => opened[from - first_node].1,
+        };
         // Room for the largest message and the most handles one can
         // carry: a message that did not fit would stay at the head of
         // the queue, and be refused again, forever.
@@ -317,8 +335,16 @@ fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 
             // The service lives as long as its first channel has a
             // sender; the second going only means fewer to watch.
             Err(Error::PeerClosed) if from == 0 => return 0,
-            Err(Error::PeerClosed) => {
+            Err(Error::PeerClosed) if from < first_stream => {
                 look = None;
+                continue;
+            }
+            // Every handle to an open file closed: the client is done
+            // with it.
+            Err(Error::PeerClosed) => {
+                let (channel, node) = opened.remove(from - first_node);
+                let _ = taaj::close(channel);
+                nodes.close(store, node);
                 continue;
             }
             Err(error) => {
@@ -326,17 +352,29 @@ fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 
                 return 2;
             }
         };
-        // Two handles: a stream to open, with its channel; or a
-        // READ_INTO, with the memory object to fill. The object is let
-        // go before the answer goes: a client that starts a program
-        // from it at once must find it its own alone, or the kernel
-        // copies it first (ipc::spawn).
+        // Two handles: a file to open, with its channel; a stream to
+        // open, with its channel; or a READ_INTO or WRITE_FROM, with its
+        // memory object. The object is let go before the answer goes: a
+        // client that starts a program from it at once must find it its
+        // own alone, or the kernel copies it first (ipc::spawn).
+        if count == 2 && message[0] == protocol::OPEN {
+            let (length, node) = nodes.open(store, node, &message[..n], &mut reply);
+            match node {
+                Some(node) => opened.push((handles[1], node)),
+                None => {
+                    let _ = taaj::close(handles[1]);
+                }
+            }
+            let _ = taaj::send(handles[0], &reply[..length], &[]);
+            let _ = taaj::close(handles[0]);
+            continue;
+        }
         if count == 2 && Stream::is_opened_by(&message[..n]) {
             let (length, stream) = if streams.len() >= protocol::STREAMS_MAX {
                 reply[0] = Status::Busy as u8;
                 (1, None)
             } else {
-                fileserver::open_stream(store, access, &message[..n], &mut reply)
+                nodes.open_stream(store, node, &message[..n], &mut reply)
             };
             match stream {
                 Some(stream) => streams.push(Open { channel: handles[1], stream, full: false }),
@@ -349,7 +387,7 @@ fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 
             continue;
         }
         if count == 2 && message[0] == protocol::WRITE_FROM {
-            let length = write_from(store, access, &message[..n], handles[1], &mut reply);
+            let length = write_from(store, &nodes, node, &message[..n], handles[1], &mut reply);
             let _ = taaj::close(handles[1]);
             if let Some(length) = length {
                 let _ = taaj::send(handles[0], &reply[..length], &[]);
@@ -358,7 +396,7 @@ fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 
             continue;
         }
         if count == 2 {
-            let length = read_into(store, &message[..n], handles[1], &mut reply);
+            let length = read_into(store, &nodes, node, &message[..n], handles[1], &mut reply);
             let _ = taaj::close(handles[1]);
             if let Some(length) = length {
                 let _ = taaj::send(handles[0], &reply[..length], &[]);
@@ -373,7 +411,7 @@ fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 
             }
             continue;
         }
-        let length = fileserver::serve(store, access, &message[..n], &mut reply);
+        let length = nodes.serve(store, node, &message[..n], &mut reply);
         // A client that gave up has closed its end: nothing to do.
         let _ = taaj::send(handles[0], &reply[..length], &[]);
         let _ = taaj::close(handles[0]);
@@ -388,6 +426,10 @@ fn serve(store: &mut impl Store, requests: Handle, look: Option<Handle>) -> i64 
         }
     }
 }
+
+// Every channel is watched in one object_wait: the root's two, the
+// streams and the open files must fit in it.
+const _: () = assert!(2 + protocol::STREAMS_MAX + protocol::OPEN_MAX <= abi::WAIT_HANDLES_MAX as usize);
 
 /// Lets stream `index` go: its channel closed, and no longer watched.
 /// For an output stream the program writing finds nobody reading; for

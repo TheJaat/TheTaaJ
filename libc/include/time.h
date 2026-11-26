@@ -58,9 +58,9 @@ size_t strftime(char *to, size_t size, const char *format, const struct tm *t);
 char *asctime(const struct tm *t);
 char *ctime(const time_t *when);
 
-/* The processor time the program has used, in units of CLOCKS_PER_SEC
- * a second. Here, the time since the system started: TheTaaJ does not
- * yet tell a program its own share. (system.rs) */
+/* The processor time the program has used, all its threads together,
+ * in units of CLOCKS_PER_SEC a second: CLOCK_PROCESS_CPUTIME_ID's time.
+ * (system.rs) */
 typedef long clock_t;
 #define CLOCKS_PER_SEC 1000000L
 clock_t clock(void);
@@ -71,14 +71,16 @@ struct timespec {
     long tv_nsec;
 };
 
-/* clock_gettime(clock, t): the time on one of two clocks, to the
+/* clock_gettime(clock, t): the time on one of three clocks, to the
  * nanosecond the CPU's counter gives: CLOCK_REALTIME, since 1970 (UTC,
- * from the real-time clock at boot), or CLOCK_MONOTONIC, since the
- * system started. Neither is ever set back. 0, or -1 with errno EINVAL
- * for another clock. (system.rs) */
+ * from the real-time clock at boot); CLOCK_MONOTONIC, since the system
+ * started; or CLOCK_PROCESS_CPUTIME_ID, the CPU time this program has
+ * used, all its threads together. None is ever set back. 0, or -1 with
+ * errno EINVAL for another clock. (system.rs) */
 typedef int clockid_t;
 #define CLOCK_REALTIME  0
 #define CLOCK_MONOTONIC 1
+#define CLOCK_PROCESS_CPUTIME_ID 2
 int clock_gettime(clockid_t clock, struct timespec *t);
 
 /* timespec_get(t, TIME_UTC): C11's way to the same time as

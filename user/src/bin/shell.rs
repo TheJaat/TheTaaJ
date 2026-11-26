@@ -1063,12 +1063,16 @@ impl Shell {
             Ok(total) => total,
             Err(error) => return say!(self, "cannot list processes: {error:?}\n"),
         };
-        self.write(b"  PID  NAME        STATE\n");
+        // CPU: the time the process's threads were on a CPU (journal
+        // entry 114), in seconds to the millisecond.
+        self.write(b"  PID  NAME        STATE           CPU\n");
         for entry in &entries[..total.min(entries.len())] {
-            match entry.exit_code {
-                None => say!(self, "{:>5}  {:<10}  running\n", entry.pid, entry.name()),
-                Some(code) => say!(self, "{:>5}  {:<10}  ended ({code})\n", entry.pid, entry.name()),
-            }
+            let state = match entry.exit_code {
+                None => alloc::string::String::from("running"),
+                Some(code) => alloc::format!("ended ({code})"),
+            };
+            let millis = entry.cpu_ns / 1_000_000;
+            say!(self, "{:>5}  {:<10}  {:<12}  {:>3}.{:03} s\n", entry.pid, entry.name(), state, millis / 1000, millis % 1000);
         }
         if let Some(info) = self.system_info() {
             say!(self, "{} processes, {} threads, {} channels\n", info.processes, info.threads, info.channels);
