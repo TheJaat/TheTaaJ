@@ -1,6 +1,6 @@
 # A panic that says where: backtraces in the kernel's own words
 
-*Journal entry #NNN · a kernel feature (K137, first part). Written on TheJat-WSL/ci. A kernel panic said what went wrong and in which source line, a CPU exception gave the registers, and neither said how the kernel got there. Now both print the thread and a backtrace - each caller, named: `kernel64::selftest::threads+0x603`, not `0xffffffff80132463`. The names come from the kernel's own symbol table, written into the kernel after it is linked.*
+*Journal entry #122 · a kernel feature (K137, first part). Written on TheJat-WSL/ci. A kernel panic said what went wrong and in which source line, a CPU exception gave the registers, and neither said how the kernel got there. Now both print the thread and a backtrace - each caller, named: `kernel64::selftest::threads+0x603`, not `0xffffffff80132463`. The names come from the kernel's own symbol table, written into the kernel after it is linked.*
 
 ## Why
 
