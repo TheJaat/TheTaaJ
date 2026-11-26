@@ -14,6 +14,7 @@ use core::ptr;
 
 use taaj::files::Kind;
 
+use crate::at::AT_FDCWD;
 use crate::descriptors::{fail, reason, text, with, Open};
 use crate::errno::*;
 
@@ -111,15 +112,35 @@ fn describe(path: &str, kind: Kind, size: u64, stamp: u64, time: u64) -> Stat {
 /// for writing.
 #[no_mangle]
 pub unsafe extern "C" fn stat(path: *const c_char, out: *mut Stat) -> c_int {
+    // SAFETY: the caller's promise, passed on.
+    unsafe { fstatat(AT_FDCWD, path, out, 0) }
+}
+
+/// `fstatat(dirfd, path, out, flags)`: stat, with `path` taken from the
+/// directory `dirfd` is open on (at.rs); with AT_EMPTY_PATH and an
+/// empty `path`, fstat of `dirfd` itself. AT_SYMLINK_NOFOLLOW changes
+/// nothing: there are no links.
+///
+/// # Safety
+/// As for `stat`.
+#[no_mangle]
+pub unsafe extern "C" fn fstatat(dirfd: c_int, path: *const c_char, out: *mut Stat, flags: c_int) -> c_int {
+    use crate::at::{AT_EMPTY_PATH, AT_SYMLINK_NOFOLLOW};
     // SAFETY: the caller's promise.
     let name = match unsafe { text(path) } {
         Ok(name) => name,
         Err(code) => return fail(code),
     };
-    let found = with(|state| {
-        let files = state.files().ok_or(EACCES)?;
-        let (kind, size, stamp, time) = files.stat_timed(name).map_err(reason)?;
-        Ok(describe(&format!("/{}", files.resolve(name)), kind, size, stamp, time))
+    if flags & !(AT_EMPTY_PATH | AT_SYMLINK_NOFOLLOW) != 0 {
+        return fail(EINVAL);
+    }
+    if name.is_empty() && flags & AT_EMPTY_PATH != 0 {
+        // SAFETY: the caller's promise.
+        return unsafe { fstat(dirfd, out) };
+    }
+    let found = with(|state| crate::at::place(state, dirfd, name)).and_then(|place| {
+        let (kind, size, stamp, time) = place.files.stat_timed(&place.name).map_err(reason)?;
+        Ok(describe(&place.shown, kind, size, stamp, time))
     });
     match found {
         Ok(status) => {
@@ -190,19 +211,28 @@ pub unsafe extern "C" fn fstat(fd: c_int, out: *mut Stat) -> c_int {
 /// # Safety
 /// `path` must be null or a string ending in a zero byte.
 #[no_mangle]
-pub unsafe extern "C" fn mkdir(path: *const c_char, _mode: c_uint) -> c_int {
+pub unsafe extern "C" fn mkdir(path: *const c_char, mode: c_uint) -> c_int {
+    // SAFETY: the caller's promise, passed on.
+    unsafe { mkdirat(AT_FDCWD, path, mode) }
+}
+
+/// `mkdirat(dirfd, path, mode)`: mkdir, with `path` taken from the
+/// directory `dirfd` is open on (at.rs).
+///
+/// # Safety
+/// `path` must be null or a string ending in a zero byte.
+#[no_mangle]
+pub unsafe extern "C" fn mkdirat(dirfd: c_int, path: *const c_char, _mode: c_uint) -> c_int {
     // SAFETY: the caller's promise.
     let name = match unsafe { text(path) } {
         Ok(name) => name,
         Err(code) => return fail(code),
     };
-    with(|state| {
-        let Some(files) = state.files() else { return fail(EACCES) };
-        match files.make_directory(name) {
-            Ok(()) => 0,
-            Err(error) => fail(reason(error)),
-        }
-    })
+    let made = with(|state| crate::at::place(state, dirfd, name)).and_then(|place| place.files.make_directory(&place.name).map_err(reason));
+    match made {
+        Ok(()) => 0,
+        Err(code) => fail(code),
+    }
 }
 
 /// `rmdir(path)`: removes an empty directory.
@@ -211,23 +241,8 @@ pub unsafe extern "C" fn mkdir(path: *const c_char, _mode: c_uint) -> c_int {
 /// `path` must be null or a string ending in a zero byte.
 #[no_mangle]
 pub unsafe extern "C" fn rmdir(path: *const c_char) -> c_int {
-    // SAFETY: the caller's promise.
-    let name = match unsafe { text(path) } {
-        Ok(name) => name,
-        Err(code) => return fail(code),
-    };
-    with(|state| {
-        let Some(files) = state.files() else { return fail(EACCES) };
-        match files.stat(name) {
-            Ok((Kind::Directory, _)) => {}
-            Ok((Kind::File, _)) => return fail(ENOTDIR),
-            Err(error) => return fail(reason(error)),
-        }
-        match files.remove(name) {
-            Ok(()) => 0,
-            Err(error) => fail(reason(error)),
-        }
-    })
+    // SAFETY: the caller's promise, passed on.
+    unsafe { crate::descriptors::unlinkat(AT_FDCWD, path, crate::at::AT_REMOVEDIR) }
 }
 
 // access's questions (unistd.h).
@@ -242,25 +257,41 @@ const W_OK: c_int = 2;
 /// `path` must be null or a string ending in a zero byte.
 #[no_mangle]
 pub unsafe extern "C" fn access(path: *const c_char, mode: c_int) -> c_int {
+    // SAFETY: the caller's promise, passed on.
+    unsafe { faccessat(AT_FDCWD, path, mode, 0) }
+}
+
+/// `faccessat(dirfd, path, mode, flags)`: access, with `path` taken
+/// from the directory `dirfd` is open on (at.rs). W_OK asks that
+/// directory's channel - one opened to read refuses changes - or, for
+/// the namespace, the files this program was given. The flags
+/// (AT_EACCESS, AT_SYMLINK_NOFOLLOW) change nothing: everyone is the
+/// same, and there are no links.
+///
+/// # Safety
+/// `path` must be null or a string ending in a zero byte.
+#[no_mangle]
+pub unsafe extern "C" fn faccessat(dirfd: c_int, path: *const c_char, mode: c_int, flags: c_int) -> c_int {
+    use crate::at::{AT_EACCESS, AT_SYMLINK_NOFOLLOW};
     // SAFETY: the caller's promise.
     let name = match unsafe { text(path) } {
         Ok(name) => name,
         Err(code) => return fail(code),
     };
-    with(|state| {
-        let Some(files) = state.files() else { return fail(EACCES) };
-        if let Err(error) = files.stat(name) {
-            return fail(reason(error));
+    if flags & !(AT_EACCESS | AT_SYMLINK_NOFOLLOW) != 0 {
+        return fail(EINVAL);
+    }
+    let allowed = with(|state| crate::at::place(state, dirfd, name)).and_then(|place| {
+        place.files.stat(&place.name).map_err(reason)?;
+        if mode & W_OK != 0 && place.files.read_only().map_err(reason)? {
+            return Err(EROFS);
         }
-        if mode & W_OK != 0 {
-            match files.read_only() {
-                Ok(false) => {}
-                Ok(true) => return fail(EROFS),
-                Err(error) => return fail(reason(error)),
-            }
-        }
-        0
-    })
+        Ok(())
+    });
+    match allowed {
+        Ok(()) => 0,
+        Err(code) => fail(code),
+    }
 }
 
 /// `chmod(path, mode)`: files have no permissions to change. 0 if the
@@ -272,6 +303,16 @@ pub unsafe extern "C" fn access(path: *const c_char, mode: c_int) -> c_int {
 pub unsafe extern "C" fn chmod(path: *const c_char, _mode: c_uint) -> c_int {
     // SAFETY: the caller's promise.
     unsafe { access(path, 0) }
+}
+
+/// `fchmodat(dirfd, path, mode, flags)`: as chmod, from `dirfd`.
+///
+/// # Safety
+/// `path` must be null or a string ending in a zero byte.
+#[no_mangle]
+pub unsafe extern "C" fn fchmodat(dirfd: c_int, path: *const c_char, _mode: c_uint, _flags: c_int) -> c_int {
+    // SAFETY: the caller's promise.
+    unsafe { faccessat(dirfd, path, 0, 0) }
 }
 
 /// `fchmod(fd, mode)`: as chmod, for an open descriptor.
@@ -481,8 +522,6 @@ pub extern "C" fn fchdir(fd: c_int) -> c_int {
 /// nanoseconds: now, and leave as it is.
 const UTIME_NOW: c_long = (1 << 30) - 1;
 const UTIME_OMIT: c_long = (1 << 30) - 2;
-/// `AT_FDCWD` (fcntl.h): a path from the current directory.
-const AT_FDCWD: c_int = -100;
 
 /// What to do with a file's times, given `times[0]` (access) and
 /// `times[1]` (change), or none: Ok(true) touch, Ok(false) nothing.
@@ -504,19 +543,16 @@ unsafe fn what_to_do(times: *const Time) -> Result<bool, c_int> {
     }
 }
 
-/// Touches the file `name` (from the current directory).
-fn touch(name: &str) -> Result<(), c_int> {
-    with(|state| {
-        let files = state.files().ok_or(EACCES)?;
-        files.touch(name).map_err(reason)
-    })
+/// Touches the file `name`, from `dirfd` (at.rs).
+fn touch(dirfd: c_int, name: &str) -> Result<(), c_int> {
+    let place = with(|state| crate::at::place(state, dirfd, name))?;
+    place.files.touch(&place.name).map_err(reason)
 }
 
 /// `utimensat(dirfd, path, times, flags)`: marks the file changed now
-/// (times null, or `times[1]` UTIME_NOW). 0, or -1 with errno: EPERM
-/// for a change time given as a time, which TheTaaJ cannot keep;
-/// EINVAL for a `dirfd` other than AT_FDCWD (directories are not opened
-/// as descriptors here) unless the path is from the root. `flags`
+/// (times null, or `times[1]` UTIME_NOW), with `path` taken from the
+/// directory `dirfd` is open on (at.rs). 0, or -1 with errno: EPERM for
+/// a change time given as a time, which TheTaaJ cannot keep. `flags`
 /// (AT_SYMLINK_NOFOLLOW) means nothing: there are no links.
 ///
 /// # Safety
@@ -529,11 +565,8 @@ pub unsafe extern "C" fn utimensat(dirfd: c_int, path: *const c_char, times: *co
         Ok(name) => name,
         Err(code) => return fail(code),
     };
-    if dirfd != AT_FDCWD && !name.starts_with('/') {
-        return fail(EINVAL);
-    }
     // SAFETY: the caller's promise.
-    match unsafe { what_to_do(times) }.and_then(|now| if now { touch(name) } else { Ok(()) }) {
+    match unsafe { what_to_do(times) }.and_then(|now| if now { touch(dirfd, name) } else { Ok(()) }) {
         Ok(()) => 0,
         Err(code) => fail(code),
     }
@@ -576,7 +609,7 @@ pub unsafe extern "C" fn utime(path: *const c_char, times: *const core::ffi::c_v
     if !times.is_null() {
         return fail(EPERM);
     }
-    match touch(name) {
+    match touch(AT_FDCWD, name) {
         Ok(()) => 0,
         Err(code) => fail(code),
     }
@@ -744,11 +777,21 @@ pub extern "C" fn symlink(_target: *const c_char, _path: *const c_char) -> c_int
 /// # Safety
 /// `path` must be null or a string ending in a zero byte.
 #[no_mangle]
-pub unsafe extern "C" fn readlink(path: *const c_char, _buffer: *mut c_char, _size: usize) -> isize {
+pub unsafe extern "C" fn readlink(path: *const c_char, buffer: *mut c_char, size: usize) -> isize {
+    // SAFETY: the caller's promise, passed on.
+    unsafe { readlinkat(AT_FDCWD, path, buffer, size) }
+}
+
+/// `readlinkat(dirfd, path, buffer, size)`: readlink, from `dirfd`.
+///
+/// # Safety
+/// `path` must be null or a string ending in a zero byte.
+#[no_mangle]
+pub unsafe extern "C" fn readlinkat(dirfd: c_int, path: *const c_char, _buffer: *mut c_char, _size: usize) -> isize {
     // SAFETY: the caller's promise.
-    match unsafe { access(path, 0) } {
+    match unsafe { faccessat(dirfd, path, 0, 0) } {
         0 => fail(EINVAL),
-        _ => -1, // access said why
+        _ => -1, // faccessat said why
     }
 }
 
@@ -761,6 +804,16 @@ pub unsafe extern "C" fn readlink(path: *const c_char, _buffer: *mut c_char, _si
 pub unsafe extern "C" fn chown(path: *const c_char, _owner: c_uint, _group: c_uint) -> c_int {
     // SAFETY: the caller's promise.
     unsafe { access(path, 0) }
+}
+
+/// `fchownat(dirfd, path, owner, group, flags)`: as chown, from `dirfd`.
+///
+/// # Safety
+/// `path` must be null or a string ending in a zero byte.
+#[no_mangle]
+pub unsafe extern "C" fn fchownat(dirfd: c_int, path: *const c_char, _owner: c_uint, _group: c_uint, _flags: c_int) -> c_int {
+    // SAFETY: the caller's promise.
+    unsafe { faccessat(dirfd, path, 0, 0) }
 }
 
 /// `fchown(fd, owner, group)`: the same, for an open descriptor.

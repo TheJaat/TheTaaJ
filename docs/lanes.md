@@ -312,7 +312,6 @@ Its files: `libc/src/descriptors.rs`, `user/src/files.rs`, the `fileserver` crat
 
 | Item | Wave | Note |
 |---|---|---|
-| J63 | 1 | The `openat` family |
 | J64 | 2 | `/tmp` in memory |
 | J65 | 2 | `/dev` |
 | J55 | 2 | Programs moved into `/bin` |

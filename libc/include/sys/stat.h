@@ -101,6 +101,11 @@ int lstat(const char *path, struct stat *out);
 
 /* Makes a directory. The mode is not kept (there are no permissions). */
 int mkdir(const char *path, mode_t mode);
+/* The same, with path taken from the directory dirfd is open on
+ * (fcntl.h's AT_ flags). */
+int fstatat(int dirfd, const char *path, struct stat *out, int flags);
+int mkdirat(int dirfd, const char *path, mode_t mode);
+int fchmodat(int dirfd, const char *path, mode_t mode, int flags);
 
 /* Permissions are not kept: these change nothing and succeed for a
  * file that is there (chmod, fchmod), and umask says 022. */
@@ -108,8 +113,9 @@ int mkdir(const char *path, mode_t mode);
  * kept, as a stamp, and it can be made newer but not set: times null,
  * or times[1].tv_nsec UTIME_NOW, gives the file a new, higher stamp;
  * UTIME_OMIT leaves it; a time given as a time fails with EPERM. The
- * access time is not kept. utimensat's dirfd must be AT_FDCWD (or the
- * path from the root); its flags mean nothing (there are no links). */
+ * access time is not kept. utimensat takes path from the directory
+ * dirfd is open on, as every ...at call; its flags mean nothing (there
+ * are no links). */
 #define UTIME_NOW ((1l << 30) - 1l)
 #define UTIME_OMIT ((1l << 30) - 2l)
 int utimensat(int dirfd, const char *path, const struct timespec times[2], int flags);
