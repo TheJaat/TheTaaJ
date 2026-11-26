@@ -556,6 +556,8 @@ ifeq ($(HAVE_CC),yes)
 	@$(TFSTOOL_RS) rm $(RUN_DISK) ground2 > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) ground2 $(C_BIN)/ground2 > /dev/null
 	@clang $(TAAJ_CFLAGS) -c $(HANDLES_C) -o $(C_BIN)/handles.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/handles.o $(LIBC_A) -o $(C_BIN)/handles
 	@$(TFSTOOL_RS) rm $(RUN_DISK) handles > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) handles $(C_BIN)/handles > /dev/null
+	@clang $(TAAJ_CFLAGS) -c $(NAMESPACE_C) -o $(C_BIN)/namespace.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/namespace.o $(LIBC_A) -o $(C_BIN)/namespace
+	@$(TFSTOOL_RS) rm $(RUN_DISK) namespace > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) namespace $(C_BIN)/namespace > /dev/null
 	@clang $(TAAJ_CFLAGS) -c $(PAGES_C) -o $(C_BIN)/pages.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/pages.o $(LIBC_A) -o $(C_BIN)/pages
 	@$(TFSTOOL_RS) rm $(RUN_DISK) pages > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) pages $(C_BIN)/pages > /dev/null
 endif
@@ -1140,6 +1142,8 @@ ifeq ($(HAVE_CC),yes)
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) ground2 > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) ground2 $(C_A64_BIN)/ground2 > /dev/null
 	@clang $(TAAJ_A64_CFLAGS) -c $(HANDLES_C) -o $(C_A64_BIN)/handles.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/handles.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/handles
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) handles > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) handles $(C_A64_BIN)/handles > /dev/null
+	@clang $(TAAJ_A64_CFLAGS) -c $(NAMESPACE_C) -o $(C_A64_BIN)/namespace.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/namespace.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/namespace
+	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) namespace > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) namespace $(C_A64_BIN)/namespace > /dev/null
 	@clang $(TAAJ_A64_CFLAGS) -c $(PAGES_C) -o $(C_A64_BIN)/pages.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/pages.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/pages
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) pages > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) pages $(C_A64_BIN)/pages > /dev/null
 endif
@@ -1747,10 +1751,14 @@ endif
 HANDLES_LOG     = $(BUILD_DIR)/handles-64.log
 HANDLES_A64_LOG = $(BUILD_DIR)/aarch64/handles.log
 HANDLES_C       = $(KERNEL64_DIR)/scripts/handles.c
+# A namespace per process (J62, journal entry 118): taaj_mount, and the
+# mounts handed to a child. namespace.c runs in the same boot.
+NAMESPACE_C     = $(KERNEL64_DIR)/scripts/namespace.c
 handles64-test: iso64 user64 libc64 tfstool-rs
 ifeq ($(HAVE_CC),yes)
 	@clang $(TAAJ_CFLAGS) -c $(HANDLES_C) -o $(C_BIN)/handles.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/handles.o $(LIBC_A) -o $(C_BIN)/handles
-	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/handles-test.sh x86_64 $(ISO64_IMG) $(HANDLES_LOG).disk $(HANDLES_LOG) $(C_BIN)/handles
+	@clang $(TAAJ_CFLAGS) -c $(NAMESPACE_C) -o $(C_BIN)/namespace.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/namespace.o $(LIBC_A) -o $(C_BIN)/namespace
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/handles-test.sh x86_64 $(ISO64_IMG) $(HANDLES_LOG).disk $(HANDLES_LOG) $(C_BIN)/handles $(C_BIN)/namespace
 	@echo "handles64-test passed"
 else
 	@echo "FAIL: the handles test needs clang and lld (sudo apt install clang lld)"; exit 1
@@ -1760,7 +1768,8 @@ aarch64-handles-test: kernel-aarch64 user-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
 	@clang $(TAAJ_A64_CFLAGS) -c $(HANDLES_C) -o $(C_A64_BIN)/handles.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/handles.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/handles
-	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/handles-test.sh aarch64 $(KERNEL_A64_IMAGE) $(HANDLES_A64_LOG).disk $(HANDLES_A64_LOG) $(C_A64_BIN)/handles
+	@clang $(TAAJ_A64_CFLAGS) -c $(NAMESPACE_C) -o $(C_A64_BIN)/namespace.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/namespace.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/namespace
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/handles-test.sh aarch64 $(KERNEL_A64_IMAGE) $(HANDLES_A64_LOG).disk $(HANDLES_A64_LOG) $(C_A64_BIN)/handles $(C_A64_BIN)/namespace
 	@echo "aarch64-handles-test passed"
 else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 handles boot is not run"
