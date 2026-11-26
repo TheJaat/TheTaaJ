@@ -373,14 +373,17 @@ enum Source {
     /// A channel end: a pipe's, or a stream opened for the new program;
     /// `reads` for one to read from.
     Channel { handle: Handle, reads: bool },
-    /// A file: its name from the root, the place, open's flags.
-    File { path: String, offset: u64, flags: c_int },
+    /// A file: its channel (with the descriptors that share it), the
+    /// name it was opened by, the place, open's flags.
+    File { file: crate::descriptors::SharedFile, offset: u64, flags: c_int },
 }
 
 /// One of the new program's descriptors beyond 0, 1 and 2, as it is
 /// handed down (abi::descriptors): a handle of its own for a stream.
 enum Given {
-    File { path: String, offset: u64, flags: c_int },
+    /// A file: a copy of its channel, and the rest abi::descriptors's
+    /// Entry::File says.
+    File { handle: Handle, path: String, offset: u64, flags: c_int },
     Read(Handle),
     Write(Handle),
 }
@@ -404,9 +407,8 @@ impl Standard {
             let _ = taaj::close(handle);
         }
         for (_, given) in self.rest {
-            if let Given::Read(handle) | Given::Write(handle) = given {
-                let _ = taaj::close(handle);
-            }
+            let (Given::Read(handle) | Given::Write(handle) | Given::File { handle, .. }) = given;
+            let _ = taaj::close(handle);
         }
     }
 }
@@ -439,9 +441,12 @@ fn standard_for(actions: &[Action]) -> Result<Standard, c_int> {
                 Some(Open::Error) => Some(Source::Error),
                 Some(Open::PipeRead(end)) => Some(Source::Channel { handle: end.channel.0, reads: true }),
                 Some(Open::PipeWrite(end)) => Some(Source::Channel { handle: end.0, reads: false }),
-                Some(Open::File(file)) => {
-                    let file = file.lock();
-                    Some(Source::File { path: file.path.clone(), offset: file.offset, flags: file.flags })
+                Some(Open::File(shared)) => {
+                    let (offset, flags) = {
+                        let file = shared.lock();
+                        (file.offset, file.flags)
+                    };
+                    Some(Source::File { file: shared.clone(), offset, flags })
                 }
                 Some(Open::Socket(_)) | None => None,
             };
@@ -470,23 +475,14 @@ fn standard_for(actions: &[Action]) -> Result<Standard, c_int> {
                     set(&mut table, *to, Some(source));
                 }
                 Action::Open { descriptor, path, flags } if *descriptor > 2 => {
-                    // Beyond 0, 1 and 2 a file stays a file: made ready
-                    // here, as open would, and handed down by name.
+                    // Beyond 0, 1 and 2 a file stays a file: opened here,
+                    // as open would, and its channel handed down.
                     let files = state.files().ok_or(EACCES)?;
+                    let flags = flags & !crate::pipes::O_CLOEXEC;
+                    let file = files.open(path, crate::descriptors::open_flags(flags)).map_err(reason)?;
                     let from_root = alloc::format!("/{}", files.resolve(path));
-                    match files.stat(&from_root) {
-                        Ok((taaj::files::Kind::Directory, _)) => return Err(crate::errno::EISDIR),
-                        Ok(_) if flags & O_TRUNC != 0 && flags & O_ACCMODE != O_RDONLY => {
-                            files.write(&from_root, &[]).map_err(reason)?;
-                        }
-                        Ok(_) => {}
-                        Err(taaj::files::FileError::Refused(taaj::files::Status::NotFound)) if flags & O_CREAT != 0 => {
-                            files.append(&from_root, &[]).map_err(reason)?;
-                        }
-                        Err(error) => return Err(reason(error)),
-                    }
-                    let source = Source::File { path: from_root, offset: 0, flags: flags & !crate::pipes::O_CLOEXEC };
-                    set(&mut table, *descriptor, Some(source));
+                    let file = crate::descriptors::shared(crate::descriptors::File { file, path: from_root, offset: 0, flags });
+                    set(&mut table, *descriptor, Some(Source::File { file, offset: 0, flags }));
                 }
                 Action::Open { descriptor, path, flags } => {
                     let files = state.files().ok_or(EACCES)?;
@@ -520,10 +516,13 @@ fn standard_for(actions: &[Action]) -> Result<Standard, c_int> {
         // read from where the descriptor had got to.
         let mut streams = Vec::new();
         for (fd, source, _) in &mut table {
-            if let (0..=2, Source::File { path, offset, flags }) = (*fd, &*source) {
-                let files = state.files().ok_or(EACCES)?;
+            if let (0..=2, Source::File { file, offset, flags }) = (*fd, &*source) {
                 let reads = flags & O_ACCMODE == O_RDONLY;
-                let stream = if reads { files.stream_in_from(path, *offset) } else { files.stream_out(path, true) };
+                // The file's lock let go before `source` is replaced.
+                let stream = {
+                    let file = file.lock();
+                    if reads { file.file.stream_in_from(*offset) } else { file.file.stream_out() }
+                };
                 let stream = stream.map_err(reason)?;
                 streams.push(stream);
                 *source = Source::Channel { handle: stream, reads };
@@ -567,8 +566,15 @@ fn standard_for(actions: &[Action]) -> Result<Standard, c_int> {
                 (fd, Some((handle, reads)), _) => {
                     standard.rest.push((fd as u8, if reads { Given::Read(handle) } else { Given::Write(handle) }))
                 }
-                (fd, None, Source::File { path, offset, flags }) => {
-                    standard.rest.push((fd as u8, Given::File { path: path.clone(), offset: *offset, flags: *flags }))
+                (fd, None, Source::File { file, offset, flags }) => {
+                    let file = file.lock();
+                    match file.file.share() {
+                        Ok(handle) => standard.rest.push((fd as u8, Given::File { handle, path: file.path.clone(), offset: *offset, flags: *flags })),
+                        Err(_) => {
+                            standard.close();
+                            return Err(crate::errno::EMFILE);
+                        }
+                    }
                 }
                 (_, None, _) => {}
             }
@@ -596,7 +602,7 @@ fn descriptors_channel(rest: Vec<(u8, Given)>) -> Result<Option<Handle>, c_int> 
     let mut failed = channel.is_err();
     for (descriptor, given) in rest {
         let (entry, handle) = match &given {
-            Given::File { path, offset, flags } => (Entry::File { descriptor, flags: *flags, offset: *offset, path }, None),
+            Given::File { handle, path, offset, flags } => (Entry::File { descriptor, flags: *flags, offset: *offset, path }, Some(*handle)),
             Given::Read(handle) => (Entry::Read { descriptor }, Some(*handle)),
             Given::Write(handle) => (Entry::Write { descriptor }, Some(*handle)),
         };

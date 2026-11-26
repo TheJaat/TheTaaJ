@@ -82,6 +82,7 @@ Its files: `kernel/kernel64/src/channel.rs`, `ipc.rs`, `cap.rs`, the channel and
 | K66 | 1 | The cycle leak |
 | K61 | 1 | `channel_call`: `sched`'s K98 and this lane's K73 wait for it |
 | K62 | 1 | One copy per message |
+| K?-port | 2 | A port: one wait for many channels (the file service's open files need it, entry 115) |
 | K63 | 2 | Bigger messages or rings; `network`'s K54 waits for it |
 | K111 | 2 | `DEBUG_WRITE` behind a capability |
 | K73 | 2 | Services with several threads |
@@ -311,9 +312,6 @@ Its files: `libc/src/descriptors.rs`, `user/src/files.rs`, the `fileserver` crat
 
 | Item | Wave | Note |
 |---|---|---|
-| J60 | 1 | Open files as handles (with J61; fixes J36) |
-| J61 | 1 | One file protocol; `taajfs`' J76/J77 and `ipc`'s K152 wait for it |
-| J36 | 1 | Descriptors follow the file (done by J60) |
 | J62 | 1 | A namespace per process: J63-J67, `services`' K105 and `crypto`'s J99 wait for it |
 | J63 | 1 | The `openat` family |
 | J64 | 2 | `/tmp` in memory |

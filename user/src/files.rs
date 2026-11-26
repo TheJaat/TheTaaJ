@@ -21,11 +21,17 @@
 //! given to the calls below is resolved against it here, on the
 //! client's side (fileserver::path) - "today", "../plan", "/welcome" -
 //! and what goes out in the request is always the whole path.
+//!
+//! An open file (`File`, from `Files::open`) is a channel of its own to
+//! the service, which knows which file it is: its requests carry no
+//! name, and it stays the same file when the file is renamed, or even
+//! removed (fileserver's `nodes`). Its handle can be handed to another
+//! program, which then has that one file - and no other.
 
 use alloc::string::String;
 
 pub use fileserver::path;
-pub use fileserver::protocol::{Kind, Status, COMPONENT_MAX};
+pub use fileserver::protocol::{open, Kind, Status, COMPONENT_MAX};
 use fileserver::protocol::{self, Request, MESSAGE_MAX};
 
 use crate::{Error, Handle};
@@ -99,36 +105,24 @@ impl Files {
     /// reply channel. They are the service's once sent; if sending fails
     /// they are closed here.
     fn call_with(&self, request: Request, more: &[Handle], reply: &mut [u8; MESSAGE_MAX]) -> Result<usize, FileError> {
-        let mut message = [0u8; MESSAGE_MAX];
-        let Some(length) = request.encode(&mut message) else {
-            close_all(more);
-            return Err(FileError::Refused(Status::BadName));
-        };
-        let (answer, theirs) = match crate::channel_create() {
-            Ok(pair) => pair,
-            Err(error) => {
-                close_all(more);
-                return Err(FileError::Unreachable(error));
+        exchange(self.requests, self.patience, request, more, reply)
+    }
+
+    /// Opens the file or directory `name` names: a channel of its own to
+    /// it (see `File`). `flags` are `open`'s: READ, WRITE, DIRECTORY,
+    /// CREATE, EXCLUSIVE, TRUNCATE.
+    pub fn open(&self, name: &str, flags: u64) -> Result<File, FileError> {
+        let (ours, theirs) = crate::channel_create().map_err(FileError::Unreachable)?;
+        let mut reply = [0u8; MESSAGE_MAX];
+        match self.call_with(Request::new(protocol::OPEN, &self.path(name), flags), &[theirs], &mut reply) {
+            Ok(n) => {
+                let (kind, _) = protocol::stat(&reply[1..=n]).unwrap_or((Kind::File, 0));
+                Ok(File { channel: ours, kind, patience: self.patience })
             }
-        };
-        let mut handles = [theirs, 0];
-        handles[1..=more.len()].copy_from_slice(more);
-        let sent = crate::send(self.requests, &message[..length], &handles[..=more.len()]);
-        if sent.is_err() {
-            // not sent: still ours
-            close_all(&handles[..=more.len()]);
-        }
-        // Giving up closes our end: an answer that comes later after all
-        // finds no one, and the service's send fails - harmlessly.
-        let deadline = crate::ticks() + self.patience;
-        let received = sent.and_then(|()| crate::receive_until(answer, reply, &mut [], deadline));
-        let _ = crate::close(answer);
-        match received.map_err(FileError::Unreachable)? {
-            (0, _) => Err(FileError::Refused(Status::BadRequest)),
-            (n, _) => match Status::from_u8(reply[0]) {
-                Status::Ok => Ok(n - 1),
-                status => Err(FileError::Refused(status)),
-            },
+            Err(error) => {
+                let _ = crate::close(ours);
+                Err(error)
+            }
         }
     }
 
@@ -258,74 +252,16 @@ impl Files {
         self.write_at(&self.path(name), protocol::APPEND, data)
     }
 
+    /// `name` is a whole path here: already resolved.
+    fn write_at(&self, name: &str, offset: u64, data: &[u8]) -> Result<u64, FileError> {
+        write_at(self.requests, self.patience, name, offset, data)
+    }
+
     /// Writes `data` into the file from `offset` on, over what is
     /// there and past its end, creating it if needed. Returns the
     /// file's size afterwards.
     pub fn write_from(&self, name: &str, offset: u64, data: &[u8]) -> Result<u64, FileError> {
         self.write_at(&self.path(name), offset, data)
-    }
-
-    /// `name` is a whole path here: already resolved.
-    fn write_at(&self, name: &str, offset: u64, data: &[u8]) -> Result<u64, FileError> {
-        if name.len() > protocol::NAME_MAX {
-            return Err(FileError::Refused(Status::BadName));
-        }
-        if data.len() > protocol::write_max(name) {
-            return self.write_through_memory(name, offset, data);
-        }
-        let mut reply = [0u8; MESSAGE_MAX];
-        let mut size = None;
-        let mut offset = offset;
-        // At least one request, so an empty write still creates the file.
-        let mut chunks = data.chunks(protocol::write_max(name).max(1));
-        let first: &[u8] = chunks.next().unwrap_or(&[]);
-        for chunk in core::iter::once(first).chain(chunks) {
-            let request = Request { op: protocol::WRITE, name, number: offset, data: chunk };
-            let n = self.call(request, &mut reply)?;
-            size = protocol::number(&reply[1..=n]);
-            if offset != protocol::APPEND {
-                offset += chunk.len() as u64;
-            }
-        }
-        size.ok_or(FileError::Refused(Status::BadRequest))
-    }
-
-    /// More than one message holds: the bytes copied into a memory
-    /// object, and written from there (protocol::WRITE_FROM) - one
-    /// request, and one commit, for each WRITE_FROM_MAX of them, where
-    /// WRITEs would make one a message (about 1 KB).
-    fn write_through_memory(&self, name: &str, offset: u64, data: &[u8]) -> Result<u64, FileError> {
-        let memory = crate::memory_create(data.len() as u64).map_err(FileError::Unreachable)?;
-        let filled = crate::memory_map(memory, true).map(|base| {
-            // SAFETY: the object is at least data.len() bytes, mapped
-            // writable, and ours alone until unmapped.
-            unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), base, data.len()) };
-            let _ = crate::memory_unmap(base);
-        });
-        if let Err(error) = filled {
-            let _ = crate::close(memory);
-            return Err(FileError::Unreachable(error));
-        }
-        let mut written = Ok(0);
-        let mut offset = offset;
-        for start in (0..data.len()).step_by(protocol::WRITE_FROM_MAX) {
-            let length = (data.len() - start).min(protocol::WRITE_FROM_MAX);
-            let place = [(start as u64).to_le_bytes(), (length as u64).to_le_bytes()].concat();
-            let request = Request { op: protocol::WRITE_FROM, name, number: offset, data: &place };
-            let mut reply = [0u8; MESSAGE_MAX];
-            written = crate::duplicate(memory, crate::rights::READ | crate::rights::TRANSFER)
-                .map_err(FileError::Unreachable)
-                .and_then(|lent| self.call_with(request, &[lent], &mut reply))
-                .and_then(|n| protocol::number(&reply[1..=n]).ok_or(FileError::Refused(Status::BadRequest)));
-            if written.is_err() {
-                break;
-            }
-            if offset != protocol::APPEND {
-                offset += length as u64;
-            }
-        }
-        let _ = crate::close(memory);
-        written
     }
 
     /// What `path` names - a file or a directory - and its size.
@@ -417,5 +353,259 @@ impl Files {
 fn close_all(handles: &[Handle]) {
     for &handle in handles {
         let _ = crate::close(handle);
+    }
+}
+
+/// Writes `data` at `offset` (or protocol::APPEND) in what `name` names
+/// on `channel`: a whole path on a service's channel, "" on a file's.
+/// Returns the file's size afterwards.
+fn write_at(channel: Handle, patience: u64, name: &str, offset: u64, data: &[u8]) -> Result<u64, FileError> {
+    if name.len() > protocol::NAME_MAX {
+        return Err(FileError::Refused(Status::BadName));
+    }
+    if data.len() > protocol::write_max(name) {
+        return write_through_memory(channel, patience, name, offset, data);
+    }
+    let mut reply = [0u8; MESSAGE_MAX];
+    let mut size = None;
+    let mut offset = offset;
+    // At least one request, so an empty write still creates the file.
+    let mut chunks = data.chunks(protocol::write_max(name).max(1));
+    let first: &[u8] = chunks.next().unwrap_or(&[]);
+    for chunk in core::iter::once(first).chain(chunks) {
+        let request = Request { op: protocol::WRITE, name, number: offset, data: chunk };
+        let n = exchange(channel, patience, request, &[], &mut reply)?;
+        size = protocol::number(&reply[1..=n]);
+        if offset != protocol::APPEND {
+            offset += chunk.len() as u64;
+        }
+    }
+    size.ok_or(FileError::Refused(Status::BadRequest))
+}
+
+/// More than one message holds: the bytes copied into a memory
+/// object, and written from there (protocol::WRITE_FROM) - one
+/// request, and one commit, for each WRITE_FROM_MAX of them, where
+/// WRITEs would make one a message (about 1 KB).
+fn write_through_memory(channel: Handle, patience: u64, name: &str, offset: u64, data: &[u8]) -> Result<u64, FileError> {
+    let memory = crate::memory_create(data.len() as u64).map_err(FileError::Unreachable)?;
+    let filled = crate::memory_map(memory, true).map(|base| {
+        // SAFETY: the object is at least data.len() bytes, mapped
+        // writable, and ours alone until unmapped.
+        unsafe { core::ptr::copy_nonoverlapping(data.as_ptr(), base, data.len()) };
+        let _ = crate::memory_unmap(base);
+    });
+    if let Err(error) = filled {
+        let _ = crate::close(memory);
+        return Err(FileError::Unreachable(error));
+    }
+    let mut written = Ok(0);
+    let mut offset = offset;
+    for start in (0..data.len()).step_by(protocol::WRITE_FROM_MAX) {
+        let length = (data.len() - start).min(protocol::WRITE_FROM_MAX);
+        let place = [(start as u64).to_le_bytes(), (length as u64).to_le_bytes()].concat();
+        let request = Request { op: protocol::WRITE_FROM, name, number: offset, data: &place };
+        let mut reply = [0u8; MESSAGE_MAX];
+        written = crate::duplicate(memory, crate::rights::READ | crate::rights::TRANSFER)
+            .map_err(FileError::Unreachable)
+            .and_then(|lent| exchange(channel, patience, request, &[lent], &mut reply))
+            .and_then(|n| protocol::number(&reply[1..=n]).ok_or(FileError::Refused(Status::BadRequest)));
+        if written.is_err() {
+            break;
+        }
+        if offset != protocol::APPEND {
+            offset += length as u64;
+        }
+    }
+    let _ = crate::close(memory);
+    written
+}
+
+/// One exchange on `channel`: the request, with a fresh channel for the
+/// reply and `more` handles (at most one) after it; the reply's payload
+/// length (in `reply`, after the status byte). The handles are the
+/// service's once sent; if sending fails they are closed here. Giving
+/// up after `patience` ticks closes our end of the reply channel: an
+/// answer that comes later finds no one, and the service's send fails -
+/// harmlessly.
+fn exchange(channel: Handle, patience: u64, request: Request, more: &[Handle], reply: &mut [u8; MESSAGE_MAX]) -> Result<usize, FileError> {
+    let mut message = [0u8; MESSAGE_MAX];
+    let Some(length) = request.encode(&mut message) else {
+        close_all(more);
+        return Err(FileError::Refused(Status::BadName));
+    };
+    let (answer, theirs) = match crate::channel_create() {
+        Ok(pair) => pair,
+        Err(error) => {
+            close_all(more);
+            return Err(FileError::Unreachable(error));
+        }
+    };
+    let mut handles = [theirs, 0];
+    handles[1..=more.len()].copy_from_slice(more);
+    let sent = crate::send(channel, &message[..length], &handles[..=more.len()]);
+    if sent.is_err() {
+        // not sent: still ours
+        close_all(&handles[..=more.len()]);
+    }
+    let deadline = crate::ticks() + patience;
+    let received = sent.and_then(|()| crate::receive_until(answer, reply, &mut [], deadline));
+    let _ = crate::close(answer);
+    match received.map_err(FileError::Unreachable)? {
+        (0, _) => Err(FileError::Refused(Status::BadRequest)),
+        (n, _) => match Status::from_u8(reply[0]) {
+            Status::Ok => Ok(n - 1),
+            status => Err(FileError::Refused(status)),
+        },
+    }
+}
+
+/// An open file or directory: a channel of its own to the file service
+/// (protocol::OPEN). Its requests carry no name - the service knows
+/// which file the channel is for - so it is the same file however it is
+/// renamed or moved, and while it is open a removal only takes its name
+/// away. Closed when dropped: the service then lets it go.
+///
+/// What it allows was fixed when it was opened: a file opened without
+/// `open::WRITE` refuses every change, whoever holds it.
+pub struct File {
+    channel: Handle,
+    kind: Kind,
+    patience: u64,
+}
+
+impl File {
+    /// A file whose channel was handed to this program (by whoever
+    /// started it, say). Its kind is asked for here.
+    pub fn from_handle(channel: Handle) -> Result<File, FileError> {
+        let mut file = File { channel, kind: Kind::File, patience: crate::ANSWER_WAIT };
+        file.kind = file.stat()?.0;
+        Ok(file)
+    }
+
+    /// The channel: to hand a copy of it on (`share`), or to wait on.
+    pub fn channel(&self) -> Handle {
+        self.channel
+    }
+
+    /// A second handle to it, that can be sent to another program. The
+    /// copy allows what this one does: the service decides that, not
+    /// the handle.
+    pub fn share(&self) -> Result<Handle, FileError> {
+        crate::duplicate(self.channel, crate::rights::SEND | crate::rights::DUPLICATE | crate::rights::TRANSFER)
+            .map_err(FileError::Unreachable)
+    }
+
+    /// Whether it is a file or a directory.
+    pub fn kind(&self) -> Kind {
+        self.kind
+    }
+
+    fn call(&self, request: Request, reply: &mut [u8; MESSAGE_MAX]) -> Result<usize, FileError> {
+        exchange(self.channel, self.patience, request, &[], reply)
+    }
+
+    /// Up to `out.len()` bytes from `offset` (at most protocol::READ_MAX
+    /// in one exchange). Returns how many: 0 at the end of the file.
+    pub fn read_at(&self, offset: u64, out: &mut [u8]) -> Result<usize, FileError> {
+        let mut reply = [0u8; MESSAGE_MAX];
+        let n = self.call(Request::new(protocol::READ, "", offset), &mut reply)?;
+        let taken = n.min(out.len());
+        out[..taken].copy_from_slice(&reply[1..=taken]);
+        Ok(taken)
+    }
+
+    /// Writes `data` from `offset` on, over what is there and past its
+    /// end. Returns the file's size afterwards.
+    pub fn write_at(&self, offset: u64, data: &[u8]) -> Result<u64, FileError> {
+        write_at(self.channel, self.patience, "", offset, data)
+    }
+
+    /// Adds `data` at the end - where the end is when the service
+    /// writes, so two writers appending cannot write over each other.
+    /// Returns the file's size afterwards.
+    pub fn append(&self, data: &[u8]) -> Result<u64, FileError> {
+        write_at(self.channel, self.patience, "", protocol::APPEND, data)
+    }
+
+    /// Sets the size; growing fills with zeros.
+    pub fn truncate(&self, length: u64) -> Result<(), FileError> {
+        let mut reply = [0u8; MESSAGE_MAX];
+        self.call(Request::new(protocol::TRUNCATE, "", length), &mut reply).map(|_| ())
+    }
+
+    /// Its kind and size.
+    pub fn stat(&self) -> Result<(Kind, u64), FileError> {
+        let (kind, size, _, _) = self.stat_timed()?;
+        Ok((kind, size))
+    }
+
+    /// Its kind, size, change stamp and time of last change (as
+    /// `Files::stat_timed`).
+    pub fn stat_timed(&self) -> Result<(Kind, u64, u64, u64), FileError> {
+        let mut reply = [0u8; MESSAGE_MAX];
+        let n = self.call(Request::new(protocol::STAT, "", 0), &mut reply)?;
+        let payload = &reply[1..=n];
+        let (kind, size) = protocol::stat(payload).ok_or(FileError::Refused(Status::BadRequest))?;
+        Ok((kind, size, protocol::stamp(payload), protocol::time(payload)))
+    }
+
+    /// Its size now.
+    pub fn size(&self) -> Result<u64, FileError> {
+        Ok(self.stat()?.1)
+    }
+
+    /// Marks it changed now, changing nothing in it.
+    pub fn touch(&self) -> Result<(), FileError> {
+        let mut reply = [0u8; MESSAGE_MAX];
+        self.call(Request::new(protocol::TOUCH, "", 0), &mut reply).map(|_| ())
+    }
+
+    /// The file as a stream to read, from `offset` on (as
+    /// `Files::stream_in_from`): a program's standard input.
+    pub fn stream_in_from(&self, offset: u64) -> Result<Handle, FileError> {
+        self.stream(Request::new(protocol::STREAM_IN, "", offset))
+    }
+
+    /// The file as a stream to write to its end (as `Files::stream_out`
+    /// with `keep`): a program's standard output.
+    pub fn stream_out(&self) -> Result<Handle, FileError> {
+        self.stream(Request::new(protocol::STREAM_OUT, "", 1))
+    }
+
+    fn stream(&self, request: Request) -> Result<Handle, FileError> {
+        let (ours, theirs) = crate::channel_create().map_err(FileError::Unreachable)?;
+        let mut reply = [0u8; MESSAGE_MAX];
+        match exchange(self.channel, self.patience, request, &[theirs], &mut reply) {
+            Ok(_) => Ok(ours),
+            Err(error) => {
+                let _ = crate::close(ours);
+                Err(error)
+            }
+        }
+    }
+
+    /// A directory's names, kinds and sizes, in name order (as
+    /// `Files::list`). Returns how many there were.
+    pub fn list(&self, mut each: impl FnMut(&str, Kind, u64)) -> Result<usize, FileError> {
+        let mut reply = [0u8; MESSAGE_MAX];
+        let mut count = 0;
+        loop {
+            let n = self.call(Request::new(protocol::LIST, "", count as u64), &mut reply)?;
+            let before = count;
+            for (name, kind, size) in protocol::entries(&reply[1..=n]) {
+                each(name, kind, size);
+                count += 1;
+            }
+            if count == before {
+                return Ok(count);
+            }
+        }
+    }
+}
+
+impl Drop for File {
+    fn drop(&mut self) {
+        let _ = crate::close(self.channel);
     }
 }
