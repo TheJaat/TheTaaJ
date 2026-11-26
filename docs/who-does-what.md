@@ -108,7 +108,7 @@ Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 
 | Machine | Step | Branch |
 |---|---|---|
-| The-Jat | G, part 2: shared file mappings (E waits: see below) | `big-memory-2` |
+| The-Jat | E: LLVM 23 | `llvm-23` |
 | MaK | A: the scheduler and timing step | `timing` |
 
 ## The decided order
@@ -123,9 +123,9 @@ Each step below is one branch, one journal entry and one test64 run. The items a
 | **B** Std's ground, part 1: randomness, real thread-local storage, signals std uses | J2 `getrandom`, J1 ELF TLS, J4 `sigaltstack`, J10 `waitid` and SIGCHLD | **Done (entry 099)** |
 | **C** Std's ground, part 2: libc calls std uses | J3 `poll`, J5 `dl_iterate_phdr`, J6 pthread attributes, J7 `stat`, J8 `realpath` and `getcwd`, J9 `posix_spawn` with fd 3+, J12 `dlopen` stubs, J13 zlib, J37 environment, J38 `execvp` and `/bin`, J39 the real `argv[0]` | **Done (entry 100)** |
 | **D** TaajFS version 6 (versions 4 and 5 came in Era 6) | J17 file times, J18 files over 256 MiB, J19 long names (entry 094), J20 faster writes (entry 093), J35 a replacing `rename`, J55 `/bin` | **Done (entry 101)**; J55's moving of the programs stays open |
-| **E** LLVM 23 | J14, and C++ (libc++, the LLVM port) moved from emulated to real thread-local storage | Long; runs unattended on The-Jat; it rebuilds the ports anyway. **Waiting (entry 102)**: libc++ 23 needs a host clang of 21 or later, so a host LLVM 23.1.5 is built first - which needs cmake and ninja (`sudo apt install cmake ninja-build`), or apt.llvm.org's LLVM 23 |
+| **E** LLVM 23 | J14, and C++ (libc++, the LLVM port) moved from emulated to real thread-local storage | Long; runs unattended on The-Jat; it rebuilds the ports anyway. libc++ 23 needs a host clang of 21 or later, so a host LLVM 23.1.5 is built first (`tools/build-host-llvm.sh`, with cmake and ninja) |
 | **F** R3 Rust's std | J15, J16 | Needs B-E |
-| **G** Memory for big programs | J26-J31 | Before rustc's 182 MB runs. **Part 1 done (entry 102)**: J26, J27, J30, J31; **part 2 (entry 103)**: J28. J29 needs sealed memory objects first (J58). Done before E because E waits |
+| **G** Memory for big programs | J26-J31 | Before rustc's 182 MB runs. **Part 1 done (entry 102)**: J26, J27, J30, J31; **part 2 done (entry 103)**: J28. J29 needs sealed memory objects first (J58). Done before E because E waits |
 | **H** R4 rustc on TheTaaJ | J21 | |
 | **I** R5 the build without cargo | J22, J23 (nasm; the bootloader change is MaK's) | |
 | **J** R6 the milestone | J24, J25 | |
