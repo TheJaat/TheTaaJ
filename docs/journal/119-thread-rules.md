@@ -1,6 +1,6 @@
 # Rules 1 and 3 of threads.rs, tested - and a panic that a 20-CPU machine swallowed
 
-*Journal entry #NNN · a test change, and a kernel fix it found (J52). Written on TheJat-WSL/ci. Entry 046 broke each of the four rules of `threads.rs` on purpose: with rule 1 or rule 3 broken, every boot still passed - "held up by the argument in this entry, not by a test". Now each fails at once: rule 1 at the first switch of every boot, rule 3 in the threads self-test. Checking that brought out a kernel bug: on a machine with more CPUs than the kernel uses, a kernel panic was a triple fault, and its report never got out.*
+*Journal entry #119 · a test change, and a kernel fix it found (J52). Written on TheJat-WSL/ci. Entry 046 broke each of the four rules of `threads.rs` on purpose: with rule 1 or rule 3 broken, every boot still passed - "held up by the argument in this entry, not by a test". Now each fails at once: rule 1 at the first switch of every boot, rule 3 in the threads self-test. Checking that brought out a kernel bug: on a machine with more CPUs than the kernel uses, a kernel panic was a triple fault, and its report never got out.*
 
 ## Why
 
