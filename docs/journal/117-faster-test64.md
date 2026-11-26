@@ -1,6 +1,6 @@
 # A faster make test64, part 3: nothing built twice, and two failures under load gone
 
-*Journal entry #NNN · a test change (J94). Written on TheJat-WSL/ci. After entries 108 and 109 the waits were gone from `make test64`; this looked at what was left. The test phase no longer builds again what `test64-shared` has just built - LLVM's tools were linked twice on every run, now once - and the suite uses 22% less CPU. Two failures that came with a busy machine are gone: the disk driver stopped as hung in the middle of a test, and a Ctrl+C that reached the shell before the program it was meant for. On a machine now shared with other sessions, the wall-clock time moved within the noise.*
+*Journal entry #117 · a test change (J94). Written on TheJat-WSL/ci. After entries 108 and 109 the waits were gone from `make test64`; this looked at what was left. The test phase no longer builds again what `test64-shared` has just built - LLVM's tools were linked twice on every run, now once - and the suite uses 22% less CPU. Two failures that came with a busy machine are gone: the disk driver stopped as hung in the middle of a test, and a Ctrl+C that reached the shell before the program it was meant for. On a machine now shared with other sessions, the wall-clock time moved within the noise.*
 
 ## Why
 
@@ -47,7 +47,7 @@ test64:
 
 ## Bugs
 
-- **The disk driver stopped as hung, mid-test** (`times64-test`, and `aarch64-times-test` on `main`). Evidence: `[init] blk has not answered for 2 s - stopping it` while `times` wrote its 301 MiB file, with no stall asked for; then "its time is a time of day" and four more file-time checks failed, and a file was missing. Cause: each flush became an `fsync` on the host, and with a dozen boots writing large images at once one took longer than init's 2 s. The `clib` failure of entry 109 in `tcc64-test` was most likely the same, and so were entry 115's on TheJat-VM (`blk` stopped during `llvm64-test` and `boot64-uefi-test`, worked around there with `TAAJ_BOOT_SLOTS=10`). On TheJat-VM, with no KVM, a machine starved of CPU could also miss the 2 s; that I could not test from here. Fix: `cache=unsafe`. Proof: no unexpected `blk` stop in five full runs; `main`, run between them, failed this way once. What happens to files after such a restart is a bug of its own, added as `K?-blk-restart`.
+- **The disk driver stopped as hung, mid-test** (`times64-test`, and `aarch64-times-test` on `main`). Evidence: `[init] blk has not answered for 2 s - stopping it` while `times` wrote its 301 MiB file, with no stall asked for; then "its time is a time of day" and four more file-time checks failed, and a file was missing. Cause: each flush became an `fsync` on the host, and with a dozen boots writing large images at once one took longer than init's 2 s. The `clib` failure of entry 109 in `tcc64-test` was most likely the same, and so were entry 115's on TheJat-VM (`blk` stopped during `llvm64-test` and `boot64-uefi-test`, worked around there with `TAAJ_BOOT_SLOTS=10`). On TheJat-VM, with no KVM, a machine starved of CPU could also miss the 2 s; that I could not test from here. Fix: `cache=unsafe`. Proof: no unexpected `blk` stop in five full runs; `main`, run between them, failed this way once. What happens to files after such a restart is a bug of its own, added as `K186`.
 - **Ctrl+C before `cat` had started**, on x86 (`boot64-test`: no `echo clean`), as on AArch64 in entry 109. Fix: as above. Proof: five full runs.
 - **My first `cache=unsafe` broke `ahci64-test`** in two runs: added to every `if=none` drive, it reached the AHCI test's empty CD drive, QEMU refused to start, and the boot was retried until it gave up - minutes each time. Fix: only drives with a file.
 
@@ -70,7 +70,7 @@ So: **22% less CPU** for the same tests, no failure under load in five runs wher
 - **LLVM's tools are still linked once on every run**, in `test64-shared`, even when nothing they are built from changed (`llvm64` and `llvm-aarch64` are `.PHONY`, and `build-llvm.py` links each time).
 - **The suite is now bound by the machine's CPUs, not by waits.** With every part started at once, the boot slots are full and the parts queue; a faster suite needs less work: fewer or shorter emulated AArch64 boots (they cost the most CPU: four host threads each, emulating), or test programs that don't need a boot.
 - `TEST_JOBS` (12) and the boot slots (CPUs less one) are worth measuring again on a quiet machine.
-- `K?-blk-restart`, for the `services` lane.
+- `K186`, for the `services` lane.
 
 ## What I learned
 

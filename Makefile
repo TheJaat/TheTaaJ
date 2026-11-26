@@ -2124,13 +2124,13 @@ test64:
 # otherwise run it again before each part that names it - relinking
 # LLVM's tools every time - and a part waiting for that is not started:
 # make fills its TEST_JOBS with the parts that are ready, and the long
-# AArch64 parts, needing llvm-aarch64, began last (journal entry NNN).
+# AArch64 parts, needing llvm-aarch64, began last (journal entry 117).
 # A part run alone (make clang64-test) still builds what it needs.
 #
 # smp64-test runs alone before the others, about 17 s. Its 20-CPU boot
 # needs 20 boot slots at once, and the typed boots wait for it (entry
 # 108); with every part ready at once, it found the slots taken and the
-# typed boots started 3 minutes late (journal entry NNN).
+# typed boots started 3 minutes late (journal entry 117).
 TEST64_SHARED = build-bootloader user64 iso64 cprogs64 tfstool-rs uefi-loader user-aarch64 cprogs-aarch64 kernel-aarch64 aarch64-esp tcc64 tcc-aarch64 cxx64 cxx-aarch64 llvm64 llvm-aarch64 pdpmake64 pdpmake-aarch64
 
 test64-shared: $(TEST64_SHARED)

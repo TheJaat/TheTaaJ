@@ -4191,3 +4191,25 @@ By hand, after `make schedbench64-test` has put `schedbench` on its disk (or wit
 | `with programs schedbench all 4` | One `schedbench:` line per measurement, ending `schedbench: done in N ms, M ms cpu` |
 
 Automated: `make test64`
+
+---
+
+## 117 · A faster make test64, part 3: nothing built twice, and two failures under load gone
+
+[The entry](journal/117-faster-test64.md)
+
+From the root of TheTaaJ:
+
+```
+make test64 2>&1 | tee build/test64.out
+awk '/smp64-test passed/ { t = 1 } t && /LD +(clang|lld)/' build/test64.out
+grep -l "blk has not answered" build/times-64.log build/aarch64/times.log
+```
+
+| Look for | Meaning |
+|---|---|
+| `test64: all passed` | Every part passed |
+| Nothing from the `awk` | No LLVM tool linked in the test phase (after `smp64-test`): only in `test64-shared`, before it |
+| Nothing from the `grep` | The disk driver was not stopped as hung during the file-time tests |
+
+Automated: `make test64`.

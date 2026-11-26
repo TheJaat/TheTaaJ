@@ -40,6 +40,7 @@ A machine may run fewer sessions than it has lanes: then it starts them in the o
 - Era 10 and 11 (sound and voice), apart from the two sound items in `devices`' last wave;
 - Era 30 (the assistant);
 - E6-E8, J50, J97, which come later or wait for the user.
+- K186 (files after the disk driver is restarted), found by `ci` in entry 117: for the `services` lane to take into its table.
 
 ## Across lanes
 
