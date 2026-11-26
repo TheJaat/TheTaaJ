@@ -1,6 +1,6 @@
 # The TaajFS items: speed, scale and checking
 
-*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `fs-items`. The user asked how good TaajFS is, and then for what was found to become work items, on a branch of their own. Ten `J?-fs-...` items in `docs/who-does-what.md`, under "TaajFS: speed, scale and checking", numbered at merge (rule 5).*
+*Journal entry #111 · a work-list change, not a feature. Written on TheJat-VM, on the branch `fs-items`. The user asked how good TaajFS is, and then for what was found to become work items, on a branch of their own. Ten J70-J79 items in `docs/who-does-what.md`, under "TaajFS: speed, scale and checking", numbered at merge (rule 5). Entry 112, merged with this one, made them half of Era 14 after all - the user asked for every area as an era.*
 
 ## Why
 
@@ -21,18 +21,18 @@ A look at TaajFS (`taajfs/src/format.rs`, `volume.rs`, `cache.rs`, and the file 
 
 | Item | What | Format change |
 |---|---|---|
-| J?-fs-bench | The benchmark: small files, a big file, a big directory, mount time, blocks written per request | No |
-| J?-fs-group | Group commits | No |
-| J?-fs-dirs | Directories found by hash or B-tree | Version 7 |
-| J?-fs-freemap | The free map on the disk | Version 7 |
-| J?-fs-sums | Checksums, kept with the pointer to the block | Version 7 |
-| J?-fs-64 | 64-bit sizes and block numbers | Version 7 |
-| J?-fs-owners | Owners, permission bits, access and change times | Version 7 |
-| J?-fs-links | Symbolic and hard links | Version 7 |
-| J?-fs-many | More than one request at a time | No |
-| J?-fs-cache | A page cache shared with programs | No |
+| J70 | The benchmark: small files, a big file, a big directory, mount time, blocks written per request | No |
+| J71 | Group commits | No |
+| J72 | Directories found by hash or B-tree | Version 7 |
+| J73 | The free map on the disk | Version 7 |
+| J74 | Checksums, kept with the pointer to the block | Version 7 |
+| J75 | 64-bit sizes and block numbers | Version 7 |
+| J76 | Owners, permission bits, access and change times | Version 7 |
+| J77 | Symbolic and hard links | Version 7 |
+| J78 | More than one request at a time | No |
+| J79 | A page cache shared with programs | No |
 
-E1 (`fsck`), E4 (a redirected file in one commit) and J36 (descriptors that follow the file) already exist; the section points to them rather than repeating them. J?-fs-group covers E4.
+E1 (`fsck`), E4 (a redirected file in one commit) and J36 (descriptors that follow the file) already exist; the section points to them rather than repeating them. J71 covers E4.
 
 ## Design decisions
 
@@ -62,9 +62,9 @@ E1 (`fsck`), E4 (a redirected file in one commit) and J36 (descriptors that foll
 Nothing to boot: this changes only `docs/`. To see the items:
 
 ```
-grep -n 'J?-fs' docs/who-does-what.md
+grep -n '^| J70 \|^| J79 ' docs/who-does-what.md
 ```
 
 | Look for | You should see |
 |---|---|
-| `J?-fs-bench` ... `J?-fs-cache` | ten rows under "TaajFS: speed, scale and checking", after J58 |
+| `J70` ... `J79` | ten rows under "TaajFS version 7", in Era 14 (entry 112 moved them there) |

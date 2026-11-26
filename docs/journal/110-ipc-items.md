@@ -1,6 +1,6 @@
 # The IPC items: measuring and speeding up messages, and the cycle leak
 
-*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `ipc-items`. The user asked how TheTaaJ's IPC is, and then for what was found to become work items. Seven `K?-ipc-...` items in `docs/who-does-what.md`, under "IPC: speed and the cycle leak", numbered at merge (rule 5).*
+*Journal entry #110 · a work-list change, not a feature. Written on TheJat-VM, on the branch `ipc-items`. The user asked how TheTaaJ's IPC is, and then for what was found to become work items. Seven K60-K66 items in `docs/who-does-what.md`, under "IPC: speed and the cycle leak", numbered at merge (rule 5). Entry 112, merged with this one, moved them into Era 13.*
 
 ## Why
 
@@ -14,13 +14,13 @@ A look at the IPC code (`kernel64/src/ipc.rs`, `channel.rs`, `cap.rs`, and the s
 
 | Item | What |
 |---|---|
-| K?-ipc-bench | The benchmark: round trip, bulk through messages and through memory objects, both CPUs, KVM and emulated. First, so the rest is measured, not guessed |
-| K?-ipc-call | One system call for a request and its reply, switching straight to the server's thread |
-| K?-ipc-copy | One copy, no allocation per message |
-| K?-ipc-big | Bigger messages or shared rings for streams |
-| K?-ipc-send-wait | Waiting until a channel can be sent to |
-| K?-ipc-priority | Priority inheritance across a call (after K20) |
-| K?-ipc-cycles | The cycle leak |
+| K60 | The benchmark: round trip, bulk through messages and through memory objects, both CPUs, KVM and emulated. First, so the rest is measured, not guessed |
+| K61 | One system call for a request and its reply, switching straight to the server's thread |
+| K62 | One copy, no allocation per message |
+| K63 | Bigger messages or shared rings for streams |
+| K64 | Waiting until a channel can be sent to |
+| K65 | Priority inheritance across a call (after K20) |
+| K66 | The cycle leak |
 
 They sit in MaK-WSL's part of the list, beside "Speed and timing": they are the kernel's core, and KVM measures them truly. They are not put in any machine's decided order: that is for the user to say.
 
@@ -47,9 +47,9 @@ They sit in MaK-WSL's part of the list, beside "Speed and timing": they are the 
 Nothing to boot: this changes only `docs/`. To see the items:
 
 ```
-grep -n 'K?-ipc' docs/who-does-what.md
+grep -n '^| K60 \|^| K66 ' docs/who-does-what.md
 ```
 
 | Look for | You should see |
 |---|---|
-| `K?-ipc-bench` ... `K?-ipc-cycles` | seven rows under "IPC: speed and the cycle leak", after K24 |
+| `K60` ... `K66` | seven rows under "IPC: speed and the cycle leak", in Era 13 (entry 112 moved them there) |

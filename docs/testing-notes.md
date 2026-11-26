@@ -4010,3 +4010,65 @@ grep "did not run" build/test64.out
 |---|---|
 | `test64: all passed`, about 6½ minutes under KVM (before: about 10½) | The waits end when their lines have run |
 | Nothing from the `grep` | No typer waited out its time for a line |
+
+---
+
+## 110 · The IPC items: measuring and speeding up messages, and the cycle leak
+
+[The entry](journal/110-ipc-items.md)
+
+Nothing to boot: this changes only `docs/`. To see the items:
+
+```
+grep -n '^| K60 \|^| K66 ' docs/who-does-what.md
+```
+
+| Look for | You should see |
+|---|---|
+| `K60` ... `K66` | seven rows under "IPC: speed and the cycle leak", in Era 13 (entry 112 moved them there) |
+
+---
+
+## 111 · The TaajFS items: speed, scale and checking
+
+[The entry](journal/111-fs-items.md)
+
+Nothing to boot: this changes only `docs/`. To see the items:
+
+```
+grep -n '^| J70 \|^| J79 ' docs/who-does-what.md
+```
+
+| Look for | You should see |
+|---|---|
+| `J70` ... `J79` | ten rows under "TaajFS version 7", in Era 14 (entry 112 moved them there) |
+
+---
+
+## 112 · Goals, and Eras 13 to 29: every part of TheTaaJ reviewed and given an era
+
+[The entry](journal/112-new-eras.md)
+
+Nothing to boot: this changes only `docs/`. To see the eras and items:
+
+```
+grep -n '^## Goals\|^## Era\|kernel stays pure' docs/who-does-what.md
+```
+
+| Look for | You should see |
+|---|---|
+| `## Era 13 · A fast core` | the IPC section (7 items) and the threads section (9 items) |
+| `## Goals` | ten goals, before "The machines" |
+| `The kernel stays pure` | a line in "Before merging" |
+| `## Era 14 · Files: a VFS and TaajFS version 7` | 10 items (J60-J69), then 10 items (J70-J79) |
+| `K53` ... `K59` | 7 rows in "Network (Era 12's ground)", after K49 |
+| `## Era 15 · Devices: a device manager and confined drivers` | 9 items (K75-K83) and K27 |
+| `## Era 16 · Memory: sharing, reclaim and hardening` | 11 items (K84-K94) |
+| `## Era 17 · Scheduling: contexts, classes and fairness` | 8 items (K95-K102) and `J80` |
+| `## Era 18 · Security: hardening, trust and people` | 11 items (K103-K113) |
+| `## Era 19 · Desktop: applications people can use daily` | 14 items (K114-K127) |
+| `## Era 20 · The command line and libc` | 11 items (J81-J90 and J82-J91) |
+| `## Era 21 · Boot: recoverable, verified and unlimited` | 8 items (K128-K135), MaK-WSL's |
+| `## Era 22` ... `## Era 28` | Observability; Services, recovery and configuration; Protocols and the ABI; Build, toolchain and tests; Packages and updates; Time and power; Portability: every architecture (with its tiers table) |
+| `## Era 29 · Cryptography and encryption` | 10 items (K176-K185) |
+| `## Later eras` | Eras 13 to 29, and the assistant as 30 |

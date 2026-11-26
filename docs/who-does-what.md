@@ -161,7 +161,7 @@ Each machine (or session) has its own table and changes only its own, so two mac
 
 | Step | Branch |
 |---|---|
-| E: LLVM 23 | `llvm-23` |
+| E: LLVM 23 - **paused**: a work-in-progress commit on `llvm-23` in TheTaaJ and TheKernel, to be finished later (what is left is in its commit message) | `llvm-23` |
 
 ### Now: MaK-WSL
 
@@ -273,8 +273,8 @@ The order matters here: each item is needed by the ones after it.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J43 | Shell: variables, `if`, `for`, `&&`, `||`, `;`, wildcards | M | Build scripts need them. `sh` has them; Era 20's J?-cli-one-shell brings them to the shell at the keyboard |
-| J44 | Shell: `2>`, `2>&1`, here-documents, `exec` for the last command | S | `sh` has them; Era 20's J?-cli-one-shell |
+| J43 | Shell: variables, `if`, `for`, `&&`, `||`, `;`, wildcards | M | Build scripts need them. `sh` has them; Era 20's J82 brings them to the shell at the keyboard |
+| J44 | Shell: `2>`, `2>&1`, here-documents, `exec` for the last command | S | `sh` has them; Era 20's J82 |
 | J45 | Rebuild only what changed in `/src/build` (make with real dependencies) | S | |
 | J46 | Install the built libc and programs over `/lib` and the root | S | |
 | J47 | `cp -r`, `rm -r`, `mv`/`cp` with many names, `find`, `grep`, `diff`, `wc`, `sort`, `head`, `tail` | M | |
@@ -361,16 +361,16 @@ The protocols are careful and tested on the host (the `net` crate: ARP, IPv4, IC
 | K34 | IP fragments, ICMP errors to programs | S | |
 | K35 | TCP: window scaling, SACK, timestamps, keepalive; a lossy-network boot test | M | |
 | K36 | IPv6 | L | Later |
-| K37 | TLS 1.3 with its cryptography | L | After J2; its cryptography from Era 29's K?-crypt-lib |
+| K37 | TLS 1.3 with its cryptography | L | After J2; its cryptography from Era 29's K176 |
 | K38 | HTTP server: several connections, keep-alive | S | |
 | K49 | Socket readiness for `poll`: the network service tells a socket's channel when bytes arrive, so poll can wait for it (entry 100 treats a socket as always ready) | S | After K33 |
-| K?-net-bench | **A network benchmark**: TCP throughput both ways, connections per second, a ping's round trip; virtio and e1000, KVM and emulated; the numbers kept in the journal | S | First, for the speed items below |
-| K?-net-rings | **Frames through shared rings** between the card's driver and the network service, and between the service and a program's socket, instead of messages: a 1514-byte frame is two 1 KiB messages today, each copied twice | M | After K?-net-bench; with K?-ipc-big |
-| K?-net-tables | **More sockets**: 16 connections, 10 sockets, 4 listeners and a backlog of 4 are fixed because the service waits on all of them in one `object_wait` (`WAIT_HANDLES_MAX`); a wait over a set that grows, or one channel per program, lifts it | M | A web server or a parallel download needs more |
-| K?-net-filter | **Which programs may listen on which ports**, and a simple packet filter | S | Today ports are first come |
-| K?-net-routes | **A routing table**: more than one card and network | M | Later |
-| K?-net-offload | **Checksum and segmentation offload** on virtio and e1000 | M | After K?-net-bench |
-| K?-net-keep | **Sockets that survive a restart of the network service**, or at least a clear "the network went away" to every program | M | Today they are all gone, and programs learn it by their channels closing |
+| K53 | **A network benchmark**: TCP throughput both ways, connections per second, a ping's round trip; virtio and e1000, KVM and emulated; the numbers kept in the journal | S | First, for the speed items below |
+| K54 | **Frames through shared rings** between the card's driver and the network service, and between the service and a program's socket, instead of messages: a 1514-byte frame is two 1 KiB messages today, each copied twice | M | After K53; with K63 |
+| K55 | **More sockets**: 16 connections, 10 sockets, 4 listeners and a backlog of 4 are fixed because the service waits on all of them in one `object_wait` (`WAIT_HANDLES_MAX`); a wait over a set that grows, or one channel per program, lifts it | M | A web server or a parallel download needs more |
+| K56 | **Which programs may listen on which ports**, and a simple packet filter | S | Today ports are first come |
+| K57 | **A routing table**: more than one card and network | M | Later |
+| K58 | **Checksum and segmentation offload** on virtio and e1000 | M | After K53 |
+| K59 | **Sockets that survive a restart of the network service**, or at least a clear "the network went away" to every program | M | Today they are all gone, and programs learn it by their channels closing |
 
 ### Desktop
 
@@ -409,13 +409,13 @@ The design - channels, handles with rights, bounded inboxes, handles carried in 
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K?-ipc-bench | **An IPC benchmark**: round-trip time of a small request and reply, and bulk throughput through messages and through a shared memory object; on both CPUs, under KVM and emulated; the numbers kept in the journal | S | First: the items below are measured against it |
-| K?-ipc-call | **`channel_call`**: send a request and wait for its reply in one system call, switching straight to the server's waiting thread and back (as L4, seL4 and Zircon do) | M | After K?-ipc-bench |
-| K?-ipc-copy | One copy per message: straight from the sender into a receiver that is already waiting, and no kernel allocation for each message | M | After K?-ipc-bench |
-| K?-ipc-big | Bigger messages (today 1 KiB; 4 to 64 KiB) or shared rings for streams - fs and net cut streams into 1023-byte pieces | M | After K?-ipc-bench; changes the `abi` with the services and libc in step |
-| K?-ipc-send-wait | Waiting until a channel can be sent to (`object_wait` for "writable"), instead of each sender retrying on `QueueFull` | S | |
-| K?-ipc-priority | Priority inheritance across a call: a server works at the priority of the client it answers | M | After K20 and K?-ipc-call; done by Era 17's K?-sched-donate if that comes first |
-| K?-ipc-cycles | **Channel cycles leak**: end A in B's inbox and B in A's keep both alive once their owners close every handle (`ipc.rs` says so; only the one-step cycle is refused) - a cycle collector, or a rule that stops cycles forming | M | A process can make kernel memory it can't give back |
+| K60 | **An IPC benchmark**: round-trip time of a small request and reply, and bulk throughput through messages and through a shared memory object; on both CPUs, under KVM and emulated; the numbers kept in the journal | S | First: the items below are measured against it |
+| K61 | **`channel_call`**: send a request and wait for its reply in one system call, switching straight to the server's waiting thread and back (as L4, seL4 and Zircon do) | M | After K60 |
+| K62 | One copy per message: straight from the sender into a receiver that is already waiting, and no kernel allocation for each message | M | After K60 |
+| K63 | Bigger messages (today 1 KiB; 4 to 64 KiB) or shared rings for streams - fs and net cut streams into 1023-byte pieces | M | After K60; changes the `abi` with the services and libc in step |
+| K64 | Waiting until a channel can be sent to (`object_wait` for "writable"), instead of each sender retrying on `QueueFull` | S | |
+| K65 | Priority inheritance across a call: a server works at the priority of the client it answers | M | After K20 and K61; done by Era 17's K98 if that comes first |
+| K66 | **Channel cycles leak**: end A in B's inbox and B in A's keep both alive once their owners close every handle (`ipc.rs` says so; only the one-step cycle is refused) - a cycle collector, or a rule that stops cycles forming | M | A process can make kernel memory it can't give back |
 
 ### Threads and several CPUs
 
@@ -423,15 +423,15 @@ TheTaaJ runs on up to 16 CPUs (`smp.rs`), on both architectures, and a program's
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K?-smp-bench | **A threads benchmark**: a context switch, a futex hand-off between two threads, thread creation, `posix_spawn` to exit, and the same work on 1, 2, 4 ... CPUs to see how it scales; KVM and emulated, the numbers kept in the journal | S | First: the items below are measured against it |
-| K?-smp-queues | **A run queue per CPU**, with an idle CPU taking work from a busy one, instead of one queue under one lock | M | After K?-smp-bench and K20 (priorities and affinity are in the same code) |
-| K?-smp-alloc | **Per-CPU caches** in the kernel heap and the frame allocator, so most allocations take no shared lock | M | After K?-smp-bench |
-| K?-smp-futex | **Futexes without one shared list**: a lock per bucket, a wake that touches only its own address's waiters, `FUTEX_REQUEUE` (so `pthread_cond_broadcast` doesn't wake everyone to fight for the mutex) | M | Today a wake wakes its whole queue and those whose flag is clear sleep again |
-| K?-smp-tlb | **Cheaper shootdowns**: PCID on x86 (ASIDs on AArch64) so a switch keeps the TLB, and only the pages taken away invalidated rather than the whole address space | M | |
-| K?-smp-idle | **Idle CPUs that sleep** until they are needed, not woken by every 10 ms tick | S | With K24 (the one-shot timer) |
-| K?-smp-services | **Services with several threads**: the file and network services serve more than one request at a time | M | With J?-fs-many; after K?-ipc-call |
-| K?-smp-max | **More than 16 CPUs** (`MAX_CPUS`) | S | With K7 (x2APIC) |
-| J?-threads-posix | The POSIX thread calls still missing: semaphores (`sem_*`, `semaphore.h`), barriers, spin locks, `pthread_kill`, `pthread_cancel`, `sched_setaffinity` (after K20), robust mutexes | M | Ports ask for them; Rust's std needs none of them |
+| K67 | **A threads benchmark**: a context switch, a futex hand-off between two threads, thread creation, `posix_spawn` to exit, and the same work on 1, 2, 4 ... CPUs to see how it scales; KVM and emulated, the numbers kept in the journal | S | First: the items below are measured against it |
+| K68 | **A run queue per CPU**, with an idle CPU taking work from a busy one, instead of one queue under one lock | M | After K67 and K20 (priorities and affinity are in the same code) |
+| K69 | **Per-CPU caches** in the kernel heap and the frame allocator, so most allocations take no shared lock | M | After K67 |
+| K70 | **Futexes without one shared list**: a lock per bucket, a wake that touches only its own address's waiters, `FUTEX_REQUEUE` (so `pthread_cond_broadcast` doesn't wake everyone to fight for the mutex) | M | Today a wake wakes its whole queue and those whose flag is clear sleep again |
+| K71 | **Cheaper shootdowns**: PCID on x86 (ASIDs on AArch64) so a switch keeps the TLB, and only the pages taken away invalidated rather than the whole address space | M | |
+| K72 | **Idle CPUs that sleep** until they are needed, not woken by every 10 ms tick | S | With K24 (the one-shot timer) |
+| K73 | **Services with several threads**: the file and network services serve more than one request at a time | M | With J78; after K61 |
+| K74 | **More than 16 CPUs** (`MAX_CPUS`) | S | With K7 (x2APIC) |
+| J59 | The POSIX thread calls still missing: semaphores (`sem_*`, `semaphore.h`), barriers, spin locks, `pthread_kill`, `pthread_cancel`, `sched_setaffinity` (after K20), robust mutexes | M | Ports ask for them; Rust's std needs none of them |
 
 Processes: TheTaaJ starts programs with `posix_spawn`, not `fork` (on purpose: a microkernel copies nothing it isn't asked to), and `fork` says so with `ENOSYS`. What is missing for processes is on the list already: process groups and job control (K44, K45), CPU time per process (K21), priorities (K20).
 
@@ -452,16 +452,16 @@ The design is Fuchsia's and Plan 9's, not Linux's:
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J?-vfs-handles | **Open files and directories as handles**: `open` returns a channel to that file or directory, served by its service; reads and writes go on it, without the path | L | First. Fixes J36 (a descriptor follows its file through a rename or a removal); lets an open file be passed to another program |
-| J?-vfs-protocol | **One file protocol** every file service speaks (today's 15 operations, made per handle), and **one client library** that `taaj::Files` and libc both use | M | With J?-vfs-handles. libc's descriptor becomes "a handle that speaks the protocol", plus the few local kinds - an open list, not a closed one |
-| J?-vfs-namespace | **A namespace per process** in libc: path prefixes to directory handles, given by the parent at `posix_spawn`; `..` and symbolic links across a mount resolved by the client; `rename` across mounts is `EXDEV`, as on Unix | M | After J?-vfs-handles. No kernel change |
-| J?-vfs-openat | The `openat` family (`openat`, `mkdirat`, `unlinkat`, `fstatat`, `renameat`), and a program given **only one directory** - a sandbox from capabilities, with no permission checks | M | After J?-vfs-namespace |
-| J?-vfs-tmp | **`/tmp` in memory**: the `fileserver` crate's `RamStore` as a service of its own | S | After J?-vfs-namespace |
-| J?-vfs-dev | **`/dev`**: `null`, `zero`, `urandom` (from J2's `getrandom`) and the terminal, served by a small device service | S | After J?-vfs-namespace; `isatty` then asks the terminal rather than being a special case |
-| J?-vfs-proc | **`/proc`**: `/proc/self/exe` (and the LLVM patch removed), `/proc/self/fd`, a directory per process with what `ps` shows | M | A service that asks init or a generic "describe this process" call: numbers out of the kernel, never files |
-| J?-vfs-mounts | **A second disk, partition or USB stick**: a second `fs` service for it, under `/mnt` | S | After J?-vfs-namespace; with K11 (GPT) |
-| J?-vfs-fat | **FAT32**, read and write, as its own service: USB sticks made elsewhere, and the EFI partition | M | After J?-vfs-protocol |
-| J?-vfs-watch | **Change notification**: a handle that is told when a directory or file changes | M | After J?-vfs-handles. For editors, build tools and the desktop |
+| J60 | **Open files and directories as handles**: `open` returns a channel to that file or directory, served by its service; reads and writes go on it, without the path | L | First. Fixes J36 (a descriptor follows its file through a rename or a removal); lets an open file be passed to another program |
+| J61 | **One file protocol** every file service speaks (today's 15 operations, made per handle), and **one client library** that `taaj::Files` and libc both use | M | With J60. libc's descriptor becomes "a handle that speaks the protocol", plus the few local kinds - an open list, not a closed one |
+| J62 | **A namespace per process** in libc: path prefixes to directory handles, given by the parent at `posix_spawn`; `..` and symbolic links across a mount resolved by the client; `rename` across mounts is `EXDEV`, as on Unix | M | After J60. No kernel change |
+| J63 | The `openat` family (`openat`, `mkdirat`, `unlinkat`, `fstatat`, `renameat`), and a program given **only one directory** - a sandbox from capabilities, with no permission checks | M | After J62 |
+| J64 | **`/tmp` in memory**: the `fileserver` crate's `RamStore` as a service of its own | S | After J62 |
+| J65 | **`/dev`**: `null`, `zero`, `urandom` (from J2's `getrandom`) and the terminal, served by a small device service | S | After J62; `isatty` then asks the terminal rather than being a special case |
+| J66 | **`/proc`**: `/proc/self/exe` (and the LLVM patch removed), `/proc/self/fd`, a directory per process with what `ps` shows | M | A service that asks init or a generic "describe this process" call: numbers out of the kernel, never files |
+| J67 | **A second disk, partition or USB stick**: a second `fs` service for it, under `/mnt` | S | After J62; with K11 (GPT) |
+| J68 | **FAT32**, read and write, as its own service: USB sticks made elsewhere, and the EFI partition | M | After J61 |
+| J69 | **Change notification**: a handle that is told when a directory or file changes | M | After J60. For editors, build tools and the desktop |
 
 ### TaajFS version 7
 
@@ -469,16 +469,16 @@ TaajFS is safe against power loss by design: copy-on-write, two superblocks, one
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J?-fs-bench | **A file-system benchmark**: many small files made, written and removed; one big file written and read; a directory of thousands of names looked up; mount time of a full volume; blocks written per request. Both CPUs, KVM and emulated, the numbers kept in the journal | S | First: the items below are measured against it |
-| J?-fs-group | **Group commits**: the requests that arrive while one commit is being written go into the next commit together, so many small writes don't each rewrite the path to the root and the superblock. A reply still goes out only once its commit is on the disk | M | After J?-fs-bench. Not a format change. Covers E4 |
-| J?-fs-dirs | **Directories that aren't scanned**: a name found by its hash (hashed blocks or a B-tree), not by reading the directory from the start | M | Version 7. Only directories over a few blocks need it |
-| J?-fs-freemap | **The free map kept on the disk**, written with each commit, so mount doesn't walk the whole tree (today it does, `volume.rs`) | M | Version 7. The walk stays as the check (E1, and the debug check that already compares the two) |
-| J?-fs-sums | **Checksums**: each block's checksum kept where it is pointed to from (as ZFS does), checked on every read; a bad block is an error, never silently wrong data | M | Version 7. Copy-on-write protects against a crash, not against a disk that returns wrong bytes |
-| J?-fs-64 | **64-bit sizes and block numbers**: volumes and files past 4 GiB (today 2^20 blocks of 4 KiB, and a 32-bit file size) | M | Version 7; the `abi`'s file sizes and offsets with it. Needed for the real PC's disk (K12) |
-| J?-fs-owners | **Owners, permission bits, and access and change times** stored per file, so `stat` stops making them up | M | Version 7. What enforces them waits for users on TheTaaJ; storing them comes first |
-| J?-fs-links | **Symbolic links and hard links** (`symlink`, `readlink`, `link`, a link count) | M | Version 7. Many build systems and `make install`s use them |
-| J?-fs-many | **More than one request at a time** in the file service: reads served while a commit is being written, several disk requests in flight | L | After J?-fs-group; with K10 (the disk driver's queue) |
-| J?-fs-cache | **A page cache shared with programs**, so `mmap` of a file maps the cache's pages rather than a copy written back (entry 103) | L | After J58 (sealed memory objects) for read-only sharing |
+| J70 | **A file-system benchmark**: many small files made, written and removed; one big file written and read; a directory of thousands of names looked up; mount time of a full volume; blocks written per request. Both CPUs, KVM and emulated, the numbers kept in the journal | S | First: the items below are measured against it |
+| J71 | **Group commits**: the requests that arrive while one commit is being written go into the next commit together, so many small writes don't each rewrite the path to the root and the superblock. A reply still goes out only once its commit is on the disk | M | After J70. Not a format change. Covers E4 |
+| J72 | **Directories that aren't scanned**: a name found by its hash (hashed blocks or a B-tree), not by reading the directory from the start | M | Version 7. Only directories over a few blocks need it |
+| J73 | **The free map kept on the disk**, written with each commit, so mount doesn't walk the whole tree (today it does, `volume.rs`) | M | Version 7. The walk stays as the check (E1, and the debug check that already compares the two) |
+| J74 | **Checksums**: each block's checksum kept where it is pointed to from (as ZFS does), checked on every read; a bad block is an error, never silently wrong data | M | Version 7. Copy-on-write protects against a crash, not against a disk that returns wrong bytes |
+| J75 | **64-bit sizes and block numbers**: volumes and files past 4 GiB (today 2^20 blocks of 4 KiB, and a 32-bit file size) | M | Version 7; the `abi`'s file sizes and offsets with it. Needed for the real PC's disk (K12) |
+| J76 | **Owners, permission bits, and access and change times** stored per file, so `stat` stops making them up | M | Version 7. What enforces them waits for users on TheTaaJ; storing them comes first |
+| J77 | **Symbolic links and hard links** (`symlink`, `readlink`, `link`, a link count) | M | Version 7. Many build systems and `make install`s use them |
+| J78 | **More than one request at a time** in the file service: reads served while a commit is being written, several disk requests in flight | L | After J71; with K10 (the disk driver's queue) |
+| J79 | **A page cache shared with programs**, so `mmap` of a file maps the cache's pages rather than a copy written back (entry 103) | L | After J58 (sealed memory objects) for read-only sharing |
 
 E1 (`fsck`) belongs with these too, and is best written once version 7's format is settled. J36 (open files that follow their file, not its name) also belongs with these.
 
@@ -499,16 +499,16 @@ The fix, Zircon's way, keeps the kernel to mechanism: it hands out every device 
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K?-dev-generic | **Every device handed out the same way**: each PCI function and each device-tree node with its configuration space (a capability to its own), every BAR, and its interrupts; the kernel's lists of classes, vendors and virtio kinds are removed, and with them what it knows of each kind | M | First. A new driver then needs no kernel change |
-| K?-dev-manager | **A device manager** in user space: a table of drivers matched by class and IDs (and by device-tree name on AArch64), one driver started per device, several devices of a kind, restarts; init's fixed slots and hand-numbered handles go | M | After K?-dev-generic. The policy moves from the kernel and init to one table |
-| K?-dev-dma-off | **Bus mastering tied to a handle**: when the last handle to a device closes (its driver died), the kernel switches its DMA off until a new driver turns it on | S | Before or with K?-dev-manager |
+| K75 | **Every device handed out the same way**: each PCI function and each device-tree node with its configuration space (a capability to its own), every BAR, and its interrupts; the kernel's lists of classes, vendors and virtio kinds are removed, and with them what it knows of each kind | M | First. A new driver then needs no kernel change |
+| K76 | **A device manager** in user space: a table of drivers matched by class and IDs (and by device-tree name on AArch64), one driver started per device, several devices of a kind, restarts; init's fixed slots and hand-numbered handles go | M | After K75. The policy moves from the kernel and init to one table |
+| K77 | **Bus mastering tied to a handle**: when the last handle to a device closes (its driver died), the kernel switches its DMA off until a new driver turns it on | S | Before or with K76 |
 | K27 | **An IOMMU** (Intel VT-d, AMD-Vi; the SMMU on AArch64) confining each driver's device to its own memory objects | L | Moved here from Security. The kernel programs it from the memory objects a driver holds: still mechanism |
-| K?-dev-usb-split | **USB as a bus**: the xHCI driver as a bus driver, and keyboards, mice and storage as class drivers of their own; more than one stick | M | With K2 (hubs). A bug in the stick's code no longer takes the keyboard with it |
-| K?-dev-vectors | **Several interrupt vectors and queues per device** (MSI-X), one per CPU for NVMe and network cards | M | With K8; after K?-smp-queues |
-| K?-dev-dma-pages | **DMA into a program's own memory**: a memory object pinned for the device, scatter-gather lists, instead of copying through one fixed region | M | With K27, which keeps it safe |
-| K?-dev-virtio-modern | **virtio 1.x** (the modern interface) beside the legacy one | M | Some hypervisors, and virtio-gpu, need it |
-| K?-dev-chaos | **A test that kills each driver in the middle of its I/O** - disk, network, USB, input - and checks that the system recovers and no data is lost that was acknowledged | S | Early: it measures the era's milestone |
-| K?-dev-power | **Device power states** (D0-D3), devices put to sleep when idle | M | Later; laptops, with K18 |
+| K78 | **USB as a bus**: the xHCI driver as a bus driver, and keyboards, mice and storage as class drivers of their own; more than one stick | M | With K2 (hubs). A bug in the stick's code no longer takes the keyboard with it |
+| K79 | **Several interrupt vectors and queues per device** (MSI-X), one per CPU for NVMe and network cards | M | With K8; after K68 |
+| K80 | **DMA into a program's own memory**: a memory object pinned for the device, scatter-gather lists, instead of copying through one fixed region | M | With K27, which keeps it safe |
+| K81 | **virtio 1.x** (the modern interface) beside the legacy one | M | Some hypervisors, and virtio-gpu, need it |
+| K82 | **A test that kills each driver in the middle of its I/O** - disk, network, USB, input - and checks that the system recovers and no data is lost that was acknowledged | S | Early: it measures the era's milestone |
+| K83 | **Device power states** (D0-D3), devices put to sleep when idle | M | Later; laptops, with K18 |
 
 ---
 
@@ -530,23 +530,23 @@ All of it stays mechanism: the kernel shares, copies on write, and drops pages; 
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K?-mm-smap | **SMEP and SMAP on x86, PAN on AArch64**: the kernel can't run user code and touches user memory only in its explicit copies (`user_pages`, `copy_from_user`, `copy_to_user`), with the bit lifted only there | S | First: small, and only security |
-| K?-mm-oom | **The kernel never panics for want of memory**: each kernel allocation that a request causes fails that request (`OutOfMemory`) instead; the heap gives back what it no longer uses; a test that runs the machine out of memory | M | Early: the era's milestone. Fallible allocation (`try_reserve`, `Box::try_new`) on every path a program can drive |
-| K?-mm-pressure | **A memory-pressure signal**: an object services wait on, told when free memory falls under a level, so they drop caches before anything fails; which program to stop, if it comes to that, decided by a user-space manager, not the kernel | M | After K?-mm-oom |
-| K?-mm-cow | **Copy-on-write memory objects**: a child object that shares its parent's pages until one is written - private file mappings, a program's data pages over its shared code | M | With J29 and J58 |
-| K?-mm-pager | **A generic pager**: a memory object whose missing pages are asked for through a channel, filled by a user-space service on a fault | L | Shared with Era 14 (J?-fs-cache); the kernel knows memory objects, never files |
-| K?-mm-reclaim | **Pages given back under pressure**: clean pages of paged objects dropped (their pager can fill them again), then E5's swap for the rest | L | After K?-mm-pager and K?-mm-pressure |
-| K?-mm-buddy | **A buddy allocator** for frames: allocation without a scan, contiguous blocks (DMA, huge pages) found at once | M | With K?-smp-alloc's per-CPU caches |
-| K?-mm-huge | **2 MiB pages** for big mappings, kernel and programs | M | After K?-mm-buddy. For Era 8's weights and big heaps |
-| K?-mm-zero | **A shared zero page**: reserved memory that is read before it is written maps one read-only page of zeros, and gets its own frame on the first write | S | After K?-mm-cow |
-| K?-mm-limits | **Memory objects over 512 MiB** | S | For Era 8: Qwen3's 1-3 GB of weights |
-| K?-mm-kpti | **Separate kernel tables** on CPUs that leak kernel memory to programs (Meltdown); off on those that don't | M | After K?-smp-tlb (PCID makes it cheap) |
+| K84 | **SMEP and SMAP on x86, PAN on AArch64**: the kernel can't run user code and touches user memory only in its explicit copies (`user_pages`, `copy_from_user`, `copy_to_user`), with the bit lifted only there | S | First: small, and only security |
+| K85 | **The kernel never panics for want of memory**: each kernel allocation that a request causes fails that request (`OutOfMemory`) instead; the heap gives back what it no longer uses; a test that runs the machine out of memory | M | Early: the era's milestone. Fallible allocation (`try_reserve`, `Box::try_new`) on every path a program can drive |
+| K86 | **A memory-pressure signal**: an object services wait on, told when free memory falls under a level, so they drop caches before anything fails; which program to stop, if it comes to that, decided by a user-space manager, not the kernel | M | After K85 |
+| K87 | **Copy-on-write memory objects**: a child object that shares its parent's pages until one is written - private file mappings, a program's data pages over its shared code | M | With J29 and J58 |
+| K88 | **A generic pager**: a memory object whose missing pages are asked for through a channel, filled by a user-space service on a fault | L | Shared with Era 14 (J79); the kernel knows memory objects, never files |
+| K89 | **Pages given back under pressure**: clean pages of paged objects dropped (their pager can fill them again), then E5's swap for the rest | L | After K88 and K86 |
+| K90 | **A buddy allocator** for frames: allocation without a scan, contiguous blocks (DMA, huge pages) found at once | M | With K69's per-CPU caches |
+| K91 | **2 MiB pages** for big mappings, kernel and programs | M | After K90. For Era 8's weights and big heaps |
+| K92 | **A shared zero page**: reserved memory that is read before it is written maps one read-only page of zeros, and gets its own frame on the first write | S | After K87 |
+| K93 | **Memory objects over 512 MiB** | S | For Era 8: Qwen3's 1-3 GB of weights |
+| K94 | **Separate kernel tables** on CPUs that leak kernel memory to programs (Meltdown); off on those that don't | M | After K71 (PCID makes it cheap) |
 
 ---
 
 ## Era 17 · Scheduling: contexts, classes and fairness
 
-**Done when**: with four programs busy on every CPU, a key press reaches the screen within a limit the benchmark sets (and typing no longer feels sluggish, K20's complaint); a sound or input thread in the real-time class is never late behind a compile; a program with 64 threads gets no more CPU than one with a single thread in the same group; a server answering a call runs on its client's priority and budget; and no program can raise its own priority without a capability that allows it. Whose it is, and when, is for the user to say. It builds on K20 (priorities and affinity, MaK-WSL's, in progress), K21 (CPU time per process), K24 (fine timers), and Era 13's K?-smp-queues, K?-smp-idle, K?-ipc-call and K?-ipc-priority.
+**Done when**: with four programs busy on every CPU, a key press reaches the screen within a limit the benchmark sets (and typing no longer feels sluggish, K20's complaint); a sound or input thread in the real-time class is never late behind a compile; a program with 64 threads gets no more CPU than one with a single thread in the same group; a server answering a call runs on its client's priority and budget; and no program can raise its own priority without a capability that allows it. Whose it is, and when, is for the user to say. It builds on K20 (priorities and affinity, MaK-WSL's, in progress), K21 (CPU time per process), K24 (fine timers), and Era 13's K68, K72, K61 and K65.
 
 What is right: the decisions (`sched.rs`) are apart from the switch (`threads.rs`) and tested on the host; round-robin over one queue shared by every CPU, 20 ms slices (`SLICE` = 2 ticks at 100 Hz); the kernel is preemptible in system calls, and a selftest checks a spinning thread is preempted; an idle CPU is poked at once when work arrives, and two threads made ready one after the other go to two CPUs; a thread woken before it left its CPU keeps running there; the rules for several CPUs written down and kept, and twenty race-hunt rounds passed.
 
@@ -556,21 +556,21 @@ What it lacks: any policy - every thread is equal, with no priorities or classes
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K?-sched-bench | **A scheduling benchmark**: wake-to-run latency, the cost of a switch, fairness between busy programs, and key press to screen with four busy programs, on KVM and emulated; the numbers kept in the journal | S | First. With K?-smp-bench |
-| K?-sched-timers | **Sleepers in a timer queue** sorted by their time, so a tick looks only at the first; no scan of every thread and no allocation in the tick | S | Early; with K24's one-shot timer it becomes "set the timer for the first sleeper" |
-| K?-sched-contexts | **Scheduling contexts as capabilities**: a priority, a budget and a period per context; a thread runs on its context's time; made and handed out by init or a resource manager, never by a program for itself | L | After K20. The core of the era |
-| K?-sched-donate | **A server runs on its client's context** for the length of a call, and the client is charged | M | After K?-sched-contexts, K?-ipc-call; replaces K?-ipc-priority's separate mechanism |
-| K?-sched-classes | **Classes**: real-time (fixed priority: sound in Era 10, input, the display), normal (a fair share by virtual run time, as EEVDF does), background (only when nothing else wants the CPU) | M | After K?-sched-contexts |
-| K?-sched-groups | **Fairness between processes, or groups of them**, not between threads: a group's share split among its threads | M | After K?-sched-classes |
-| K?-sched-cache | **A thread prefers the CPU it last ran on** while its data is still in that CPU's cache; moved only when another CPU would otherwise idle | S | With K?-smp-queues |
-| K?-sched-cpus | **More than 64 CPUs** in the scheduler (`pokes` and the CPU sets as bitmaps of any size) | S | With K?-smp-max |
-| J?-sched-posix | `nice`, `getpriority`/`setpriority`, `sched_setscheduler`, `sched_getaffinity`/`sched_setaffinity`, `pthread_setschedparam`, mapped onto contexts: allowed only as far as the program's context lets | S | After K?-sched-contexts; with J?-threads-posix |
+| K95 | **A scheduling benchmark**: wake-to-run latency, the cost of a switch, fairness between busy programs, and key press to screen with four busy programs, on KVM and emulated; the numbers kept in the journal | S | First. With K67 |
+| K96 | **Sleepers in a timer queue** sorted by their time, so a tick looks only at the first; no scan of every thread and no allocation in the tick | S | Early; with K24's one-shot timer it becomes "set the timer for the first sleeper" |
+| K97 | **Scheduling contexts as capabilities**: a priority, a budget and a period per context; a thread runs on its context's time; made and handed out by init or a resource manager, never by a program for itself | L | After K20. The core of the era |
+| K98 | **A server runs on its client's context** for the length of a call, and the client is charged | M | After K97, K61; replaces K65's separate mechanism |
+| K99 | **Classes**: real-time (fixed priority: sound in Era 10, input, the display), normal (a fair share by virtual run time, as EEVDF does), background (only when nothing else wants the CPU) | M | After K97 |
+| K100 | **Fairness between processes, or groups of them**, not between threads: a group's share split among its threads | M | After K99 |
+| K101 | **A thread prefers the CPU it last ran on** while its data is still in that CPU's cache; moved only when another CPU would otherwise idle | S | With K68 |
+| K102 | **More than 64 CPUs** in the scheduler (`pokes` and the CPU sets as bitmaps of any size) | S | With K74 |
+| J80 | `nice`, `getpriority`/`setpriority`, `sched_setscheduler`, `sched_getaffinity`/`sched_setaffinity`, `pthread_setschedparam`, mapped onto contexts: allowed only as far as the program's context lets | S | After K97; with J59 |
 
 ---
 
 ## Era 18 · Security: hardening, trust and people
 
-**Done when**: a program given no grants cannot crash or starve the machine, whatever it calls; the fuzzers (system calls on TheTaaJ, every parser on the host) run for a set time with nothing found; a program gets its manifest's grants only if it and its manifest are signed; the machine boots verified (UEFI Secure Boot, measured into a TPM where there is one); and two users on one machine cannot reach each other's files. Whose it is, and when, is for the user to say. Items already elsewhere are pointed to, not moved: K25 (ASLR), K26 (stack protector), K28 (who may switch off), K29 (TCP sequence numbers) in Security above; K37 (TLS) and K?-net-filter in Era 12; K27 (IOMMU) in Era 15; K?-mm-smap, K?-mm-kpti and K?-mm-oom in Era 16; K?-sched-contexts in Era 17; J?-vfs-openat's sandboxes in Era 14; K?-ipc-cycles in Era 13.
+**Done when**: a program given no grants cannot crash or starve the machine, whatever it calls; the fuzzers (system calls on TheTaaJ, every parser on the host) run for a set time with nothing found; a program gets its manifest's grants only if it and its manifest are signed; the machine boots verified (UEFI Secure Boot, measured into a TPM where there is one); and two users on one machine cannot reach each other's files. Whose it is, and when, is for the user to say. Items already elsewhere are pointed to, not moved: K25 (ASLR), K26 (stack protector), K28 (who may switch off), K29 (TCP sequence numbers) in Security above; K37 (TLS) and K56 in Era 12; K27 (IOMMU) in Era 15; K84, K94 and K85 in Era 16; K97 in Era 17; J63's sandboxes in Era 14; K66 in Era 13.
 
 What is right, and is TheTaaJ's strongest point: **capabilities from the bottom up**. A process reaches a kernel object only through a handle, whose rights (SEND, RECEIVE, DUPLICATE, TRANSFER, READ, WRITE, KILL) can only shrink when passed on. No ambient authority in the kernel for what matters: no "kill process 42" (`kill` and signals need a handle with KILL), starting a program needs a launcher handle, the process list needs the system handle. The shell **narrows the registry for each program it runs** - `ls` gets the read-only file channel, `ping` only `net`, an unknown program nothing - and a redirect gives a channel, not the file service. init's namespace table is the system's policy in one place. Drivers hold only their own registers, DMA memory and interrupt. The kernel is Rust, with about 260 `unsafe`. Randomness from the CPU, jitter and the clock, through ChaCha.
 
@@ -587,23 +587,23 @@ All of it keeps the kernel pure: the kernel counts, checks rights and enforces; 
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K?-sec-kmem | **Kernel objects counted against their creator**: each channel, queued message, handle, process and thread charged to an account (the creator's, or the sender's for a message in someone's inbox), refused at the limit | M | First: the era's milestone. With K?-mm-oom; makes K?-ipc-cycles a bounded leak until it is fixed |
-| K?-sec-fuzz | **Fuzzing**: a system-call fuzzer run on TheTaaJ (random calls, arguments and handles from a program with no grants), and `cargo fuzz` on the host for every parser of untrusted input - `elf`, `taajfs`, `net`, `usb` descriptors, `acpi` tables, the file and network protocols | M | Early. Run for a set time before an era's merge |
-| K?-sec-manifests | **A manifest per program**: the services it needs (`files.look`, `net`, `windows`...), read by the shell and init, which grant from it rather than from lists of names in the shell; a program without one gets nothing, as now | M | After J?-vfs-namespace, so a manifest can name directories too |
-| K?-sec-signing | **Signed programs and manifests**: a key the machine trusts, checked before a program gets its manifest's grants; unsigned programs run with none | M | After K?-sec-manifests |
-| K?-sec-boot | **Verified boot**: UEFI Secure Boot (the bootloader and kernel signed), and measured boot into a TPM where there is one | L | With MaK-WSL, who owns TheBootloader |
-| K?-sec-users | **Users and login**: each user a set of capabilities - a home directory handle and the services allowed - given by a login service, with no user ids checked in the kernel | L | After J?-vfs-namespace and J?-fs-owners |
-| K?-sec-crypt | **Disk encryption**: a block service between `fs` and the disk driver, its key from the login (and the TPM) | L | After K?-sec-users |
-| K?-sec-spectre | **Speculation mitigations**: IBRS/IBPB or retpolines, buffers cleared on return to user mode, on the CPUs that need them; the AArch64 equivalents | M | With K?-mm-kpti |
-| K?-sec-debug | **`DEBUG_WRITE` behind a capability**: a log handle given to whoever may write the kernel console | S | Small |
-| K?-sec-unsafe | **Every `unsafe` with a written reason** (`// SAFETY:`), checked by a lint; Miri over the host tests of the kernel's crates | M | |
-| K?-sec-audit | **An audit log**: grants, kills, power, spawns with powers, kept by a user-space service and readable only with a handle for it | M | Before the assistant era, whose "undo" and activity log build on it |
+| K103 | **Kernel objects counted against their creator**: each channel, queued message, handle, process and thread charged to an account (the creator's, or the sender's for a message in someone's inbox), refused at the limit | M | First: the era's milestone. With K85; makes K66 a bounded leak until it is fixed |
+| K104 | **Fuzzing**: a system-call fuzzer run on TheTaaJ (random calls, arguments and handles from a program with no grants), and `cargo fuzz` on the host for every parser of untrusted input - `elf`, `taajfs`, `net`, `usb` descriptors, `acpi` tables, the file and network protocols | M | Early. Run for a set time before an era's merge |
+| K105 | **A manifest per program**: the services it needs (`files.look`, `net`, `windows`...), read by the shell and init, which grant from it rather than from lists of names in the shell; a program without one gets nothing, as now | M | After J62, so a manifest can name directories too |
+| K106 | **Signed programs and manifests**: a key the machine trusts, checked before a program gets its manifest's grants; unsigned programs run with none | M | After K105 |
+| K107 | **Verified boot**: UEFI Secure Boot (the bootloader and kernel signed), and measured boot into a TPM where there is one | L | With MaK-WSL, who owns TheBootloader |
+| K108 | **Users and login**: each user a set of capabilities - a home directory handle and the services allowed - given by a login service, with no user ids checked in the kernel | L | After J62 and J76 |
+| K109 | **Disk encryption**: a block service between `fs` and the disk driver, its key from the login (and the TPM) | L | After K108 |
+| K110 | **Speculation mitigations**: IBRS/IBPB or retpolines, buffers cleared on return to user mode, on the CPUs that need them; the AArch64 equivalents | M | With K94 |
+| K111 | **`DEBUG_WRITE` behind a capability**: a log handle given to whoever may write the kernel console | S | Small |
+| K112 | **Every `unsafe` with a written reason** (`// SAFETY:`), checked by a lint; Miri over the host tests of the kernel's crates | M | |
+| K113 | **An audit log**: grants, kills, power, spawns with powers, kept by a user-space service and readable only with a handle for it | M | Before the assistant era, whose "undo" and activity log build on it |
 
 ---
 
 ## Era 19 · Desktop: applications people can use daily
 
-**Done when**: a day's ordinary work can be done on TheTaaJ's desktop with no terminal - open, edit and save files in applications, copy and paste between them, type in a language other than English, find and start programs from a panel, resize and minimise windows, lock the screen and unlock it as one's own user - with key-to-screen time under the limit the benchmark sets. Whose it is, and when, is for the user to say. The Desktop items above (K39-K46) are pointed to, not moved; K?-sec-users (Era 18) comes before the screen lock.
+**Done when**: a day's ordinary work can be done on TheTaaJ's desktop with no terminal - open, edit and save files in applications, copy and paste between them, type in a language other than English, find and start programs from a panel, resize and minimise windows, lock the screen and unlock it as one's own user - with key-to-screen time under the limit the benchmark sets. Whose it is, and when, is for the user to say. The Desktop items above (K39-K46) are pointed to, not moved; K108 (Era 18) comes before the screen lock.
 
 What is right, and close to Wayland with capabilities in place of a socket: a program opens a window on the registry's `windows` with a channel and a memory object, draws into its own memory and sends DAMAGE; pixels never travel in messages; closing the channel closes the window, so a crash cleans up by itself. The server draws every frame and title, so no program can fake another's title bar, and keys go only to the window with the focus. The screen is composed in a back buffer, only damaged rectangles again. The window manager (`gui::desktop`), drawing (`gfx`), the editor's logic (`gui::text`) and the protocol (`gui::protocol`) are all tested on the host.
 
@@ -613,20 +613,20 @@ All of it stays out of the kernel: the compositor, window manager, toolkit, font
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K?-ui-bench | **A desktop benchmark**: key to screen with four busy programs, frames per second dragging a window, the cost of one composition at the screen's size | S | First. With K?-sched-bench |
-| K?-ui-split | **`display` split**: the compositor, the window manager, the terminal (K44) and the boot console as programs of their own; a crash in the terminal leaves the screen | M | Early: everything else builds on it |
-| K?-ui-input | **Real key events** through the window protocol: key codes, down and up, modifiers, repeat, a keyboard layout chosen in user space; the terminal turns them into bytes for programs that want bytes | M | With K42; Era 11's push-to-talk key needs it |
-| K?-ui-text | **Text for every language**: UTF-8 drawn with a TrueType rasteriser (our own, or a port), several sizes, fallback fonts; left-to-right first | L | With K43 |
-| K?-ui-toolkit | **A toolkit to build applications with**: layout, text fields, lists, menus, scroll bars, dialogs, keyboard focus between widgets; its logic tested on the host as `gui` is | L | After K?-ui-input and K?-ui-text |
-| K?-ui-shell | **A panel**: a launcher, the open windows, a clock; windows resized, minimised and maximised | M | With K40 |
-| K?-ui-clipboard | **Copy and paste**: a clipboard service that hands a memory object from the copying program to the pasting one, only on the user's keys | S | With K41 |
-| K?-ui-apps | **The first applications**: a terminal window, a file manager, settings, an image viewer, a calculator; `edit` on the new toolkit | L | After K?-ui-toolkit; the file manager after Era 14's handles |
-| K?-ui-images | **PNG and JPEG** decoders as libraries in user space, fuzzed (K?-sec-fuzz) | M | For K?-ui-apps' image viewer and icons |
-| K?-ui-gpu | **virtio-gpu**: 2D first, scanout and vsync; the compositor using it where it is there | M | After K?-dev-virtio-modern. Real GPUs much later |
-| K?-ui-scale | **The screen's native resolution and scaling** for big and HiDPI screens | M | With K39 |
-| K?-ui-trusted | **A trusted path**: a key combination that always reaches the system, whatever has the focus; a screen lock; limits on how many windows a program opens and whether it may cover the screen | M | The lock after K?-sec-users |
-| K?-ui-notify | **Notifications**, and a window asking for attention without taking the focus | S | |
-| K?-ui-a11y | **Accessibility**: everything reachable from the keyboard, high contrast, zoom; a screen reader with Era 11's voice | M | |
+| K114 | **A desktop benchmark**: key to screen with four busy programs, frames per second dragging a window, the cost of one composition at the screen's size | S | First. With K95 |
+| K115 | **`display` split**: the compositor, the window manager, the terminal (K44) and the boot console as programs of their own; a crash in the terminal leaves the screen | M | Early: everything else builds on it |
+| K116 | **Real key events** through the window protocol: key codes, down and up, modifiers, repeat, a keyboard layout chosen in user space; the terminal turns them into bytes for programs that want bytes | M | With K42; Era 11's push-to-talk key needs it |
+| K117 | **Text for every language**: UTF-8 drawn with a TrueType rasteriser (our own, or a port), several sizes, fallback fonts; left-to-right first | L | With K43 |
+| K118 | **A toolkit to build applications with**: layout, text fields, lists, menus, scroll bars, dialogs, keyboard focus between widgets; its logic tested on the host as `gui` is | L | After K116 and K117 |
+| K119 | **A panel**: a launcher, the open windows, a clock; windows resized, minimised and maximised | M | With K40 |
+| K120 | **Copy and paste**: a clipboard service that hands a memory object from the copying program to the pasting one, only on the user's keys | S | With K41 |
+| K121 | **The first applications**: a terminal window, a file manager, settings, an image viewer, a calculator; `edit` on the new toolkit | L | After K118; the file manager after Era 14's handles |
+| K122 | **PNG and JPEG** decoders as libraries in user space, fuzzed (K104) | M | For K121' image viewer and icons |
+| K123 | **virtio-gpu**: 2D first, scanout and vsync; the compositor using it where it is there | M | After K81. Real GPUs much later |
+| K124 | **The screen's native resolution and scaling** for big and HiDPI screens | M | With K39 |
+| K125 | **A trusted path**: a key combination that always reaches the system, whatever has the focus; a screen lock; limits on how many windows a program opens and whether it may cover the screen | M | The lock after K108 |
+| K126 | **Notifications**, and a window asking for attention without taking the focus | S | |
+| K127 | **Accessibility**: everything reachable from the keyboard, high contrast, zoom; a screen reader with Era 11's voice | M | |
 
 ---
 
@@ -646,23 +646,23 @@ All of it is user space: the shells and libc are programs and a library.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J?-libc-docs | **`libc/src/lib.rs`'s overview brought up to date**: real threads, native thread-local storage, what each file holds now | S | First: small, and the rest of the era reads it |
-| J?-cli-one-shell | **One shell language**: the shell at the keyboard parses and runs with `sh.rs`, keeping what only it does (grants, jobs, the keyboard); one parser left | M | Supersedes J43 and J44 |
-| J?-cli-line | **Line editing**: history (kept in a file), Tab completion of commands and names, arrow keys, Ctrl+R search, a start-up file (`.shrc`) | M | After J?-cli-one-shell |
-| J?-cli-bg | **`&` and job control in scripts** as at the keyboard | M | With K45 |
-| J?-libc-termios | **`termios`**: raw and cooked modes, echo, the window size (`TIOCGWINSZ`), on K44's pseudo-terminals; then a port of a small `vi` and `less` | M | With K44 |
-| J?-libc-headers | **The missing headers**: `regex` (POSIX regular expressions), `iconv` (UTF-8, Latin-1, UTF-16), `wctype`, `threads.h` (C11), `complex.h`, `search`, `ftw`/`nftw`, `wordexp`, `syslog`, `sys/ioctl.h` | L | Each with host tests; `semaphore.h` is J?-threads-posix's |
-| J?-libc-utf8 | **A UTF-8 locale**: `setlocale` takes `C.UTF-8`, `mbrtowc` and the wide functions done properly | M | With Era 19's K?-ui-text |
-| J?-libc-malloc | **A faster `malloc`**: size classes and per-thread caches, a debug mode for double frees and overruns, host tests for the family | M | Covers J41 and J42 |
-| J?-libc-conform | **A conformance suite** (libc-test, Open POSIX test suite) run on TheTaaJ, its pass rate kept in the journal and watched | M | Early: it measures the era |
-| J?-libc-shared | **A shared libc**: dynamic linking for programs that want it | L | After Era 16's shared code pages (J29, K?-mm-cow) |
-| J?-cli-tools | **The everyday tools**: J47 and J48, and `sed`, `awk`, `tar`, `xargs` - ported or our own | L | After J?-libc-headers (`regex`) |
+| J81 | **`libc/src/lib.rs`'s overview brought up to date**: real threads, native thread-local storage, what each file holds now | S | First: small, and the rest of the era reads it |
+| J82 | **One shell language**: the shell at the keyboard parses and runs with `sh.rs`, keeping what only it does (grants, jobs, the keyboard); one parser left | M | Supersedes J43 and J44 |
+| J83 | **Line editing**: history (kept in a file), Tab completion of commands and names, arrow keys, Ctrl+R search, a start-up file (`.shrc`) | M | After J82 |
+| J84 | **`&` and job control in scripts** as at the keyboard | M | With K45 |
+| J85 | **`termios`**: raw and cooked modes, echo, the window size (`TIOCGWINSZ`), on K44's pseudo-terminals; then a port of a small `vi` and `less` | M | With K44 |
+| J86 | **The missing headers**: `regex` (POSIX regular expressions), `iconv` (UTF-8, Latin-1, UTF-16), `wctype`, `threads.h` (C11), `complex.h`, `search`, `ftw`/`nftw`, `wordexp`, `syslog`, `sys/ioctl.h` | L | Each with host tests; `semaphore.h` is J59's |
+| J87 | **A UTF-8 locale**: `setlocale` takes `C.UTF-8`, `mbrtowc` and the wide functions done properly | M | With Era 19's K117 |
+| J88 | **A faster `malloc`**: size classes and per-thread caches, a debug mode for double frees and overruns, host tests for the family | M | Covers J41 and J42 |
+| J89 | **A conformance suite** (libc-test, Open POSIX test suite) run on TheTaaJ, its pass rate kept in the journal and watched | M | Early: it measures the era |
+| J90 | **A shared libc**: dynamic linking for programs that want it | L | After Era 16's shared code pages (J29, K87) |
+| J91 | **The everyday tools**: J47 and J48, and `sed`, `awk`, `tar`, `xargs` - ported or our own | L | After J86 (`regex`) |
 
 ---
 
 ## Era 21 · Boot: recoverable, verified and unlimited
 
-**Done when**: a deliberately broken kernel update boots the previous kernel by itself; a kernel twice today's size boots from BIOS; an emulated BIOS boot reaches the kernel under a time the first measurement sets; the user can choose a kernel and edit its command line at boot; and, with Era 18's K?-sec-boot, the boot is verified. **The bootloader is MaK-WSL's (rule 7)**: these items are MaK-WSL's to do, or to agree before anyone else does them. Whose it is, and when, is for the user to say. Pointed to, not moved: K51 (the slow BIOS loader), J51 (test programs out of the kernel image), K12 (the installer), K25 (ASLR), K?-sec-boot (Era 18), U6 (Raspberry Pi and RISC-V).
+**Done when**: a deliberately broken kernel update boots the previous kernel by itself; a kernel twice today's size boots from BIOS; an emulated BIOS boot reaches the kernel under a time the first measurement sets; the user can choose a kernel and edit its command line at boot; and, with Era 18's K107, the boot is verified. **The bootloader is MaK-WSL's (rule 7)**: these items are MaK-WSL's to do, or to agree before anyone else does them. Whose it is, and when, is for the user to say. Pointed to, not moved: K51 (the slow BIOS loader), J51 (test programs out of the kernel image), K12 (the installer), K25 (ASLR), K107 (Era 18), U6 (Raspberry Pi and RISC-V).
 
 What is right: **the TaajBoot protocol** (`bootloader/headers/boot/taajboot.h`) - one 136-byte structure every loader fills (memory map, kernel place, ramdisk, ACPI RSDP, device tree, command line, framebuffer, loader name), fixed-width, append-only, with a `Size` field for older loaders, its layout checked in C and in the kernel's Rust mirror. "A new way to boot is then a new loader, never a change to the kernel." Three loaders behind it: BIOS (a hybrid MBR for USB sticks, stage1, stage2 in 32-bit assembly and C, ISO 9660, E820, VESA, long mode), UEFI x86_64 (`ExitBootServices` done right: nothing allocates between reading the map and exiting, and it retries), and UEFI AArch64 (a Linux-style `Image` with a device tree, the firmware's keep-out ranges copied into the tree, so the kernel never learns UEFI). About 5,000 lines.
 
@@ -672,7 +672,7 @@ What is missing:
 - **It is slow emulated**: 14 of an 18 s boot, an `int 13h` read at a time (K51).
 - **No recovery**: one kernel, no fallback when a new one fails to boot. TaajFS has A/B superblocks; the boot path has nothing like them.
 - **No menu**: no timeout, no choice of kernel, no way to give a command line at boot (the protocol has the field).
-- **No verification**: Secure Boot and measured boot are Era 18's K?-sec-boot.
+- **No verification**: Secure Boot and measured boot are Era 18's K107.
 - **The kernel lives outside TaajFS** - ISO 9660 for BIOS, the FAT EFI partition for UEFI - and nothing decides how TheTaaJ updates it.
 - **A fixed physical place** in the first 1 GiB: no kernel ASLR.
 - **No tests of its own**: the ISO 9660 reader, the ELF loader and the page-table builder are tested only by booting everything.
@@ -680,21 +680,21 @@ What is missing:
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K?-boot-tidy | **`abc.txt` and `random.txt` removed** from TheBootloader | S | MaK-WSL's. First: trivial |
-| K?-boot-tests | **Host tests** for the ISO 9660 reader, the ELF loader and the page-table builder, as the kernel's crates have | S | Early: the items below change all three |
-| K?-boot-big | **A kernel of any size from BIOS**: read in pieces to anywhere above 1 MiB (unreal mode, or a copy out of a buffer below 1 MiB after each read) | M | Ends the 3 MiB wall; J51 then is no longer urgent |
-| K?-boot-fast | **A fast BIOS read**: as many sectors per `int 13h` as the BIOS takes, or staying in real mode for the whole read; measured before and after | S | Is K51 |
-| K?-boot-ab | **Two kernels, A and B**: a new one is tried once, TheTaaJ marks it good after it has booted, and the loader goes back to the other one if it was not marked | M | The era's milestone. With K?-boot-where |
-| K?-boot-menu | **A boot menu** with a timeout: which kernel, the command line edited, a recovery entry (a shell with nothing started but what is needed) | M | The protocol's `CommandLine` already exists |
-| K?-boot-where | **Where kernels live and how they are updated**: on the EFI partition (written from TheTaaJ through Era 14's J?-vfs-fat), or a loader that reads TaajFS; one answer for BIOS and UEFI | M | With K12 (the installer) |
-| K?-boot-reloc | **A relocatable kernel**, placed by the loader where there is RAM, at a random place when asked | M | For K25's kernel half; machines with odd memory maps |
-| K?-sec-boot | Secure Boot and measured boot | L | In Era 18; listed here because it is the same code |
+| K128 | **`abc.txt` and `random.txt` removed** from TheBootloader | S | MaK-WSL's. First: trivial |
+| K129 | **Host tests** for the ISO 9660 reader, the ELF loader and the page-table builder, as the kernel's crates have | S | Early: the items below change all three |
+| K130 | **A kernel of any size from BIOS**: read in pieces to anywhere above 1 MiB (unreal mode, or a copy out of a buffer below 1 MiB after each read) | M | Ends the 3 MiB wall; J51 then is no longer urgent |
+| K131 | **A fast BIOS read**: as many sectors per `int 13h` as the BIOS takes, or staying in real mode for the whole read; measured before and after | S | Is K51 |
+| K132 | **Two kernels, A and B**: a new one is tried once, TheTaaJ marks it good after it has booted, and the loader goes back to the other one if it was not marked | M | The era's milestone. With K134 |
+| K133 | **A boot menu** with a timeout: which kernel, the command line edited, a recovery entry (a shell with nothing started but what is needed) | M | The protocol's `CommandLine` already exists |
+| K134 | **Where kernels live and how they are updated**: on the EFI partition (written from TheTaaJ through Era 14's J68), or a loader that reads TaajFS; one answer for BIOS and UEFI | M | With K12 (the installer) |
+| K135 | **A relocatable kernel**, placed by the loader where there is RAM, at a random place when asked | M | For K25's kernel half; machines with odd memory maps |
+| K107 | Secure Boot and measured boot | L | In Era 18; listed here because it is the same code |
 
 ---
 
 ## Era 22 · Observability: logs, crashes, tracing and profiling
 
-**Done when**: the log of the last boot can be read after a reboot; a kernel panic shows a backtrace on the screen and leaves a crash record that the next boot finds; a program that crashes leaves a report (its registers, backtrace, the last of its output) in a file; a running system can be traced (system calls, IPC, scheduling, faults) and a slow request found from the trace; a profiler shows where a program spends its time; and `top` shows each process's CPU and memory live. Whose it is, and when, is for the user to say. The vision names "observable" as a goal; this is it. Pointed to: K21 (CPU time per process), K?-sec-audit (Era 18).
+**Done when**: the log of the last boot can be read after a reboot; a kernel panic shows a backtrace on the screen and leaves a crash record that the next boot finds; a program that crashes leaves a report (its registers, backtrace, the last of its output) in a file; a running system can be traced (system calls, IPC, scheduling, faults) and a slow request found from the trace; a profiler shows where a program spends its time; and `top` shows each process's CPU and memory live. Whose it is, and when, is for the user to say. The vision names "observable" as a goal; this is it. Pointed to: K21 (CPU time per process), K113 (Era 18).
 
 What is right: the kernel's messages and every program's output go to one debug log, a serial line, written from a fixed-size ring (`logring.rs`) so printing never waits for the line and a program cannot use the ring up - a message dropped is dropped whole and counted, so the log says something is missing; lines from several writers are kept whole (`logmerge.rs`); at a panic the kernel takes the screen back and prints there too (`lastwords.rs`), so a machine with nobody on its serial port still shows why it stopped; the shell has `ps`, `mem`, `uptime` and `services`.
 
@@ -704,19 +704,19 @@ All of it stays in user space except what only the kernel can see: the kernel pr
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K?-obs-logd | **A log service**: everything that goes to the debug log also goes to a file on the disk, with the time, the source (kernel or which program) and a level on each line; kept across reboots, the oldest dropped first; read with a `log` command | M | First. The kernel's ring is handed to it as a memory object; the serial line stays as it is |
-| K?-obs-panic | **A panic that says where**: a backtrace (frame pointers, the kernel's own symbols), the CPU and thread, and a crash record left in memory that survives a warm reboot or in a reserved spot on the disk, which the next boot hands to the log service | M | |
-| K?-obs-crash | **A crash report per program**: when a process breaks a rule, its registers, a backtrace, its memory map and the last lines it printed, written by a user-space service the kernel tells (as `PeerClosed` tells a client) | M | After K?-obs-logd |
-| K?-obs-trace | **Tracing**: trace points in the kernel (system calls, IPC sends and receives, switches, faults, interrupts) written to a per-CPU ring that a tracing service maps, with a handle for it; a `trace` command that records a span and shows it | L | The data the benchmarks of Eras 13 and 17 want |
-| K?-obs-profile | **A profiler**: the timer samples where each CPU is (program and address); a report per function, with symbols | M | After K?-obs-trace |
-| K?-obs-top | **`top`**: CPU (K21), memory, threads and handles per process, refreshed | S | After K21 |
-| K?-obs-debug | **A debugger on TheTaaJ**: a debug capability over another process (stop, read and write its memory and registers, breakpoints), given only by its launcher; a small debugger program; a gdb stub on the serial line for the kernel on a real PC | L | |
+| K136 | **A log service**: everything that goes to the debug log also goes to a file on the disk, with the time, the source (kernel or which program) and a level on each line; kept across reboots, the oldest dropped first; read with a `log` command | M | First. The kernel's ring is handed to it as a memory object; the serial line stays as it is |
+| K137 | **A panic that says where**: a backtrace (frame pointers, the kernel's own symbols), the CPU and thread, and a crash record left in memory that survives a warm reboot or in a reserved spot on the disk, which the next boot hands to the log service | M | |
+| K138 | **A crash report per program**: when a process breaks a rule, its registers, a backtrace, its memory map and the last lines it printed, written by a user-space service the kernel tells (as `PeerClosed` tells a client) | M | After K136 |
+| K139 | **Tracing**: trace points in the kernel (system calls, IPC sends and receives, switches, faults, interrupts) written to a per-CPU ring that a tracing service maps, with a handle for it; a `trace` command that records a span and shows it | L | The data the benchmarks of Eras 13 and 17 want |
+| K140 | **A profiler**: the timer samples where each CPU is (program and address); a report per function, with symbols | M | After K139 |
+| K141 | **`top`**: CPU (K21), memory, threads and handles per process, refreshed | S | After K21 |
+| K142 | **A debugger on TheTaaJ**: a debug capability over another process (stop, read and write its memory and registers, breakpoints), given only by its launcher; a small debugger program; a gdb stub on the serial line for the kernel on a real PC | L | |
 
 ---
 
 ## Era 23 · Services, recovery and configuration
 
-**Done when**: every service - the registry and init's own work included - can crash and come back with its clients carrying on; a service that was restarted gets back the state it had (open files, sockets, windows) or its clients are told exactly what was lost; services are described in configuration files, not in init's code, and a new service is added without changing init; and the system shuts down by asking every service to finish, in order. Whose it is, and when, is for the user to say. Pointed to: E2 (poisoned requests), E3 (a watchdog for the shell, init and the registry), K16 (shutdown that asks), K?-net-keep (Era 12), K?-dev-manager (Era 15), K?-sec-manifests (Era 18).
+**Done when**: every service - the registry and init's own work included - can crash and come back with its clients carrying on; a service that was restarted gets back the state it had (open files, sockets, windows) or its clients are told exactly what was lost; services are described in configuration files, not in init's code, and a new service is added without changing init; and the system shuts down by asking every service to finish, in order. Whose it is, and when, is for the user to say. Pointed to: E2 (poisoned requests), E3 (a watchdog for the shell, init and the registry), K16 (shutdown that asks), K59 (Era 12), K76 (Era 15), K105 (Era 18).
 
 What is right: init is a supervisor. It wires the services with channels, gives each only the handles it needs and fewer rights than it holds, keeps the originals so a restarted driver gets the same channels and its clients never notice, restarts a service that ends, gives up after 5 restarts in 30 seconds, and keeps a watchdog for `fs` and the disk driver (a request a second; no answer and it is killed and restarted). The registry gives each client only the names meant for it. A dead service is noticed by its clients through `PeerClosed`.
 
@@ -724,14 +724,14 @@ What is missing: **init itself and the registry** are restarted by nothing (if i
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K?-svc-config | **Services described in files**: each service's program, the handles it gets, the names it serves and may use, its restart policy and watchdog, read by init at boot - replacing init's tables; the unused `config.cfg` removed | M | First. With K?-sec-manifests (Era 18), which describes programs the same way |
-| K?-svc-control | **`service` commands**: list, stop, start, restart, status - through init, with a capability for it | S | After K?-svc-config |
-| K?-svc-watch | **A watchdog for every service that answers requests**, declared in its configuration | S | After K?-svc-config; covers E3's shell and registry |
-| K?-svc-state | **State that survives a restart**: a service may keep what its clients depend on in a memory object init holds for it (as init keeps a driver's DMA memory) and find it again when it starts; for those that can't, a clear "your session was lost" to each client | L | `fs`, `net`, `display` first |
-| K?-svc-init | **init and the registry restartable**: a small, fixed first process that only restarts init, or init and the registry each watching the other | M | The last supervisor must be the simplest |
-| K?-svc-poison | **A request that crashes a service again and again is refused** after the second time, instead of crashing it forever | S | Is E2 |
-| K?-svc-shutdown | **Shutdown in order**: every service asked to finish (disks flushed, files committed) in the reverse of the start order, with a time limit | S | Is K16 |
-| K?-svc-settings | **Settings**: one place for the machine's settings (keyboard layout, time zone, screen, network), a service that keeps them and tells those who asked when one changes | M | For Era 19's settings application |
+| K143 | **Services described in files**: each service's program, the handles it gets, the names it serves and may use, its restart policy and watchdog, read by init at boot - replacing init's tables; the unused `config.cfg` removed | M | First. With K105 (Era 18), which describes programs the same way |
+| K144 | **`service` commands**: list, stop, start, restart, status - through init, with a capability for it | S | After K143 |
+| K145 | **A watchdog for every service that answers requests**, declared in its configuration | S | After K143; covers E3's shell and registry |
+| K146 | **State that survives a restart**: a service may keep what its clients depend on in a memory object init holds for it (as init keeps a driver's DMA memory) and find it again when it starts; for those that can't, a clear "your session was lost" to each client | L | `fs`, `net`, `display` first |
+| K147 | **init and the registry restartable**: a small, fixed first process that only restarts init, or init and the registry each watching the other | M | The last supervisor must be the simplest |
+| K148 | **A request that crashes a service again and again is refused** after the second time, instead of crashing it forever | S | Is E2 |
+| K149 | **Shutdown in order**: every service asked to finish (disks flushed, files committed) in the reverse of the start order, with a time limit | S | Is K16 |
+| K150 | **Settings**: one place for the machine's settings (keyboard layout, time zone, screen, network), a service that keeps them and tells those who asked when one changes | M | For Era 19's settings application |
 
 ---
 
@@ -745,11 +745,11 @@ What is missing: **every protocol is written by hand**, request by request - `ab
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K?-abi-idl | **An interface description language**: a small one, ours (or FIDL-like), describing messages, their fields, handles carried, and replies; a generator for Rust (`no_std`) and C | L | First. Small: what TheTaaJ's protocols use, not more |
-| K?-abi-move | **The protocols moved onto it** one at a time: the file protocol first (it changes in Era 14 anyway), then net, display, block, nic, init, power, the window protocol | L | After K?-abi-idl. With Era 14's J?-vfs-protocol |
-| K?-abi-version | **Versions**: each protocol says its version when a channel is opened; a service serves older versions it still knows; the system calls get a version a program states at start | M | After K?-abi-idl |
-| K?-abi-check | **An ABI check before merging**: the generated layouts compared with the last release's; a change that breaks one fails unless the version changes with it | S | After K?-abi-version. A new line in "Before merging" |
-| K?-abi-docs | **The protocols documented from the IDL**: a page per protocol, generated, for the website and for whoever writes a service | S | |
+| K151 | **An interface description language**: a small one, ours (or FIDL-like), describing messages, their fields, handles carried, and replies; a generator for Rust (`no_std`) and C | L | First. Small: what TheTaaJ's protocols use, not more |
+| K152 | **The protocols moved onto it** one at a time: the file protocol first (it changes in Era 14 anyway), then net, display, block, nic, init, power, the window protocol | L | After K151. With Era 14's J61 |
+| K153 | **Versions**: each protocol says its version when a channel is opened; a service serves older versions it still knows; the system calls get a version a program states at start | M | After K151 |
+| K154 | **An ABI check before merging**: the generated layouts compared with the last release's; a change that breaks one fails unless the version changes with it | S | After K153. A new line in "Before merging" |
+| K155 | **The protocols documented from the IDL**: a page per protocol, generated, for the website and for whoever writes a service | S | |
 
 ---
 
@@ -763,18 +763,18 @@ What is missing: **no CI** - tests run only when someone runs them, on their own
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J?-build-clean | **A clean build from a fresh clone**, in a container, with one documented command; the setup script (`tools/setup-wsl.sh`) checked by it | S | Is J54. First |
-| J?-build-ci | **Our own CI**: a machine of ours (TheJat-WSL suits it) that builds every pushed branch, runs the host tests and `make test64`, and posts the result where the branches are; no outside service gets the code to run | M | After J?-build-clean. Never builds anyone else's pull request (rule) |
-| J?-build-fast | **A faster `make test64`**: parts run in parallel up to the machine's CPUs, one disk image built once and shared, the boot shortened; measured before and after | M | |
-| J?-build-flaky | **No flaky tests**: every part run 50 times in CI; each that ever fails is fixed or its limits measured again (K50, K52) | M | After J?-build-ci |
-| J?-build-coverage | **Coverage** of the host tests of the kernel's crates, kept in the journal; a floor that may only rise | S | |
-| J?-build-selfhost | **TheTaaJ builds itself**: libc and the C programs today (J45, J46), the kernel once Rust runs there (after R4) | L | After Era 9 |
+| J92 | **A clean build from a fresh clone**, in a container, with one documented command; the setup script (`tools/setup-wsl.sh`) checked by it | S | Is J54. First |
+| J93 | **Our own CI**: a machine of ours (TheJat-WSL suits it) that builds every pushed branch, runs the host tests and `make test64`, and posts the result where the branches are; no outside service gets the code to run | M | After J92. Never builds anyone else's pull request (rule) |
+| J94 | **A faster `make test64`**: parts run in parallel up to the machine's CPUs, one disk image built once and shared, the boot shortened; measured before and after | M | |
+| J95 | **No flaky tests**: every part run 50 times in CI; each that ever fails is fixed or its limits measured again (K50, K52) | M | After J93 |
+| J96 | **Coverage** of the host tests of the kernel's crates, kept in the journal; a floor that may only rise | S | |
+| J97 | **TheTaaJ builds itself**: libc and the C programs today (J45, J46), the kernel once Rust runs there (after R4) | L | After Era 9 |
 
 ---
 
 ## Era 26 · Packages and updates
 
-**Done when**: a program is installed, updated and removed on TheTaaJ with one command, from a signed package, its files and its manifest placed by a package service; the system itself (kernel, libc, services) is updated the same way, with the old version kept until the new one has booted (Era 21's A/B kernels); and an update that fails leaves the system as it was. Whose it is, and when, is for the user to say. The assistant's draft (`docs/ai-assistant.md`) asks for a package manager for programs and models; this is it. Pointed to: K?-sec-signing and K?-sec-manifests (Era 18), K?-boot-ab and K?-boot-where (Era 21), J46.
+**Done when**: a program is installed, updated and removed on TheTaaJ with one command, from a signed package, its files and its manifest placed by a package service; the system itself (kernel, libc, services) is updated the same way, with the old version kept until the new one has booted (Era 21's A/B kernels); and an update that fails leaves the system as it was. Whose it is, and when, is for the user to say. The assistant's draft (`docs/ai-assistant.md`) asks for a package manager for programs and models; this is it. Pointed to: K106 and K105 (Era 18), K132 and K134 (Era 21), J46.
 
 What is right: TaajFS commits atomically (copy-on-write), so an update could be made all-or-nothing; programs already run with only what is granted to them, which a package's manifest can declare; the disk is built reproducibly from recipes on the host (`tools/tfstool-rs`, `put-*.sh`).
 
@@ -782,17 +782,17 @@ What is missing: **everything on the disk is put there from the host**: there is
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J?-pkg-format | **A package format**: an archive of files, a manifest (Era 18's, with the services the program needs), a version, its dependencies, a signature | M | First |
-| J?-pkg-service | **A package service** that installs, updates and removes packages, keeps what file belongs to which, and makes each change one TaajFS commit (all or nothing); `pkg install/remove/list` | M | After J?-pkg-format and J?-vfs-namespace |
-| J?-pkg-build | **Packages built on the host** from the same recipes that build the disk today, so the disk is made of packages | M | After J?-pkg-format |
-| J?-pkg-repo | **A repository**: a signed index of packages, fetched over the network (after K37, TLS) or from a USB stick | M | After J?-pkg-service |
-| J?-pkg-system | **System updates**: the kernel (through Era 21's A/B), libc and the services as packages; the previous version kept until the new one has run | L | After K?-boot-ab |
+| J98 | **A package format**: an archive of files, a manifest (Era 18's, with the services the program needs), a version, its dependencies, a signature | M | First |
+| J99 | **A package service** that installs, updates and removes packages, keeps what file belongs to which, and makes each change one TaajFS commit (all or nothing); `pkg install/remove/list` | M | After J98 and J62 |
+| J100 | **Packages built on the host** from the same recipes that build the disk today, so the disk is made of packages | M | After J98 |
+| J101 | **A repository**: a signed index of packages, fetched over the network (after K37, TLS) or from a USB stick | M | After J99 |
+| J102 | **System updates**: the kernel (through Era 21's A/B), libc and the services as packages; the previous version kept until the new one has run | L | After K132 |
 
 ---
 
 ## Era 27 · Time and power
 
-**Done when**: the clock shows local time in the user's time zone, is set from the network, and stays right across a suspend; the machine suspends to RAM and resumes with its programs and devices working; the power button and the lid do what the settings say; a laptop shows its battery; and idle CPUs and devices save power. Whose it is, and when, is for the user to say. Pointed to: K13-K18 (ACPI and power), K24 (fine timers), K?-smp-idle (Era 13), K?-dev-power (Era 15), K?-svc-settings (Era 23).
+**Done when**: the clock shows local time in the user's time zone, is set from the network, and stays right across a suspend; the machine suspends to RAM and resumes with its programs and devices working; the power button and the lid do what the settings say; a laptop shows its battery; and idle CPUs and devices save power. Whose it is, and when, is for the user to say. Pointed to: K13-K18 (ACPI and power), K24 (fine timers), K72 (Era 13), K83 (Era 15), K150 (Era 23).
 
 What is right: a monotonic clock in nanoseconds from the CPU's counter (`clock.rs`), Unix time read from the RTC at boot (`rtc.rs`); powering off and resetting from user space, the `\_S5` value read from the DSDT without an AML interpreter, all of it tested on the host against a simulated chipset (`acpi` crate); PSCI on AArch64.
 
@@ -800,11 +800,11 @@ What is missing: **no time zones** (`localtime` is UTC, `libc/c/time.c`); no net
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J?-time-zones | **Time zones**: the tz database (or the zones in use) on the disk, `TZ`, `localtime` that means local | M | First: small and seen by everyone |
-| K?-time-ntp | **Network time**: an NTP (SNTP) client service that sets the clock and writes the RTC | S | After K30 (DHCP) and K33 (UDP) |
-| K?-power-cpu | **CPU power**: idle states (C-states, `mwait`; WFI on AArch64) and frequency (P-states) chosen by a user-space policy | M | With K?-smp-idle and K24 |
-| K?-power-suspend | **Suspend and resume** end to end: services told before and after, devices saved and restored, the clock corrected | L | Is K18, after K13 and K?-dev-power |
-| K?-power-events | **Power button, lid and battery** as events a power service hands to whoever asked (the desktop shows them; the settings say what they do) | M | After K13; is K15 and K17 |
+| J103 | **Time zones**: the tz database (or the zones in use) on the disk, `TZ`, `localtime` that means local | M | First: small and seen by everyone |
+| K156 | **Network time**: an NTP (SNTP) client service that sets the clock and writes the RTC | S | After K30 (DHCP) and K33 (UDP) |
+| K157 | **CPU power**: idle states (C-states, `mwait`; WFI on AArch64) and frequency (P-states) chosen by a user-space policy | M | With K72 and K24 |
+| K158 | **Suspend and resume** end to end: services told before and after, devices saved and restored, the clock corrected | L | Is K18, after K13 and K83 |
+| K159 | **Power button, lid and battery** as events a power service hands to whoever asked (the desktop shows them; the settings say what they do) | M | After K13; is K15 and K17 |
 
 ---
 
@@ -812,7 +812,7 @@ What is missing: **no time zones** (`localtime` is UTC, `libc/c/time.c`); no net
 
 **The goal (the user's, 2026-11-26): TheTaaJ runs on every architecture in the world that can run it - fully portable.** "Can run it" means a CPU with a memory management unit: a microkernel's isolation is separate address spaces, and a CPU without an MMU (most microcontrollers) cannot give them. Within that, nothing in TheTaaJ may assume one CPU's word size, byte order, page size, page-table shape, firmware, interrupt controller, timer or cache behaviour.
 
-**Done when**: (1) the kernel, libc and every service build for each architecture below from the same sources, with what differs only behind `arch/` (kernel), `libc`'s small per-CPU files, and the toolchain's target; (2) each tier's architectures pass what their tier promises, in our CI (Era 25), every time; (3) at least one big-endian architecture and one with a page size other than 4 KiB pass, proving those assumptions gone; (4) a written porting guide lets a new architecture be added without changing anything outside `arch/` and the per-CPU files. Whose it is, and when, is for the user to say. Pointed to: U6 (a real board), E7 (the 32-bit kernel), K?-boot-reloc (Era 21), J?-build-ci (Era 25).
+**Done when**: (1) the kernel, libc and every service build for each architecture below from the same sources, with what differs only behind `arch/` (kernel), `libc`'s small per-CPU files, and the toolchain's target; (2) each tier's architectures pass what their tier promises, in our CI (Era 25), every time; (3) at least one big-endian architecture and one with a page size other than 4 KiB pass, proving those assumptions gone; (4) a written porting guide lets a new architecture be added without changing anything outside `arch/` and the per-CPU files. Whose it is, and when, is for the user to say. Pointed to: U6 (a real board), E7 (the 32-bit kernel), K135 (Era 21), J93 (Era 25).
 
 **Tiers**, each tested in QEMU (which emulates every one of them) and on real hardware where there is some:
 
@@ -840,28 +840,28 @@ All of it stays the kernel's mechanism behind `arch/` and a few per-CPU files; n
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K?-port-guide | **The port contract written down**: what `arch/` must provide (entry, context switch, page-table format and levels, TLB, interrupts, timer, SMP start, cache maintenance, the console), what libc's per-CPU files must, and a checklist for a new architecture | S | First. The rest is measured against it |
-| K?-port-pagesize | **The page size a parameter**: read from `abi` at run time by programs, a constant per architecture in the kernel; every 4096 in `user/`, libc and the services removed; tested at 16 KiB and 64 KiB on AArch64 | M | Early: touches everything |
-| K?-port-levels | **Page tables of any shape**: the number of levels and entries per level part of each CPU's `Format` (3 for Sv39, 5 for LA57 and Sv57), and room for CPUs whose tables are not a tree | M | With K?-port-pagesize |
-| K?-port-endian | **Byte-order clean**: every place that reads memory as bytes goes through the explicit little-endian helpers; a big-endian architecture (s390x or PowerPC64 BE) in CI to keep it so | M | Proven by Tier 3 |
-| K?-port-dma | **Non-coherent DMA**: memory objects for DMA say whether the device is coherent; drivers flush before a device reads and invalidate after it writes, through one `arch/` call | M | With Era 15's K?-dev-dma-pages; for ARM and RISC-V boards |
-| K?-port-irq | **Interrupt controllers and timers behind one interface** in `arch/`, so a new one (PLIC/AIA, LoongArch's, XIVE) is one file | M | With Era 15's K?-dev-vectors |
-| K?-port-toolchain | **The toolchain for every target**: host LLVM and our port built with every Tier 1-3 target, Rust's `no_std` targets for each, libc's per-CPU files (`setjmp`, `fenv`, the thread pointer) for each | M | |
-| K?-port-pcie | **PCIe on AArch64** (and on every architecture with it): the bus from the device tree, so AHCI, NVMe, e1000 and xHCI run there with their tests | M | After K?-dev-generic (Era 15) |
-| K?-port-parity | **Every Tier 1 test on both Tier 1 CPUs**, or a written reason why not | M | After K?-port-pcie |
-| K?-port-riscv | **RISC-V 64**: `arch/riscv64` (Sv39/Sv48, the PLIC or AIA, SBI timers and SMP), booted by OpenSBI with U-Boot or our UEFI loader | L | The first Tier 2 port; it tests the contract |
-| K?-port-loongarch | **LoongArch64**: `arch/loongarch64`, booted by UEFI | L | Tier 2 |
-| K?-port-ppc64 | **PowerPC64 (little-endian)**: `arch/ppc64` (radix page tables on POWER9 and later, XIVE), booted by QEMU's `pseries` or OPAL | L | Tier 2; the big-endian build is Tier 3 |
-| K?-port-s390x | **s390x**: big-endian, its own I/O (channel subsystem, virtio-ccw), its own boot (IPL) | L | Tier 3; the strongest test of the contract |
-| K?-port-mips-sparc | **MIPS64 and SPARC64** | L | Tier 3, later |
-| K?-port-board | **Real boards**: a Raspberry Pi 4 or 5, a RISC-V board (VisionFive 2 or similar), whatever the user has | L | U6: only if the user wants them |
-| K?-port-32 | **A 32-bit build** (i686, ARMv7-A, RV32) of the same kernel, if the user decides to (E7) | L | Decide with the user |
+| K160 | **The port contract written down**: what `arch/` must provide (entry, context switch, page-table format and levels, TLB, interrupts, timer, SMP start, cache maintenance, the console), what libc's per-CPU files must, and a checklist for a new architecture | S | First. The rest is measured against it |
+| K161 | **The page size a parameter**: read from `abi` at run time by programs, a constant per architecture in the kernel; every 4096 in `user/`, libc and the services removed; tested at 16 KiB and 64 KiB on AArch64 | M | Early: touches everything |
+| K162 | **Page tables of any shape**: the number of levels and entries per level part of each CPU's `Format` (3 for Sv39, 5 for LA57 and Sv57), and room for CPUs whose tables are not a tree | M | With K161 |
+| K163 | **Byte-order clean**: every place that reads memory as bytes goes through the explicit little-endian helpers; a big-endian architecture (s390x or PowerPC64 BE) in CI to keep it so | M | Proven by Tier 3 |
+| K164 | **Non-coherent DMA**: memory objects for DMA say whether the device is coherent; drivers flush before a device reads and invalidate after it writes, through one `arch/` call | M | With Era 15's K80; for ARM and RISC-V boards |
+| K165 | **Interrupt controllers and timers behind one interface** in `arch/`, so a new one (PLIC/AIA, LoongArch's, XIVE) is one file | M | With Era 15's K79 |
+| K166 | **The toolchain for every target**: host LLVM and our port built with every Tier 1-3 target, Rust's `no_std` targets for each, libc's per-CPU files (`setjmp`, `fenv`, the thread pointer) for each | M | |
+| K167 | **PCIe on AArch64** (and on every architecture with it): the bus from the device tree, so AHCI, NVMe, e1000 and xHCI run there with their tests | M | After K75 (Era 15) |
+| K168 | **Every Tier 1 test on both Tier 1 CPUs**, or a written reason why not | M | After K167 |
+| K169 | **RISC-V 64**: `arch/riscv64` (Sv39/Sv48, the PLIC or AIA, SBI timers and SMP), booted by OpenSBI with U-Boot or our UEFI loader | L | The first Tier 2 port; it tests the contract |
+| K170 | **LoongArch64**: `arch/loongarch64`, booted by UEFI | L | Tier 2 |
+| K171 | **PowerPC64 (little-endian)**: `arch/ppc64` (radix page tables on POWER9 and later, XIVE), booted by QEMU's `pseries` or OPAL | L | Tier 2; the big-endian build is Tier 3 |
+| K172 | **s390x**: big-endian, its own I/O (channel subsystem, virtio-ccw), its own boot (IPL) | L | Tier 3; the strongest test of the contract |
+| K173 | **MIPS64 and SPARC64** | L | Tier 3, later |
+| K174 | **Real boards**: a Raspberry Pi 4 or 5, a RISC-V board (VisionFive 2 or similar), whatever the user has | L | U6: only if the user wants them |
+| K175 | **A 32-bit build** (i686, ARMv7-A, RV32) of the same kernel, if the user decides to (E7) | L | Decide with the user |
 
 ---
 
 ## Era 29 · Cryptography and encryption
 
-**Done when**: the disk is encrypted, its key unlocked at login and sealed to the TPM where there is one; an HTTPS page is fetched with TLS 1.3; packages and programs are verified by their signatures; swap is encrypted; and every algorithm in our library passes its RFC test vectors and Google's Wycheproof cases and gives the same answers as an audited library on the host, in every test run. Whose it is, and when, is for the user to say. Pointed to, not moved: K37 (TLS 1.3), K?-sec-crypt (disk encryption), K?-sec-signing and K?-sec-boot (Era 18), K?-sec-users (passwords), J?-pkg-repo (Era 26), E5 (swap), Era 8's XSAVE.
+**Done when**: the disk is encrypted, its key unlocked at login and sealed to the TPM where there is one; an HTTPS page is fetched with TLS 1.3; packages and programs are verified by their signatures; swap is encrypted; and every algorithm in our library passes its RFC test vectors and Google's Wycheproof cases and gives the same answers as an audited library on the host, in every test run. Whose it is, and when, is for the user to say. Pointed to, not moved: K37 (TLS 1.3), K109 (disk encryption), K106 and K107 (Era 18), K108 (passwords), J101 (Era 26), E5 (swap), Era 8's XSAVE.
 
 **Our own and an audited one, both (the user's decision, 2026-11-26).** We write every algorithm ourselves, to learn it, and check it three ways: the RFCs' test vectors, Wycheproof's cases (the edge cases that break real implementations), and differential tests on the host against an audited library (RustCrypto's crates, `rustls`, or Monocypher/BearSSL in C), the same inputs to both on every run. Real secrets are protected by the audited library until ours has passed all of that and a review of its timing; then ours may take over, one algorithm at a time.
 
@@ -873,16 +873,16 @@ All of it stays out of the kernel but the random generator (there already) and s
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K?-crypt-lib | **Our crypto library**: SHA-256/512, BLAKE2s/b, HMAC, HKDF, ChaCha20-Poly1305, AES-128/256-GCM, X25519, Ed25519, Argon2id; `no_std` Rust with a C interface; RFC test vectors and Wycheproof as host tests | L | First |
-| K?-crypt-audited | **The audited library beside it**: one ported (RustCrypto, `rustls`, or Monocypher/BearSSL), behind the same interface, so a program or service can use either | M | With K?-crypt-lib; real secrets use this one until K?-crypt-trust |
-| K?-crypt-diff | **Differential tests**: random inputs to ours and the audited one on every host test run; any difference fails the build | S | After both |
-| K?-crypt-ct | **Constant time and wiping**: a tool on the host that checks the secret-dependent code takes the same path and time (dudect-style, or checking the machine code for branches on secrets); secrets zeroed after use, in the library and the services | M | |
-| K?-crypt-trust | **Ours takes over**, an algorithm at a time, once it passes the vectors, Wycheproof, the differential tests and K?-crypt-ct, with its journal entry saying so | S | Last |
-| K?-crypt-hw | **The CPU's crypto instructions**: AES-NI, the SHA extensions, ARMv8 Crypto, used when present, the same answers as without them | M | After Era 8's XSAVE (vector registers saved per thread) |
-| K?-crypt-keys | **A key service**: a program gets a capability to *use* a key (encrypt, sign, derive), never the key itself; keys unlocked at login, sealed to the TPM where there is one | L | After K?-sec-users |
-| K?-crypt-swap | **Encrypted swap**, with a key made at each boot and never stored | S | With E5 |
-| K?-crypt-fs | **Encryption per file or per user in TaajFS version 7**: its checksums (J?-fs-sums) become authenticated encryption, so the tree is encrypted and tamper-evident from the superblock down (as ZFS's native encryption) | L | With Era 14's version 7; beside K?-sec-crypt's whole-disk encryption |
-| K?-crypt-ssh | **SSH**: a server and a client, keys from the key service | L | After K37 and K?-crypt-keys |
+| K176 | **Our crypto library**: SHA-256/512, BLAKE2s/b, HMAC, HKDF, ChaCha20-Poly1305, AES-128/256-GCM, X25519, Ed25519, Argon2id; `no_std` Rust with a C interface; RFC test vectors and Wycheproof as host tests | L | First |
+| K177 | **The audited library beside it**: one ported (RustCrypto, `rustls`, or Monocypher/BearSSL), behind the same interface, so a program or service can use either | M | With K176; real secrets use this one until K180 |
+| K178 | **Differential tests**: random inputs to ours and the audited one on every host test run; any difference fails the build | S | After both |
+| K179 | **Constant time and wiping**: a tool on the host that checks the secret-dependent code takes the same path and time (dudect-style, or checking the machine code for branches on secrets); secrets zeroed after use, in the library and the services | M | |
+| K180 | **Ours takes over**, an algorithm at a time, once it passes the vectors, Wycheproof, the differential tests and K179, with its journal entry saying so | S | Last |
+| K181 | **The CPU's crypto instructions**: AES-NI, the SHA extensions, ARMv8 Crypto, used when present, the same answers as without them | M | After Era 8's XSAVE (vector registers saved per thread) |
+| K182 | **A key service**: a program gets a capability to *use* a key (encrypt, sign, derive), never the key itself; keys unlocked at login, sealed to the TPM where there is one | L | After K108 |
+| K183 | **Encrypted swap**, with a key made at each boot and never stored | S | With E5 |
+| K184 | **Encryption per file or per user in TaajFS version 7**: its checksums (J74) become authenticated encryption, so the tree is encrypted and tamper-evident from the superblock down (as ZFS's native encryption) | L | With Era 14's version 7; beside K109's whole-disk encryption |
+| K185 | **SSH**: a server and a client, keys from the key service | L | After K37 and K182 |
 
 ---
 
@@ -891,10 +891,10 @@ All of it stays out of the kernel but the random generator (there already) and s
 | # | Item | Size | Notes |
 |---|---|---|---|
 | E1 | `fsck` for TaajFS: check and repair a damaged disk | M | |
-| E2 | Services that crash on one "poisoned" request again and again: give up on that request | S | Era 23's K?-svc-poison |
-| E3 | A watchdog for the shell, init and the registry | S | Era 23's K?-svc-watch and K?-svc-init |
+| E2 | Services that crash on one "poisoned" request again and again: give up on that request | S | Era 23's K148 |
+| E3 | A watchdog for the shell, init and the registry | S | Era 23's K145 and K147 |
 | E4 | A redirected file written in one commit, not one per message | S | Part of J20 |
-| E5 | Swap to a disk file | L | Later; with Era 16's K?-mm-reclaim |
+| E5 | Swap to a disk file | L | Later; with Era 16's K89 |
 | E6 | TheKernel standalone (not needing `heap`, `virtio`, `console`, `user/` from the parent) | M | |
 | E7 | The 32-bit kernel booted again, or retired officially | S | Decide with the user |
 | E8 | Users' documentation: a "how to use TheTaaJ" page for the website | S | |
