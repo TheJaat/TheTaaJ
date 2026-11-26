@@ -1,6 +1,6 @@
-# Goals, Eras 13 to 21, and the network, threads, VFS, driver, memory, scheduler, security, desktop, shell, libc and boot items
+# Goals, and Eras 13 to 28: every part of TheTaaJ reviewed and given an era
 
-*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support, VFS, device drivers, memory management, the scheduler, security, the desktop, the shell and libc and the bootloader are, for all the items found - IPC, TaajFS, network, threads, VFS, drivers, memory, scheduling, security, desktop, command line, boot - to be put into eras, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
+*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support, VFS, device drivers, memory management, the scheduler, security, the desktop, the shell and libc and the bootloader are, for all the items found - IPC, TaajFS, network, threads, VFS, drivers, memory, scheduling, security, desktop, command line, boot - to be put into eras, and then for every area not yet reviewed (observability, services, protocols, build and tests, packages, time and power, portability, configuration) to be given its era too, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
 
 ## Why
 
@@ -89,6 +89,19 @@ The bootloader is MaK-WSL's (rule 7): it was read, not changed. Its core is exce
 
 The loaders are a working minimum. The BIOS loader takes a kernel only between 1 and 3 MiB (about 670 KiB left) and is slow emulated (K51). There is one kernel and no fallback when a new one fails; no menu or command line at boot; no verified boot; the kernel lives on ISO 9660 or the EFI partition, outside TaajFS, with no plan for updating it; it sits at a fixed physical place; the loaders have no tests of their own; and two stray files (`abc.txt`, `random.txt`) sit in the public repository.
 
+## What the last reviews found
+
+Asked whether everything was covered, I listed eight areas not yet reviewed; the user asked for all of them as eras. Each was checked against the code first:
+
+- **Observability**: one debug log on the serial line, from a fixed ring that drops whole messages and counts them; lines kept whole; the screen taken back at a panic. But nothing keeps the log (on a real PC it is gone at the next boot), no backtrace at a panic, no crash record or crash reports, no tracing, profiler, `top` or debugger.
+- **Services and recovery**: init is a real supervisor (wiring, least authority, restarts with the same channels, giving up after 5 in 30 s, a watchdog for `fs` and the disk driver). But nothing restarts init or the registry, a restarted service starts empty, and everything is in init's code - there is no configuration; `ramdisk-src/config.cfg` is a leftover nothing reads.
+- **Protocols and the ABI**: one `abi` crate shared by everyone, explicit little-endian layouts, host tests. But every protocol is written by hand (and twice, for C), nothing has a version, and nothing checks that a change keeps the ABI. The vision asked for an IDL.
+- **Build and tests**: `make test64` in full before every merge, the race hunt, our own toolchain. But no CI, a fresh clone never tried, two flaky parts, no coverage numbers, and TheTaaJ can't build its own kernel yet.
+- **Packages and updates**: none. Everything on the disk is put there from the host.
+- **Time and power**: a nanosecond clock, Unix time from the RTC, power-off and reset with `\_S5` read without an interpreter. But no time zones, no network time, no AML interpreter, so no power button, battery or suspend.
+- **Portability**: one kernel for both CPUs behind `arch/`, about half the tests on both. But the PCI drivers and some tests are x86-only (AArch64's PCIe bus is unused), no real ARM board, no RISC-V.
+- **Configuration**: none; it went into Era 23 with services, since settings are what services read.
+
 ## What changed in `docs/who-does-what.md`
 
 - **Era 12 · Web** (its ground was already the "Network" section): an introduction to the section, and seven `K?-net-...` items - a benchmark, shared rings for frames, more sockets, a port filter, a routing table, offload, and sockets surviving a restart.
@@ -103,7 +116,8 @@ The loaders are a working minimum. The BIOS loader takes a kernel only between 1
 - **Era 19 · Desktop: applications people can use daily**, new: fourteen `K?-ui-...` items (a benchmark, `display` split into four programs, real key events, text for every language, a toolkit, a panel, a clipboard, the first applications, PNG and JPEG, virtio-gpu, native resolution and scaling, a trusted path and screen lock, notifications, accessibility). K39-K46 are pointed to.
 - **Era 20 · The command line and libc**, new: eleven items (`J?-libc-docs`, `J?-cli-one-shell`, `J?-cli-line`, `J?-cli-bg`, `J?-libc-termios`, `J?-libc-headers`, `J?-libc-utf8`, `J?-libc-malloc`, `J?-libc-conform`, `J?-libc-shared`, `J?-cli-tools`). J43 and J44 note that `sh` has what they ask for and J?-cli-one-shell brings it to the keyboard; J32-J50, J57, K31, K33, K44 and K45 are pointed to.
 - **Era 21 · Boot: recoverable, verified and unlimited**, new, MaK-WSL's: eight `K?-boot-...` items (stray files removed, host tests, a kernel of any size from BIOS, a fast BIOS read, A/B kernels with fallback, a boot menu, where kernels live and how they are updated, a relocatable kernel), with K?-sec-boot listed beside them. K51, J51, K12, K25 and U6 are pointed to.
-- **Later eras**: 13 to 21 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 22.
+- **Eras 22 to 28**, new: Observability (seven `K?-obs-...` items), Services, recovery and configuration (eight `K?-svc-...`), Protocols and the ABI (five `K?-abi-...`), Build, toolchain and tests (six `J?-build-...`), Packages and updates (five `J?-pkg-...`), Time and power (five: `J?-time-zones`, `K?-time-ntp`, `K?-power-...`), Portability (four `K?-port-...`). E2 and E3 now point to Era 23's items that do them.
+- **Later eras**: 13 to 28 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 29.
 
 ## Design decisions
 
@@ -125,6 +139,10 @@ The loaders are a working minimum. The BIOS loader takes a kernel only between 1
 - **A conformance suite as libc's yardstick**, as the benchmarks are for speed: libc's coverage is measured, not guessed.
 - **Boot's milestone is recovery.** A machine used daily must survive a bad kernel update by itself, as TaajFS survives a power cut: A/B kernels, a new one tried once and kept only when TheTaaJ says it booted. The 3 MiB wall comes next, since every kernel feature moves it closer.
 - **The bootloader's era is MaK-WSL's.** Rule 7 gives TheBootloader to MaK-WSL; the era says so at its top, and its items are MaK-WSL's to do or to agree.
+- **Configuration inside Era 23, not an era of its own.** Today's "configuration" is init's code; describing services in files and keeping settings in a service are the same work.
+- **Observability's kernel part is trace points and a ring.** The kernel can see what nobody else can - switches, faults, every IPC - so it writes events to a ring handed out as a memory object; keeping, searching and showing them is a service's.
+- **Our own CI, on our own machine.** No outside service builds the code; TheJat-WSL suits it, and it never builds anyone else's pull request (the rule for public repositories).
+- **An IDL of our own size.** What TheTaaJ's protocols use, generating `no_std` Rust and C, not a general framework.
 - **The network items in Era 12, not a new era.** Era 12 was already the network's era; the new items are its scale and speed.
 - **Every era starts with a benchmark.** Each section's first item measures; the rest are judged by it.
 - **No owner given.** The eras are not put in either machine's decided order: that is for the user.
@@ -141,6 +159,7 @@ The loaders are a working minimum. The BIOS loader takes a kernel only between 1
 - The desktop claims: what `display.rs` holds and its startup handles, the window protocol (`gui/src/protocol.rs`), the window manager (`gui/src/desktop.rs`), `gfx`'s font from `console`, `WINDOW_PROGRAMS` (`counter`) and `EDIT_PROGRAMS` (`edit`) in `user/src/bin/shell.rs`.
 - The shell and libc claims: `sh.rs`'s header and its refusal of `&`, its 33 tests; `shell.rs`'s header (jobs, grants, no history or completion found in it); `libc/src/lib.rs`'s overview against `threads.rs` and the missing `emutls.c`; the headers in `libc/include`; musl's libm in `libc/c/libm`.
 - The boot claims: `taajboot.h` (the protocol, its size checks), `stage2/elf.c`'s "Segment outside 1 MiB .. 3 MiB, refusing" and the kernel's `linker.ld` check, journal entry 089's 672 KiB left, `uefi/main.c` and `uefi/aarch64.c`'s headers, `abc.txt` and `random.txt` at TheBootloader's root, and no test files in it.
+- The last reviews' claims: `logring.rs`, `logmerge.rs`, `lastwords.rs` and the panic handler in `main.rs` (no backtrace); the shell's built-in commands; init's header, `MAX_RESTARTS` and `RESTART_WINDOW`; `ramdisk-src/config.cfg` read by nothing in the 64-bit code; the `abi` crate's modules and no version on calls or protocols; `TEST64_PARTS` and no CI files; no package code; `libc/c/time.c` (localtime is UTC), `rtc.rs`, the `acpi` crate; the `aarch64-...` test parts against the x86-only ones.
 - Nothing was built or run: this changes only documents.
 
 ## What is still missing
@@ -175,4 +194,5 @@ grep -n '^## Goals\|^## Era\|kernel stays pure\|K?-\|J?-\|^| K27' docs/who-does-
 | `## Era 19 · Desktop: applications people can use daily` | 14 `K?-ui` items |
 | `## Era 20 · The command line and libc` | 11 `J?-cli`/`J?-libc` items |
 | `## Era 21 · Boot: recoverable, verified and unlimited` | 8 `K?-boot` items, MaK-WSL's |
-| `## Later eras` | Eras 13 to 21, and the assistant as 22 |
+| `## Era 22` ... `## Era 28` | Observability; Services, recovery and configuration; Protocols and the ABI; Build, toolchain and tests; Packages and updates; Time and power; Portability |
+| `## Later eras` | Eras 13 to 28, and the assistant as 29 |

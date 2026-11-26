@@ -692,13 +692,146 @@ What is missing:
 
 ---
 
+## Era 22 · Observability: logs, crashes, tracing and profiling
+
+**Done when**: the log of the last boot can be read after a reboot; a kernel panic shows a backtrace on the screen and leaves a crash record that the next boot finds; a program that crashes leaves a report (its registers, backtrace, the last of its output) in a file; a running system can be traced (system calls, IPC, scheduling, faults) and a slow request found from the trace; a profiler shows where a program spends its time; and `top` shows each process's CPU and memory live. Whose it is, and when, is for the user to say. The vision names "observable" as a goal; this is it. Pointed to: K21 (CPU time per process), K?-sec-audit (Era 18).
+
+What is right: the kernel's messages and every program's output go to one debug log, a serial line, written from a fixed-size ring (`logring.rs`) so printing never waits for the line and a program cannot use the ring up - a message dropped is dropped whole and counted, so the log says something is missing; lines from several writers are kept whole (`logmerge.rs`); at a panic the kernel takes the screen back and prints there too (`lastwords.rs`), so a machine with nobody on its serial port still shows why it stopped; the shell has `ps`, `mem`, `uptime` and `services`.
+
+What is missing: the log lives only on the serial line and on the screen - nothing keeps it, so on the real PC it is gone at the reboot that follows a problem; no levels, no sources, no time on each line; a panic prints its message but no backtrace; no crash record kept across a reboot; a program that crashes leaves a line, not a report; no tracing of system calls, IPC or scheduling; no profiler; no `top`; no debugger on TheTaaJ (QEMU's gdb works from the host, nothing on the real PC).
+
+All of it stays in user space except what only the kernel can see: the kernel provides trace points and a ring of events as a memory object, given to whoever holds a handle for it; collecting, storing and showing them is a service's job.
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| K?-obs-logd | **A log service**: everything that goes to the debug log also goes to a file on the disk, with the time, the source (kernel or which program) and a level on each line; kept across reboots, the oldest dropped first; read with a `log` command | M | First. The kernel's ring is handed to it as a memory object; the serial line stays as it is |
+| K?-obs-panic | **A panic that says where**: a backtrace (frame pointers, the kernel's own symbols), the CPU and thread, and a crash record left in memory that survives a warm reboot or in a reserved spot on the disk, which the next boot hands to the log service | M | |
+| K?-obs-crash | **A crash report per program**: when a process breaks a rule, its registers, a backtrace, its memory map and the last lines it printed, written by a user-space service the kernel tells (as `PeerClosed` tells a client) | M | After K?-obs-logd |
+| K?-obs-trace | **Tracing**: trace points in the kernel (system calls, IPC sends and receives, switches, faults, interrupts) written to a per-CPU ring that a tracing service maps, with a handle for it; a `trace` command that records a span and shows it | L | The data the benchmarks of Eras 13 and 17 want |
+| K?-obs-profile | **A profiler**: the timer samples where each CPU is (program and address); a report per function, with symbols | M | After K?-obs-trace |
+| K?-obs-top | **`top`**: CPU (K21), memory, threads and handles per process, refreshed | S | After K21 |
+| K?-obs-debug | **A debugger on TheTaaJ**: a debug capability over another process (stop, read and write its memory and registers, breakpoints), given only by its launcher; a small debugger program; a gdb stub on the serial line for the kernel on a real PC | L | |
+
+---
+
+## Era 23 · Services, recovery and configuration
+
+**Done when**: every service - the registry and init's own work included - can crash and come back with its clients carrying on; a service that was restarted gets back the state it had (open files, sockets, windows) or its clients are told exactly what was lost; services are described in configuration files, not in init's code, and a new service is added without changing init; and the system shuts down by asking every service to finish, in order. Whose it is, and when, is for the user to say. Pointed to: E2 (poisoned requests), E3 (a watchdog for the shell, init and the registry), K16 (shutdown that asks), K?-net-keep (Era 12), K?-dev-manager (Era 15), K?-sec-manifests (Era 18).
+
+What is right: init is a supervisor. It wires the services with channels, gives each only the handles it needs and fewer rights than it holds, keeps the originals so a restarted driver gets the same channels and its clients never notice, restarts a service that ends, gives up after 5 restarts in 30 seconds, and keeps a watchdog for `fs` and the disk driver (a request a second; no answer and it is killed and restarted). The registry gives each client only the names meant for it. A dead service is noticed by its clients through `PeerClosed`.
+
+What is missing: **init itself and the registry** are restarted by nothing (if init dies, the system has no supervisor); only `fs` and the disk driver are watched; **a restarted service starts empty** - `net` forgets every socket, `display` every window, `fs` its streams - and each client finds out its own way; **everything is in init's code**: which services exist, their order, their handles by number (`Grant` lists with hand-numbered slots), their names in the registry; there is no configuration at all - `ramdisk-src/config.cfg` (`timer.hz=1000`) is a leftover the 64-bit system never reads; no way to stop, start or restart a service by hand; shutdown kills rather than asks (K16).
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| K?-svc-config | **Services described in files**: each service's program, the handles it gets, the names it serves and may use, its restart policy and watchdog, read by init at boot - replacing init's tables; the unused `config.cfg` removed | M | First. With K?-sec-manifests (Era 18), which describes programs the same way |
+| K?-svc-control | **`service` commands**: list, stop, start, restart, status - through init, with a capability for it | S | After K?-svc-config |
+| K?-svc-watch | **A watchdog for every service that answers requests**, declared in its configuration | S | After K?-svc-config; covers E3's shell and registry |
+| K?-svc-state | **State that survives a restart**: a service may keep what its clients depend on in a memory object init holds for it (as init keeps a driver's DMA memory) and find it again when it starts; for those that can't, a clear "your session was lost" to each client | L | `fs`, `net`, `display` first |
+| K?-svc-init | **init and the registry restartable**: a small, fixed first process that only restarts init, or init and the registry each watching the other | M | The last supervisor must be the simplest |
+| K?-svc-poison | **A request that crashes a service again and again is refused** after the second time, instead of crashing it forever | S | Is E2 |
+| K?-svc-shutdown | **Shutdown in order**: every service asked to finish (disks flushed, files committed) in the reverse of the start order, with a time limit | S | Is K16 |
+| K?-svc-settings | **Settings**: one place for the machine's settings (keyboard layout, time zone, screen, network), a service that keeps them and tells those who asked when one changes | M | For Era 19's settings application |
+
+---
+
+## Era 24 · Protocols and the ABI: one IDL, versions, stability
+
+**Done when**: every protocol between programs and services is written once in an interface description, and its encoding and decoding in Rust (and C for libc) are generated from it; every protocol and the system calls carry a version, and a program built for an older version still runs; a change that breaks the ABI fails a check before it can be merged. Whose it is, and when, is for the user to say. The vision says to "plan an IDL for IPC protocols"; this is it.
+
+What is right: one `abi` crate (about 2,800 lines) shared by the kernel, the services, the Rust runtime and libc, so they can't disagree about a number; every value little-endian at an explicit offset; most protocols with host tests that encode and decode; the boot protocol (TaajBoot) append-only with a size field - the model the rest could follow.
+
+What is missing: **every protocol is written by hand**, request by request - `abi::init`, `display`, `block`, `nic`, `net`, `power`, and outside `abi` the file protocol (`fileserver::protocol`) and the window protocol (`gui::protocol`); each new service repeats the work, and C has to mirror it again. **No versions**: not on the system calls, not on any protocol; a change to a message's layout breaks every program built before it, and nothing says so. **No check** that a change keeps the ABI; Rule "the ABI stays in step" is kept by care alone.
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| K?-abi-idl | **An interface description language**: a small one, ours (or FIDL-like), describing messages, their fields, handles carried, and replies; a generator for Rust (`no_std`) and C | L | First. Small: what TheTaaJ's protocols use, not more |
+| K?-abi-move | **The protocols moved onto it** one at a time: the file protocol first (it changes in Era 14 anyway), then net, display, block, nic, init, power, the window protocol | L | After K?-abi-idl. With Era 14's J?-vfs-protocol |
+| K?-abi-version | **Versions**: each protocol says its version when a channel is opened; a service serves older versions it still knows; the system calls get a version a program states at start | M | After K?-abi-idl |
+| K?-abi-check | **An ABI check before merging**: the generated layouts compared with the last release's; a change that breaks one fails unless the version changes with it | S | After K?-abi-version. A new line in "Before merging" |
+| K?-abi-docs | **The protocols documented from the IDL**: a page per protocol, generated, for the website and for whoever writes a service | S | |
+
+---
+
+## Era 25 · Build, toolchain and tests
+
+**Done when**: a fresh clone builds and passes on a clean machine with one documented command; every push to a branch is built and tested automatically on a machine of ours, and the result is shown; `make test64` takes under a time set when the era starts, with no test that fails now and then; the tests' coverage of the kernel's crates is measured; and TheTaaJ can rebuild its own kernel and libc. Whose it is, and when, is for the user to say. Pointed to: J51-J54 (Test suite health), J45 and J46 (rebuilding on TheTaaJ), J15/R3 and J21/R4 (Rust's std and rustc, Era 9), K50 and K52 (flaky tests), the race hunt (entries 104, 105).
+
+What is right: `make test64` (about 60 parts, `TEST64_PARTS`, on both CPUs) is run in full before every merge, with main merged in; host tests for every crate that can have them; the race hunt (`tools/race-hunt.sh`) runs the whole suite twenty times under KVM; timing tests follow written rules ("Before merging"); the toolchain is ours (host LLVM 23.1.5 built by `tools/build-host-llvm.sh`, step E) and C, C++ and LLVM itself are built for and on TheTaaJ.
+
+What is missing: **no CI** - tests run only when someone runs them, on their own machine; `make test64` takes about 14 minutes on either machine (Measured times), `boot64-test`'s typing over 6 of them and some parts have failed now and then (K50, K52); nobody knows the tests' coverage; a fresh clone has never been tried on a clean machine (J54); the kernel image is near the BIOS loader's 3 MiB (J51, Era 21); the build is one big Makefile with a host-side script per port; and TheTaaJ cannot yet build its own kernel (no Rust on it before Era 9).
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| J?-build-clean | **A clean build from a fresh clone**, in a container, with one documented command; the setup script (`tools/setup-wsl.sh`) checked by it | S | Is J54. First |
+| J?-build-ci | **Our own CI**: a machine of ours (TheJat-WSL suits it) that builds every pushed branch, runs the host tests and `make test64`, and posts the result where the branches are; no outside service gets the code to run | M | After J?-build-clean. Never builds anyone else's pull request (rule) |
+| J?-build-fast | **A faster `make test64`**: parts run in parallel up to the machine's CPUs, one disk image built once and shared, the boot shortened; measured before and after | M | |
+| J?-build-flaky | **No flaky tests**: every part run 50 times in CI; each that ever fails is fixed or its limits measured again (K50, K52) | M | After J?-build-ci |
+| J?-build-coverage | **Coverage** of the host tests of the kernel's crates, kept in the journal; a floor that may only rise | S | |
+| J?-build-selfhost | **TheTaaJ builds itself**: libc and the C programs today (J45, J46), the kernel once Rust runs there (after R4) | L | After Era 9 |
+
+---
+
+## Era 26 · Packages and updates
+
+**Done when**: a program is installed, updated and removed on TheTaaJ with one command, from a signed package, its files and its manifest placed by a package service; the system itself (kernel, libc, services) is updated the same way, with the old version kept until the new one has booted (Era 21's A/B kernels); and an update that fails leaves the system as it was. Whose it is, and when, is for the user to say. The assistant's draft (`docs/ai-assistant.md`) asks for a package manager for programs and models; this is it. Pointed to: K?-sec-signing and K?-sec-manifests (Era 18), K?-boot-ab and K?-boot-where (Era 21), J46.
+
+What is right: TaajFS commits atomically (copy-on-write), so an update could be made all-or-nothing; programs already run with only what is granted to them, which a package's manifest can declare; the disk is built reproducibly from recipes on the host (`tools/tfstool-rs`, `put-*.sh`).
+
+What is missing: **everything on the disk is put there from the host**: there is no package, no package format, no way to install or remove a program on TheTaaJ but copying files; no update of the system from TheTaaJ; no record of which file belongs to which program; no versions; no signatures.
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| J?-pkg-format | **A package format**: an archive of files, a manifest (Era 18's, with the services the program needs), a version, its dependencies, a signature | M | First |
+| J?-pkg-service | **A package service** that installs, updates and removes packages, keeps what file belongs to which, and makes each change one TaajFS commit (all or nothing); `pkg install/remove/list` | M | After J?-pkg-format and J?-vfs-namespace |
+| J?-pkg-build | **Packages built on the host** from the same recipes that build the disk today, so the disk is made of packages | M | After J?-pkg-format |
+| J?-pkg-repo | **A repository**: a signed index of packages, fetched over the network (after K37, TLS) or from a USB stick | M | After J?-pkg-service |
+| J?-pkg-system | **System updates**: the kernel (through Era 21's A/B), libc and the services as packages; the previous version kept until the new one has run | L | After K?-boot-ab |
+
+---
+
+## Era 27 · Time and power
+
+**Done when**: the clock shows local time in the user's time zone, is set from the network, and stays right across a suspend; the machine suspends to RAM and resumes with its programs and devices working; the power button and the lid do what the settings say; a laptop shows its battery; and idle CPUs and devices save power. Whose it is, and when, is for the user to say. Pointed to: K13-K18 (ACPI and power), K24 (fine timers), K?-smp-idle (Era 13), K?-dev-power (Era 15), K?-svc-settings (Era 23).
+
+What is right: a monotonic clock in nanoseconds from the CPU's counter (`clock.rs`), Unix time read from the RTC at boot (`rtc.rs`); powering off and resetting from user space, the `\_S5` value read from the DSDT without an AML interpreter, all of it tested on the host against a simulated chipset (`acpi` crate); PSCI on AArch64.
+
+What is missing: **no time zones** (`localtime` is UTC, `libc/c/time.c`); no network time; the RTC read once and never written; 10 ms ticks (K24); no AML interpreter (K13), so no power button, battery, lid or suspend (K15, K17, K18); every CPU woken every tick; no device power states; no CPU frequency control.
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| J?-time-zones | **Time zones**: the tz database (or the zones in use) on the disk, `TZ`, `localtime` that means local | M | First: small and seen by everyone |
+| K?-time-ntp | **Network time**: an NTP (SNTP) client service that sets the clock and writes the RTC | S | After K30 (DHCP) and K33 (UDP) |
+| K?-power-cpu | **CPU power**: idle states (C-states, `mwait`; WFI on AArch64) and frequency (P-states) chosen by a user-space policy | M | With K?-smp-idle and K24 |
+| K?-power-suspend | **Suspend and resume** end to end: services told before and after, devices saved and restored, the clock corrected | L | Is K18, after K13 and K?-dev-power |
+| K?-power-events | **Power button, lid and battery** as events a power service hands to whoever asked (the desktop shows them; the settings say what they do) | M | After K13; is K15 and K17 |
+
+---
+
+## Era 28 · Portability: AArch64 as a peer, then RISC-V
+
+**Done when**: every test of `make test64` that can run on AArch64 does, with no x86-only part left without a reason written next to it; TheTaaJ runs on a real ARM board (a Raspberry Pi, if the user wants one, U6); and a RISC-V port boots to the shell in QEMU. Whose it is, and when, is for the user to say. The vision's order is x86_64, then AArch64, then RISC-V. Pointed to: U6, K?-boot-reloc (Era 21).
+
+What is right: one kernel for both CPUs with what differs behind `arch/` (`x86_64/`, `aarch64/`); one page-table implementation with a format per CPU; the boot protocol and the device tree keep the kernel ignorant of firmware; virtio drivers over both PCI and MMIO; about half of `make test64`'s parts run on both (`aarch64-...`), SMP included.
+
+What is missing: the parts that run on x86_64 only - the SATA, NVMe, Intel network card and USB drivers and their tests (AArch64's `virt` machine is used without its PCIe bus), the fault tests (`fault64-test`), `kernel64-test`, `smp64-test`, `big64-test`, `stick64-test`; no real ARM board ever booted; no RISC-V.
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| K?-port-pcie | **PCIe on AArch64**: the `virt` machine's PCIe bus (ECAM from the device tree), so the PCI drivers - AHCI, NVMe, e1000, xHCI - run there too, with their tests | M | First. After K?-dev-generic (Era 15), which makes it one place |
+| K?-port-parity | **Every x86-only test given an AArch64 twin**, or a written reason why not (fault tests, SMP, big memory, the stick) | M | After K?-port-pcie |
+| K?-port-board | **A real ARM board**: a Raspberry Pi 4 or 5 (its UART, its interrupt controller, its SD card or USB disk) | L | Only if the user wants it (U6) |
+| K?-port-riscv | **RISC-V in QEMU**: `arch/riscv64` (Sv39/48 paging, the PLIC and CLINT, SBI), booted by OpenSBI and our loader or U-Boot, to the shell | L | Later, U6. The `Format` and `arch/` split is what makes it possible |
+
+---
+
 ## Either machine: whoever is free
 
 | # | Item | Size | Notes |
 |---|---|---|---|
 | E1 | `fsck` for TaajFS: check and repair a damaged disk | M | |
-| E2 | Services that crash on one "poisoned" request again and again: give up on that request | S | |
-| E3 | A watchdog for the shell, init and the registry | S | |
+| E2 | Services that crash on one "poisoned" request again and again: give up on that request | S | Era 23's K?-svc-poison |
+| E3 | A watchdog for the shell, init and the registry | S | Era 23's K?-svc-watch and K?-svc-init |
 | E4 | A redirected file written in one commit, not one per message | S | Part of J20 |
 | E5 | Swap to a disk file | L | Later; with Era 16's K?-mm-reclaim |
 | E6 | TheKernel standalone (not needing `heap`, `virtio`, `console`, `user/` from the parent) | M | |
@@ -731,4 +864,11 @@ As drafted in `docs/ai-assistant.md`, and added since:
 - **Era 19 · Desktop: applications people can use daily** (above).
 - **Era 20 · The command line and libc** (above).
 - **Era 21 · Boot: recoverable, verified and unlimited** (above; MaK-WSL's).
-- **The assistant** (drafted as Era 9, which is now rustc) takes the next free number, 22: the `infer` service, tools published by services, confirmation, undo.
+- **Era 22 · Observability: logs, crashes, tracing and profiling** (above).
+- **Era 23 · Services, recovery and configuration** (above).
+- **Era 24 · Protocols and the ABI: one IDL, versions, stability** (above).
+- **Era 25 · Build, toolchain and tests** (above).
+- **Era 26 · Packages and updates** (above).
+- **Era 27 · Time and power** (above).
+- **Era 28 · Portability: AArch64 as a peer, then RISC-V** (above).
+- **The assistant** (drafted as Era 9, which is now rustc) takes the next free number, 29: the `infer` service, tools published by services, confirmation, undo.
