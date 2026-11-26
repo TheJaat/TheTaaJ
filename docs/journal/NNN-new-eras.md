@@ -1,6 +1,6 @@
-# Goals, Eras 13 and 14, and the network, threads and VFS items
+# Goals, Eras 13 to 15, and the network, threads, VFS and driver items
 
-*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support and VFS are, for all the items found - IPC, TaajFS, network, threads, VFS - to be put into eras, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
+*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support, VFS and device drivers are, for all the items found - IPC, TaajFS, network, threads, VFS, drivers - to be put into eras, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
 
 ## Why
 
@@ -45,6 +45,14 @@ The question the user asked next: would a VFS still leave TheTaaJ a pure microke
 
 The cost is a message per operation where a monolithic kernel makes a function call - which is why Era 13 (a fast core) comes before Era 14.
 
+## What the drivers review found
+
+Every driver is a user-space program, handed its registers, a contiguous DMA memory object with its physical address, and its interrupt as capabilities; the logic of most is in a crate tested on the host against a simulated device; init restarts a driver that crashes, and keeps its DMA memory so a restart never frees what the device may still write. Architecturally right. Against the Goals, two real flaws and some smaller ones:
+
+- **The kernel decides which devices exist.** `offered()` in `devices.rs` has a list - AHCI, NVMe and xHCI by class, the e1000 by Intel's numbers - and knows things about each kind (which BAR, MSI-X or not, NVMe's smallest register size); `mmio_devices.rs` identifies virtio devices. Policy in the kernel, and every new driver a kernel change.
+- **Nothing confines DMA.** No IOMMU, and bus mastering, turned on at hand-out, is never turned off. The CPU confines a driver; the bus does not.
+- init has fixed slots for one disk, one card and one USB controller, with each driver's handles numbered by hand; one `usb` program is the controller and all its devices; one interrupt vector per device; data copied through one fixed DMA region; only virtio's legacy interface; no test that kills a driver mid-I/O.
+
 ## What changed in `docs/who-does-what.md`
 
 - **Era 12 · Web** (its ground was already the "Network" section): an introduction to the section, and seven `K?-net-...` items - a benchmark, shared rings for frames, more sockets, a port filter, a routing table, offload, and sockets surviving a restart.
@@ -52,7 +60,8 @@ The cost is a message per operation where a monolithic kernel makes a function c
 - **Goals**, a new section at the top: a pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performant, stable - each with what it means here. Every design, review and item is judged against them.
 - **Before merging** gains a check: the kernel stays pure - nothing new in it knows about files, paths, mounts, protocols or devices, and anything added is a generic mechanism whose entry says why it could not live in user space.
 - **Era 14 · Files: a VFS and TaajFS version 7**, new: ten `J?-vfs-...` items (handles, one protocol and one client library, a namespace per process, `openat` and one-directory sandboxes, `/tmp`, `/dev`, `/proc`, a second disk or USB stick, FAT32, change notification), and the ten `J?-fs-...` items (moved from The-Jat's list).
-- **Later eras**: 13 and 14 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 15.
+- **Era 15 · Devices: a device manager and confined drivers**, new: nine `K?-dev-...` items (every device handed out the same way, a device manager, bus mastering tied to a handle, USB as a bus with class drivers, several vectors and queues, DMA into a program's memory, virtio 1.x, a test that kills drivers mid-I/O, device power states), and K27, the IOMMU, moved there from Security.
+- **Later eras**: 13, 14 and 15 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 16.
 
 ## Design decisions
 
@@ -60,6 +69,8 @@ The cost is a message per operation where a monolithic kernel makes a function c
 - **IPC and threads in one era.** They are the same work from two sides: a request's cost is two context switches and the scheduler's lock as much as the copies, and `channel_call`'s direct switch is a scheduler change.
 - **The VFS and TaajFS version 7 in one era.** Handles change the file protocol and version 7 changes the format; together the file service is rebuilt once. The handles and the namespace come first: J36, the real PC's USB sticks and sandboxing all wait on them.
 - **The goals in the repository, not only in a session's memory.** All three machines read this file after every pull; the rule that keeps the kernel pure has to be where each of them will see it, and in the checklist they each go through before merging.
+- **Drivers as their own era, not in Era 7.** Era 7 is the real PC's drivers (hubs, I219, Realtek); Era 15 is how every driver is found, started, confined and restarted - the same for a virtual card as for a real one. Its milestone: no device kinds in the kernel, a new driver without a kernel change, two disks and two cards at once, the IOMMU on the real PC, every driver killed mid-I/O and recovered from.
+- **The device manager is Zircon's answer**: the kernel hands out every device the same way, and one table in user space decides which driver gets it. The IOMMU stays mechanism too: the kernel programs it from the memory objects a driver holds.
 - **The network items in Era 12, not a new era.** Era 12 was already the network's era; the new items are its scale and speed.
 - **Every era starts with a benchmark.** Each section's first item measures; the rest are judged by it.
 - **No owner given.** The eras are not put in either machine's decided order: that is for the user.
@@ -69,6 +80,7 @@ The cost is a message per operation where a monolithic kernel makes a function c
 
 - Each claim against the code: `MAX_CPUS = 16` (`smp.rs`), the one queue and `THREADS` (`sched.rs`, `threads.rs`), `SLICE = 2` ticks, the kernel heap's one `IrqLock` (`mm.rs`), `FRAMES`, the futex `WAITERS` list and its 64 queues (`futex.rs`), the CR3 reload (`tlb.rs`), `fork`'s `ENOSYS` (`libc/src/system.rs`), only `sched_yield` in `sched.h` and no `semaphore.h`; the network's limits (`TCP_CONNECTIONS` 16, `TCP_LISTENERS` 8, `TCP_BACKLOG` 4 in `net/src/stack.rs`; `SOCKETS` 10, `LISTENERS` 4 and the `WAIT_HANDLES_MAX` assertion in `user/src/bin/net.rs`), the fixed address there, what `tcp.rs` says it does not do, and the frame split into pieces (`user/src/nic.rs`).
 - The VFS claims: the stateless whole-path protocol and its 15 operations (`fileserver/src/lib.rs`), one store per `fs` service (`user/src/bin/fs.rs`), the `Open` enum and the path-and-offset open file (`libc/src/descriptors.rs`), `__taaj_executable` (`libc/src/lib.rs`), `isatty`'s cases, and init's namespaces table (`user/src/bin/init.rs`).
+- The driver claims: `offered()` and its class and vendor matches, `prepare`'s per-kind choices and the bus-master bit set (`kernel64/src/devices.rs`), the virtio identification (`mmio_devices.rs`), the DMA note at the top of `devices.rs`, init's fixed grants for one disk, card and USB controller and its keeping of their DMA memory (`user/src/bin/init.rs`), and what `usb.rs` serves.
 - Nothing was built or run: this changes only documents.
 
 ## What is still missing
@@ -86,7 +98,7 @@ The cost is a message per operation where a monolithic kernel makes a function c
 Nothing to boot: this changes only `docs/`. To see the eras and items:
 
 ```
-grep -n '^## Goals\|^## Era\|kernel stays pure\|K?-\|J?-' docs/who-does-what.md
+grep -n '^## Goals\|^## Era\|kernel stays pure\|K?-\|J?-\|^| K27' docs/who-does-what.md
 ```
 
 | Look for | You should see |
@@ -96,4 +108,5 @@ grep -n '^## Goals\|^## Era\|kernel stays pure\|K?-\|J?-' docs/who-does-what.md
 | `The kernel stays pure` | a line in "Before merging" |
 | `## Era 14 · Files: a VFS and TaajFS version 7` | 10 `J?-vfs` items, then 10 `J?-fs` items |
 | `K?-net-bench` ... `K?-net-keep` | 7 rows in "Network (Era 12's ground)", after K49 |
-| `## Later eras` | Eras 13 and 14, and the assistant as 15 |
+| `## Era 15 · Devices: a device manager and confined drivers` | 9 `K?-dev` items and K27 |
+| `## Later eras` | Eras 13, 14 and 15, and the assistant as 16 |
