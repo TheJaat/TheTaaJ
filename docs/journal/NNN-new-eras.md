@@ -1,6 +1,6 @@
-# Goals, Eras 13 to 20, and the network, threads, VFS, driver, memory, scheduler, security, desktop, shell and libc items
+# Goals, Eras 13 to 21, and the network, threads, VFS, driver, memory, scheduler, security, desktop, shell, libc and boot items
 
-*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support, VFS, device drivers, memory management, the scheduler, security, the desktop, the shell and libc are, for all the items found - IPC, TaajFS, network, threads, VFS, drivers, memory, scheduling, security, desktop, command line - to be put into eras, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
+*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support, VFS, device drivers, memory management, the scheduler, security, the desktop, the shell and libc and the bootloader are, for all the items found - IPC, TaajFS, network, threads, VFS, drivers, memory, scheduling, security, desktop, command line, boot - to be put into eras, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
 
 ## Why
 
@@ -83,6 +83,12 @@ libc is well built: the system half in Rust on the `taaj` runtime, shared with R
 
 There are two shells. `sh` (`libc/src/sh.rs`) has nearly all of POSIX's language and 33 host tests, but no `&`; `shell`, at the keyboard, grants each program only its services and runs background jobs, but has no variables, `if` or `for`, and no history, Tab completion or arrow keys. Two parsers for two languages: a script that works in one doesn't in the other.
 
+## What the bootloader review found
+
+The bootloader is MaK-WSL's (rule 7): it was read, not changed. Its core is excellent: the TaajBoot protocol, one fixed-width, append-only structure every loader fills, its layout checked in C and in Rust, so the kernel cannot tell BIOS from UEFI and a new way to boot is a new loader, never a kernel change. Three loaders: BIOS (MBR, stage1, stage2), UEFI x86_64 (`ExitBootServices` done right), UEFI AArch64 (the firmware's reserved memory copied into the device tree).
+
+The loaders are a working minimum. The BIOS loader takes a kernel only between 1 and 3 MiB (about 670 KiB left) and is slow emulated (K51). There is one kernel and no fallback when a new one fails; no menu or command line at boot; no verified boot; the kernel lives on ISO 9660 or the EFI partition, outside TaajFS, with no plan for updating it; it sits at a fixed physical place; the loaders have no tests of their own; and two stray files (`abc.txt`, `random.txt`) sit in the public repository.
+
 ## What changed in `docs/who-does-what.md`
 
 - **Era 12 · Web** (its ground was already the "Network" section): an introduction to the section, and seven `K?-net-...` items - a benchmark, shared rings for frames, more sockets, a port filter, a routing table, offload, and sockets surviving a restart.
@@ -96,7 +102,8 @@ There are two shells. `sh` (`libc/src/sh.rs`) has nearly all of POSIX's language
 - **Era 18 · Security: hardening, trust and people**, new: eleven `K?-sec-...` items (kernel objects counted against their creator, fuzzing, a manifest per program, signed programs, verified boot, users as capability sets, disk encryption, speculation mitigations, `DEBUG_WRITE` behind a capability, an `unsafe` audit with Miri, an audit log). K25, K26, K28, K29 and the security items of Eras 12 to 17 are pointed to, not moved.
 - **Era 19 · Desktop: applications people can use daily**, new: fourteen `K?-ui-...` items (a benchmark, `display` split into four programs, real key events, text for every language, a toolkit, a panel, a clipboard, the first applications, PNG and JPEG, virtio-gpu, native resolution and scaling, a trusted path and screen lock, notifications, accessibility). K39-K46 are pointed to.
 - **Era 20 · The command line and libc**, new: eleven items (`J?-libc-docs`, `J?-cli-one-shell`, `J?-cli-line`, `J?-cli-bg`, `J?-libc-termios`, `J?-libc-headers`, `J?-libc-utf8`, `J?-libc-malloc`, `J?-libc-conform`, `J?-libc-shared`, `J?-cli-tools`). J43 and J44 note that `sh` has what they ask for and J?-cli-one-shell brings it to the keyboard; J32-J50, J57, K31, K33, K44 and K45 are pointed to.
-- **Later eras**: 13 to 20 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 21.
+- **Era 21 · Boot: recoverable, verified and unlimited**, new, MaK-WSL's: eight `K?-boot-...` items (stray files removed, host tests, a kernel of any size from BIOS, a fast BIOS read, A/B kernels with fallback, a boot menu, where kernels live and how they are updated, a relocatable kernel), with K?-sec-boot listed beside them. K51, J51, K12, K25 and U6 are pointed to.
+- **Later eras**: 13 to 21 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 22.
 
 ## Design decisions
 
@@ -116,6 +123,8 @@ There are two shells. `sh` (`libc/src/sh.rs`) has nearly all of POSIX's language
 - **A trusted path.** A key combination that always reaches the system is what makes a screen lock and a login trustworthy when any program may draw anything in its window.
 - **One shell language, not two.** Rather than teach the keyboard's shell what `sh` already knows (J43, J44), the keyboard's shell uses `sh.rs` - one parser, one set of tests, scripts and typed lines the same. What only the keyboard's shell does (grants, jobs, the keyboard) stays in it.
 - **A conformance suite as libc's yardstick**, as the benchmarks are for speed: libc's coverage is measured, not guessed.
+- **Boot's milestone is recovery.** A machine used daily must survive a bad kernel update by itself, as TaajFS survives a power cut: A/B kernels, a new one tried once and kept only when TheTaaJ says it booted. The 3 MiB wall comes next, since every kernel feature moves it closer.
+- **The bootloader's era is MaK-WSL's.** Rule 7 gives TheBootloader to MaK-WSL; the era says so at its top, and its items are MaK-WSL's to do or to agree.
 - **The network items in Era 12, not a new era.** Era 12 was already the network's era; the new items are its scale and speed.
 - **Every era starts with a benchmark.** Each section's first item measures; the rest are judged by it.
 - **No owner given.** The eras are not put in either machine's decided order: that is for the user.
@@ -131,6 +140,7 @@ There are two shells. `sh` (`libc/src/sh.rs`) has nearly all of POSIX's language
 - The security claims: the rights in `abi` (SEND to KILL), `PROCESS_KILL` and `SIGNAL_SEND` needing KILL, `PROCESS_SPAWN`'s launcher, `SYSTEM_INFO` and `PROCESS_LIST` needing the system handle, `DEBUG_WRITE` with no handle (`abi`, `syscall.rs`); the shell's grants by name (`user/src/bin/shell.rs`, `narrow`); what `account.rs` does not count; `random.rs`'s sources; no fuzz targets in the repository.
 - The desktop claims: what `display.rs` holds and its startup handles, the window protocol (`gui/src/protocol.rs`), the window manager (`gui/src/desktop.rs`), `gfx`'s font from `console`, `WINDOW_PROGRAMS` (`counter`) and `EDIT_PROGRAMS` (`edit`) in `user/src/bin/shell.rs`.
 - The shell and libc claims: `sh.rs`'s header and its refusal of `&`, its 33 tests; `shell.rs`'s header (jobs, grants, no history or completion found in it); `libc/src/lib.rs`'s overview against `threads.rs` and the missing `emutls.c`; the headers in `libc/include`; musl's libm in `libc/c/libm`.
+- The boot claims: `taajboot.h` (the protocol, its size checks), `stage2/elf.c`'s "Segment outside 1 MiB .. 3 MiB, refusing" and the kernel's `linker.ld` check, journal entry 089's 672 KiB left, `uefi/main.c` and `uefi/aarch64.c`'s headers, `abc.txt` and `random.txt` at TheBootloader's root, and no test files in it.
 - Nothing was built or run: this changes only documents.
 
 ## What is still missing
@@ -164,4 +174,5 @@ grep -n '^## Goals\|^## Era\|kernel stays pure\|K?-\|J?-\|^| K27' docs/who-does-
 | `## Era 18 · Security: hardening, trust and people` | 11 `K?-sec` items |
 | `## Era 19 · Desktop: applications people can use daily` | 14 `K?-ui` items |
 | `## Era 20 · The command line and libc` | 11 `J?-cli`/`J?-libc` items |
-| `## Later eras` | Eras 13 to 20, and the assistant as 21 |
+| `## Era 21 · Boot: recoverable, verified and unlimited` | 8 `K?-boot` items, MaK-WSL's |
+| `## Later eras` | Eras 13 to 21, and the assistant as 22 |
