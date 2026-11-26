@@ -1,6 +1,6 @@
 # Every unsafe with a reason, checked
 
-*Journal entry #NNN · a check, and the reasons it asked for (K112). Written on TheJat-WSL/ci. Rust's `unsafe` marks code whose soundness the compiler cannot check: a person must, and says why in a `// SAFETY:` comment, or for an `unsafe fn` in a `# Safety` section saying what its caller must promise. Most of TheTaaJ's do; 68 places did not, or not where a tool can find them. Now `make unsafe-check` - part of `make test64` - fails, naming the place, when one is missing.*
+*Journal entry #121 · a check, and the reasons it asked for (K112). Written on TheJat-WSL/ci. Rust's `unsafe` marks code whose soundness the compiler cannot check: a person must, and says why in a `// SAFETY:` comment, or for an `unsafe fn` in a `# Safety` section saying what its caller must promise. Most of TheTaaJ's do; 68 places did not, or not where a tool can find them. Now `make unsafe-check` - part of `make test64` - fails, naming the place, when one is missing.*
 
 ## Why
 

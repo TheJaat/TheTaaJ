@@ -11,7 +11,7 @@
 # Over every crate the system is built from, for each CPU it is built
 # for: the kernel, the programs (user/) and the C library for both, and
 # the crates with logic tested on the host. Exits non-zero, naming each
-# place, if any is missing (journal entry NNN).
+# place, if any is missing (journal entry 121).
 
 set -u
 cd "$(dirname "$0")/.." || exit 1
