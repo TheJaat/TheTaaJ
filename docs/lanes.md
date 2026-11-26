@@ -134,8 +134,8 @@ Its files: the test rules of the `Makefile`, `kernel/kernel64/scripts/*-test.sh`
 | J96 | 2 | Coverage of the host tests |
 | K104 | 2 | A system-call fuzzer |
 | K187 | 2 | Miri over the host tests (K112's second half) |
-| K137 | 2 | A panic with a backtrace |
 | K136 | 3 | The log service |
+| K188 | 3 | A crash record the next boot finds (K137's second half) |
 | K138 | 3 | A crash report per program |
 | K141 | 3 | `top` (after `sched`'s K21) |
 | K139 | 3 | Tracing |

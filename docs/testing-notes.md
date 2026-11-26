@@ -4303,9 +4303,25 @@ Automated: `make test64` (its `unsafe-check` part).
 
 ---
 
-## 122 · /tmp in memory
+## 122 · A panic that says where: backtraces in the kernel's own words
 
-[The entry](journal/122-tmp.md)
+[The entry](journal/122-backtrace.md)
+
+`make run64` boots as before: nothing is printed until something goes wrong. To see a backtrace:
+
+| Do | You should see |
+|---|---|
+| `make fault64-test` | `fault-page: ok`, and in `build/fault64-page.log`, after the registers: `backtrace:`, then `#0 ... kernel64::run_fault_test+0x...` and `#1 ... kernel64::kernel_main+0x...` |
+| In `kernel/kernel64/src/threads.rs`, `WaitQueue::wake_all`, take the waiters out (`core::mem::take(&mut *self.waiters.lock())`), then `make smp64-test` | `KERNEL PANIC ... rule 3 of threads.rs ...`, then `in thread "boot" (1)` and a backtrace through `kernel64::selftest::threads` and `kernel64::kernel_main`. Change it back |
+| `python3 kernel/kernel64/scripts/fill-symbols.py kernel/kernel64/target/x86_64-unknown-none/release/kernel64` | `SYMBOLS 642 functions` (about that many) |
+
+Automated: `make test64` (`fault64-test` and `aarch64-test` require the backtraces).
+
+---
+
+## 123 · /tmp in memory
+
+[The entry](journal/123-tmp.md)
 
 Start TheTaaJ:
 
