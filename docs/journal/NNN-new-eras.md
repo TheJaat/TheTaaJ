@@ -1,6 +1,6 @@
-# Goals, Eras 13 to 17, and the network, threads, VFS, driver, memory and scheduler items
+# Goals, Eras 13 to 18, and the network, threads, VFS, driver, memory, scheduler and security items
 
-*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support, VFS, device drivers, memory management and the scheduler are, for all the items found - IPC, TaajFS, network, threads, VFS, drivers, memory, scheduling - to be put into eras, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
+*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support, VFS, device drivers, memory management, the scheduler and security are, for all the items found - IPC, TaajFS, network, threads, VFS, drivers, memory, scheduling, security - to be put into eras, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
 
 ## Why
 
@@ -65,6 +65,12 @@ Simple, correct and tested, with no policy yet. `sched.rs` decides and `threads.
 
 What it lacks: priorities or classes (every thread equal; K20 is under way on MaK-WSL); fairness per process rather than per thread; a tick that walks every thread's state and allocates, under the global lock, to find due sleepers; 10 ms ticks; every CPU woken each tick; no regard for a CPU's cache; no priority inheritance; no CPU budgets; a 64-CPU cap in `pokes`; no `nice` or `sched_setscheduler`; no latency ever measured.
 
+## What the security review found
+
+TheTaaJ's strongest point. Capabilities from the bottom up: handles with rights that only shrink when passed on; no kill by process number, starting a program needs a launcher handle, the process list needs the system handle; the shell narrows the registry for every program it runs, so `ls` gets read-only files, `ping` only the network and an unknown program nothing; init's namespace table is the policy in one place; drivers hold only their own hardware; the kernel is Rust.
+
+What surrounds that core is thin. Kernel objects - channels, queued messages, handles, processes - are not counted against anyone, and the kernel heap panics when it cannot grow: the one way a program with no grants can bring the machine down. SMEP, SMAP, PAN, KPTI, the IOMMU, ASLR, the stack protector and speculation mitigations are all missing. A program's services come from lists of names in the shell, nothing is signed, nothing verifies the boot. No users, no encryption, no fuzzing, no audit of `unsafe`, no audit log; `DEBUG_WRITE` is open to every program.
+
 ## What changed in `docs/who-does-what.md`
 
 - **Era 12 · Web** (its ground was already the "Network" section): an introduction to the section, and seven `K?-net-...` items - a benchmark, shared rings for frames, more sockets, a port filter, a routing table, offload, and sockets surviving a restart.
@@ -75,7 +81,8 @@ What it lacks: priorities or classes (every thread equal; K20 is under way on Ma
 - **Era 15 · Devices: a device manager and confined drivers**, new: nine `K?-dev-...` items (every device handed out the same way, a device manager, bus mastering tied to a handle, USB as a bus with class drivers, several vectors and queues, DMA into a program's memory, virtio 1.x, a test that kills drivers mid-I/O, device power states), and K27, the IOMMU, moved there from Security.
 - **Era 16 · Memory: sharing, reclaim and hardening**, new: eleven `K?-mm-...` items (SMEP, SMAP and PAN; no kernel panic for want of memory; a pressure signal; copy-on-write objects; a generic pager; reclaim; a buddy allocator; huge pages; a zero page; objects over 512 MiB; KPTI where needed). J29, J58, K25 and E5 stay where they are, pointed to.
 - **Era 17 · Scheduling: contexts, classes and fairness**, new: nine items (`K?-sched-bench`, `-timers`, `-contexts`, `-donate`, `-classes`, `-groups`, `-cache`, `-cpus`, and `J?-sched-posix`), building on K20, K21, K24 and Era 13's queue, idle and IPC items. K?-ipc-priority notes that K?-sched-donate does its job if it comes first.
-- **Later eras**: 13 to 17 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 18.
+- **Era 18 · Security: hardening, trust and people**, new: eleven `K?-sec-...` items (kernel objects counted against their creator, fuzzing, a manifest per program, signed programs, verified boot, users as capability sets, disk encryption, speculation mitigations, `DEBUG_WRITE` behind a capability, an `unsafe` audit with Miri, an audit log). K25, K26, K28, K29 and the security items of Eras 12 to 17 are pointed to, not moved.
+- **Later eras**: 13 to 18 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 19.
 
 ## Design decisions
 
@@ -87,6 +94,9 @@ What it lacks: priorities or classes (every thread equal; K20 is under way on Ma
 - **The device manager is Zircon's answer**: the kernel hands out every device the same way, and one table in user space decides which driver gets it. The IOMMU stays mechanism too: the kernel programs it from the memory objects a driver holds.
 - **Memory as its own era, with policy kept out of the kernel.** The kernel shares, copies on write and drops pages; which pages to evict and which program to stop when memory runs out is decided in user space, as the Goals ask. Its milestone: shared code pages, copy-on-write private mappings, running out of memory without a kernel panic, SMEP, SMAP and PAN on. Hardening first: K?-mm-smap is small, and K?-mm-oom is what the milestone tests.
 - **Scheduling contexts, seL4's MCS way.** The scheduler is the one piece of policy every microkernel keeps, but it can be kept to mechanism: the kernel enforces a context's priority, budget and period; user space decides who gets which context and hands it out as a capability, so a program can't raise its own priority; and a server runs on its caller's context during a call, which makes priority inheritance and "who pays for this request" the same mechanism. Linux's `nice`, trusted from any process, would fit the Goals worse. Its milestone: a key press on time with four busy programs, real-time threads never late behind a compile, 64 threads no more than one, servers on their clients' budgets, no priority raised without a capability.
+- **Security as its own era, though it runs through every other.** Each era already has its security items (the IOMMU, SMAP, contexts as capabilities, sandboxes); Era 18 has what belongs to none of them - accounting for kernel memory, trust in what runs and boots, users, encryption, fuzzing - and points to the rest. Its milestone: a program with no grants can't crash the machine, the fuzzers find nothing in a set time, only signed programs get grants, a verified boot, two users kept apart.
+- **Users as capability sets, not user ids.** A login service hands a user's session its home directory handle and its allowed services; the kernel never checks a uid. That keeps the kernel pure and makes a user the same thing as everything else in TheTaaJ: what you were handed.
+- **Kernel-memory accounting first**, because it is the one hole a powerless program can use against the whole machine.
 - **The network items in Era 12, not a new era.** Era 12 was already the network's era; the new items are its scale and speed.
 - **Every era starts with a benchmark.** Each section's first item measures; the rest are judged by it.
 - **No owner given.** The eras are not put in either machine's decided order: that is for the user.
@@ -99,6 +109,7 @@ What it lacks: priorities or classes (every thread equal; K20 is under way on Ma
 - The driver claims: `offered()` and its class and vendor matches, `prepare`'s per-kind choices and the bus-master bit set (`kernel64/src/devices.rs`), the virtio identification (`mmio_devices.rs`), the DMA note at the top of `devices.rs`, init's fixed grants for one disk, card and USB controller and its keeping of their DMA memory (`user/src/bin/init.rs`), and what `usb.rs` serves.
 - The memory claims: `paging.rs`'s `Format`, `frame.rs`'s bitmap and lowest-first search, the panic for a null `alloc` in `mm.rs`, the protections `enable_protection` turns on (NXE, CR0.WP, CR4.PGE - not SMEP or SMAP) and PXN and UXN on AArch64, `fault_in` and the account (`process.rs`, `account.rs`), `MEMORY_MAX` 512 MiB and `RESERVE_MAX` 64 GiB (`abi`).
 - The scheduler claims: `SLICE`, the one `ready` queue and the `states` map, `tick`'s walk over every state and its `Vec`, `offer` and `pokes` (a `u64`) in `sched.rs`; `preempt_if_needed` from the timer interrupt and the preemption selftest; `HZ` from `abi::TICKS_PER_SECOND`. K21's branch (`k21-cpu-time`) exists unmerged; K20's is not pushed yet.
+- The security claims: the rights in `abi` (SEND to KILL), `PROCESS_KILL` and `SIGNAL_SEND` needing KILL, `PROCESS_SPAWN`'s launcher, `SYSTEM_INFO` and `PROCESS_LIST` needing the system handle, `DEBUG_WRITE` with no handle (`abi`, `syscall.rs`); the shell's grants by name (`user/src/bin/shell.rs`, `narrow`); what `account.rs` does not count; `random.rs`'s sources; no fuzz targets in the repository.
 - Nothing was built or run: this changes only documents.
 
 ## What is still missing
@@ -129,4 +140,5 @@ grep -n '^## Goals\|^## Era\|kernel stays pure\|K?-\|J?-\|^| K27' docs/who-does-
 | `## Era 15 · Devices: a device manager and confined drivers` | 9 `K?-dev` items and K27 |
 | `## Era 16 · Memory: sharing, reclaim and hardening` | 11 `K?-mm` items |
 | `## Era 17 · Scheduling: contexts, classes and fairness` | 8 `K?-sched` items and `J?-sched-posix` |
-| `## Later eras` | Eras 13 to 17, and the assistant as 18 |
+| `## Era 18 · Security: hardening, trust and people` | 11 `K?-sec` items |
+| `## Later eras` | Eras 13 to 18, and the assistant as 19 |

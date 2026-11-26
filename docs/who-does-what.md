@@ -339,7 +339,7 @@ The order matters here: each item is needed by the ones after it.
 
 ### Security
 
-K27 (the IOMMU) is in Era 15.
+K27 (the IOMMU) is in Era 15. Era 18 (Security: hardening, trust and people) has the rest, and points to these.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
@@ -566,6 +566,39 @@ What it lacks: any policy - every thread is equal, with no priorities or classes
 
 ---
 
+## Era 18 · Security: hardening, trust and people
+
+**Done when**: a program given no grants cannot crash or starve the machine, whatever it calls; the fuzzers (system calls on TheTaaJ, every parser on the host) run for a set time with nothing found; a program gets its manifest's grants only if it and its manifest are signed; the machine boots verified (UEFI Secure Boot, measured into a TPM where there is one); and two users on one machine cannot reach each other's files. Whose it is, and when, is for the user to say. Items already elsewhere are pointed to, not moved: K25 (ASLR), K26 (stack protector), K28 (who may switch off), K29 (TCP sequence numbers) in Security above; K37 (TLS) and K?-net-filter in Era 12; K27 (IOMMU) in Era 15; K?-mm-smap, K?-mm-kpti and K?-mm-oom in Era 16; K?-sched-contexts in Era 17; J?-vfs-openat's sandboxes in Era 14; K?-ipc-cycles in Era 13.
+
+What is right, and is TheTaaJ's strongest point: **capabilities from the bottom up**. A process reaches a kernel object only through a handle, whose rights (SEND, RECEIVE, DUPLICATE, TRANSFER, READ, WRITE, KILL) can only shrink when passed on. No ambient authority in the kernel for what matters: no "kill process 42" (`kill` and signals need a handle with KILL), starting a program needs a launcher handle, the process list needs the system handle. The shell **narrows the registry for each program it runs** - `ls` gets the read-only file channel, `ping` only `net`, an unknown program nothing - and a redirect gives a channel, not the file service. init's namespace table is the system's policy in one place. Drivers hold only their own registers, DMA memory and interrupt. The kernel is Rust, with about 260 `unsafe`. Randomness from the CPU, jitter and the clock, through ChaCha.
+
+What is missing:
+
+- **Kernel memory a program can use up**: channels, queued messages, handles, processes and threads are kernel allocations not counted against their creator, and the kernel heap panics when it can't grow (Era 16). The one way a program with no grants can bring the machine down.
+- **Defences around the core**: SMEP, SMAP, PAN, KPTI (Era 16), the IOMMU (Era 15), ASLR (K25), stack protector (K26), and no speculation (Spectre) mitigations at all.
+- **Trust in what runs**: which services a program gets is a list of names hard-coded in the shell (`CHANGE_PROGRAMS`, `NET_PROGRAMS`, ...), so whoever can write `/edit` plants code that gets `windows` and `files`, and a new program means editing the shell; nothing is signed; nothing verifies the bootloader or the kernel.
+- **People**: no users or login; no disk encryption.
+- **Assurance**: system calls and parsers (ELF, TaajFS, the network, USB descriptors, ACPI) are tested but never fuzzed; `unsafe` is not audited as a whole; no Miri.
+- **Smaller**: `DEBUG_WRITE` lets any program write the kernel console; no audit log of grants and powerful actions (which the assistant will need).
+
+All of it keeps the kernel pure: the kernel counts, checks rights and enforces; who gets what - manifests, signatures, users, the audit log, encryption - is in user-space services.
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| K?-sec-kmem | **Kernel objects counted against their creator**: each channel, queued message, handle, process and thread charged to an account (the creator's, or the sender's for a message in someone's inbox), refused at the limit | M | First: the era's milestone. With K?-mm-oom; makes K?-ipc-cycles a bounded leak until it is fixed |
+| K?-sec-fuzz | **Fuzzing**: a system-call fuzzer run on TheTaaJ (random calls, arguments and handles from a program with no grants), and `cargo fuzz` on the host for every parser of untrusted input - `elf`, `taajfs`, `net`, `usb` descriptors, `acpi` tables, the file and network protocols | M | Early. Run for a set time before an era's merge |
+| K?-sec-manifests | **A manifest per program**: the services it needs (`files.look`, `net`, `windows`...), read by the shell and init, which grant from it rather than from lists of names in the shell; a program without one gets nothing, as now | M | After J?-vfs-namespace, so a manifest can name directories too |
+| K?-sec-signing | **Signed programs and manifests**: a key the machine trusts, checked before a program gets its manifest's grants; unsigned programs run with none | M | After K?-sec-manifests |
+| K?-sec-boot | **Verified boot**: UEFI Secure Boot (the bootloader and kernel signed), and measured boot into a TPM where there is one | L | With MaK-WSL, who owns TheBootloader |
+| K?-sec-users | **Users and login**: each user a set of capabilities - a home directory handle and the services allowed - given by a login service, with no user ids checked in the kernel | L | After J?-vfs-namespace and J?-fs-owners |
+| K?-sec-crypt | **Disk encryption**: a block service between `fs` and the disk driver, its key from the login (and the TPM) | L | After K?-sec-users |
+| K?-sec-spectre | **Speculation mitigations**: IBRS/IBPB or retpolines, buffers cleared on return to user mode, on the CPUs that need them; the AArch64 equivalents | M | With K?-mm-kpti |
+| K?-sec-debug | **`DEBUG_WRITE` behind a capability**: a log handle given to whoever may write the kernel console | S | Small |
+| K?-sec-unsafe | **Every `unsafe` with a written reason** (`// SAFETY:`), checked by a lint; Miri over the host tests of the kernel's crates | M | |
+| K?-sec-audit | **An audit log**: grants, kills, power, spawns with powers, kept by a user-space service and readable only with a handle for it | M | Before the assistant era, whose "undo" and activity log build on it |
+
+---
+
 ## Either machine: whoever is free
 
 | # | Item | Size | Notes |
@@ -601,4 +634,5 @@ As drafted in `docs/ai-assistant.md`, and added since:
 - **Era 15 · Devices: a device manager and confined drivers** (above).
 - **Era 16 · Memory: sharing, reclaim and hardening** (above).
 - **Era 17 · Scheduling: contexts, classes and fairness** (above).
-- **The assistant** (drafted as Era 9, which is now rustc) takes the next free number, 18: the `infer` service, tools published by services, confirmation, undo.
+- **Era 18 · Security: hardening, trust and people** (above).
+- **The assistant** (drafted as Era 9, which is now rustc) takes the next free number, 19: the `infer` service, tools published by services, confirmation, undo.
