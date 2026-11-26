@@ -131,7 +131,6 @@ Its files: the test rules of the `Makefile`, `kernel/kernel64/scripts/*-test.sh`
 | J95 | 2 | No flaky tests (every part 50 times) |
 | K50 | 2 | `bigmem64-test` once did not finish under KVM |
 | K52 | 2 | `aarch64-tcp-test`'s late segment |
-| J52 | 2 | A test for the rules of `threads.rs` |
 | J96 | 2 | Coverage of the host tests |
 | K104 | 2 | A system-call fuzzer |
 | K112 | 2 | Every `unsafe` with a reason, checked |

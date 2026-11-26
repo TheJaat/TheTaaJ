@@ -178,7 +178,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| TheJat-WSL/ci: J51, test programs out of the kernel image (no branch yet) | - |
+| TheJat-WSL/ci: K112, every `unsafe` with a reason, checked (J51 waits for U7, J92 for U8) | `k112-unsafe-reasons` |
 
 ## The decided order
 
@@ -294,7 +294,7 @@ The order matters here: each item is needed by the ones after it.
 | # | Item | Size | Notes |
 |---|---|---|---|
 | J51 | Test programs out of the kernel image (onto the test disk) | M | The kernel image has ~680 KiB left under 3 MiB |
-| J52 | A test that fails when rule 1 or rule 3 of `threads.rs` is broken | S | Known gap |
+| J52 | A test that fails when rule 1 or rule 3 of `threads.rs` is broken | S | **Done (entry 119)**: rule 1 checked at every switch (the lock still held where it is released), rule 3 by the threads self-test (a waiter woken before it waits is still in its queue); each broken on purpose panics. Found and fixed with it: a panic on a machine with more CPUs than the kernel uses was a triple fault (the stopping NMI reached the CPUs left asleep); `fault-test.sh`'s new `page@20` checks it |
 | J53 | A test for the ticks mutation from entry 097 (late timer interrupts) | S | Perhaps by stopping a CPU for a while |
 | J54 | A fresh `git clone --recurse-submodules` builds and passes (in a clean container) | S | Never tried |
 | J55 | Programs moved into `/bin` on the run disks (libc's exec and the shell both look there, entries 100 and 101) | S | The disk recipes and every test put programs in the root and look for them there |
