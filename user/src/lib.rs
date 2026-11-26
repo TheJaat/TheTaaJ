@@ -443,6 +443,17 @@ pub fn realtime_ns() -> u64 {
     abi::decode(syscall(call::CLOCK, abi::clock::REALTIME, 0, 0)).unwrap_or(0)
 }
 
+/// SCHED_SET: a thread's or a process's priority (as a level, see
+/// abi::sched), CPUs, or a process's ceiling (journal entry NNN).
+pub fn sched_set(target: u64, id: u64, what: u64, value: u64) -> Result<(), Error> {
+    abi::decode(syscall5(call::SCHED_SET, target, id, what, value, 0)).map(|_| ())
+}
+
+/// SCHED_GET: what SCHED_SET sets, and the calling thread's number.
+pub fn sched_get(target: u64, id: u64, what: u64) -> Result<u64, Error> {
+    abi::decode(syscall(call::SCHED_GET, target, id, what))
+}
+
 /// The CPU time this process has used, all its threads together, in
 /// nanoseconds: the time they were on a CPU (clock::PROCESS_CPU).
 pub fn process_cpu_ns() -> u64 {

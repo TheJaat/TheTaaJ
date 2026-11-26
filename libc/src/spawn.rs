@@ -100,6 +100,12 @@ fn children<R>(f: impl FnOnce(&mut Vec<(c_int, Handle)>) -> R) -> R {
     f(&mut CHILDREN.lock())
 }
 
+/// The process handle of the child numbered `id`, not yet waited for
+/// (sched.rs: setpriority and sched_setaffinity on a child).
+pub(crate) fn child_process(id: c_int) -> Option<Handle> {
+    children(|list| list.iter().find(|&&(other, _)| other == id).map(|&(_, handle)| handle))
+}
+
 /// `posix_spawn_file_actions_init(actions)`: no actions. 0.
 ///
 /// # Safety

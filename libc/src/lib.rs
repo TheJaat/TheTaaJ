@@ -84,6 +84,7 @@ pub mod sockets;
 pub mod pipes;
 pub mod poll;
 pub mod random;
+pub mod sched;
 pub mod spawn;
 pub mod status;
 pub mod string;
