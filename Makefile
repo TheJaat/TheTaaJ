@@ -1758,7 +1758,7 @@ HANDLES_C       = $(KERNEL64_DIR)/scripts/handles.c
 # A namespace per process (J62, journal entry 118): taaj_mount, and the
 # mounts handed to a child. namespace.c runs in the same boot.
 NAMESPACE_C     = $(KERNEL64_DIR)/scripts/namespace.c
-# Names from a directory descriptor (J63, journal entry 119): the *at
+# Names from a directory descriptor (J63, journal entry 120): the *at
 # calls, and a child in a tree of its own. at.c runs in the same boot.
 AT_C            = $(KERNEL64_DIR)/scripts/at.c
 handles64-test: iso64 user64 libc64 tfstool-rs

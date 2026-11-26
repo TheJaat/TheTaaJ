@@ -1,6 +1,6 @@
 # Names from a directory, and a program given one directory
 
-*Journal entry #119 · J63 of Era 14: the `openat` family, and a sandbox made of capabilities. Written on TheJat-VM/files, on the branch `j63-openat` in TheTaaJ and TheKernel.*
+*Journal entry #120 · J63 of Era 14: the `openat` family, and a sandbox made of capabilities. Written on TheJat-VM/files, on the branch `j63-openat` in TheTaaJ and TheKernel.*
 
 ## Why
 
