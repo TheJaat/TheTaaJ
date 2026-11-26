@@ -173,7 +173,7 @@ Each machine (or session) has its own table and changes only its own, so two mac
 
 | Step | Branch |
 |---|---|
-| Building and measuring TheJat-WSL (no lane yet: the user decides) | - |
+| Faster tests: next, e1000-64-test and the LLVM relinking (no branch yet) | - |
 
 ## The decided order
 

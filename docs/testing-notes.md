@@ -3975,3 +3975,38 @@ grep -c "^### Now: " docs/who-does-what.md
 | `2` | Only rule 14's two lines about pull requests from outside |
 | `58` | All of test64's parts, as before |
 | `3` | One "Now" table per machine |
+
+---
+
+## 108 · The 20-CPU boot first: test64's parts in 573 s instead of 940
+
+[The entry](journal/108-smp-boot-first.md)
+
+From the root of TheTaaJ, with nothing else booting on the machine:
+
+```
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `test64: all passed`, in about 10 minutes under KVM (before: about 16) | The suite no longer stands still |
+| `boot64-test passed` and `boot64-uefi-test passed` within seconds of each other, at the end | The two typed boots ran side by side |
+
+---
+
+## 109 · The typed boots wait for the right thing: test64 in 6½ minutes
+
+[The entry](journal/109-typed-boots.md)
+
+From the root of TheTaaJ, with nothing else booting on the machine:
+
+```
+make test64 2>&1 | tee build/test64.out
+grep "did not run" build/test64.out
+```
+
+| Look for | Meaning |
+|---|---|
+| `test64: all passed`, about 6½ minutes under KVM (before: about 10½) | The waits end when their lines have run |
+| Nothing from the `grep` | No typer waited out its time for a line |

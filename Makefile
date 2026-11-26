@@ -745,7 +745,7 @@ run64-stick-uefi: stick64
 # The x86_64 boot tests type the cprimes limit for this machine's
 # accelerator (CPRIMES_LIMIT_X86, above); AArch64's keeps CPRIMES_LIMIT_TCG.
 boot64-test boot64-uefi-test: CPRIMES_LIMIT = $(CPRIMES_LIMIT_X86)
-boot64-test: iso64 cprogs64 tfstool-rs
+boot64-test: iso64 cprogs64 tfstool-rs | smp64-test
 	@echo "Booting the 64-bit kernel headless via BIOS (serial log: $(SERIAL64_LOG))..."
 	$(call make-test-disk,$(SERIAL64_LOG).disk)
 	@DISK=$(SERIAL64_LOG).disk KEYS="$(TEST_KEYS)" $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(SERIAL64_LOG)
@@ -788,7 +788,7 @@ endif
 	@echo "power64-test passed"
 
 # The same ISO, the same kernel, booted by UEFI firmware instead.
-boot64-uefi-test: iso64 cprogs64 tfstool-rs
+boot64-uefi-test: iso64 cprogs64 tfstool-rs | smp64-test
 ifneq ($(HAVE_CLANG),yes)
 	@echo "FAIL: the UEFI loader needs clang and lld (sudo apt install clang lld)"; exit 1
 endif
@@ -802,9 +802,16 @@ endif
 # The other numbers of CPUs. The two boots above have 4, and do
 # everything; these only boot, with one CPU (nothing to start), with
 # two, and with more than the kernel uses (the rest are left asleep).
+#
+# The 20-CPU boot needs 20 boot slots at once, and while it waits for
+# them it holds boot-slots.sh's gate, so no other boot can start. It once
+# waited behind boot64-test's typed boot, 7 minutes long, and the whole
+# suite stood still for 6 of them, with boot64-uefi-test, as long, queued
+# behind (journal entry 108). So the two typed boots wait for smp64-test
+# (an order-only prerequisite, about 20 s), and its 20-CPU boot comes first.
 SMP64_LOG = $(BUILD_DIR)/smp64
 smp64-test: iso64
-	@for cpus in 1 2 20; do \
+	@for cpus in 20 2 1; do \
 	    echo "Booting the 64-bit kernel with $$cpus CPU(s) (serial log: $(SMP64_LOG)-$$cpus.log)..."; \
 	    SMP=$$cpus $(KERNEL64_DIR)/scripts/qemu-boot.sh $(ISO64_IMG) $(SMP64_LOG)-$$cpus.log 40; \
 	    used=$$cpus; [ $$cpus -le 16 ] || used=16; \
