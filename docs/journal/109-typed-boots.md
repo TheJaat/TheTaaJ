@@ -1,6 +1,6 @@
 # The typed boots wait for the right thing: test64 in 6½ minutes
 
-*Journal entry #NNN · a test fix, in TheKernel's boot scripts. Written on TheJat-WSL. The typed boots (`boot64-test`, `boot64-uefi-test`, `aarch64-keys-test`, and the screen and editor tests) spent more than half their time in waits that could only end by running out: about 240 s of a 434-second boot. A wait now ends when the line it waits for has run, by that line's own text. `make test64` on TheJat-WSL: 626 s after entry 108, 389 s now; 994 s this morning.*
+*Journal entry #109 · a test fix, in TheKernel's boot scripts. Written on TheJat-WSL. The typed boots (`boot64-test`, `boot64-uefi-test`, `aarch64-keys-test`, and the screen and editor tests) spent more than half their time in waits that could only end by running out: about 240 s of a 434-second boot. A wait now ends when the line it waits for has run, by that line's own text. `make test64` on TheJat-WSL: 626 s after entry 108, 389 s now; 994 s this morning.*
 
 ## Why
 

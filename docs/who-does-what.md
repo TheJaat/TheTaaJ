@@ -155,7 +155,7 @@ Each machine (or session) has its own table and changes only its own, so two mac
 
 | Step | Branch |
 |---|---|
-| Faster tests: typing less in the typed boots (boot64, boot64-uefi, aarch64-keys) | `typed-boots` |
+| Faster tests: next, e1000-64-test and the LLVM relinking (no branch yet) | - |
 
 ## The decided order
 
