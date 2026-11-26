@@ -1,6 +1,6 @@
-# Goals, Eras 13 to 18, and the network, threads, VFS, driver, memory, scheduler and security items
+# Goals, Eras 13 to 19, and the network, threads, VFS, driver, memory, scheduler, security and desktop items
 
-*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support, VFS, device drivers, memory management, the scheduler and security are, for all the items found - IPC, TaajFS, network, threads, VFS, drivers, memory, scheduling, security - to be put into eras, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
+*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support, VFS, device drivers, memory management, the scheduler, security and the desktop are, for all the items found - IPC, TaajFS, network, threads, VFS, drivers, memory, scheduling, security, desktop - to be put into eras, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
 
 ## Why
 
@@ -71,6 +71,12 @@ TheTaaJ's strongest point. Capabilities from the bottom up: handles with rights 
 
 What surrounds that core is thin. Kernel objects - channels, queued messages, handles, processes - are not counted against anyone, and the kernel heap panics when it cannot grow: the one way a program with no grants can bring the machine down. SMEP, SMAP, PAN, KPTI, the IOMMU, ASLR, the stack protector and speculation mitigations are all missing. A program's services come from lists of names in the shell, nothing is signed, nothing verifies the boot. No users, no encryption, no fuzzing, no audit of `unsafe`, no audit log; `DEBUG_WRITE` is open to every program.
 
+## What the desktop review found
+
+The window server's design is right for a microkernel and close to Wayland's: a window is a channel and a memory object, the program draws in its own memory and says what changed, pixels never travel in messages, and a crash closes its windows by itself. The server draws every frame, so titles can't be faked, and keys go only to the focused window. The window manager, drawing, the editor and the protocol are tested on the host.
+
+As a desktop it is at the start. `display` is the compositor, window manager, terminal and console in one process; keys reach programs as terminal bytes; the font is ASCII at one size; no resizing, panel, launcher or clipboard; two programs with windows (`counter` and `edit`); a toolkit of a frame, text and buttons; CPU composition at the boot resolution; any program with `windows` may cover the screen, and no key always reaches the system; no notifications, accessibility or image formats; key-to-screen time never measured. Of the vision's "a desktop people can use daily", the furthest from done.
+
 ## What changed in `docs/who-does-what.md`
 
 - **Era 12 · Web** (its ground was already the "Network" section): an introduction to the section, and seven `K?-net-...` items - a benchmark, shared rings for frames, more sockets, a port filter, a routing table, offload, and sockets surviving a restart.
@@ -82,7 +88,8 @@ What surrounds that core is thin. Kernel objects - channels, queued messages, ha
 - **Era 16 · Memory: sharing, reclaim and hardening**, new: eleven `K?-mm-...` items (SMEP, SMAP and PAN; no kernel panic for want of memory; a pressure signal; copy-on-write objects; a generic pager; reclaim; a buddy allocator; huge pages; a zero page; objects over 512 MiB; KPTI where needed). J29, J58, K25 and E5 stay where they are, pointed to.
 - **Era 17 · Scheduling: contexts, classes and fairness**, new: nine items (`K?-sched-bench`, `-timers`, `-contexts`, `-donate`, `-classes`, `-groups`, `-cache`, `-cpus`, and `J?-sched-posix`), building on K20, K21, K24 and Era 13's queue, idle and IPC items. K?-ipc-priority notes that K?-sched-donate does its job if it comes first.
 - **Era 18 · Security: hardening, trust and people**, new: eleven `K?-sec-...` items (kernel objects counted against their creator, fuzzing, a manifest per program, signed programs, verified boot, users as capability sets, disk encryption, speculation mitigations, `DEBUG_WRITE` behind a capability, an `unsafe` audit with Miri, an audit log). K25, K26, K28, K29 and the security items of Eras 12 to 17 are pointed to, not moved.
-- **Later eras**: 13 to 18 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 19.
+- **Era 19 · Desktop: applications people can use daily**, new: fourteen `K?-ui-...` items (a benchmark, `display` split into four programs, real key events, text for every language, a toolkit, a panel, a clipboard, the first applications, PNG and JPEG, virtio-gpu, native resolution and scaling, a trusted path and screen lock, notifications, accessibility). K39-K46 are pointed to.
+- **Later eras**: 13 to 19 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 20.
 
 ## Design decisions
 
@@ -97,6 +104,9 @@ What surrounds that core is thin. Kernel objects - channels, queued messages, ha
 - **Security as its own era, though it runs through every other.** Each era already has its security items (the IOMMU, SMAP, contexts as capabilities, sandboxes); Era 18 has what belongs to none of them - accounting for kernel memory, trust in what runs and boots, users, encryption, fuzzing - and points to the rest. Its milestone: a program with no grants can't crash the machine, the fuzzers find nothing in a set time, only signed programs get grants, a verified boot, two users kept apart.
 - **Users as capability sets, not user ids.** A login service hands a user's session its home directory handle and its allowed services; the kernel never checks a uid. That keeps the kernel pure and makes a user the same thing as everything else in TheTaaJ: what you were handed.
 - **Kernel-memory accounting first**, because it is the one hole a powerless program can use against the whole machine.
+- **The desktop's milestone is a day without the terminal.** The vision is a desktop used daily; the test is whether a day's ordinary work - files, editing, copy and paste, another language, a locked screen - can be done in applications alone, quickly enough (the benchmark sets the key-to-screen limit).
+- **Split `display` first.** Four jobs in one process is the one thing about the desktop that goes against Modular and Reliable; every other item builds on the pieces it becomes.
+- **A trusted path.** A key combination that always reaches the system is what makes a screen lock and a login trustworthy when any program may draw anything in its window.
 - **The network items in Era 12, not a new era.** Era 12 was already the network's era; the new items are its scale and speed.
 - **Every era starts with a benchmark.** Each section's first item measures; the rest are judged by it.
 - **No owner given.** The eras are not put in either machine's decided order: that is for the user.
@@ -110,6 +120,7 @@ What surrounds that core is thin. Kernel objects - channels, queued messages, ha
 - The memory claims: `paging.rs`'s `Format`, `frame.rs`'s bitmap and lowest-first search, the panic for a null `alloc` in `mm.rs`, the protections `enable_protection` turns on (NXE, CR0.WP, CR4.PGE - not SMEP or SMAP) and PXN and UXN on AArch64, `fault_in` and the account (`process.rs`, `account.rs`), `MEMORY_MAX` 512 MiB and `RESERVE_MAX` 64 GiB (`abi`).
 - The scheduler claims: `SLICE`, the one `ready` queue and the `states` map, `tick`'s walk over every state and its `Vec`, `offer` and `pokes` (a `u64`) in `sched.rs`; `preempt_if_needed` from the timer interrupt and the preemption selftest; `HZ` from `abi::TICKS_PER_SECOND`. K21's branch (`k21-cpu-time`) exists unmerged; K20's is not pushed yet.
 - The security claims: the rights in `abi` (SEND to KILL), `PROCESS_KILL` and `SIGNAL_SEND` needing KILL, `PROCESS_SPAWN`'s launcher, `SYSTEM_INFO` and `PROCESS_LIST` needing the system handle, `DEBUG_WRITE` with no handle (`abi`, `syscall.rs`); the shell's grants by name (`user/src/bin/shell.rs`, `narrow`); what `account.rs` does not count; `random.rs`'s sources; no fuzz targets in the repository.
+- The desktop claims: what `display.rs` holds and its startup handles, the window protocol (`gui/src/protocol.rs`), the window manager (`gui/src/desktop.rs`), `gfx`'s font from `console`, `WINDOW_PROGRAMS` (`counter`) and `EDIT_PROGRAMS` (`edit`) in `user/src/bin/shell.rs`.
 - Nothing was built or run: this changes only documents.
 
 ## What is still missing
@@ -141,4 +152,5 @@ grep -n '^## Goals\|^## Era\|kernel stays pure\|K?-\|J?-\|^| K27' docs/who-does-
 | `## Era 16 · Memory: sharing, reclaim and hardening` | 11 `K?-mm` items |
 | `## Era 17 · Scheduling: contexts, classes and fairness` | 8 `K?-sched` items and `J?-sched-posix` |
 | `## Era 18 · Security: hardening, trust and people` | 11 `K?-sec` items |
-| `## Later eras` | Eras 13 to 18, and the assistant as 19 |
+| `## Era 19 · Desktop: applications people can use daily` | 14 `K?-ui` items |
+| `## Later eras` | Eras 13 to 19, and the assistant as 20 |
