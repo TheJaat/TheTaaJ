@@ -155,7 +155,7 @@ Each machine (or session) has its own table and changes only its own, so two mac
 
 | Step | Branch |
 |---|---|
-| Building and measuring TheJat-WSL (no lane yet: the user decides) | - |
+| Faster tests: the 20-CPU boot no longer holds up the suite | `smp-boot-first` |
 
 ## The decided order
 
