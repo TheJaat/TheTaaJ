@@ -195,7 +195,6 @@ Its files: `kernel/kernel64/src/sched.rs`, `smp.rs`, `futex.rs`, `alarms.rs`, `c
 | Item | Wave | Note |
 |---|---|---|
 | K20 | 1 | Priorities and affinity: **in progress** (`k20-priorities`) |
-| K21 | 1 | CPU time per process; `ci`'s K141 waits for it |
 | K24 | 1 | Fine timers |
 | J53 | 1 | The ticks mutation test |
 | K67 | 1 | The threads benchmark |
