@@ -643,6 +643,7 @@ endif
 kernel64: user64
 	@echo "Building the 64-bit kernel..."
 	cd $(KERNEL64_DIR) && cargo build --release
+	@python3 $(KERNEL64_DIR)/scripts/fill-symbols.py $(KERNEL64_DIR)/target/x86_64-unknown-none/release/kernel64
 
 uefi-loader:
 ifeq ($(HAVE_CLANG),yes)
@@ -842,6 +843,7 @@ BIG64_SAID = \[test\] big image: the kernel ends at 0x[0-9a-f]+, above 2 MiB; 51
 big64-test: build-bootloader user64 uefi-loader
 	@echo "Building a kernel that ends above 2 MiB..."
 	cd $(KERNEL64_DIR) && cargo build --release --quiet --features big-image --target-dir target/big-image
+	@python3 $(KERNEL64_DIR)/scripts/fill-symbols.py $(KERNEL64_DIR)/target/big-image/x86_64-unknown-none/release/kernel64
 	rm -rf $(BIG64_DIR)
 	mkdir -p $(BIG64_DIR)/kernel
 	cp $(STAGE1_BIN) $(STAGE2_BIN) $(BIG64_DIR)/
@@ -1100,6 +1102,7 @@ endif
 
 kernel-aarch64: user-aarch64 cprogs-aarch64
 	cd $(KERNEL64_DIR) && cargo build --release --target $(KERNEL_A64_TARGET)
+	@python3 $(KERNEL64_DIR)/scripts/fill-symbols.py $(KERNEL64_DIR)/target/$(KERNEL_A64_TARGET)/release/kernel64
 	@mkdir -p $(BUILD_DIR)/aarch64
 	$(LLVM_OBJCOPY) -O binary $(KERNEL_A64_ELF) $(KERNEL_A64_IMAGE).new && mv -f $(KERNEL_A64_IMAGE).new $(KERNEL_A64_IMAGE)
 

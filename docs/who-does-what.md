@@ -178,7 +178,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| TheJat-WSL/ci: next in the lane (J51 waits for U7, J92 for U8) | - |
+| TheJat-WSL/ci: K137, a panic that says where | `k137-backtrace` |
 
 ## The decided order
 
@@ -714,7 +714,8 @@ All of it stays in user space except what only the kernel can see: the kernel pr
 | # | Item | Size | Notes |
 |---|---|---|---|
 | K136 | **A log service**: everything that goes to the debug log also goes to a file on the disk, with the time, the source (kernel or which program) and a level on each line; kept across reboots, the oldest dropped first; read with a `log` command | M | First. The kernel's ring is handed to it as a memory object; the serial line stays as it is |
-| K137 | **A panic that says where**: a backtrace (frame pointers, the kernel's own symbols), the CPU and thread, and a crash record left in memory that survives a warm reboot or in a reserved spot on the disk, which the next boot hands to the log service | M | |
+| K137 | **A panic that says where**: a backtrace (frame pointers, the kernel's own symbols), the CPU and thread, and a crash record left in memory that survives a warm reboot or in a reserved spot on the disk, which the next boot hands to the log service | M | **Done (entry NNN)** for the backtrace and the thread: frame pointers, the kernel's own symbols filled in after linking, on both CPUs, for panics and CPU exceptions; the fault tests require it. The crash record is `K?-crash-record` |
+| K?-crash-record | **A crash record the next boot finds**: a panic's report kept in memory that survives a warm reboot, or in a reserved spot on the disk, and handed to the log service at the next boot | M | K137's second half; after K136 (the log service) |
 | K138 | **A crash report per program**: when a process breaks a rule, its registers, a backtrace, its memory map and the last lines it printed, written by a user-space service the kernel tells (as `PeerClosed` tells a client) | M | After K136 |
 | K139 | **Tracing**: trace points in the kernel (system calls, IPC sends and receives, switches, faults, interrupts) written to a per-CPU ring that a tracing service maps, with a handle for it; a `trace` command that records a span and shows it | L | The data the benchmarks of Eras 13 and 17 want |
 | K140 | **A profiler**: the timer samples where each CPU is (program and address); a report per function, with symbols | M | After K139 |
