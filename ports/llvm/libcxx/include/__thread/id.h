@@ -12,18 +12,19 @@
 
 #include <__compare/ordering.h>
 #include <__config>
-#include <__fwd/hash.h>
+#include <__fwd/functional.h>
 #include <__fwd/ostream.h>
-#include <__threading_support>
+#include <__thread/support.h>
 
 #if !defined(_LIBCPP_HAS_NO_PRAGMA_SYSTEM_HEADER)
 #  pragma GCC system_header
 #endif
 
+#if _LIBCPP_HAS_THREADS
+
 _LIBCPP_BEGIN_NAMESPACE_STD
 
-#ifndef _LIBCPP_HAS_NO_THREADS
-class _LIBCPP_EXPORTED_FROM_ABI __thread_id;
+class __thread_id;
 
 namespace this_thread {
 
@@ -34,7 +35,7 @@ _LIBCPP_HIDE_FROM_ABI __thread_id get_id() _NOEXCEPT;
 template <>
 struct hash<__thread_id>;
 
-class _LIBCPP_TEMPLATE_VIS __thread_id {
+class __thread_id {
   // FIXME: pthread_t is a pointer on Darwin but a long on Linux.
   // NULL is the no-thread value on Darwin.  Someone needs to check
   // on other platforms.  We assume 0 works everywhere for now.
@@ -72,7 +73,7 @@ private:
 
   friend __thread_id this_thread::get_id() _NOEXCEPT;
   friend class _LIBCPP_EXPORTED_FROM_ABI thread;
-  friend struct _LIBCPP_TEMPLATE_VIS hash<__thread_id>;
+  friend struct hash<__thread_id>;
 };
 
 inline _LIBCPP_HIDE_FROM_ABI bool operator==(__thread_id __x, __thread_id __y) _NOEXCEPT {
@@ -114,8 +115,8 @@ inline _LIBCPP_HIDE_FROM_ABI __thread_id get_id() _NOEXCEPT { return __libcpp_th
 
 } // namespace this_thread
 
-#endif // !_LIBCPP_HAS_NO_THREADS
-
 _LIBCPP_END_NAMESPACE_STD
+
+#endif // _LIBCPP_HAS_THREADS
 
 #endif // _LIBCPP___THREAD_ID_H

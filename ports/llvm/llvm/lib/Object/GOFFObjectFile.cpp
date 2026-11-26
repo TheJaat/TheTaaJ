@@ -35,7 +35,7 @@ ObjectFile::createGOFFObjectFile(MemoryBufferRef Object) {
 
 GOFFObjectFile::GOFFObjectFile(MemoryBufferRef Object, Error &Err)
     : ObjectFile(Binary::ID_GOFF, Object) {
-  ErrorAsOutParameter ErrAsOutParam(&Err);
+  ErrorAsOutParameter ErrAsOutParam(Err);
   // Object file isn't the right size, bail out early.
   if ((Object.getBufferSize() % GOFF::RecordLength) != 0) {
     Err = createStringError(
@@ -104,16 +104,13 @@ GOFFObjectFile::GOFFObjectFile(MemoryBufferRef Object, Error &Err)
       PrevContinuationBits = I[1] & 0x03;
       continue;
     }
-
-#ifndef NDEBUG
-    for (size_t J = 0; J < GOFF::RecordLength; ++J) {
+    LLVM_DEBUG(for (size_t J = 0; J < GOFF::RecordLength; ++J) {
       const uint8_t *P = I + J;
       if (J % 8 == 0)
         dbgs() << "  ";
-
       dbgs() << format("%02hhX", *P);
-    }
-#endif
+    });
+
     switch (RecordType) {
     case GOFF::RT_ESD: {
       // Save ESD record.
@@ -168,6 +165,17 @@ GOFFObjectFile::GOFFObjectFile(MemoryBufferRef Object, Error &Err)
       LLVM_DEBUG(dbgs() << "  --  ESD " << EsdId << "\n");
       break;
     }
+    case GOFF::RT_TXT:
+      // Save TXT records.
+      TextPtrs.emplace_back(I);
+      LLVM_DEBUG(dbgs() << "  --  TXT\n");
+      break;
+    case GOFF::RT_RLD:
+      LLVM_DEBUG(dbgs() << "  --  RLD (GOFF record type) unhandled\n");
+      break;
+    case GOFF::RT_LEN:
+      LLVM_DEBUG(dbgs() << "  --  LEN (GOFF record type) unhandled\n");
+      break;
     case GOFF::RT_END:
       LLVM_DEBUG(dbgs() << "  --  END (GOFF record type) unhandled\n");
       break;
@@ -175,7 +183,10 @@ GOFFObjectFile::GOFFObjectFile(MemoryBufferRef Object, Error &Err)
       LLVM_DEBUG(dbgs() << "  --  HDR (GOFF record type) unhandled\n");
       break;
     default:
-      llvm_unreachable("Unknown record type");
+      Err = createStringError(object_error::parse_failed,
+                              "record %zu has unknown record type 0x%02" PRIX8,
+                              RecordNum, RecordType);
+      return;
     }
     PrevRecordType = RecordType;
     PrevContinuationBits = I[1] & 0x03;
@@ -188,8 +199,8 @@ const uint8_t *GOFFObjectFile::getSymbolEsdRecord(DataRefImpl Symb) const {
 }
 
 Expected<StringRef> GOFFObjectFile::getSymbolName(DataRefImpl Symb) const {
-  if (EsdNamesCache.count(Symb.d.a)) {
-    auto &StrPtr = EsdNamesCache[Symb.d.a];
+  if (auto It = EsdNamesCache.find(Symb.d.a); It != EsdNamesCache.end()) {
+    auto &StrPtr = It->second;
     return StringRef(StrPtr.second.get(), StrPtr.first);
   }
 
@@ -268,7 +279,13 @@ Expected<uint32_t> GOFFObjectFile::getSymbolFlags(DataRefImpl Symb) const {
   GOFF::ESDBindingScope BindingScope;
   ESDRecord::getBindingScope(Record, BindingScope);
 
-  if (BindingScope != GOFF::ESD_BSC_Section) {
+  GOFF::ESDSymbolType Type;
+  ESDRecord::getSymbolType(Record, Type);
+
+  if (Type != GOFF::ESD_ST_SectionDefinition &&
+      Type != GOFF::ESD_ST_ElementDefinition &&
+      BindingScope != GOFF::ESD_BSC_Section &&
+      BindingScope != GOFF::ESD_BSC_Module) {
     Expected<StringRef> Name = getSymbolName(Symb);
     if (Name && *Name != " ") { // Blank name is local.
       Flags |= SymbolRef::SF_Global;
@@ -364,6 +381,51 @@ GOFFObjectFile::getSymbolSection(DataRefImpl Symb) const {
                                std::to_string(SymEdId));
 }
 
+uint32_t GOFFObjectFile::getZOSSymbolArchiveAttributes(DataRefImpl Symb) const {
+  const uint8_t *SymRecord = getSymbolEsdRecord(Symb);
+  uint32_t Attrs = 0;
+
+  // Bit 2 (0x4): 64-bit AMODE. If the child AMODE is unspecified,
+  // query the parent ED.
+  // TODO: The parent-walk path (child ESD_AMODE_None with a parent that has
+  // ESD_AMODE_64) cannot currently be tested as GOFFObjectWriter always emits
+  // ESD_AMODE_64 directly on LD/ER records and does not set AMODE on ED
+  // records. Full coverage requires yaml2obj GOFF ESD record support.
+  GOFF::ESDAmode Amode;
+  ESDRecord::getAmode(SymRecord, Amode);
+  if (Amode == GOFF::ESD_AMODE_None) {
+    uint32_t ParentEsdId;
+    ESDRecord::getParentEsdId(SymRecord, ParentEsdId);
+    if (ParentEsdId) {
+      const uint8_t *EdRecord = EsdPtrs[ParentEsdId];
+      ESDRecord::getAmode(EdRecord, Amode);
+    }
+  }
+  if (Amode == GOFF::ESD_AMODE_64)
+    Attrs |= 0x4;
+
+  // Bit 1 (0x2): XPLink — LinkageType is ESD_LT_XPLink.
+  GOFF::ESDLinkageType LinkageType;
+  ESDRecord::getLinkageType(SymRecord, LinkageType);
+  if (LinkageType == GOFF::ESD_LT_XPLink)
+    Attrs |= 0x2;
+
+  // Bit 0 (0x1): Writable Static Area.
+  GOFF::ESDNameSpaceId NameSpace;
+  ESDRecord::getNameSpaceId(SymRecord, NameSpace);
+  if (NameSpace == GOFF::ESD_NS_Parts)
+    Attrs |= 0x1;
+
+  return Attrs;
+}
+
+uint64_t GOFFObjectFile::getSymbolSize(DataRefImpl Symb) const {
+  const uint8_t *Record = getSymbolEsdRecord(Symb);
+  uint32_t Length;
+  ESDRecord::getLength(Record, Length);
+  return Length;
+}
+
 const uint8_t *GOFFObjectFile::getSectionEdEsdRecord(DataRefImpl &Sec) const {
   SectionEntryImpl EsdIds = SectionList[Sec.d.a];
   const uint8_t *EsdRecord = EsdPtrs[EsdIds.d.a];
@@ -394,6 +456,155 @@ GOFFObjectFile::getSectionPrEsdRecord(uint32_t SectionIndex) const {
   return EsdRecord;
 }
 
+uint32_t GOFFObjectFile::getSectionDefEsdId(DataRefImpl &Sec) const {
+  const uint8_t *EsdRecord = getSectionEdEsdRecord(Sec);
+  uint32_t Length;
+  ESDRecord::getLength(EsdRecord, Length);
+  if (Length == 0) {
+    const uint8_t *PrEsdRecord = getSectionPrEsdRecord(Sec);
+    if (PrEsdRecord)
+      EsdRecord = PrEsdRecord;
+  }
+
+  uint32_t DefEsdId;
+  ESDRecord::getEsdId(EsdRecord, DefEsdId);
+  LLVM_DEBUG(dbgs() << "Got def EsdId: " << DefEsdId << '\n');
+  return DefEsdId;
+}
+
+void GOFFObjectFile::moveSectionNext(DataRefImpl &Sec) const {
+  Sec.d.a++;
+  if ((Sec.d.a) >= SectionList.size())
+    Sec.d.a = 0;
+}
+
+Expected<StringRef> GOFFObjectFile::getSectionName(DataRefImpl Sec) const {
+  DataRefImpl EdSym;
+  SectionEntryImpl EsdIds = SectionList[Sec.d.a];
+  EdSym.d.a = EsdIds.d.a;
+  Expected<StringRef> Name = getSymbolName(EdSym);
+  if (Name) {
+    StringRef Res = *Name;
+    LLVM_DEBUG(dbgs() << "Got section: " << Res << '\n');
+    LLVM_DEBUG(dbgs() << "Final section name: " << Res << '\n');
+    Name = Res;
+  }
+  return Name;
+}
+
+uint64_t GOFFObjectFile::getSectionAddress(DataRefImpl Sec) const {
+  uint32_t Offset;
+  const uint8_t *EsdRecord = getSectionEdEsdRecord(Sec);
+  ESDRecord::getOffset(EsdRecord, Offset);
+  return Offset;
+}
+
+uint64_t GOFFObjectFile::getSectionSize(DataRefImpl Sec) const {
+  uint32_t Length;
+  uint32_t DefEsdId = getSectionDefEsdId(Sec);
+  const uint8_t *EsdRecord = EsdPtrs[DefEsdId];
+  ESDRecord::getLength(EsdRecord, Length);
+  LLVM_DEBUG(dbgs() << "Got section size: " << Length << '\n');
+  return static_cast<uint64_t>(Length);
+}
+
+// Unravel TXT records and expand fill characters to produce
+// a contiguous sequence of bytes.
+Expected<ArrayRef<uint8_t>>
+GOFFObjectFile::getSectionContents(DataRefImpl Sec) const {
+  if (auto It = SectionDataCache.find(Sec.d.a); It != SectionDataCache.end()) {
+    auto &Buf = It->second;
+    return ArrayRef<uint8_t>(Buf);
+  }
+  uint64_t SectionSize = getSectionSize(Sec);
+  uint32_t DefEsdId = getSectionDefEsdId(Sec);
+
+  const uint8_t *EdEsdRecord = getSectionEdEsdRecord(Sec);
+  bool FillBytePresent;
+  ESDRecord::getFillBytePresent(EdEsdRecord, FillBytePresent);
+  uint8_t FillByte = '\0';
+  if (FillBytePresent)
+    ESDRecord::getFillByteValue(EdEsdRecord, FillByte);
+
+  // Initialize section with fill byte.
+  SmallVector<uint8_t> Data(SectionSize, FillByte);
+
+  // Replace section with content from text records.
+  for (const uint8_t *TxtRecordInt : TextPtrs) {
+    const uint8_t *TxtRecordPtr = TxtRecordInt;
+    uint32_t TxtEsdId;
+    TXTRecord::getElementEsdId(TxtRecordPtr, TxtEsdId);
+    LLVM_DEBUG(dbgs() << "Got txt EsdId: " << TxtEsdId << '\n');
+
+    if (TxtEsdId != DefEsdId)
+      continue;
+
+    uint32_t TxtDataOffset;
+    TXTRecord::getOffset(TxtRecordPtr, TxtDataOffset);
+
+    uint16_t TxtDataSize;
+    TXTRecord::getDataLength(TxtRecordPtr, TxtDataSize);
+
+    LLVM_DEBUG(dbgs() << "Record offset " << TxtDataOffset << ", data size "
+                      << TxtDataSize << "\n");
+
+    SmallString<256> CompleteData;
+    CompleteData.reserve(TxtDataSize);
+    if (Error Err = TXTRecord::getData(TxtRecordPtr, CompleteData))
+      return std::move(Err);
+    assert(CompleteData.size() == TxtDataSize && "Wrong length of data");
+    std::copy(CompleteData.data(), CompleteData.data() + TxtDataSize,
+              Data.begin() + TxtDataOffset);
+  }
+  auto &Cache = SectionDataCache[Sec.d.a];
+  Cache = std::move(Data);
+  return ArrayRef<uint8_t>(Cache);
+}
+
+uint64_t GOFFObjectFile::getSectionAlignment(DataRefImpl Sec) const {
+  const uint8_t *EsdRecord = getSectionEdEsdRecord(Sec);
+  GOFF::ESDAlignment Pow2Alignment;
+  ESDRecord::getAlignment(EsdRecord, Pow2Alignment);
+  return 1ULL << static_cast<uint64_t>(Pow2Alignment);
+}
+
+bool GOFFObjectFile::isSectionText(DataRefImpl Sec) const {
+  const uint8_t *EsdRecord = getSectionEdEsdRecord(Sec);
+  GOFF::ESDExecutable Executable;
+  ESDRecord::getExecutable(EsdRecord, Executable);
+  return Executable == GOFF::ESD_EXE_CODE;
+}
+
+bool GOFFObjectFile::isSectionData(DataRefImpl Sec) const {
+  const uint8_t *EsdRecord = getSectionEdEsdRecord(Sec);
+  GOFF::ESDExecutable Executable;
+  ESDRecord::getExecutable(EsdRecord, Executable);
+  return Executable == GOFF::ESD_EXE_DATA;
+}
+
+bool GOFFObjectFile::isSectionNoLoad(DataRefImpl Sec) const {
+  const uint8_t *EsdRecord = getSectionEdEsdRecord(Sec);
+  GOFF::ESDLoadingBehavior LoadingBehavior;
+  ESDRecord::getLoadingBehavior(EsdRecord, LoadingBehavior);
+  return LoadingBehavior == GOFF::ESD_LB_NoLoad;
+}
+
+bool GOFFObjectFile::isSectionReadOnlyData(DataRefImpl Sec) const {
+  if (!isSectionData(Sec))
+    return false;
+
+  const uint8_t *EsdRecord = getSectionEdEsdRecord(Sec);
+  GOFF::ESDLoadingBehavior LoadingBehavior;
+  ESDRecord::getLoadingBehavior(EsdRecord, LoadingBehavior);
+  return LoadingBehavior == GOFF::ESD_LB_Initial;
+}
+
+bool GOFFObjectFile::isSectionZeroInit(DataRefImpl Sec) const {
+  // GOFF uses fill characters and fill characters are applied
+  // on getSectionContents() - so we say false to zero init.
+  return false;
+}
+
 section_iterator GOFFObjectFile::section_begin() const {
   DataRefImpl Sec;
   moveSectionNext(Sec);
@@ -407,8 +618,7 @@ section_iterator GOFFObjectFile::section_end() const {
 
 void GOFFObjectFile::moveSymbolNext(DataRefImpl &Symb) const {
   for (uint32_t I = Symb.d.a + 1, E = EsdPtrs.size(); I < E; ++I) {
-    if (EsdPtrs[I]) {
-      const uint8_t *EsdRecord = EsdPtrs[I];
+    if (const uint8_t *EsdRecord = EsdPtrs[I]) {
       GOFF::ESDSymbolType SymbolType;
       ESDRecord::getSymbolType(EsdRecord, SymbolType);
       // Skip EDs - i.e. section symbols.
@@ -474,6 +684,13 @@ Error ESDRecord::getData(const uint8_t *Record,
                          SmallString<256> &CompleteData) {
   uint16_t DataSize = getNameLength(Record);
   return getContinuousData(Record, DataSize, 72, CompleteData);
+}
+
+Error TXTRecord::getData(const uint8_t *Record,
+                         SmallString<256> &CompleteData) {
+  uint16_t Length;
+  getDataLength(Record, Length);
+  return getContinuousData(Record, Length, 24, CompleteData);
 }
 
 Error ENDRecord::getData(const uint8_t *Record,

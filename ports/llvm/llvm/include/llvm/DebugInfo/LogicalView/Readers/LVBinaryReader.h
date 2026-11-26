@@ -23,8 +23,10 @@
 #include "llvm/MC/MCObjectFileInfo.h"
 #include "llvm/MC/MCRegisterInfo.h"
 #include "llvm/MC/MCSubtargetInfo.h"
+#include "llvm/MC/MCTargetOptions.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Object/COFF.h"
+#include "llvm/Object/IRObjectFile.h"
 #include "llvm/Object/ObjectFile.h"
 
 namespace llvm {
@@ -47,23 +49,24 @@ struct LVSymbolTableEntry final {
 
 // Function names extracted from the object symbol table.
 class LVSymbolTable final {
-  using LVSymbolNames = std::map<std::string, LVSymbolTableEntry>;
+  using LVSymbolNames = std::map<std::string, LVSymbolTableEntry, std::less<>>;
   LVSymbolNames SymbolNames;
 
 public:
   LVSymbolTable() = default;
 
-  void add(StringRef Name, LVScope *Function, LVSectionIndex SectionIndex = 0);
-  void add(StringRef Name, LVAddress Address, LVSectionIndex SectionIndex,
-           bool IsComdat);
-  LVSectionIndex update(LVScope *Function);
+  LLVM_ABI void add(StringRef Name, LVScope *Function,
+                    LVSectionIndex SectionIndex = 0);
+  LLVM_ABI void add(StringRef Name, LVAddress Address,
+                    LVSectionIndex SectionIndex, bool IsComdat);
+  LLVM_ABI LVSectionIndex update(LVScope *Function);
 
-  const LVSymbolTableEntry &getEntry(StringRef Name);
-  LVAddress getAddress(StringRef Name);
-  LVSectionIndex getIndex(StringRef Name);
-  bool getIsComdat(StringRef Name);
+  LLVM_ABI const LVSymbolTableEntry &getEntry(StringRef Name);
+  LLVM_ABI LVAddress getAddress(StringRef Name);
+  LLVM_ABI LVSectionIndex getIndex(StringRef Name);
+  LLVM_ABI bool getIsComdat(StringRef Name);
 
-  void print(raw_ostream &OS);
+  LLVM_ABI void print(raw_ostream &OS);
 };
 
 class LVBinaryReader : public LVReader {
@@ -93,12 +96,6 @@ class LVBinaryReader : public LVReader {
       SectionAddresses.emplace(Section.getAddress(), Section);
   }
 
-  // Scopes with ranges for current compile unit. It is used to find a line
-  // giving its exact or closest address. To support comdat functions, all
-  // addresses for the same section are recorded in the same map.
-  using LVSectionRanges = std::map<LVSectionIndex, std::unique_ptr<LVRange>>;
-  LVSectionRanges SectionRanges;
-
   // Image base and virtual address for Executable file.
   uint64_t ImageBaseAddress = 0;
   uint64_t VirtualAddress = 0;
@@ -115,6 +112,7 @@ protected:
   LVLines CULines;
 
   std::unique_ptr<const MCRegisterInfo> MRI;
+  MCTargetOptions MCOptions;
   std::unique_ptr<const MCAsmInfo> MAI;
   std::unique_ptr<const MCSubtargetInfo> STI;
   std::unique_ptr<const MCInstrInfo> MII;
@@ -122,8 +120,51 @@ protected:
   std::unique_ptr<MCContext> MC;
   std::unique_ptr<MCInstPrinter> MIP;
 
+  // https://yurydelendik.github.io/webassembly-dwarf/
+  // 2. Consuming and Generating DWARF for WebAssembly Code
+  // Note: Some DWARF constructs don't map one-to-one onto WebAssembly
+  // constructs. We strive to enumerate and resolve any ambiguities here.
+  //
+  // 2.1. Code Addresses
+  // Note: DWARF associates various bits of debug info
+  // with particular locations in the program via its code address (instruction
+  // pointer or PC). However, WebAssembly's linear memory address space does not
+  // contain WebAssembly instructions.
+  //
+  // Wherever a code address (see 2.17 of [DWARF]) is used in DWARF for
+  // WebAssembly, it must be the offset of an instruction relative within the
+  // Code section of the WebAssembly file. The DWARF is considered malformed if
+  // a PC offset is between instruction boundaries within the Code section.
+  //
+  // Note: It is expected that a DWARF consumer does not know how to decode
+  // WebAssembly instructions. The instruction pointer is selected as the offset
+  // in the binary file of the first byte of the instruction, and it is
+  // consistent with the WebAssembly Web API conventions definition of the code
+  // location.
+  //
+  // EXAMPLE: .DEBUG_LINE INSTRUCTION POINTERS
+  // The .debug_line DWARF section maps instruction pointers to source
+  // locations. With WebAssembly, the .debug_line section maps Code
+  // section-relative instruction offsets to source locations.
+  //
+  // EXAMPLE: DW_AT_* ATTRIBUTES
+  // For entities with a single associated code address, DWARF uses
+  // the DW_AT_low_pc attribute to specify the associated code address value.
+  // For WebAssembly, the DW_AT_low_pc's value is a Code section-relative
+  // instruction offset.
+  //
+  // For entities with a single contiguous range of code, DWARF uses a
+  // pair of DW_AT_low_pc and DW_AT_high_pc attributes to specify the associated
+  // contiguous range of code address values. For WebAssembly, these attributes
+  // are Code section-relative instruction offsets.
+  //
+  // For entities with multiple ranges of code, DWARF uses the DW_AT_ranges
+  // attribute, which refers to the array located at the .debug_ranges section.
+  LVAddress WasmCodeSectionOffset = 0;
+
   // Loads all info for the architecture of the provided object file.
-  Error loadGenericTargetInfo(StringRef TheTriple, StringRef TheFeatures);
+  LLVM_ABI Error loadGenericTargetInfo(StringRef TheTriple,
+                                       StringRef TheFeatures, StringRef TheCPU);
 
   virtual void mapRangeAddress(const object::ObjectFile &Obj) {}
   virtual void mapRangeAddress(const object::ObjectFile &Obj,
@@ -131,27 +172,25 @@ protected:
                                bool IsComdat) {}
 
   // Create a mapping from virtual address to section.
-  void mapVirtualAddress(const object::ObjectFile &Obj);
-  void mapVirtualAddress(const object::COFFObjectFile &COFFObj);
+  LLVM_ABI void mapVirtualAddress(const object::ObjectFile &Obj);
+  LLVM_ABI void mapVirtualAddress(const object::COFFObjectFile &COFFObj);
 
-  Expected<std::pair<LVSectionIndex, object::SectionRef>>
+  LLVM_ABI Expected<std::pair<LVSectionIndex, object::SectionRef>>
   getSection(LVScope *Scope, LVAddress Address, LVSectionIndex SectionIndex);
 
-  void addSectionRange(LVSectionIndex SectionIndex, LVScope *Scope);
-  void addSectionRange(LVSectionIndex SectionIndex, LVScope *Scope,
-                       LVAddress LowerAddress, LVAddress UpperAddress);
-  LVRange *getSectionRanges(LVSectionIndex SectionIndex);
+  LLVM_ABI void includeInlineeLines(LVSectionIndex SectionIndex,
+                                    LVScope *Function);
 
-  void includeInlineeLines(LVSectionIndex SectionIndex, LVScope *Function);
+  LLVM_ABI Error createInstructions();
+  LLVM_ABI Error createInstructions(LVScope *Function,
+                                    LVSectionIndex SectionIndex);
+  LLVM_ABI Error createInstructions(LVScope *Function,
+                                    LVSectionIndex SectionIndex,
+                                    const LVNameInfo &NameInfo);
 
-  Error createInstructions();
-  Error createInstructions(LVScope *Function, LVSectionIndex SectionIndex);
-  Error createInstructions(LVScope *Function, LVSectionIndex SectionIndex,
-                           const LVNameInfo &NameInfo);
-
-  void processLines(LVLines *DebugLines, LVSectionIndex SectionIndex);
-  void processLines(LVLines *DebugLines, LVSectionIndex SectionIndex,
-                    LVScope *Function);
+  LLVM_ABI void processLines(LVLines *DebugLines, LVSectionIndex SectionIndex);
+  LLVM_ABI void processLines(LVLines *DebugLines, LVSectionIndex SectionIndex,
+                             LVScope *Function);
 
 public:
   LVBinaryReader() = delete;
@@ -160,7 +199,7 @@ public:
       : LVReader(Filename, FileFormatName, W, BinaryType) {}
   LVBinaryReader(const LVBinaryReader &) = delete;
   LVBinaryReader &operator=(const LVBinaryReader &) = delete;
-  virtual ~LVBinaryReader() = default;
+  ~LVBinaryReader() override = default;
 
   void addInlineeLines(LVScope *Scope, LVLines &Lines) {
     CUInlineeLines.emplace(Scope, std::make_unique<LVLines>(std::move(Lines)));
@@ -172,23 +211,23 @@ public:
     return ImageBaseAddress + (Segment * VirtualAddress) + Offset + Addendum;
   }
 
-  void addToSymbolTable(StringRef Name, LVScope *Function,
-                        LVSectionIndex SectionIndex = 0);
-  void addToSymbolTable(StringRef Name, LVAddress Address,
-                        LVSectionIndex SectionIndex, bool IsComdat);
-  LVSectionIndex updateSymbolTable(LVScope *Function);
+  LLVM_ABI void addToSymbolTable(StringRef Name, LVScope *Function,
+                                 LVSectionIndex SectionIndex = 0);
+  LLVM_ABI void addToSymbolTable(StringRef Name, LVAddress Address,
+                                 LVSectionIndex SectionIndex, bool IsComdat);
+  LLVM_ABI LVSectionIndex updateSymbolTable(LVScope *Function);
 
-  const LVSymbolTableEntry &getSymbolTableEntry(StringRef Name);
-  LVAddress getSymbolTableAddress(StringRef Name);
-  LVSectionIndex getSymbolTableIndex(StringRef Name);
-  bool getSymbolTableIsComdat(StringRef Name);
+  LLVM_ABI const LVSymbolTableEntry &getSymbolTableEntry(StringRef Name);
+  LLVM_ABI LVAddress getSymbolTableAddress(StringRef Name);
+  LLVM_ABI LVSectionIndex getSymbolTableIndex(StringRef Name);
+  LLVM_ABI bool getSymbolTableIsComdat(StringRef Name);
 
   LVSectionIndex getSectionIndex(LVScope *Scope) override {
     return Scope ? getSymbolTableIndex(Scope->getLinkageName())
                  : DotTextSectionIndex;
   }
 
-  void print(raw_ostream &OS) const;
+  LLVM_ABI void print(raw_ostream &OS) const;
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
   void dump() const { print(dbgs()); }

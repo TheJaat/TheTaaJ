@@ -16,6 +16,11 @@ class PfmCounter<string counter> {
   // The name can be "some_counter + some_other_counter", in which case the
   // measured value is the sum of events on these counters.
   string Counter = counter;
+  // Optional raw PMU encoding that bypasses libpfm symbolic lookup.
+  // EventSelect is an up to 16-bit event identifier.
+  // UMask is an 8-bit unit mask qualifying the event.
+  int EventSelect = -1;
+  int UMask = 0;
 }
 
 // Issue counters can be tied to a ProcResource
@@ -35,6 +40,7 @@ class ValidationEvent <int event_number> {
   int EventNumber = event_number;
 }
 
+// TableGen names for events defined in `llvm::exegesis::ValidationEvent`.
 def InstructionRetired  : ValidationEvent<0>;
 def L1DCacheLoadMiss : ValidationEvent<1>;
 def L1DCacheStoreMiss : ValidationEvent<2>;
@@ -42,6 +48,7 @@ def L1ICacheLoadMiss : ValidationEvent<3>;
 def DataTLBLoadMiss : ValidationEvent<4>;
 def DataTLBStoreMiss : ValidationEvent<5>;
 def InstructionTLBLoadMiss : ValidationEvent<6>;
+def BranchPredictionMiss : ValidationEvent<7>;
 
 
 // PfmValidationCounter provides a mapping between the events that are

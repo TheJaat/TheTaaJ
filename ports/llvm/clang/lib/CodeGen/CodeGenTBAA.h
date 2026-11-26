@@ -29,6 +29,7 @@ namespace clang {
   class Type;
 
 namespace CodeGen {
+class CodeGenTypes;
 
 // TBAAAccessKind - A kind of TBAA memory access descriptor.
 enum class TBAAAccessKind : unsigned {
@@ -115,10 +116,11 @@ struct TBAAAccessInfo {
 /// while lowering AST types to LLVM types.
 class CodeGenTBAA {
   ASTContext &Context;
+  CodeGenTypes &CGTypes;
   llvm::Module &Module;
   const CodeGenOptions &CodeGenOpts;
   const LangOptions &Features;
-  MangleContext &MContext;
+  std::unique_ptr<MangleContext> MangleCtx;
 
   // MDHelper - Helper for creating metadata.
   llvm::MDBuilder MDHelper;
@@ -137,14 +139,15 @@ class CodeGenTBAA {
 
   llvm::MDNode *Root;
   llvm::MDNode *Char;
+  llvm::SmallVector<llvm::MDNode *, 4> AnyPtrs;
 
   /// getRoot - This is the mdnode for the root of the metadata type graph
   /// for this translation unit.
   llvm::MDNode *getRoot();
 
-  /// getChar - This is the mdnode for "char", which is special, and any types
-  /// considered to be equivalent to it.
-  llvm::MDNode *getChar();
+  /// getAnyPtr - This is the mdnode for any pointer type of (at least) the
+  /// given pointer depth.
+  llvm::MDNode *getAnyPtr(unsigned PtrDepth = 1);
 
   /// CollectFields - Collect information about the fields of a type for
   /// !tbaa.struct metadata formation. Return false for an unsupported type.
@@ -166,9 +169,13 @@ class CodeGenTBAA {
   /// used to describe accesses to objects of the given base type.
   llvm::MDNode *getBaseTypeInfoHelper(const Type *Ty);
 
+  /// getValidBaseTypeInfo - Return metadata that describes the given base
+  /// access type. The type must be suitable.
+  llvm::MDNode *getValidBaseTypeInfo(QualType QTy);
+
 public:
-  CodeGenTBAA(ASTContext &Ctx, llvm::Module &M, const CodeGenOptions &CGO,
-              const LangOptions &Features, MangleContext &MContext);
+  CodeGenTBAA(ASTContext &Ctx, CodeGenTypes &CGTypes, llvm::Module &M,
+              const CodeGenOptions &CGO, const LangOptions &Features);
   ~CodeGenTBAA();
 
   /// getTypeInfo - Get metadata used to describe accesses to objects of the
@@ -187,12 +194,17 @@ public:
   /// the given type.
   llvm::MDNode *getTBAAStructInfo(QualType QTy);
 
-  /// getBaseTypeInfo - Get metadata that describes the given base access type.
-  /// Return null if the type is not suitable for use in TBAA access tags.
+  /// getBaseTypeInfo - Get metadata that describes the given base access
+  /// type. Return null if the type is not suitable for use in TBAA access
+  /// tags.
   llvm::MDNode *getBaseTypeInfo(QualType QTy);
 
   /// getAccessTagInfo - Get TBAA tag for a given memory access.
   llvm::MDNode *getAccessTagInfo(TBAAAccessInfo Info);
+
+  /// getChar - This is the mdnode for "char", which is special, and any types
+  /// considered to be equivalent to it.
+  llvm::MDNode *getChar();
 
   /// mergeTBAAInfoForCast - Get merged TBAA information for the purpose of
   /// type casts.
@@ -216,26 +228,6 @@ public:
 namespace llvm {
 
 template<> struct DenseMapInfo<clang::CodeGen::TBAAAccessInfo> {
-  static clang::CodeGen::TBAAAccessInfo getEmptyKey() {
-    unsigned UnsignedKey = DenseMapInfo<unsigned>::getEmptyKey();
-    return clang::CodeGen::TBAAAccessInfo(
-      static_cast<clang::CodeGen::TBAAAccessKind>(UnsignedKey),
-      DenseMapInfo<MDNode *>::getEmptyKey(),
-      DenseMapInfo<MDNode *>::getEmptyKey(),
-      DenseMapInfo<uint64_t>::getEmptyKey(),
-      DenseMapInfo<uint64_t>::getEmptyKey());
-  }
-
-  static clang::CodeGen::TBAAAccessInfo getTombstoneKey() {
-    unsigned UnsignedKey = DenseMapInfo<unsigned>::getTombstoneKey();
-    return clang::CodeGen::TBAAAccessInfo(
-      static_cast<clang::CodeGen::TBAAAccessKind>(UnsignedKey),
-      DenseMapInfo<MDNode *>::getTombstoneKey(),
-      DenseMapInfo<MDNode *>::getTombstoneKey(),
-      DenseMapInfo<uint64_t>::getTombstoneKey(),
-      DenseMapInfo<uint64_t>::getTombstoneKey());
-  }
-
   static unsigned getHashValue(const clang::CodeGen::TBAAAccessInfo &Val) {
     auto KindValue = static_cast<unsigned>(Val.Kind);
     return DenseMapInfo<unsigned>::getHashValue(KindValue) ^

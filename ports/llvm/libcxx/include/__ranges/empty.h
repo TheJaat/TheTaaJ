@@ -20,16 +20,16 @@
 #  pragma GCC system_header
 #endif
 
-_LIBCPP_BEGIN_NAMESPACE_STD
-
 #if _LIBCPP_STD_VER >= 20
+
+_LIBCPP_BEGIN_NAMESPACE_STD
 
 // [range.prim.empty]
 
 namespace ranges {
 namespace __empty {
 template <class _Tp>
-concept __member_empty = __workaround_52970<_Tp> && requires(_Tp&& __t) { bool(__t.empty()); };
+concept __member_empty = requires(_Tp&& __t) { bool(__t.empty()); };
 
 template <class _Tp>
 concept __can_invoke_size = !__member_empty<_Tp> && requires(_Tp&& __t) { ranges::size(__t); };
@@ -64,8 +64,8 @@ inline constexpr auto empty = __empty::__fn{};
 } // namespace __cpo
 } // namespace ranges
 
-#endif // _LIBCPP_STD_VER >= 20
-
 _LIBCPP_END_NAMESPACE_STD
+
+#endif // _LIBCPP_STD_VER >= 20
 
 #endif // _LIBCPP___RANGES_EMPTY_H

@@ -63,9 +63,10 @@ int MachineFrameInfo::CreateStackObject(uint64_t Size, Align Alignment,
   return Index;
 }
 
-int MachineFrameInfo::CreateSpillStackObject(uint64_t Size, Align Alignment) {
+int MachineFrameInfo::CreateSpillStackObject(uint64_t Size, Align Alignment,
+                                             TargetStackID::Value StackID) {
   Alignment = clampStackAlignment(!StackRealignable, Alignment, StackAlignment);
-  CreateStackObject(Size, Alignment, true);
+  CreateStackObject(Size, Alignment, true, nullptr, StackID);
   int Index = (int)Objects.size() - NumFixedObjects - 1;
   ensureMaxAlignment(Alignment);
   return Index;
@@ -184,7 +185,8 @@ uint64_t MachineFrameInfo::estimateStackSize(const MachineFunction &MF) const {
   return alignTo(Offset, StackAlign);
 }
 
-void MachineFrameInfo::computeMaxCallFrameSize(const MachineFunction &MF) {
+void MachineFrameInfo::computeMaxCallFrameSize(
+    MachineFunction &MF, std::vector<MachineBasicBlock::iterator> *FrameSDOps) {
   const TargetInstrInfo &TII = *MF.getSubtarget().getInstrInfo();
   unsigned FrameSetupOpcode = TII.getCallFrameSetupOpcode();
   unsigned FrameDestroyOpcode = TII.getCallFrameDestroyOpcode();
@@ -192,18 +194,14 @@ void MachineFrameInfo::computeMaxCallFrameSize(const MachineFunction &MF) {
          "Can only compute MaxCallFrameSize if Setup/Destroy opcode are known");
 
   MaxCallFrameSize = 0;
-  for (const MachineBasicBlock &MBB : MF) {
-    for (const MachineInstr &MI : MBB) {
+  for (MachineBasicBlock &MBB : MF) {
+    for (MachineInstr &MI : MBB) {
       unsigned Opcode = MI.getOpcode();
       if (Opcode == FrameSetupOpcode || Opcode == FrameDestroyOpcode) {
-        unsigned Size = TII.getFrameSize(MI);
+        uint64_t Size = TII.getFrameSize(MI);
         MaxCallFrameSize = std::max(MaxCallFrameSize, Size);
-        AdjustsStack = true;
-      } else if (MI.isInlineAsm()) {
-        // Some inline asm's need a stack frame, as indicated by operand 1.
-        unsigned ExtraInfo = MI.getOperand(InlineAsm::MIOp_ExtraInfo).getImm();
-        if (ExtraInfo & InlineAsm::Extra_IsAlignStack)
-          AdjustsStack = true;
+        if (FrameSDOps != nullptr)
+          FrameSDOps->push_back(&MI);
       }
     }
   }
@@ -247,6 +245,22 @@ void MachineFrameInfo::print(const MachineFunction &MF, raw_ostream &OS) const{
     }
     OS << "\n";
   }
+  OS << "save/restore points:\n";
+
+  if (!SavePoints.empty()) {
+    OS << "save points:\n";
+
+    for (auto &item : SavePoints)
+      OS << printMBBReference(*item.first) << "\n";
+  } else
+    OS << "save points are empty\n";
+
+  if (!RestorePoints.empty()) {
+    OS << "restore points:\n";
+    for (auto &item : RestorePoints)
+      OS << printMBBReference(*item.first) << "\n";
+  } else
+    OS << "restore points are empty\n";
 }
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)

@@ -3,11 +3,18 @@ itself, Clang and lld, as they are upstream, with TheTaaJ's changes on top (see 
 history of this directory).
 
   from     https://github.com/llvm/llvm-project
-  release  llvmorg-18.1.3 (llvm-project-18.1.3.src.tar.xz,
-           sha256 2929f62d69dec0379e529eb632c40e15191e36f3bd58c2cb2df0413a0dc48651)
+  release  llvmorg-23.1.5 (llvm-project-23.1.5.src.tar.xz,
+           sha256 fb50b1eac93ddeb3aa8dab4cfe324dff74f4a9c2bdee6160c9e36188f8d06a6e)
 
-18.1.3 because it is the clang that builds TheTaaJ (Ubuntu's clang 18):
-libc++'s headers are written for a clang of their own release or newer.
+23.1.5 because it is the LLVM rustc 1.100 is built on, so Rust and C
+on TheTaaJ share one LLVM. libc++'s headers are written for a clang of
+their own release or newer, and the byte-for-byte checks compare clang
+on TheTaaJ with the clang that built everything else, so the host
+builds its own clang of the same release (tools/build-host-llvm.sh).
+Until journal entry 104 the port was 18.1.3, Ubuntu's clang.
+
+tools/import-llvm.sh copies a release into this directory, the parts
+below and nothing else.
 
 Of each runtime only include/ and src/ are here (and libcxx/vendor, the
 default assertion handler), with its licence - not
@@ -29,12 +36,13 @@ Of Clang (clang/): include/, the libraries the clang program is made
 of (lib/: Basic, Lex, Parse, AST, ASTMatchers, Sema, Analysis, Edit,
 APINotes, Support, Serialization, Driver, Frontend, Frontend/Rewrite,
 FrontendTool, CodeGen, ExtractAPI, Index, Format, Rewrite,
-Tooling/Core, Tooling/Inclusions), lib/Headers (the headers clang
+Tooling/Core, Tooling/Inclusions, and since 23 Options, the driver's
+options table), lib/Headers (the headers clang
 brings with it: stddef.h, stdarg.h, the intrinsics), tools/driver (the
 program), utils/TableGen (the source of clang-tblgen), its top
 CMakeLists.txt (the version) and its licence. Not Clang's tests,
-documentation, the static analyser, the ARC migrator, the interpreter
-or the other tools.
+documentation, the static analyser, the interpreter, CIR, the
+dependency scanner, the install API or the other tools.
 
 Of lld (lld/): include/, Common/, ELF/ (the linker for ELF files, the
 only kind TheTaaJ has), tools/lld (the program), its top CMakeLists.txt

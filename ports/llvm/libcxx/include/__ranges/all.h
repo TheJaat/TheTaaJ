@@ -29,9 +29,9 @@
 #  pragma GCC system_header
 #endif
 
-_LIBCPP_BEGIN_NAMESPACE_STD
-
 #if _LIBCPP_STD_VER >= 20
+
+_LIBCPP_BEGIN_NAMESPACE_STD
 
 namespace ranges::views {
 
@@ -39,9 +39,8 @@ namespace __all {
 struct __fn : __range_adaptor_closure<__fn> {
   template <class _Tp>
     requires ranges::view<decay_t<_Tp>>
-  [[nodiscard]] _LIBCPP_HIDE_FROM_ABI constexpr auto operator()(_Tp&& __t) const
-      noexcept(noexcept(_LIBCPP_AUTO_CAST(std::forward<_Tp>(__t))))
-          -> decltype(_LIBCPP_AUTO_CAST(std::forward<_Tp>(__t))) {
+  [[nodiscard]] _LIBCPP_HIDE_FROM_ABI constexpr auto operator()(_Tp&& __t) const noexcept(
+      noexcept(_LIBCPP_AUTO_CAST(std::forward<_Tp>(__t)))) -> decltype(_LIBCPP_AUTO_CAST(std::forward<_Tp>(__t))) {
     return _LIBCPP_AUTO_CAST(std::forward<_Tp>(__t));
   }
 
@@ -72,8 +71,8 @@ using all_t = decltype(views::all(std::declval<_Range>()));
 
 } // namespace ranges::views
 
-#endif // _LIBCPP_STD_VER >= 20
-
 _LIBCPP_END_NAMESPACE_STD
+
+#endif // _LIBCPP_STD_VER >= 20
 
 #endif // _LIBCPP___RANGES_ALL_H

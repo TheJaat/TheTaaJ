@@ -28,9 +28,9 @@
 #  pragma GCC system_header
 #endif
 
-_LIBCPP_BEGIN_NAMESPACE_STD
-
 #if _LIBCPP_STD_VER >= 20
+
+_LIBCPP_BEGIN_NAMESPACE_STD
 
 // [range.prim.data]
 
@@ -40,7 +40,7 @@ template <class _Tp>
 concept __ptr_to_object = is_pointer_v<_Tp> && is_object_v<remove_pointer_t<_Tp>>;
 
 template <class _Tp>
-concept __member_data = __can_borrow<_Tp> && __workaround_52970<_Tp> && requires(_Tp&& __t) {
+concept __member_data = __can_borrow<_Tp> && requires(_Tp&& __t) {
   { _LIBCPP_AUTO_CAST(__t.data()) } -> __ptr_to_object;
 };
 
@@ -51,12 +51,12 @@ concept __ranges_begin_invocable = !__member_data<_Tp> && __can_borrow<_Tp> && r
 
 struct __fn {
   template <__member_data _Tp>
-  _LIBCPP_HIDE_FROM_ABI constexpr auto operator()(_Tp&& __t) const noexcept(noexcept(__t.data())) {
+  [[nodiscard]] _LIBCPP_HIDE_FROM_ABI constexpr auto operator()(_Tp&& __t) const noexcept(noexcept(__t.data())) {
     return __t.data();
   }
 
   template <__ranges_begin_invocable _Tp>
-  _LIBCPP_HIDE_FROM_ABI constexpr auto operator()(_Tp&& __t) const
+  [[nodiscard]] _LIBCPP_HIDE_FROM_ABI constexpr auto operator()(_Tp&& __t) const
       noexcept(noexcept(std::to_address(ranges::begin(__t)))) {
     return std::to_address(ranges::begin(__t));
   }
@@ -83,9 +83,8 @@ struct __fn {
 
   template <class _Tp>
     requires is_rvalue_reference_v<_Tp&&>
-  [[nodiscard]] _LIBCPP_HIDE_FROM_ABI constexpr auto operator()(_Tp&& __t) const
-      noexcept(noexcept(ranges::data(static_cast<const _Tp&&>(__t))))
-          -> decltype(ranges::data(static_cast<const _Tp&&>(__t))) {
+  [[nodiscard]] _LIBCPP_HIDE_FROM_ABI constexpr auto operator()(_Tp&& __t) const noexcept(
+      noexcept(ranges::data(static_cast<const _Tp&&>(__t)))) -> decltype(ranges::data(static_cast<const _Tp&&>(__t))) {
     return ranges::data(static_cast<const _Tp&&>(__t));
   }
 };
@@ -96,8 +95,8 @@ inline constexpr auto cdata = __cdata::__fn{};
 } // namespace __cpo
 } // namespace ranges
 
-#endif // _LIBCPP_STD_VER >= 20
-
 _LIBCPP_END_NAMESPACE_STD
+
+#endif // _LIBCPP_STD_VER >= 20
 
 #endif // _LIBCPP___RANGES_DATA_H

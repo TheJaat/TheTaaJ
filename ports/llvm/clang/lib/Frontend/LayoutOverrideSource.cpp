@@ -8,14 +8,10 @@
 #include "clang/Frontend/LayoutOverrideSource.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
+#include "clang/AST/Type.h"
 #include "clang/Basic/CharInfo.h"
 #include "llvm/Support/raw_ostream.h"
-#if defined(_LIBCPP_HAS_NO_FILESYSTEM)
-#include "llvm/Support/MemoryBuffer.h"
-#include <sstream>
-#else
 #include <fstream>
-#endif
 #include <string>
 
 using namespace clang;
@@ -45,19 +41,9 @@ static bool parseUnsigned(StringRef &S, unsigned long long &ULL) {
 }
 
 LayoutOverrideSource::LayoutOverrideSource(StringRef Filename) {
-#if defined(_LIBCPP_HAS_NO_FILESYSTEM)
-  // TheTaaJ: a C++ library without <fstream> (libc++ built with
-  // _LIBCPP_HAS_NO_FILESYSTEM). The file is read whole, and its lines
-  // taken from a string stream instead.
-  auto Buffer = llvm::MemoryBuffer::getFile(Filename);
-  if (!Buffer)
-    return;
-  std::istringstream Input((*Buffer)->getBuffer().str());
-#else
   std::ifstream Input(Filename.str().c_str());
   if (!Input.is_open())
     return;
-#endif
 
   // Parse the output of -fdump-record-layouts.
   std::string CurrentType;
@@ -200,7 +186,7 @@ LayoutOverrideSource::LayoutOverrideSource(StringRef Filename) {
 
   // Flush the last type/layout, if there is one.
   if (!CurrentType.empty())
-    Layouts[CurrentType] = CurrentLayout;
+    Layouts[CurrentType] = std::move(CurrentLayout);
 }
 
 bool

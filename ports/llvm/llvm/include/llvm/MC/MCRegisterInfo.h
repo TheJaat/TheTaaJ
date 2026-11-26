@@ -16,10 +16,12 @@
 #define LLVM_MC_MCREGISTERINFO_H
 
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/Sequence.h"
 #include "llvm/ADT/iterator.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/MC/LaneBitmask.h"
 #include "llvm/MC/MCRegister.h"
+#include "llvm/Support/Compiler.h"
 #include <cassert>
 #include <cstdint>
 #include <iterator>
@@ -37,15 +39,38 @@ public:
   using iterator = const MCPhysReg*;
   using const_iterator = const MCPhysReg*;
 
-  const iterator RegsBegin;
-  const uint8_t *const RegSet;
+  // TODO: reorder fields to reduce memory usage.
+  const uint32_t RegsOff;   ///< Relative offset to MCPhysReg array.
+  const uint32_t RegSetOff; ///< Relative offset to uint8_t array.
   const uint32_t NameIdx;
+  const uint32_t RegSizeInBits;
   const uint16_t RegsSize;
   const uint16_t RegSetSize;
   const uint16_t ID;
-  const uint16_t RegSizeInBits;
-  const int8_t CopyCost;
+  const uint8_t CopyCost;
   const bool Allocatable;
+  const bool BaseClass;
+
+  const uint32_t SubClassMaskOff;    ///< Relative offset to uint32_t array.
+  const uint32_t SuperRegIndicesOff; ///< Relative offset to MCPhysReg array.
+  const LaneBitmask LaneMask;
+  /// Classes with a higher priority value are assigned first by register
+  /// allocators using a greedy heuristic. The value is in the range [0,31].
+  const uint8_t AllocationPriority;
+
+  // Change allocation priority heuristic used by greedy.
+  const bool GlobalPriority;
+
+  /// Configurable target specific flags.
+  const uint8_t TSFlags;
+  const uint8_t SpillStackID;
+  /// Whether the class supports two (or more) disjunct subregister indices.
+  const bool HasDisjunctSubRegs;
+  /// Whether a combination of subregisters can cover every register in the
+  /// class. See also the CoveredBySubRegs description in Target.td.
+  const bool CoveredBySubRegs;
+  const uint32_t SuperClassesOff; ///< Relative offset to unsigned array.
+  const uint16_t SuperClassesSize;
 
   /// getID() - Return the register class ID number.
   ///
@@ -53,8 +78,11 @@ public:
 
   /// begin/end - Return all of the registers in this class.
   ///
-  iterator       begin() const { return RegsBegin; }
-  iterator         end() const { return RegsBegin + RegsSize; }
+  iterator begin() const {
+    return reinterpret_cast<iterator>(reinterpret_cast<const char *>(this) +
+                                      RegsOff);
+  }
+  iterator end() const { return begin() + RegsSize; }
 
   /// getNumRegs - Return the number of registers in this class.
   ///
@@ -62,19 +90,24 @@ public:
 
   /// getRegister - Return the specified register in the class.
   ///
-  unsigned getRegister(unsigned i) const {
+  MCRegister getRegister(unsigned i) const {
     assert(i < getNumRegs() && "Register number out of range!");
-    return RegsBegin[i];
+    return begin()[i];
+  }
+
+  ArrayRef<MCPhysReg> getRegisters() const {
+    return ArrayRef(begin(), RegsSize);
   }
 
   /// contains - Return true if the specified register is included in this
   /// register class.  This does not include virtual registers.
   bool contains(MCRegister Reg) const {
-    unsigned RegNo = unsigned(Reg);
+    unsigned RegNo = Reg.id();
     unsigned InByte = RegNo % 8;
     unsigned Byte = RegNo / 8;
     if (Byte >= RegSetSize)
       return false;
+    const uint8_t *RegSet = reinterpret_cast<const uint8_t *>(this) + RegSetOff;
     return (RegSet[Byte] & (1 << InByte)) != 0;
   }
 
@@ -92,11 +125,103 @@ public:
   /// getCopyCost - Return the cost of copying a value between two registers in
   /// this class. A negative number means the register class is very expensive
   /// to copy e.g. status flag register classes.
-  int getCopyCost() const { return CopyCost; }
+  uint8_t getCopyCost() const { return CopyCost; }
+
+  /// \return true if register class is very expensive to copy e.g. status flag
+  /// register classes.
+  bool expensiveOrImpossibleToCopy() const {
+    return CopyCost == std::numeric_limits<uint8_t>::max();
+  }
 
   /// isAllocatable - Return true if this register class may be used to create
   /// virtual registers.
   bool isAllocatable() const { return Allocatable; }
+
+  /// Return true if this register class has a defined BaseClassOrder.
+  bool isBaseClass() const { return BaseClass; }
+
+  /// Return true if the specified TargetRegisterClass
+  /// is a proper sub-class of this TargetRegisterClass.
+  bool hasSubClass(const MCRegisterClass *RC) const {
+    return RC != this && hasSubClassEq(RC);
+  }
+
+  /// Returns true if RC is a sub-class of or equal to this class.
+  bool hasSubClassEq(const MCRegisterClass *RC) const {
+    unsigned ID = RC->getID();
+    return (getSubClassMask()[ID / 32] >> (ID % 32)) & 1;
+  }
+
+  /// Return true if the specified MCRegisterClass is a
+  /// proper super-class of this MCRegisterClass.
+  bool hasSuperClass(const MCRegisterClass *RC) const {
+    return RC->hasSubClass(this);
+  }
+
+  /// Returns true if RC is a super-class of or equal to this class.
+  bool hasSuperClassEq(const MCRegisterClass *RC) const {
+    return RC->hasSubClassEq(this);
+  }
+
+  /// Returns a bit vector of subclasses, including this one.
+  /// The vector is indexed by class IDs.
+  ///
+  /// To use it, consider the returned array as a chunk of memory that
+  /// contains an array of bits of size NumRegClasses. Each 32-bit chunk
+  /// contains a bitset of the ID of the subclasses in big-endian style.
+
+  /// I.e., the representation of the memory from left to right at the
+  /// bit level looks like:
+  /// [31 30 ... 1 0] [ 63 62 ... 33 32] ...
+  ///                     [ XXX NumRegClasses NumRegClasses - 1 ... ]
+  /// Where the number represents the class ID and XXX bits that
+  /// should be ignored.
+  ///
+  /// See the implementation of hasSubClassEq for an example of how it
+  /// can be used.
+  const uint32_t *getSubClassMask() const {
+    return reinterpret_cast<const uint32_t *>(
+        reinterpret_cast<const char *>(this) + SubClassMaskOff);
+  }
+
+  /// Returns a 0-terminated list of sub-register indices that project some
+  /// super-register class into this register class. The list has an entry for
+  /// each Idx such that:
+  ///
+  ///   There exists SuperRC where:
+  ///     For all Reg in SuperRC:
+  ///       this->contains(Reg:Idx)
+  const uint16_t *getSuperRegIndices() const {
+    return reinterpret_cast<const uint16_t *>(
+        reinterpret_cast<const char *>(this) + SuperRegIndicesOff);
+  }
+
+  /// Returns a list of super-classes.  The
+  /// classes are ordered by ID which is also a topological ordering from large
+  /// to small classes.  The list does NOT include the current class.
+  ArrayRef<unsigned> superclasses() const {
+    const unsigned *SuperClasses = reinterpret_cast<const unsigned *>(
+        reinterpret_cast<const char *>(this) + SuperClassesOff);
+    return ArrayRef(SuperClasses, SuperClassesSize);
+  }
+
+  /// Returns the combination of all lane masks of register in this class.
+  /// The lane masks of the registers are the combination of all lane masks
+  /// of their subregisters. Returns 1 if there are no subregisters.
+  LaneBitmask getLaneMask() const { return LaneMask; }
+};
+
+template <unsigned RegClassCount, unsigned RegCount, unsigned BitSetSize,
+          unsigned SubClassMaskSize, unsigned SuperRegIdxSeqSize,
+          unsigned SuperClassSize>
+struct MCRegisterClassStorage {
+  MCRegisterClass Classes[RegClassCount];
+  MCPhysReg Regs[RegCount];
+  uint8_t BitSets[BitSetSize];
+  uint32_t SubClassMasks[SubClassMaskSize];
+  uint16_t SuperRegIdxSeqs[SuperRegIdxSeqSize];
+  // Avoid zero-sized arrays.
+  unsigned SuperClasses[SuperClassSize > 0 ? SuperClassSize : 1];
 };
 
 /// MCRegisterDesc - This record contains information about a particular
@@ -122,6 +247,12 @@ struct MCRegisterDesc {
   /// Index into list with lane mask sequences. The sequence contains a lanemask
   /// for every register unit.
   uint16_t RegUnitLaneMasks;
+
+  // Is true for constant registers.
+  bool IsConstant;
+
+  // Is true for artificial registers.
+  bool IsArtificial;
 };
 
 /// MCRegisterInfo base class - We assume that the target defines a static
@@ -136,7 +267,7 @@ struct MCRegisterDesc {
 /// TableGen generated physical register data. It must not be extended with
 /// virtual methods.
 ///
-class MCRegisterInfo {
+class LLVM_ABI MCRegisterInfo {
 public:
   using regclass_iterator = const MCRegisterClass *;
 
@@ -147,13 +278,6 @@ public:
     unsigned ToReg;
 
     bool operator<(DwarfLLVMRegPair RHS) const { return FromReg < RHS.FromReg; }
-  };
-
-  /// SubRegCoveredBits - Emitted by tablegen: bit range covered by a subreg
-  /// index, -1 in any being invalid.
-  struct SubRegCoveredBits {
-    uint16_t Offset;
-    uint16_t Size;
   };
 
 private:
@@ -172,11 +296,10 @@ private:
   const char *RegClassStrings;                // Pointer to the class strings.
   const uint16_t *SubRegIndices;              // Pointer to the subreg lookup
                                               // array.
-  const SubRegCoveredBits *SubRegIdxRanges;   // Pointer to the subreg covered
-                                              // bit ranges array.
   unsigned NumSubRegIndices;                  // Number of subreg indices.
   const uint16_t *RegEncodingTable;           // Pointer to array of register
                                               // encodings.
+  const unsigned (*RegUnitIntervals)[2]; // Pointer to regunit interval table.
 
   unsigned L2DwarfRegsSize;
   unsigned EHL2DwarfRegsSize;
@@ -188,6 +311,9 @@ private:
   const DwarfLLVMRegPair *EHDwarf2LRegs;      // Dwarf to LLVM regs mapping EH
   DenseMap<MCRegister, int> L2SEHRegs;        // LLVM to SEH regs mapping
   DenseMap<MCRegister, int> L2CVRegs;         // LLVM to CV regs mapping
+
+  mutable std::vector<std::vector<MCPhysReg>> RegAliasesCache;
+  ArrayRef<MCPhysReg> getCachedAliasesOf(MCRegister R) const;
 
   /// Iterator class that can traverse the differentially encoded values in
   /// DiffLists. Don't use this class directly, use one of the adaptors below.
@@ -254,6 +380,9 @@ public:
                        iterator_range<MCSuperRegIterator>>
   sub_and_superregs_inclusive(MCRegister Reg) const;
 
+  /// Returns an iterator range over all regunits.
+  iota_range<MCRegUnit> regunits() const;
+
   /// Returns an iterator range over all regunits for \p Reg.
   iterator_range<MCRegUnitIterator> regunits(MCRegister Reg) const;
 
@@ -265,6 +394,9 @@ public:
   friend class MCRegUnitIterator;
   friend class MCRegUnitMaskIterator;
   friend class MCRegUnitRootIterator;
+  friend class MCRegAliasIterator;
+
+  virtual ~MCRegisterInfo() = default;
 
   /// Initialize MCRegisterInfo, called by TableGen
   /// auto-generated routines. *DO NOT USE*.
@@ -274,8 +406,8 @@ public:
                           const int16_t *DL, const LaneBitmask *RUMS,
                           const char *Strings, const char *ClassStrings,
                           const uint16_t *SubIndices, unsigned NumIndices,
-                          const SubRegCoveredBits *SubIdxRanges,
-                          const uint16_t *RET) {
+                          const uint16_t *RET,
+                          const unsigned (*RUI)[2] = nullptr) {
     Desc = D;
     NumRegs = NR;
     RAReg = RA;
@@ -290,8 +422,8 @@ public:
     NumRegUnits = NRU;
     SubRegIndices = SubIndices;
     NumSubRegIndices = NumIndices;
-    SubRegIdxRanges = SubIdxRanges;
     RegEncodingTable = RET;
+    RegUnitIntervals = RUI;
 
     // Initialize DWARF register mapping variables
     EHL2DwarfRegs = nullptr;
@@ -302,6 +434,8 @@ public:
     EHDwarf2LRegsSize = 0;
     Dwarf2LRegs = nullptr;
     Dwarf2LRegsSize = 0;
+
+    RegAliasesCache.resize(NumRegs);
   }
 
   /// Used to initialize LLVM register to Dwarf
@@ -356,16 +490,16 @@ public:
     return PCReg;
   }
 
-  const MCRegisterDesc &operator[](MCRegister RegNo) const {
-    assert(RegNo < NumRegs &&
+  const MCRegisterDesc &operator[](MCRegister Reg) const {
+    assert(Reg.id() < NumRegs &&
            "Attempting to access record for invalid register number!");
-    return Desc[RegNo];
+    return Desc[Reg.id()];
   }
 
   /// Provide a get method, equivalent to [], but more useful with a
   /// pointer to this object.
-  const MCRegisterDesc &get(MCRegister RegNo) const {
-    return operator[](RegNo);
+  const MCRegisterDesc &get(MCRegister Reg) const {
+    return operator[](Reg);
   }
 
   /// Returns the physical register number of sub-register "Index"
@@ -383,21 +517,24 @@ public:
   /// otherwise.
   unsigned getSubRegIndex(MCRegister RegNo, MCRegister SubRegNo) const;
 
-  /// Get the size of the bit range covered by a sub-register index.
-  /// If the index isn't continuous, return the sum of the sizes of its parts.
-  /// If the index is used to access subregisters of different sizes, return -1.
-  unsigned getSubRegIdxSize(unsigned Idx) const;
-
-  /// Get the offset of the bit range covered by a sub-register index.
-  /// If an Offset doesn't make sense (the index isn't continuous, or is used to
-  /// access sub-registers at different offsets), return -1.
-  unsigned getSubRegIdxOffset(unsigned Idx) const;
-
   /// Return the human-readable symbolic target-specific name for the
   /// specified physical register.
   const char *getName(MCRegister RegNo) const {
     return RegStrings + get(RegNo).Name;
   }
+
+  /// Returns true if the given register is constant.
+  bool isConstant(MCRegister RegNo) const { return get(RegNo).IsConstant; }
+
+  /// Returns true if the given register is artificial, which means it
+  /// represents a regunit that is not separately addressable but still needs to
+  /// be modelled, such as the top 16-bits of a 32-bit GPR.
+  bool isArtificial(MCRegister RegNo) const { return get(RegNo).IsArtificial; }
+
+  /// Returns true when the given register unit is considered artificial.
+  /// Register units are considered artificial when at least one of the
+  /// root registers is artificial.
+  bool isArtificialRegUnit(MCRegUnit Unit) const;
 
   /// Return the number of registers this target has (useful for
   /// sizing arrays holding per register information)
@@ -423,23 +560,23 @@ public:
   /// number.  Returns -1 if there is no equivalent value.  The second
   /// parameter allows targets to use different numberings for EH info and
   /// debugging info.
-  int getDwarfRegNum(MCRegister RegNum, bool isEH) const;
+  virtual int64_t getDwarfRegNum(MCRegister Reg, bool isEH) const;
 
-  /// Map a dwarf register back to a target register. Returns std::nullopt is
+  /// Map a dwarf register back to a target register. Returns std::nullopt if
   /// there is no mapping.
-  std::optional<unsigned> getLLVMRegNum(unsigned RegNum, bool isEH) const;
+  std::optional<MCRegister> getLLVMRegNum(uint64_t RegNum, bool isEH) const;
 
   /// Map a target EH register number to an equivalent DWARF register
   /// number.
-  int getDwarfRegNumFromDwarfEHRegNum(unsigned RegNum) const;
+  int64_t getDwarfRegNumFromDwarfEHRegNum(uint64_t RegNum) const;
 
   /// Map a target register to an equivalent SEH register
   /// number.  Returns LLVM register number if there is no equivalent value.
-  int getSEHRegNum(MCRegister RegNum) const;
+  int getSEHRegNum(MCRegister Reg) const;
 
   /// Map a target register to an equivalent CodeView register
   /// number.
-  int getCodeViewRegNum(MCRegister RegNum) const;
+  int getCodeViewRegNum(MCRegister Reg) const;
 
   regclass_iterator regclass_begin() const { return Classes; }
   regclass_iterator regclass_end() const { return Classes+NumClasses; }
@@ -462,11 +599,11 @@ public:
     return RegClassStrings + Class->NameIdx;
   }
 
-   /// Returns the encoding for RegNo
-  uint16_t getEncodingValue(MCRegister RegNo) const {
-    assert(RegNo < NumRegs &&
+   /// Returns the encoding for Reg
+  uint16_t getEncodingValue(MCRegister Reg) const {
+    assert(Reg.id() < NumRegs &&
            "Attempting to get encoding for invalid register number!");
-    return RegEncodingTable[RegNo];
+    return RegEncodingTable[Reg.id()];
   }
 
   /// Returns true if RegB is a sub-register of RegA.
@@ -496,6 +633,19 @@ public:
 
   /// Returns true if the two registers are equal or alias each other.
   bool regsOverlap(MCRegister RegA, MCRegister RegB) const;
+
+  /// Returns true if this target uses regunit intervals.
+  bool hasRegUnitIntervals() const { return RegUnitIntervals != nullptr; }
+
+  /// Returns an iterator range over all native regunits in the RegUnitInterval
+  /// table for \p Reg.
+  iota_range<unsigned> regunits_interval(MCRegister Reg) const {
+    assert(hasRegUnitIntervals() &&
+           "Target does not support regunit intervals");
+    assert(Reg.id() < NumRegs && "Invalid register number");
+    return seq<unsigned>(RegUnitIntervals[Reg.id()][0],
+                         RegUnitIntervals[Reg.id()][1]);
+  }
 };
 
 //===----------------------------------------------------------------------===//
@@ -520,7 +670,7 @@ public:
 
   MCSubRegIterator(MCRegister Reg, const MCRegisterInfo *MCRI,
                    bool IncludeSelf = false) {
-    assert(MCRegister::isPhysicalRegister(Reg.id()));
+    assert(Reg.isPhysical());
     I.init(Reg.id(), MCRI->DiffLists + MCRI->get(Reg).SubRegs);
     // Initially, the iterator points to Reg itself.
     Val = MCPhysReg(*I);
@@ -568,9 +718,10 @@ public:
   bool isValid() const { return SRIter.isValid(); }
 
   /// Moves to the next position.
-  void operator++() {
+  MCSubRegIndexIterator &operator++() {
     ++SRIter;
     ++SRIndex;
+    return *this;
   }
 };
 
@@ -589,7 +740,7 @@ public:
 
   MCSuperRegIterator(MCRegister Reg, const MCRegisterInfo *MCRI,
                      bool IncludeSelf = false) {
-    assert(MCRegister::isPhysicalRegister(Reg.id()));
+    assert(Reg.isPhysical());
     I.init(Reg.id(), MCRI->DiffLists + MCRI->get(Reg).SuperRegs);
     // Initially, the iterator points to Reg itself.
     Val = MCPhysReg(*I);
@@ -635,8 +786,7 @@ public:
   MCRegUnitIterator() = default;
 
   MCRegUnitIterator(MCRegister Reg, const MCRegisterInfo *MCRI) {
-    assert(Reg && "Null register has no regunits");
-    assert(MCRegister::isPhysicalRegister(Reg.id()));
+    assert(Reg.isPhysical());
     // Decode the RegUnits MCRegisterDesc field.
     unsigned RU = MCRI->get(Reg).RegUnits;
     unsigned FirstRU = RU & ((1u << RegUnitBits) - 1);
@@ -676,7 +826,7 @@ public:
   }
 
   /// Returns a (RegUnit, LaneMask) pair.
-  std::pair<unsigned,LaneBitmask> operator*() const {
+  std::pair<MCRegUnit, LaneBitmask> operator*() const {
     return std::make_pair(*RUIter, *MaskListIter);
   }
 
@@ -684,9 +834,10 @@ public:
   bool isValid() const { return RUIter.isValid(); }
 
   /// Moves to the next position.
-  void operator++() {
+  MCRegUnitMaskIterator &operator++() {
     ++MaskListIter;
     ++RUIter;
+    return *this;
   }
 };
 
@@ -707,10 +858,11 @@ class MCRegUnitRootIterator {
 public:
   MCRegUnitRootIterator() = default;
 
-  MCRegUnitRootIterator(unsigned RegUnit, const MCRegisterInfo *MCRI) {
-    assert(RegUnit < MCRI->getNumRegUnits() && "Invalid register unit");
-    Reg0 = MCRI->RegUnitRoots[RegUnit][0];
-    Reg1 = MCRI->RegUnitRoots[RegUnit][1];
+  MCRegUnitRootIterator(MCRegUnit RegUnit, const MCRegisterInfo *MCRI) {
+    assert(static_cast<unsigned>(RegUnit) < MCRI->getNumRegUnits() &&
+           "Invalid register unit");
+    Reg0 = MCRI->RegUnitRoots[static_cast<unsigned>(RegUnit)][0];
+    Reg1 = MCRI->RegUnitRoots[static_cast<unsigned>(RegUnit)][1];
   }
 
   /// Dereference to get the current root register.
@@ -724,70 +876,39 @@ public:
   }
 
   /// Preincrement to move to the next root register.
-  void operator++() {
+  MCRegUnitRootIterator &operator++() {
     assert(isValid() && "Cannot move off the end of the list.");
     Reg0 = Reg1;
     Reg1 = 0;
+    return *this;
   }
 };
 
-/// MCRegAliasIterator enumerates all registers aliasing Reg.  If IncludeSelf is
-/// set, Reg itself is included in the list.  This iterator does not guarantee
-/// any ordering or that entries are unique.
+/// MCRegAliasIterator enumerates all registers aliasing Reg.
 class MCRegAliasIterator {
 private:
-  MCRegister Reg;
-  const MCRegisterInfo *MCRI;
-  bool IncludeSelf;
-
-  MCRegUnitIterator RI;
-  MCRegUnitRootIterator RRI;
-  MCSuperRegIterator SI;
+  const MCPhysReg *It = nullptr;
+  const MCPhysReg *End = nullptr;
 
 public:
   MCRegAliasIterator(MCRegister Reg, const MCRegisterInfo *MCRI,
-                     bool IncludeSelf)
-    : Reg(Reg), MCRI(MCRI), IncludeSelf(IncludeSelf) {
-    // Initialize the iterators.
-    for (RI = MCRegUnitIterator(Reg, MCRI); RI.isValid(); ++RI) {
-      for (RRI = MCRegUnitRootIterator(*RI, MCRI); RRI.isValid(); ++RRI) {
-        for (SI = MCSuperRegIterator(*RRI, MCRI, true); SI.isValid(); ++SI) {
-          if (!(!IncludeSelf && Reg == *SI))
-            return;
-        }
-      }
-    }
+                     bool IncludeSelf) {
+    ArrayRef<MCPhysReg> Cache = MCRI->getCachedAliasesOf(Reg);
+    assert(Cache.back() == Reg);
+    It = Cache.begin();
+    End = Cache.end();
+    if (!IncludeSelf)
+      --End;
   }
 
-  bool isValid() const { return RI.isValid(); }
+  bool isValid() const { return It != End; }
 
-  MCRegister operator*() const {
-    assert(SI.isValid() && "Cannot dereference an invalid iterator.");
-    return *SI;
-  }
+  MCRegister operator*() const { return *It; }
 
-  void advance() {
-    // Assuming SI is valid.
-    ++SI;
-    if (SI.isValid()) return;
-
-    ++RRI;
-    if (RRI.isValid()) {
-      SI = MCSuperRegIterator(*RRI, MCRI, true);
-      return;
-    }
-
-    ++RI;
-    if (RI.isValid()) {
-      RRI = MCRegUnitRootIterator(*RI, MCRI);
-      SI = MCSuperRegIterator(*RRI, MCRI, true);
-    }
-  }
-
-  void operator++() {
+  MCRegAliasIterator &operator++() {
     assert(isValid() && "Cannot move off the end of the list.");
-    do advance();
-    while (!IncludeSelf && isValid() && *SI == Reg);
+    ++It;
+    return *this;
   }
 };
 
@@ -815,6 +936,12 @@ inline detail::concat_range<const MCPhysReg, iterator_range<MCSubRegIterator>,
                             iterator_range<MCSuperRegIterator>>
 MCRegisterInfo::sub_and_superregs_inclusive(MCRegister Reg) const {
   return concat<const MCPhysReg>(subregs_inclusive(Reg), superregs(Reg));
+}
+
+inline iota_range<MCRegUnit> MCRegisterInfo::regunits() const {
+  return enum_seq(static_cast<MCRegUnit>(0),
+                  static_cast<MCRegUnit>(getNumRegUnits()),
+                  force_iteration_on_noniterable_enum);
 }
 
 inline iterator_range<MCRegUnitIterator>
