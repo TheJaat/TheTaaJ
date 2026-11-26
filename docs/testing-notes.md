@@ -4246,3 +4246,26 @@ cd kernel/abi && cargo test
 | the last line | `test result: ok. 35 passed` |
 
 Automated: `make handles64-test aarch64-handles-test`, and `make test64`.
+
+---
+
+## 119 · Names from a directory, and a program given one directory
+
+[The entry](journal/119-openat.md)
+
+Start TheTaaJ:
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `with programs at` | `at: 30 checks, all passed` |
+| `with programs namespace` | `namespace: 38 checks, all passed` (entry 118's) |
+| `with programs handles` | `handles: 45 checks, all passed` (entry 115's) |
+| `ls` | no `atdir`, `moved`, `box` or `outside` left behind |
+
+The same on AArch64 with `make run-aarch64`: `with programs at` gives the same line.
+
+Automated: `make handles64-test aarch64-handles-test`, and `make test64`.

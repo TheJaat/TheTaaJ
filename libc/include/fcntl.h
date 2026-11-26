@@ -28,7 +28,7 @@ extern "C" {
 #define O_NOCTTY    0400
 
 /* For the ...at calls (openat, fstatat, mkdirat, unlinkat, renameat,
- * faccessat, utimensat; journal entry NNN): a name is taken from the
+ * faccessat, utimensat; journal entry 119): a name is taken from the
  * directory the descriptor is open on - that directory, wherever it has
  * moved - or, with AT_FDCWD, from the current directory. */
 #define AT_FDCWD -100
