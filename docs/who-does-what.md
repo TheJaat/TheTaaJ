@@ -155,7 +155,7 @@ Each machine (or session) has its own table and changes only its own, so two mac
 
 | Step | Branch |
 |---|---|
-| How we work: back to branches, conflicts avoided at merge, three machines named | `back-to-branches` |
+| Building and measuring TheJat-WSL (no lane yet: the user decides) | - |
 
 ## The decided order
 

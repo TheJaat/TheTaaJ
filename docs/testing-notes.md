@@ -3953,3 +3953,25 @@ gh pr list --repo TheJaat/TheTaaJ
 |---|---|
 | A pull request labelled `review:pass` or `review:changes`, with a comment headed **Review** | The reviewer has looked at it |
 | After `merge-ok`: the pull request merged, its branch gone, its journal entry numbered in `docs/journal/README.md` | The reviewer merged it as `how-we-work.md` says |
+
+---
+
+## 107 · Back to branches: no pull requests, conflicts avoided at merge, three machines named
+
+[The entry](journal/107-back-to-branches.md)
+
+From the root of TheTaaJ:
+
+```
+ls docs/how-we-work.md docs/review.md
+grep -c "pull request\|reviewer" docs/who-does-what.md
+make -s test64-list | wc -w
+grep -c "^### Now: " docs/who-does-what.md
+```
+
+| Look for | Meaning |
+|---|---|
+| `No such file or directory`, twice | 106's pull-request files are gone |
+| `2` | Only rule 14's two lines about pull requests from outside |
+| `58` | All of test64's parts, as before |
+| `3` | One "Now" table per machine |

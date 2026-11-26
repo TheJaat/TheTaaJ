@@ -1,6 +1,6 @@
 # Back to branches: no pull requests, conflicts avoided at merge, three machines named
 
-*Journal entry #NNN · a working step, not a feature. Written on TheJat-WSL. Entry 106 made every change a pull request, reviewed and merged by one reviewer. After one pull request under it, the user decided it was more process than the machines need. The rules go back to what they were before 106 - a branch for everything, full testing, the user asked, and the one who did the work merges it - with what 106 got right kept: everything that collided in entries 098-105 is now done at merge time. There are three machines now, with names: TheJat-VM, MaK-WSL and TheJat-WSL.*
+*Journal entry #107 · a working step, not a feature. Written on TheJat-WSL. Entry 106 made every change a pull request, reviewed and merged by one reviewer. After one pull request under it, the user decided it was more process than the machines need. The rules go back to what they were before 106 - a branch for everything, full testing, the user asked, and the one who did the work merges it - with what 106 got right kept: everything that collided in entries 098-105 is now done at merge time. There are three machines now, with names: TheJat-VM, MaK-WSL and TheJat-WSL.*
 
 ## Why
 
