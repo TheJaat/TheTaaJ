@@ -1,4 +1,4 @@
-# Goals, and Eras 13 to 28: every part of TheTaaJ reviewed and given an era
+# Goals, and Eras 13 to 29: every part of TheTaaJ reviewed and given an era
 
 *Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support, VFS, device drivers, memory management, the scheduler, security, the desktop, the shell and libc and the bootloader are, for all the items found - IPC, TaajFS, network, threads, VFS, drivers, memory, scheduling, security, desktop, command line, boot - to be put into eras, and then for every area not yet reviewed (observability, services, protocols, build and tests, packages, time and power, portability, configuration) to be given its era too, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
 
@@ -102,6 +102,12 @@ Asked whether everything was covered, I listed eight areas not yet reviewed; the
 - **Portability**: one kernel for both CPUs behind `arch/`, about half the tests on both. But the PCI drivers and some tests are x86-only (AArch64's PCIe bus is unused), no real ARM board, no RISC-V. Then the user set the goal higher: "i want it to run on every architecture available in the world, fully portable". Checked again for that: 4 KiB pages fixed (`PAGE_SIZE` in `abi` and the kernel, 4096 in `user/`), four page-table levels fixed (`paging.rs`), libc's `setjmp` and `fenv` written for two CPUs and `#error` otherwise, interrupts and timers for the APIC and GIC only, DMA assumed coherent, the toolchain built for two targets.
 - **Configuration**: none; it went into Era 23 with services, since settings are what services read.
 
+## What the encryption review found
+
+One piece of cryptography, and a good one: the kernel's random generator, ChaCha20 with fast key erasure, seeded from the CPU's random instruction, jitter and the clock. Nothing else: no hash, cipher, key exchange or signature, so no disk encryption, TLS, signed programs, SSH or key storage; no use of the CPU's crypto instructions; no constant-time checks.
+
+Asked whether to write the algorithms or port audited ones, the user chose both: ours for learning, checked against the RFC vectors, Wycheproof and an audited library on every test run; the audited one guarding real secrets until ours has earned it.
+
 ## What changed in `docs/who-does-what.md`
 
 - **Era 12 · Web** (its ground was already the "Network" section): an introduction to the section, and seven `K?-net-...` items - a benchmark, shared rings for frames, more sockets, a port filter, a routing table, offload, and sockets surviving a restart.
@@ -116,8 +122,9 @@ Asked whether everything was covered, I listed eight areas not yet reviewed; the
 - **Era 19 · Desktop: applications people can use daily**, new: fourteen `K?-ui-...` items (a benchmark, `display` split into four programs, real key events, text for every language, a toolkit, a panel, a clipboard, the first applications, PNG and JPEG, virtio-gpu, native resolution and scaling, a trusted path and screen lock, notifications, accessibility). K39-K46 are pointed to.
 - **Era 20 · The command line and libc**, new: eleven items (`J?-libc-docs`, `J?-cli-one-shell`, `J?-cli-line`, `J?-cli-bg`, `J?-libc-termios`, `J?-libc-headers`, `J?-libc-utf8`, `J?-libc-malloc`, `J?-libc-conform`, `J?-libc-shared`, `J?-cli-tools`). J43 and J44 note that `sh` has what they ask for and J?-cli-one-shell brings it to the keyboard; J32-J50, J57, K31, K33, K44 and K45 are pointed to.
 - **Era 21 · Boot: recoverable, verified and unlimited**, new, MaK-WSL's: eight `K?-boot-...` items (stray files removed, host tests, a kernel of any size from BIOS, a fast BIOS read, A/B kernels with fallback, a boot menu, where kernels live and how they are updated, a relocatable kernel), with K?-sec-boot listed beside them. K51, J51, K12, K25 and U6 are pointed to.
-- **Eras 22 to 28**, new: Observability (seven `K?-obs-...` items), Services, recovery and configuration (eight `K?-svc-...`), Protocols and the ABI (five `K?-abi-...`), Build, toolchain and tests (six `J?-build-...`), Packages and updates (five `J?-pkg-...`), Time and power (five: `J?-time-zones`, `K?-time-ntp`, `K?-power-...`), Portability: every architecture (sixteen `K?-port-...`: the port contract, page size as a parameter, page tables of any shape, byte-order clean, non-coherent DMA, one interrupt and timer interface, the toolchain for every target, PCIe on AArch64, test parity, RISC-V, LoongArch, PowerPC64, s390x, MIPS and SPARC, real boards, a 32-bit build if decided). The Goals' Portable row now says every architecture with an MMU. E2 and E3 now point to Era 23's items that do them.
-- **Later eras**: 13 to 28 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 29.
+- **Eras 22 to 28**, new: Observability (seven `K?-obs-...` items), Services, recovery and configuration (eight `K?-svc-...`), Protocols and the ABI (five `K?-abi-...`), Build, toolchain and tests (six `J?-build-...`), Packages and updates (five `J?-pkg-...`), Time and power (five: `J?-time-zones`, `K?-time-ntp`, `K?-power-...`), Portability: every architecture (sixteen `K?-port-...`: the port contract, page size as a parameter, page tables of any shape, byte-order clean, non-coherent DMA, one interrupt and timer interface, the toolchain for every target, PCIe on AArch64, test parity, RISC-V, LoongArch, PowerPC64, s390x, MIPS and SPARC, real boards, a 32-bit build if decided). The Goals' Portable row now says every architecture with an MMU.
+- **Era 29 · Cryptography and encryption**, new: ten `K?-crypt-...` items (our library, the audited one beside it, differential tests, constant time and wiping, ours taking over, the CPU's crypto instructions, a key service, encrypted swap, encryption in TaajFS version 7, SSH). K37 now says its cryptography comes from Era 29. E2 and E3 now point to Era 23's items that do them.
+- **Later eras**: 13 to 29 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 30.
 
 ## Design decisions
 
@@ -139,6 +146,8 @@ Asked whether everything was covered, I listed eight areas not yet reviewed; the
 - **A conformance suite as libc's yardstick**, as the benchmarks are for speed: libc's coverage is measured, not guessed.
 - **Boot's milestone is recovery.** A machine used daily must survive a bad kernel update by itself, as TaajFS survives a power cut: A/B kernels, a new one tried once and kept only when TheTaaJ says it booted. The 3 MiB wall comes next, since every kernel feature moves it closer.
 - **The bootloader's era is MaK-WSL's.** Rule 7 gives TheBootloader to MaK-WSL; the era says so at its top, and its items are MaK-WSL's to do or to agree.
+- **Crypto: ours and an audited one.** Crypto written for the first time is where serious bugs hide, and they don't show in ordinary tests: a timing leak, a wrong edge case. So ours is checked three ways on every run, and an audited library protects real secrets until ours has passed and its timing has been checked. That keeps both goals: learning every concept, and secure.
+- **Keys as capabilities.** A program is given the right to use a key, never the key: what a hardware security module does, as a service - natural where everything is a capability already.
 - **"Every architecture" means every one with an MMU.** A microkernel's isolation is separate address spaces; a CPU without an MMU can't give them, so most microcontrollers are out by the design's nature, not by choice. Within that, tiers: x86_64 and AArch64 fully (today), RISC-V, LoongArch and PowerPC64 LE to the shell and the core tests, s390x, PowerPC BE, MIPS and SPARC as proof that byte order, page size and firmware are behind `arch/`. 32-bit only if the user decides (E7), since the vision is 64-bit.
 - **A big-endian CPU and a page size other than 4 KiB in CI.** Portability claimed is not portability; the two assumptions most likely to hide are kept away by running where they are false.
 - **The port contract first**: written down before a third architecture, so each port tests the contract rather than inventing it.
@@ -162,12 +171,13 @@ Asked whether everything was covered, I listed eight areas not yet reviewed; the
 - The desktop claims: what `display.rs` holds and its startup handles, the window protocol (`gui/src/protocol.rs`), the window manager (`gui/src/desktop.rs`), `gfx`'s font from `console`, `WINDOW_PROGRAMS` (`counter`) and `EDIT_PROGRAMS` (`edit`) in `user/src/bin/shell.rs`.
 - The shell and libc claims: `sh.rs`'s header and its refusal of `&`, its 33 tests; `shell.rs`'s header (jobs, grants, no history or completion found in it); `libc/src/lib.rs`'s overview against `threads.rs` and the missing `emutls.c`; the headers in `libc/include`; musl's libm in `libc/c/libm`.
 - The boot claims: `taajboot.h` (the protocol, its size checks), `stage2/elf.c`'s "Segment outside 1 MiB .. 3 MiB, refusing" and the kernel's `linker.ld` check, journal entry 089's 672 KiB left, `uefi/main.c` and `uefi/aarch64.c`'s headers, `abc.txt` and `random.txt` at TheBootloader's root, and no test files in it.
+- The encryption claims: `chacha.rs` and `random.rs`, and no other cryptographic code in TheTaaJ's own sources (a search for SHA, BLAKE, AES, Poly1305, Ed25519, X25519 and HMAC outside `ports/`).
 - The last reviews' claims: `logring.rs`, `logmerge.rs`, `lastwords.rs` and the panic handler in `main.rs` (no backtrace); the shell's built-in commands; init's header, `MAX_RESTARTS` and `RESTART_WINDOW`; `ramdisk-src/config.cfg` read by nothing in the 64-bit code; the `abi` crate's modules and no version on calls or protocols; `TEST64_PARTS` and no CI files; no package code; `libc/c/time.c` (localtime is UTC), `rtc.rs`, the `acpi` crate; the `aarch64-...` test parts against the x86-only ones.
 - Nothing was built or run: this changes only documents.
 
 ## What is still missing
 
-- Which machine takes each of Eras 13 to 28, and in what order (Era 21 is MaK-WSL's, as TheBootloader's owner); the numbers given to the new items at merge.
+- Which machine takes each of Eras 13 to 29, and in what order (Era 21 is MaK-WSL's, as TheBootloader's owner); the numbers given to the new items at merge.
 
 ## What I learned
 
@@ -198,4 +208,5 @@ grep -n '^## Goals\|^## Era\|kernel stays pure\|K?-\|J?-\|^| K27' docs/who-does-
 | `## Era 20 · The command line and libc` | 11 `J?-cli`/`J?-libc` items |
 | `## Era 21 · Boot: recoverable, verified and unlimited` | 8 `K?-boot` items, MaK-WSL's |
 | `## Era 22` ... `## Era 28` | Observability; Services, recovery and configuration; Protocols and the ABI; Build, toolchain and tests; Packages and updates; Time and power; Portability: every architecture (with its tiers table) |
-| `## Later eras` | Eras 13 to 28, and the assistant as 29 |
+| `## Era 29 · Cryptography and encryption` | 10 `K?-crypt` items |
+| `## Later eras` | Eras 13 to 29, and the assistant as 30 |
