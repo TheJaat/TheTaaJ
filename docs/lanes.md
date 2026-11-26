@@ -40,6 +40,7 @@ A machine may run fewer sessions than it has lanes: then it starts them in the o
 - Era 10 and 11 (sound and voice), apart from the two sound items in `devices`' last wave;
 - Era 30 (the assistant);
 - E6-E8, J50, J97, which come later or wait for the user.
+- K186 (files after the disk driver is restarted), found by `ci` in entry 117: for the `services` lane to take into its table.
 
 ## Across lanes
 
@@ -123,7 +124,6 @@ Its files: the test rules of the `Makefile`, `kernel/kernel64/scripts/*-test.sh`
 
 | Item | Wave | Note |
 |---|---|---|
-| J94 | 1 | A faster `make test64` (TheJat-WSL's "faster tests" work: `e1000-64-test`, LLVM relinking) |
 | J51 | 1 | Test programs out of the kernel image: every lane's new tests need room |
 | J92 | 1 | A clean build from a fresh clone, in a container (is J54) |
 | J54 | 1 | Done by J92 |
