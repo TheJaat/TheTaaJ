@@ -1724,7 +1724,7 @@ else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 ground2 boot is not run"
 endif
 
-# Open files as handles (J60, J61, journal entry NNN): open gives a
+# Open files as handles (J60, J61, journal entry 115): open gives a
 # channel to the file itself, so a descriptor follows its file through a
 # rename, keeps it after a removal or a replacing rename, and is handed
 # to a child as the file. handles.c checks it in one boot.

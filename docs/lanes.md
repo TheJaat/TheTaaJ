@@ -82,7 +82,7 @@ Its files: `kernel/kernel64/src/channel.rs`, `ipc.rs`, `cap.rs`, the channel and
 | K66 | 1 | The cycle leak |
 | K61 | 1 | `channel_call`: `sched`'s K98 and this lane's K73 wait for it |
 | K62 | 1 | One copy per message |
-| K?-port | 2 | A port: one wait for many channels (the file service's open files need it, entry NNN) |
+| K?-port | 2 | A port: one wait for many channels (the file service's open files need it, entry 115) |
 | K63 | 2 | Bigger messages or rings; `network`'s K54 waits for it |
 | K111 | 2 | `DEBUG_WRITE` behind a capability |
 | K73 | 2 | Services with several threads |

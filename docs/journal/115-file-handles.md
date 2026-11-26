@@ -1,6 +1,6 @@
 # Open files as handles: a descriptor is the file, not its name
 
-*Journal entry #NNN · J60 and J61 of Era 14 (with J36): the first step of a VFS with the kernel left out. Written on TheJat-VM/files, on the branch `j60-file-handles` in TheTaaJ and TheKernel.*
+*Journal entry #115 · J60 and J61 of Era 14 (with J36): the first step of a VFS with the kernel left out. Written on TheJat-VM/files, on the branch `j60-file-handles` in TheTaaJ and TheKernel.*
 
 ## Why
 

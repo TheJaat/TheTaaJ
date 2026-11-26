@@ -4128,3 +4128,42 @@ make boot64-test
 | `boot64-test passed` | `ps` printed the CPU column the test expects |
 
 Automated: `make test64`
+
+---
+
+## 115 · Open files as handles: a descriptor is the file, not its name
+
+[The entry](journal/115-file-handles.md)
+
+Start TheTaaJ:
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `with programs handles` | `handles: 45 checks, all passed` |
+| `ls` | no `.taaj-removed`, and none of the test's files (`a`, `b`, `d`, `doomed`, `x`, `moved`, `f`, `g`) left |
+| `echo hello > note` then `cat note` | `hello`: the shell's streams work as before |
+| `mv note memo` then `cat memo` | `hello` |
+| `rm memo` then `ls` | `memo` is gone, and there is no `.taaj-removed` |
+
+The same on AArch64 with `make run-aarch64`: `with programs handles` gives the same line.
+
+On the host:
+
+```
+cd fileserver && cargo test
+```
+
+| Look for | You should see |
+|---|---|
+| `nodes::tests::open_files_follow_their_file_in_memory` | `ok` |
+| `nodes::tests::open_files_follow_their_file_on_disk` | `ok` |
+| `nodes::tests::a_removed_open_file_left_by_a_stop_is_removed_at_the_start` | `ok` |
+| `nodes::tests::listing_the_root_pages_past_the_hidden_directory` | `ok` |
+| `nodes::tests::open_files_are_counted` | `ok` |
+| the last line | `test result: ok. 48 passed` |
+
+Automated: `make handles64-test aarch64-handles-test`, and `make test64`.
