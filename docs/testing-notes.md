@@ -3714,9 +3714,166 @@ Automated: make ground64-test, make aarch64-ground-test, make test64
 
 ---
 
-## 100 · Tests at full speed: KVM for the test scripts, and the boot test's two typing races
+## 100 · Std's ground, part 2: poll and select, dl_iterate_phdr, pthread attributes, exec with PATH, directory descriptors, zlib
 
-[The entry](journal/100-tests-at-full-speed.md)
+[The entry](journal/100-std-ground-2.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`. It puts `ground2` on the disk.
+
+| Type | You should see |
+|---|---|
+| `with programs ground2` | after a few seconds `ground2: 87 checks, all passed`; in the terminal, its children `exited with code 7` (twice: the program exec started, then the one that exec'd), `ended by signal 15 (SIGTERM)` then `exited with code -1115` (the go-between passing the signal's code on), `exited with code 42` twice, `exited with code 3` twice, `exited with code 4`, and at the end `"ground2" exited with code 0` |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make ground2-64-test
+make aarch64-ground2-test
+make test64
+```
+
+| Look for | Meaning |
+|---|---|
+| `std's ground, part 2 (x86_64): 87 checks of poll, select, dl_iterate_phdr, getauxval, dlfcn, pthread attributes, exec with PATH, descriptors through exec, argv[0], realpath and zlib passed` | every part above; the same for aarch64 |
+| `test64: all passed` | every part, the new two included |
+
+Automated: make ground2-64-test, make aarch64-ground2-test, make test64
+
+---
+
+## 101 · TaajFS version 6: file times, volumes and files over 256 MiB, a rename that replaces, and programs found in /bin
+
+[The entry](journal/101-taajfs-6.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`.
+
+| Type | You should see |
+|---|---|
+| `write t one` then `ls -l` | `t` with its size and today's date and time (UTC) |
+| `write u two` then `ls -l` | `u` a little later than `t` |
+| `mv u t` then `ls` | only `t`: the rename replaced it; `cat t` says `two` |
+| `mkdir d` then `mv d t` | `mv: d to t: not a directory`: a directory does not replace a file |
+| `mv t d` then `ls d` | `t` went into `d` (a directory as TO means "into it", as before) |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make times64-test
+make aarch64-times-test
+make test64
+```
+
+---
+
+## 102 · Memory for big programs, part 1: mprotect for real, memory given back, a heap that returns it, and copies that cannot race an unmap
+
+[The entry](journal/102-pages.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`. It puts `pages` on the disk.
+
+| Type | You should see |
+|---|---|
+| `with programs pages` | after some seconds `pages: N copies went in, M were refused` (the two add up to 20000) and `pages: 54 checks, all passed`, then `"pages" exited with code 0` |
+| `mem` before and after | the memory in use back where it was: what pages took, it gave back |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make pages64-test
+make aarch64-pages-test
+make test64
+```
+
+---
+
+## 103 · Memory for big programs, part 2: shared file mappings that are written back, pread and pwrite, and why programs are not loaded page by page yet
+
+[The entry](journal/103-shared-mappings.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`. It puts the new `pages` on the disk.
+
+| Type | You should see |
+|---|---|
+| `with programs pages` | `pages: N copies went in, M were refused`, then `pages: 77 checks, all passed`; between them a second `pages` started "for a program" exits with code 0 (the child that writes through a mapping and exits) |
+| `ls` afterwards | no `p.file` or `p.exit`: the checks clean up after themselves |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make pages64-test
+make aarch64-pages-test
+make test64
+```
+
+---
+
+## 104 · Tests at full speed: KVM for the test scripts, and the boot test's two typing races
+
+[The entry](journal/104-tests-at-full-speed.md)
 
 On MaK (KVM):
 
@@ -3744,9 +3901,9 @@ make test64 TAAJ_ACCEL=tcg
 
 ---
 
-## 101 · The race hunt: twenty rounds under KVM, a SIGCHLD that came late, and tests that timed the host
+## 105 · The race hunt: twenty rounds under KVM, a SIGCHLD that came late, and tests that timed the host
 
-[The entry](journal/101-the-race-hunt.md)
+[The entry](journal/105-the-race-hunt.md)
 
 On MaK (KVM):
 

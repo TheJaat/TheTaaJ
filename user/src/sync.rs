@@ -82,6 +82,11 @@ impl<T> Mutex<T> {
         self.lock.lock();
         MutexGuard { mutex: self }
     }
+
+    /// The value, if the lock is free now; None without waiting if not.
+    pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
+        self.lock.try_lock().then_some(MutexGuard { mutex: self })
+    }
 }
 
 /// The value of a locked Mutex. Dropping it unlocks.

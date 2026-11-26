@@ -162,7 +162,7 @@ fn main() -> i64 {
             let deaf = Files::with_patience(silent, 10);
             // Not before 10 ticks; by 13, tried up to three times (a host
             // that stops this virtual machine makes one try late; journal
-            // entry 101).
+            // entry 105).
             let mut waited = 0;
             for _ in 0..3 {
                 let start = taaj::ticks();
@@ -279,8 +279,13 @@ fn main() -> i64 {
     check!(files.rename("g", "m/sub/g") == Ok(()) && matches(&files, "m/sub/g", 3000), "and back down");
     check!(files.rename("m/sub", "sub") == Ok(()), "a directory moves");
     check!(matches(&files, "sub/g", 3000) && files.list("m", |_, _, _| {}) == Ok(0), "with what is in it");
-    check!(files.rename("sub", "m") == refused(Status::Exists), "nothing is replaced: not a directory");
-    check!(files.rename("sub/g", "big") == refused(Status::Exists), "nor a file");
+    check!(files.write("m/full", b"x") == Ok(1), "something in the old directory");
+    check!(files.rename("sub", "m") == refused(Status::NotEmpty), "a directory with things in it is not replaced");
+    check!(files.rename("sub/g", "m") == refused(Status::IsDirectory), "nor a directory by a file");
+    check!(files.rename("sub", "m/full") == refused(Status::NotDirectory), "nor a file by a directory");
+    check!(files.write("m/old", b"old") == Ok(3) && files.rename("m/full", "m/old") == Ok(()), "a file replaces a file");
+    check!(matches_bytes(&files, "m/old", b"x") && files.size("m/full") == refused(Status::NotFound), "its bytes, under the one name");
+    check!(files.remove("m/old") == Ok(()), "the old directory empty again");
     check!(files.rename("sub", "sub/in") == refused(Status::IntoItself), "not into itself");
     check!(files.rename("nothing", "x") == refused(Status::NotFound), "what is not there cannot move");
     check!(files.rename("sub", "nowhere/x") == refused(Status::NotFound), "nor to a directory that is not there");

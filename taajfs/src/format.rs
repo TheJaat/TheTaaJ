@@ -42,6 +42,19 @@ pub const VERSION_STAMPS: u32 = 4;
 /// second slot for an entry of its own, a file whose inode number is
 /// four letters of the name.
 pub const VERSION_LONG_NAMES: u32 = 5;
+/// Version 6: a file's inode may carry the time it last changed, as
+/// well as its stamp (a timed inode, see `Inode`), and there may be
+/// everything before. A volume becomes this before the first timed
+/// inode is written, and stays it. Older code would take a timed inode
+/// for a damaged one.
+///
+/// (Volumes bigger than 256 MiB, up to MAX_BLOCKS, came with this
+/// version's code too, but need no number of their own: code that
+/// knows only 65536 blocks refuses the superblock of a bigger volume -
+/// `is_valid` - so it can never mount one and write over it.)
+pub const VERSION_TIMES: u32 = 6;
+/// The newest version this code reads and writes.
+pub const VERSION_NEWEST: u32 = VERSION_TIMES;
 pub const BLOCK_SIZE: usize = 4096;
 /// The name field of a slot. A name shorter than this has a NUL after
 /// it there and takes one slot; one this long or longer takes two.
@@ -51,7 +64,14 @@ pub const NAME_MAX: usize = 28;
 pub const LONG_NAME_MAX: usize = NAME_MAX + MORE_NAME;
 /// The name bytes a second slot holds: all of it but the type field.
 pub const MORE_NAME: usize = 36;
-pub const MAX_BLOCKS: u32 = 65536;
+/// The most blocks a volume may have: 4 GiB. Until version 6's code it
+/// was 65536, 256 MiB. Block numbers are u32 and could go further; the
+/// free map (one byte a block, in memory) and a file's 32-bit size are
+/// what this keeps sensible.
+pub const MAX_BLOCKS: u32 = 1 << 20;
+/// What the code before it allowed: a superblock saying more is refused
+/// there (see VERSION_TIMES).
+pub const OLD_MAX_BLOCKS: u32 = 65536;
 
 pub const SUPER_A: u32 = 0;
 pub const SUPER_B: u32 = 1;
@@ -85,12 +105,20 @@ pub const STAMPED_HEADER: usize = 24;
 pub const STAMPED_BLOCKS: usize = (BLOCK_SIZE - STAMPED_HEADER) / 4;
 /// The most a stamped inode reaches with its own block list.
 pub const STAMPED_DIRECT_MAX: usize = STAMPED_BLOCKS * BLOCK_SIZE;
+/// A timed inode's magic, "JAFU" when read as bytes on disk.
+pub const MAGIC_TIMED: u32 = 0x5546_414A;
+/// A timed inode's header: the four fields, the stamp, then the time,
+/// u64 each.
+pub const TIMED_HEADER: usize = 32;
+/// 1016 block pointers fit after it.
+pub const TIMED_BLOCKS: usize = (BLOCK_SIZE - TIMED_HEADER) / 4;
 /// 1024 block numbers fit in one index block.
 pub const INDEX_BLOCKS: usize = BLOCK_SIZE / 4;
-/// The biggest file: the whole of the biggest volume, 256 MiB. (An
-/// inode of index blocks reaches 1020 * 1024 blocks, 4 GiB, which the
-/// 32-bit size could not say.)
-pub const MAX_FILE_SIZE: usize = MAX_BLOCKS as usize * BLOCK_SIZE;
+/// The biggest file: what a timed inode's index blocks reach, 1016 *
+/// 1024 blocks - just under 4 GiB, so that the 32-bit size can say it
+/// (the other layouts reach a little further; this is the least). On a
+/// volume smaller than that, the volume is the limit.
+pub const MAX_FILE_SIZE: usize = TIMED_BLOCKS * INDEX_BLOCKS * BLOCK_SIZE;
 
 /// One block, as it sits on disk.
 pub type Block = [u8; BLOCK_SIZE];
@@ -236,7 +264,7 @@ impl Superblock {
     /// The same checks `TfsMount` applies before trusting a slot.
     pub fn is_valid(&self) -> bool {
         self.magic == MAGIC
-            && (VERSION..=VERSION_LONG_NAMES).contains(&self.version)
+            && (VERSION..=VERSION_NEWEST).contains(&self.version)
             && self.block_size == BLOCK_SIZE as u32
             && self.total_blocks != 0
             && self.total_blocks <= MAX_BLOCKS
@@ -435,6 +463,14 @@ impl DirBlock {
 /// it names STAMPED_BLOCKS blocks itself, two fewer. An inode written
 /// before version 4 keeps its layout and has stamp 0: older than
 /// anything changed since.
+///
+/// A timed inode (magic MAGIC_TIMED, version 6) carries a stamp and,
+/// after it, the time of the change: nanoseconds since 1 January 1970,
+/// UTC, as the clock of whoever wrote it said - TheTaaJ's or the host
+/// tool's. That is what `ls -l` and `stat` show. Order still comes from
+/// the stamp; and the volume never writes a time older than one it
+/// already holds (see `Volume`), so times order changes too. Its header
+/// is 32 bytes: TIMED_BLOCKS slots, four fewer than the oldest layout.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Inode {
     pub magic: u32,
@@ -454,6 +490,9 @@ pub struct Inode {
     pub blocks: Vec<u32>,
     /// When it last changed (see above); 0 for an unstamped inode.
     pub stamp: u64,
+    /// The time of that change, in nanoseconds since 1970; 0 for an
+    /// inode that is not timed.
+    pub time: u64,
 }
 
 impl Inode {
@@ -466,29 +505,42 @@ impl Inode {
             block_count: blocks.len() as u32,
             blocks,
             stamp: 0,
+            time: 0,
         }
     }
 
     /// A big file's inode: `block_count` data blocks, named by the index
     /// blocks `index`.
     pub fn big(size: u32, kind: u32, block_count: u32, index: Vec<u32>) -> Inode {
-        Inode { magic: MAGIC, size, kind, block_count, blocks: index, stamp: 0 }
+        Inode { magic: MAGIC, size, kind, block_count, blocks: index, stamp: 0, time: 0 }
     }
 
     /// The same inode, stamped. Its blocks must fit a stamped inode: a
     /// small file of more than STAMPED_BLOCKS is a big one when stamped.
     pub fn stamped(self, stamp: u64) -> Inode {
-        Inode { magic: MAGIC_STAMPED, stamp, ..self }
+        Inode { magic: MAGIC_STAMPED, stamp, time: 0, ..self }
     }
 
-    /// Whether it carries a stamp (and has the longer header).
+    /// The same inode, stamped and timed. Its blocks must fit a timed
+    /// inode: more than TIMED_BLOCKS make it a big one.
+    pub fn timed(self, stamp: u64, time: u64) -> Inode {
+        Inode { magic: MAGIC_TIMED, stamp, time, ..self }
+    }
+
+    /// Whether it carries a stamp (and has a longer header): a stamped
+    /// inode or a timed one.
     pub fn is_stamped(&self) -> bool {
-        self.magic == MAGIC_STAMPED
+        self.magic == MAGIC_STAMPED || self.magic == MAGIC_TIMED
     }
 
-    /// Whether it is an inode at all: either magic.
+    /// Whether it carries a time.
+    pub fn is_timed(&self) -> bool {
+        self.magic == MAGIC_TIMED
+    }
+
+    /// Whether it is an inode at all: any of the three magics.
     pub fn is_valid(&self) -> bool {
-        self.magic == MAGIC || self.magic == MAGIC_STAMPED
+        self.magic == MAGIC || self.magic == MAGIC_STAMPED || self.magic == MAGIC_TIMED
     }
 
     /// How many block numbers it holds itself.
@@ -496,20 +548,24 @@ impl Inode {
         Self::slots_for(self.magic)
     }
 
-    fn slots_for(magic: u32) -> usize {
-        if magic == MAGIC_STAMPED {
-            STAMPED_BLOCKS
-        } else {
-            INODE_BLOCKS
+    pub fn slots_for(magic: u32) -> usize {
+        match magic {
+            MAGIC_TIMED => TIMED_BLOCKS,
+            MAGIC_STAMPED => STAMPED_BLOCKS,
+            _ => INODE_BLOCKS,
+        }
+    }
+
+    fn header_for(magic: u32) -> usize {
+        match magic {
+            MAGIC_TIMED => TIMED_HEADER,
+            MAGIC_STAMPED => STAMPED_HEADER,
+            _ => INODE_HEADER,
         }
     }
 
     fn header(&self) -> usize {
-        if self.is_stamped() {
-            STAMPED_HEADER
-        } else {
-            INODE_HEADER
-        }
+        Self::header_for(self.magic)
     }
 
     /// Whether the slots name index blocks, not data blocks.
@@ -529,13 +585,10 @@ impl Inode {
         } else {
             block_count as usize
         };
-        let (header, stamp) = if magic == MAGIC_STAMPED {
-            let low = u64::from(get_u32(block, 16));
-            let high = u64::from(get_u32(block, 20));
-            (STAMPED_HEADER, low | high << 32)
-        } else {
-            (INODE_HEADER, 0)
-        };
+        let u64_at = |at: usize| u64::from(get_u32(block, at)) | u64::from(get_u32(block, at + 4)) << 32;
+        let header = Self::header_for(magic);
+        let stamp = if magic == MAGIC_STAMPED || magic == MAGIC_TIMED { u64_at(16) } else { 0 };
+        let time = if magic == MAGIC_TIMED { u64_at(24) } else { 0 };
         let blocks = (0..usable)
             .map(|i| get_u32(block, header + i * 4))
             .collect();
@@ -547,6 +600,7 @@ impl Inode {
             block_count,
             blocks,
             stamp,
+            time,
         }
     }
 
@@ -570,6 +624,10 @@ impl Inode {
         if self.is_stamped() {
             put_u32(&mut block, 16, self.stamp as u32);
             put_u32(&mut block, 20, (self.stamp >> 32) as u32);
+        }
+        if self.is_timed() {
+            put_u32(&mut block, 24, self.time as u32);
+            put_u32(&mut block, 28, (self.time >> 32) as u32);
         }
         let header = self.header();
         for (i, &number) in self.blocks.iter().enumerate() {
@@ -608,7 +666,39 @@ mod tests {
         assert_eq!(DIR_ENTRIES, 102);
         assert_eq!(INODE_BLOCKS, 1020);
         assert_eq!(DIRECT_MAX, 1020 * 4096);
-        assert_eq!(MAX_FILE_SIZE, 256 << 20);
+        assert_eq!(MAX_FILE_SIZE, 1016 * 1024 * 4096);
+        assert!(MAX_FILE_SIZE <= u32::MAX as usize, "a file's size is 32 bits");
+        assert_eq!(MAX_BLOCKS as usize * BLOCK_SIZE, 4 << 30);
+    }
+
+    #[test]
+    fn a_timed_inode_round_trips_with_stamp_and_time() {
+        let inode = Inode::new(9000, TYPE_FILE, vec![10, 11, 12]).timed(0x1_0000_0007, 0x1880_0000_0000_0042);
+        let block = inode.to_block();
+
+        assert_eq!(&block[0..4], b"JAFU");
+        assert_eq!(&block[16..24], &[7, 0, 0, 0, 1, 0, 0, 0]);
+        assert_eq!(&block[24..32], &[0x42, 0, 0, 0, 0, 0, 0x80, 0x18]);
+        assert_eq!(&block[32..36], &[10, 0, 0, 0]);
+        let back = Inode::parse(&block);
+        assert_eq!(back, inode);
+        assert!(back.is_valid() && back.is_stamped() && back.is_timed() && !back.is_big());
+        assert_eq!((TIMED_BLOCKS, back.slots()), (1016, 1016));
+        let big = Inode::big(0, TYPE_FILE, TIMED_BLOCKS as u32 + 1, vec![40]).timed(3, 4);
+        assert!(Inode::parse(&big.to_block()).is_big());
+    }
+
+    #[test]
+    fn a_superblock_of_a_volume_over_256_mib_is_new_codes_only() {
+        let sb = Superblock::new(OLD_MAX_BLOCKS + 1, 1, FIRST_DATA);
+        assert!(sb.is_valid(), "this code mounts it");
+        assert!(sb.total_blocks > OLD_MAX_BLOCKS, "older code, checking against 65536, does not");
+        assert!(!Superblock::new(MAX_BLOCKS + 1, 1, FIRST_DATA).is_valid());
+        let mut six = Superblock::new(4096, 1, FIRST_DATA);
+        six.version = VERSION_TIMES;
+        assert!(six.sealed().is_valid());
+        six.version = VERSION_TIMES + 1;
+        assert!(!six.sealed().is_valid());
     }
 
     #[test]

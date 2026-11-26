@@ -7,7 +7,7 @@
  * aligned_alloc, the locale, constructors and atexit - and of what
  * LLVM needs of it: stat and directories, chdir, truncate, dup2 and
  * fcntl, mmap, signals, pthreads, sysconf, nanosleep,
- * rand - and of what make needs: change stamps, and utimensat.
+ * rand - and of what make needs: change times, and utimensat.
  *
  *   with files clib     every check; "library: N checks, all passed",
  *                       then, from the atexit handlers, "library: atexit
@@ -40,6 +40,13 @@
 
 static int checks;
 static int failures;
+
+/* Whether a changed after b, to the nanosecond. */
+static int newer(const struct stat *a, const struct stat *b)
+{
+    return a->st_mtim.tv_sec > b->st_mtim.tv_sec
+        || (a->st_mtim.tv_sec == b->st_mtim.tv_sec && a->st_mtim.tv_nsec > b->st_mtim.tv_nsec);
+}
 
 static void check(int ok, const char *what)
 {
@@ -214,9 +221,11 @@ static void files(void)
     check(stream != NULL && fclose(stream) == 0, "fclose a stream fdopen made");
 
     check(getenv("PATH") == NULL, "getenv: no environment");
-    char *arguments[] = {"ls", NULL};
+    /* execvp runs a program in this one's place (entry 100): one that
+     * is not there leaves this program running, with ENOENT. */
+    char *arguments[] = {"no-such-program", NULL};
     errno = 0;
-    check(execvp("ls", arguments) == -1 && errno == ENOSYS, "execvp: ENOSYS");
+    check(execvp("no-such-program", arguments) == -1 && errno == ENOENT, "execvp of nothing: ENOENT");
 }
 
 /* ---- what C++'s library needs ---- */
@@ -358,30 +367,32 @@ static void for_llvm(void)
     if (fd >= 0)
         close(fd);
 
-    /* Change stamps, for make: what changed later is newer, a touch
-     * makes a file newer, and a stamp cannot be set to a given time. */
+    /* Change times, for make: what changed later is newer, a touch
+     * makes a file newer, and a time cannot be set to a given one. The
+     * whole st_mtim is compared, as make does: two changes in the same
+     * second differ only in the nanoseconds (TaajFS version 6). */
     struct stat note, later;
     made = fopen("later", "w");
     check(made && fputs("x", made) >= 0 && fclose(made) == 0, "a second file");
-    check(stat("note", &note) == 0 && stat("later", &later) == 0 && later.st_mtime > note.st_mtime && note.st_mtime >= 1,
+    check(stat("note", &note) == 0 && stat("later", &later) == 0 && newer(&later, &note) && note.st_mtime >= 1,
           "the file written later has the later st_mtime");
-    check(utimensat(AT_FDCWD, "note", NULL, 0) == 0 && stat("note", &note) == 0 && note.st_mtime > later.st_mtime,
+    check(utimensat(AT_FDCWD, "note", NULL, 0) == 0 && stat("note", &note) == 0 && newer(&note, &later),
           "utimensat with no times makes a file newer");
     struct timespec now[2] = {{0, UTIME_OMIT}, {0, UTIME_NOW}};
-    check(utimensat(AT_FDCWD, "later", now, 0) == 0 && stat("later", &later) == 0 && later.st_mtime > note.st_mtime,
+    check(utimensat(AT_FDCWD, "later", now, 0) == 0 && stat("later", &later) == 0 && newer(&later, &note),
           "utimensat with UTIME_NOW");
     struct timespec omit[2] = {{0, UTIME_OMIT}, {0, UTIME_OMIT}};
-    time_t stamped = later.st_mtime;
-    check(utimensat(AT_FDCWD, "later", omit, 0) == 0 && stat("later", &later) == 0 && later.st_mtime == stamped,
+    struct stat unchanged = later;
+    check(utimensat(AT_FDCWD, "later", omit, 0) == 0 && stat("later", &later) == 0 && !newer(&later, &unchanged) && !newer(&unchanged, &later),
           "UTIME_OMIT changes nothing");
     struct timespec given[2] = {{5, 0}, {5, 0}};
     errno = 0;
     check(utimensat(AT_FDCWD, "later", given, 0) == -1 && errno == EPERM, "a stamp cannot be set to a time: EPERM");
     errno = 0;
     check(utimensat(AT_FDCWD, "nothere", NULL, 0) == -1 && errno == ENOENT, "touching nothing: ENOENT");
-    check(utime("note", NULL) == 0 && stat("note", &note) == 0 && note.st_mtime > later.st_mtime, "utime with no times");
+    check(utime("note", NULL) == 0 && stat("note", &note) == 0 && newer(&note, &later), "utime with no times");
     fd = open("later", O_RDONLY);
-    check(fd >= 0 && futimens(fd, NULL) == 0 && stat("later", &later) == 0 && later.st_mtime > note.st_mtime, "futimens");
+    check(fd >= 0 && futimens(fd, NULL) == 0 && stat("later", &later) == 0 && newer(&later, &note), "futimens");
     if (fd >= 0)
         close(fd);
     check(stat("note", &note) == 0 && note.st_size == 8, "and a touch changes nothing in the file");

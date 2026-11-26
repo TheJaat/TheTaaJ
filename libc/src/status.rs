@@ -68,16 +68,28 @@ pub fn inode(path: &str) -> u64 {
 /// and never less than 1 - `make` takes 0 to mean there is no file. A
 /// file not changed since stamping began (stamp 0) is 1, older than any
 /// stamped one: a commit's stamp is at least 2 (sys/stat.h).
-fn time_of(stamp: u64) -> Time {
+///
+/// A file with a time of its own (TaajFS version 6: nanoseconds since
+/// 1970, from the clock of whoever wrote it) is told that instead: a
+/// real date, for `ls -l` and for people. The two kinds order rightly
+/// against each other: every file with a time was written after every
+/// file with only a stamp (seconds since 1970 that small are before
+/// any clock TheTaaJ has read), and the volume never gives a newer
+/// change an older time.
+fn time_of(stamp: u64, time: u64) -> Time {
+    if time != 0 {
+        let seconds = c_long::try_from(time / 1_000_000_000).unwrap_or(c_long::MAX);
+        return Time { seconds, nanoseconds: (time % 1_000_000_000) as c_long };
+    }
     Time { seconds: c_long::try_from(stamp.max(1)).unwrap_or(c_long::MAX), nanoseconds: 0 }
 }
 
-fn describe(path: &str, kind: Kind, size: u64, stamp: u64) -> Stat {
+fn describe(path: &str, kind: Kind, size: u64, stamp: u64, time: u64) -> Stat {
     let size = i64::try_from(size).unwrap_or(i64::MAX);
     Stat {
-        st_atim: time_of(stamp),
-        st_mtim: time_of(stamp),
-        st_ctim: time_of(stamp),
+        st_atim: time_of(stamp, time),
+        st_mtim: time_of(stamp, time),
+        st_ctim: time_of(stamp, time),
         st_dev: 1,
         st_ino: inode(path),
         st_nlink: 1,
@@ -106,8 +118,8 @@ pub unsafe extern "C" fn stat(path: *const c_char, out: *mut Stat) -> c_int {
     };
     let found = with(|state| {
         let files = state.files().ok_or(EACCES)?;
-        let (kind, size, stamp) = files.stat_stamped(name).map_err(reason)?;
-        Ok(describe(&format!("/{}", files.resolve(name)), kind, size, stamp))
+        let (kind, size, stamp, time) = files.stat_timed(name).map_err(reason)?;
+        Ok(describe(&format!("/{}", files.resolve(name)), kind, size, stamp, time))
     });
     match found {
         Ok(status) => {
@@ -156,8 +168,8 @@ pub unsafe extern "C" fn fstat(fd: c_int, out: *mut Stat) -> c_int {
             None => return Err(EBADF),
         };
         let files = state.files().ok_or(EBADF)?;
-        let (kind, size, stamp) = files.stat_stamped(&path).map_err(reason)?;
-        Ok(describe(&path, kind, size, stamp))
+        let (kind, size, stamp, time) = files.stat_timed(&path).map_err(reason)?;
+        Ok(describe(&path, kind, size, stamp, time))
     });
     match found {
         Ok(status) => {
@@ -294,6 +306,9 @@ pub struct Dirent {
 /// where readdir has got to.
 pub struct Dir {
     path: String,
+    /// The descriptor it reads (fdopendir), or dirfd made for it; -1
+    /// for none. closedir closes it.
+    fd: c_int,
     entries: Vec<(String, u8)>,
     next: usize,
     entry: Dirent,
@@ -328,6 +343,7 @@ pub unsafe extern "C" fn opendir(path: *const c_char) -> *mut Dir {
     match listed {
         Ok((path, entries)) => Box::into_raw(Box::new(Dir {
             path,
+            fd: -1,
             entries,
             next: 0,
             entry: Dirent { d_ino: 0, d_off: 0, d_reclen: 0, d_type: 0, d_name: [0; 256] },
@@ -389,8 +405,70 @@ pub unsafe extern "C" fn closedir(dir: *mut Dir) -> c_int {
         return fail(EBADF);
     }
     // SAFETY: the caller's promise: it came from Box::into_raw in opendir.
-    drop(unsafe { Box::from_raw(dir) });
+    let dir = unsafe { Box::from_raw(dir) };
+    if dir.fd >= 0 {
+        crate::descriptors::close(dir.fd);
+    }
     0
+}
+
+/// The path from the root that descriptor `fd` was opened on, if it is
+/// a file's or a directory's.
+fn path_of(fd: c_int) -> Result<String, c_int> {
+    match crate::descriptors::open_at(fd) {
+        Some(crate::descriptors::Open::File(file)) => Ok(file.lock().path.clone()),
+        Some(_) => Err(ENOTDIR),
+        None => Err(EBADF),
+    }
+}
+
+/// `fdopendir(fd)`: opendir on what `fd` - opened with O_DIRECTORY - is
+/// open on. The DIR then owns `fd`: closedir closes it.
+#[no_mangle]
+pub extern "C" fn fdopendir(fd: c_int) -> *mut Dir {
+    let path = match path_of(fd) {
+        Ok(path) => path,
+        Err(code) => return fail_null(code),
+    };
+    let Ok(path) = alloc::ffi::CString::new(path) else { return fail_null(EINVAL) };
+    // SAFETY: a string ending in a zero.
+    let dir = unsafe { opendir(path.as_ptr()) };
+    if !dir.is_null() {
+        // SAFETY: just made.
+        unsafe { (*dir).fd = fd };
+    }
+    dir
+}
+
+/// `dirfd(dir)`: a descriptor for the directory `dir` reads - the one
+/// fdopendir was given, or one opened now (O_DIRECTORY) and kept until
+/// closedir. -1 with errno if it cannot be opened.
+///
+/// # Safety
+/// `dir` must come from opendir or fdopendir and not have been closed.
+#[no_mangle]
+pub unsafe extern "C" fn dirfd(dir: *mut Dir) -> c_int {
+    // SAFETY: the caller's promise.
+    let dir = unsafe { &mut *dir };
+    if dir.fd < 0 {
+        let Ok(path) = alloc::ffi::CString::new(dir.path.clone()) else { return fail(EINVAL) };
+        // SAFETY: a string ending in a zero.
+        dir.fd = unsafe { crate::descriptors::__taaj_open(path.as_ptr(), crate::descriptors::O_DIRECTORY) };
+    }
+    dir.fd
+}
+
+/// `fchdir(fd)`: chdir to the directory `fd` (opened with O_DIRECTORY)
+/// is open on. ENOTDIR for anything else, EBADF for no descriptor.
+#[no_mangle]
+pub extern "C" fn fchdir(fd: c_int) -> c_int {
+    let path = match path_of(fd) {
+        Ok(path) => path,
+        Err(code) => return fail(code),
+    };
+    let Ok(path) = alloc::ffi::CString::new(path) else { return fail(EINVAL) };
+    // SAFETY: a string ending in a zero.
+    unsafe { chdir(path.as_ptr()) }
 }
 
 // ---- marking a file changed -------------------------------------------

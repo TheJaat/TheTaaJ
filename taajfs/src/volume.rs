@@ -22,7 +22,8 @@ use crate::device::{BlockDevice, DeviceError};
 use crate::format::{
     empty_block, get_u32, put_u32, Block, DirBlock, DirEntry, Inode, Superblock, BLOCK_SIZE, DIR_ENTRIES,
     FIRST_DATA, INDEX_BLOCKS, INODE_BLOCKS, MAGIC, MAX_BLOCKS, MAX_FILE_SIZE, LONG_NAME_MAX, NAME_MAX, SUPER_A, SUPER_B,
-    TYPE_DIR, TYPE_FILE, VERSION_BIG_FILES, VERSION_DIRECTORIES, VERSION_LONG_NAMES, VERSION_STAMPS, STAMPED_BLOCKS,
+    TYPE_DIR, TYPE_FILE, VERSION_BIG_FILES, VERSION_DIRECTORIES, VERSION_LONG_NAMES, VERSION_NEWEST, VERSION_STAMPS,
+    VERSION_TIMES, STAMPED_BLOCKS, TIMED_BLOCKS,
 };
 
 /// The most blocks `read_at` asks the device for at once: 256 KiB.
@@ -214,6 +215,14 @@ pub struct Volume<D: BlockDevice> {
     /// Blocks handed out since the last commit: the ones the new tree
     /// does not use are free again once it is committed.
     fresh: Vec<u32>,
+    /// Where times for timed inodes come from (version 6): nanoseconds
+    /// since 1970. TheTaaJ's file service gives the machine's clock,
+    /// the host's tool the host's. None: no clock, and a file written
+    /// gets only the time order allows (see `time_now`).
+    clock: Option<fn() -> u64>,
+    /// The newest time any inode on the volume holds: found at mount,
+    /// raised by every timed inode written since.
+    newest: u64,
 }
 
 impl<D: BlockDevice> Volume<D> {
@@ -223,7 +232,7 @@ impl<D: BlockDevice> Volume<D> {
     /// nothing else can write to the disk behind the volume's back.
     pub fn mount(mut device: D) -> Result<Volume<D>> {
         let mut best: Option<(u32, Superblock)> = None;
-        let mut lowest = VERSION_LONG_NAMES;
+        let mut lowest = VERSION_NEWEST;
         let mut block = empty_block();
 
         for slot in [SUPER_A, SUPER_B] {
@@ -255,6 +264,8 @@ impl<D: BlockDevice> Volume<D> {
             used: Vec::new(),
             used_count: 0,
             fresh: Vec::new(),
+            clock: None,
+            newest: 0,
         };
         volume.rebuild_free_map()?;
         Ok(volume)
@@ -405,6 +416,7 @@ impl<D: BlockDevice> Volume<D> {
                     }
                     self.mark_used(entry.inode)?;
                     let inode = self.read_inode(entry.inode)?;
+                    self.newest = self.newest.max(inode.time);
                     if inode.is_big() {
                         for &index in &inode.blocks {
                             self.mark_used(index)?;
@@ -634,6 +646,41 @@ impl<D: BlockDevice> Volume<D> {
         Ok(())
     }
 
+    /// Makes the volume one whose files carry the time they changed:
+    /// version 6 in both slots. From then on every inode written is
+    /// timed (see `Inode`), with the clock `set_clock` gave. Like
+    /// `allow_stamps`, asked for, not done by every write.
+    pub fn allow_times(&mut self) -> Result<()> {
+        self.raise_version(VERSION_TIMES)
+    }
+
+    /// Where the times of timed inodes come from: nanoseconds since
+    /// 1970, UTC.
+    pub fn set_clock(&mut self, clock: fn() -> u64) {
+        self.clock = Some(clock);
+    }
+
+    /// Whether inodes written now are timed: no slot says less than
+    /// version 6.
+    fn timing(&self) -> bool {
+        self.lowest >= VERSION_TIMES
+    }
+
+    /// The time an inode written now gets: the clock's, but never
+    /// older than the newest time already on the volume - one
+    /// nanosecond after it, if the clock says less. Two machines' clocks
+    /// write to the same disk (the host's tool and TheTaaJ), and they
+    /// need not agree to the nanosecond, or at all: TheTaaJ's starts
+    /// from the real-time clock's whole seconds. A file written later
+    /// must still look newer to `make`, so the times on a volume only
+    /// grow, as its stamps do.
+    fn time_now(&mut self) -> u64 {
+        let now = self.clock.map_or(0, |clock| clock());
+        let time = if self.newest == 0 { now } else { now.max(self.newest + 1) };
+        self.newest = time;
+        time
+    }
+
     /// Whether inodes written now are stamped: only when no slot says
     /// less than version 4, as with every other version (see
     /// `raise_version`).
@@ -643,7 +690,9 @@ impl<D: BlockDevice> Volume<D> {
 
     /// How many blocks an inode written now names itself.
     fn direct_slots(&self) -> usize {
-        if self.stamping() {
+        if self.timing() {
+            TIMED_BLOCKS
+        } else if self.stamping() {
             STAMPED_BLOCKS
         } else {
             INODE_BLOCKS
@@ -738,7 +787,14 @@ impl<D: BlockDevice> Volume<D> {
             }
             Inode::big(size, kind, blocks.len() as u32, index)
         };
-        let inode = if self.stamping() { inode.stamped(self.next_stamp()) } else { inode };
+        let inode = if self.timing() {
+            let time = self.time_now();
+            inode.timed(self.next_stamp(), time)
+        } else if self.stamping() {
+            inode.stamped(self.next_stamp())
+        } else {
+            inode
+        };
         let number = self.allocate()?;
         self.write(number, &inode.to_block())?;
         Ok(number)
@@ -890,6 +946,16 @@ impl<D: BlockDevice> Volume<D> {
             return Ok(0);
         }
         Ok(self.read_inode(file.inode)?.stamp)
+    }
+
+    /// The time the file last changed, in nanoseconds since 1970: 0 for
+    /// a directory and for a file not changed since the volume began
+    /// timing (version 6).
+    pub fn time(&mut self, file: &FileInfo) -> Result<u64> {
+        if file.kind == TYPE_DIR {
+            return Ok(0);
+        }
+        Ok(self.read_inode(file.inode)?.time)
     }
 
     /// Reads from `offset` into `buffer`; returns how many bytes it got.
@@ -1232,8 +1298,21 @@ impl<D: BlockDevice> Volume<D> {
                 return Err(Error::Name);
             }
         }
-        if self.find(&to_dirs, to_name)?.is_some() {
-            return Err(Error::Exists);
+        // Something there already is replaced, as POSIX's rename does:
+        // a file by a file, an empty directory by a directory - in the
+        // same commit, so that the name never stops being there. Other
+        // pairs are refused, as Unix refuses them.
+        let target = self.find(&to_dirs, to_name)?;
+        if let Some(target) = &target {
+            if target.inode == entry.inode {
+                return Ok(()); // two names for one thing: nothing to do
+            }
+            match (entry.kind == TYPE_DIR, target.kind == TYPE_DIR) {
+                (false, true) => return Err(Error::IsDirectory),
+                (true, false) => return Err(Error::NotDirectory),
+                (true, true) if !self.entries(target.inode)?.is_empty() => return Err(Error::NotEmpty),
+                _ => {}
+            }
         }
 
         self.allow_name(to_name)?;
@@ -1241,8 +1320,15 @@ impl<D: BlockDevice> Volume<D> {
             let moved = DirEntry::new(to_name, entry.inode, entry.size, entry.kind);
             let root = if same_directory {
                 // One directory changes: the entry is replaced, where
-                // it stands, by itself under the new name.
-                v.rewrite_path(&from_dirs, from_name, Some(moved))?
+                // it stands, by itself under the new name - after the
+                // one it replaces, if any, is taken out.
+                match target {
+                    Some(_) => {
+                        let without = v.rewrite_path(&to_dirs, to_name, None)?;
+                        v.rewrite_path_from(without, &from_dirs, from_name, Some(moved))?
+                    }
+                    None => v.rewrite_path(&from_dirs, from_name, Some(moved))?,
+                }
             } else {
                 let without = v.rewrite_path(&from_dirs, from_name, None)?;
                 v.rewrite_path_from(without, &to_dirs, to_name, Some(moved))?
@@ -1805,6 +1891,103 @@ mod tests {
     }
 
     #[test]
+    fn a_rename_replaces_what_unix_lets_it() {
+        let mut v = fresh();
+        v.put("new", &pattern(3 * BLOCK_SIZE, 1)).unwrap();
+        v.put("old", &pattern(5 * BLOCK_SIZE, 2)).unwrap();
+        let free = v.free_blocks();
+        let generation = v.superblock().generation;
+
+        // A file over a file, in one directory: one commit, and the old
+        // one's blocks free.
+        v.rename("new", "old").unwrap();
+        assert_eq!(v.superblock().generation, generation + 1, "one commit: the name was never missing");
+        assert_eq!(contents(&mut v, "old"), pattern(3 * BLOCK_SIZE, 1));
+        assert!(matches!(v.lookup("new"), Err(Error::NotFound)));
+        assert_eq!(v.free_blocks(), free + 6, "the replaced file's five blocks and its inode");
+
+        // Across directories.
+        v.make_directory("d").unwrap();
+        v.put("d/x", b"inside").unwrap();
+        v.rename("old", "d/x").unwrap();
+        assert_eq!(contents(&mut v, "d/x"), pattern(3 * BLOCK_SIZE, 1));
+        assert_eq!(v.list().unwrap().len(), 1, "only d is left in the root");
+
+        // A directory over an empty one.
+        v.make_directory("empty").unwrap();
+        v.rename("d", "empty").unwrap();
+        assert_eq!(contents(&mut v, "empty/x"), pattern(3 * BLOCK_SIZE, 1));
+        assert!(matches!(v.lookup("d"), Err(Error::NotFound)));
+
+        let mut v = remount(v);
+        assert_eq!(contents(&mut v, "empty/x"), pattern(3 * BLOCK_SIZE, 1));
+        let after = v.free_blocks();
+        v.rebuild_free_map().unwrap();
+        assert_eq!(v.free_blocks(), after, "the free map kept up with every replacement");
+    }
+
+    // ---- times (version 6) --------------------------------------------
+
+    fn clock_at_1000() -> u64 {
+        1000
+    }
+
+    fn clock_at_5000() -> u64 {
+        5000
+    }
+
+    #[test]
+    fn times_come_from_the_clock_and_never_go_back() {
+        let mut v = fresh();
+        v.put("before", b"untimed").unwrap();
+        v.set_clock(clock_at_5000);
+        v.allow_times().unwrap();
+        assert_eq!(v.superblock().version, VERSION_TIMES);
+        let before = v.lookup("before").unwrap();
+        assert_eq!(v.time(&before).unwrap(), 0, "written before timing: no time");
+
+        v.put("a", b"first").unwrap();
+        let a = v.lookup("a").unwrap();
+        assert_eq!(v.time(&a).unwrap(), 5000);
+        // A clock behind the volume (another machine's): the next time
+        // is just after the newest, so later is still newer.
+        v.set_clock(clock_at_1000);
+        v.put("b", b"second").unwrap();
+        let b = v.lookup("b").unwrap();
+        assert_eq!(v.time(&b).unwrap(), 5001);
+        assert!(v.stamp(&b).unwrap() > v.stamp(&a).unwrap(), "stamps still order");
+
+        // The newest time is found again at mount.
+        let mut v = remount(v);
+        v.set_clock(clock_at_1000);
+        v.put("c", b"third").unwrap();
+        let c = v.lookup("c").unwrap();
+        assert_eq!(v.time(&c).unwrap(), 5002);
+        let root = v.lookup("").unwrap();
+        assert!(matches!(v.time(&root), Ok(0)), "a directory has none");
+    }
+
+    #[test]
+    fn a_timed_volume_holds_big_files_with_four_fewer_slots() {
+        let mut v = fresh_big();
+        v.set_clock(clock_at_5000);
+        v.allow_times().unwrap();
+        // One block more than a timed inode holds itself: a big file.
+        let size = (TIMED_BLOCKS + 1) * BLOCK_SIZE;
+        v.put("big", &pattern(size, 4)).unwrap();
+        let mut v = remount(v);
+        assert_eq!(contents(&mut v, "big"), pattern(size, 4));
+        let file = v.lookup("big").unwrap();
+        let inode = v.read_inode(file.inode).unwrap();
+        assert!(inode.is_timed() && inode.is_big());
+        // Exactly what a timed inode holds itself: a small one.
+        v.put("edge", &pattern(TIMED_BLOCKS * BLOCK_SIZE, 5)).unwrap();
+        let file = v.lookup("edge").unwrap();
+        assert!(!v.read_inode(file.inode).unwrap().is_big());
+        assert_eq!(contents(&mut v, "edge"), pattern(TIMED_BLOCKS * BLOCK_SIZE, 5));
+    }
+
+    #[test]
     fn delete_returns_every_block() {
         let mut v = fresh();
         let free_before = v.free_blocks();
@@ -2304,6 +2487,7 @@ mod tests {
         v.make_directory("d").unwrap();
         v.make_directory("d/inner").unwrap();
         v.make_directory("dd").unwrap();
+        v.put("dd/full", b"so not empty").unwrap();
         v.put("d/f", b"file").unwrap();
         v.put("g", b"other").unwrap();
         let free = v.free_blocks();
@@ -2313,11 +2497,12 @@ mod tests {
         assert!(matches!(v.rename("g", "nowhere/x"), Err(Error::NotFound)));
         assert!(matches!(v.rename("g", "d/f/x"), Err(Error::NotDirectory)));
         assert!(matches!(v.rename("g/x", "y"), Err(Error::NotDirectory)));
-        // Nothing is replaced: not a file, not a directory, not by either.
-        assert!(matches!(v.rename("g", "d/f"), Err(Error::Exists)));
-        assert!(matches!(v.rename("g", "d"), Err(Error::Exists)));
-        assert!(matches!(v.rename("d", "g"), Err(Error::Exists)));
-        assert!(matches!(v.rename("d", "dd"), Err(Error::Exists)));
+        // What rename may not replace (a_rename_replaces_what_unix_lets_it
+        // has what it may): a directory by a file, a file by a
+        // directory, a directory with something in it.
+        assert!(matches!(v.rename("g", "d"), Err(Error::IsDirectory)));
+        assert!(matches!(v.rename("d", "g"), Err(Error::NotDirectory)));
+        assert!(matches!(v.rename("d", "dd"), Err(Error::NotEmpty)));
         // Into itself, at any depth - but not into a neighbour whose
         // name merely starts the same way.
         assert!(matches!(v.rename("d", "d/x"), Err(Error::IntoItself)));

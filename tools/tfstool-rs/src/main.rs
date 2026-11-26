@@ -208,5 +208,19 @@ fn open(image: &str) -> Result<Volume<FileDevice>, String> {
         .map_err(|e| format!("cannot open {image}: {e}"))?;
     // A USB stick's image holds the volume in a partition.
     let (device, _) = FileDevice::find(file).map_err(|e| format!("cannot read {image}: {e}"))?;
-    Volume::mount(device).map_err(|e| format!("mount: {e}"))
+    let mut volume = Volume::mount(device).map_err(|e| format!("mount: {e}"))?;
+    // The host's clock for the times of files written here. Only a
+    // volume that already keeps times (version 6: TheTaaJ raised it)
+    // gets them; the tool never raises the version itself, so what it
+    // writes on a fresh volume stays what the C tool writes.
+    volume.set_clock(host_time);
+    Ok(volume)
+}
+
+/// Nanoseconds since 1970, from the host's clock (0 if it says the
+/// time is before then).
+fn host_time() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| u64::try_from(since.as_nanos()).unwrap_or(u64::MAX))
 }

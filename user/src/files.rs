@@ -344,6 +344,17 @@ impl Files {
         Ok((kind, size, protocol::stamp(&reply[1..=n])))
     }
 
+    /// As `stat_stamped`, and the time of that change: nanoseconds since
+    /// 1970, or 0 if the service does not know it (a directory, a file
+    /// not changed since TaajFS version 6, the memory store).
+    pub fn stat_timed(&self, path: &str) -> Result<(Kind, u64, u64, u64), FileError> {
+        let mut reply = [0u8; MESSAGE_MAX];
+        let n = self.call(Request::new(protocol::STAT, &self.path(path), 0), &mut reply)?;
+        let payload = &reply[1..=n];
+        let (kind, size) = protocol::stat(payload).ok_or(FileError::Refused(Status::BadRequest))?;
+        Ok((kind, size, protocol::stamp(payload), protocol::time(payload)))
+    }
+
     /// Marks the file `name` changed now, as `touch` does: a new, higher
     /// stamp, and nothing in it changed.
     pub fn touch(&self, name: &str) -> Result<(), FileError> {

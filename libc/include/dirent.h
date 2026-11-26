@@ -36,6 +36,11 @@ DIR *opendir(const char *path);
 struct dirent *readdir(DIR *dir);
 void rewinddir(DIR *dir);
 int closedir(DIR *dir);
+/* opendir on a descriptor opened with O_DIRECTORY; closedir closes it. */
+DIR *fdopendir(int fd);
+/* A descriptor for the directory dir reads (opened when first asked
+ * for, closed by closedir). */
+int dirfd(DIR *dir);
 
 #ifdef __cplusplus
 }

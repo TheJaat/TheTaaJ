@@ -94,7 +94,7 @@ The items most others wait for, most first. This is why the order below is what 
 | **J14 LLVM 23** | J15 R3, J21 R4 | The-Jat, step E |
 | **J1 ELF thread-local storage** | J15 R3 | The-Jat, step B |
 | **J3 `poll`** | J15 R3, K33 non-blocking sockets | The-Jat, step C |
-| **J17-J20 TaajFS version 4** | J7 `stat` with times, J21 (rustc's big files), E1 `fsck` (written for the new format) | The-Jat, step D |
+| **J17-J20 TaajFS version 6** | J7 `stat` with times, J21 (rustc's big files), E1 `fsck` (written for the new format) | **Done (entry 101)** |
 | **K1 R7, the real PC** | K3 a day on it, K4 its fixes, MaK's step C drivers | MaK, step B |
 | **K13 AML interpreter** | K14 `_PRT`, K15 power button, K17 battery, K18 suspend | MaK, step E |
 | **J43 shell variables and `if`** | J45 rebuilding only what changed, J25 R6's build scripts | The-Jat, filler |
@@ -108,7 +108,7 @@ Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 
 | Machine | Step | Branch |
 |---|---|---|
-| The-Jat | C: std's ground, part 2 (the libc calls std uses) | `std-ground-2` |
+| The-Jat | E: LLVM 23 | `llvm-23` |
 | MaK | A: the scheduler and timing step, one branch per item: now K19's second part, the race hunt | `k19-race-hunt-2` |
 
 ## The decided order
@@ -121,11 +121,11 @@ Each step below is one branch, one journal entry and one test64 run. The items a
 |---|---|---|
 | **A** Merge the core basics | entry 097 | **Done (entry 097)**, merged 2026-11-26 |
 | **B** Std's ground, part 1: randomness, real thread-local storage, signals std uses | J2 `getrandom`, J1 ELF TLS, J4 `sigaltstack`, J10 `waitid` and SIGCHLD | **Done (entry 099)** |
-| **C** Std's ground, part 2: libc calls std uses | J3 `poll`, J5 `dl_iterate_phdr`, J6 pthread attributes, J7 `stat`, J8 `realpath` and `getcwd`, J9 `posix_spawn` with fd 3+, J12 `dlopen` stubs, J13 zlib, J37 environment, J38 `execvp` and `/bin`, J39 the real `argv[0]` | Everything R3 will ask for, so R3 is only Rust's side |
-| **D** TaajFS version 4 | J17 file times, J18 files over 256 MiB, J19 long names, J20 faster writes, J35 a replacing `rename` | One format change instead of four |
-| **E** LLVM 23 | J14, and C++ (libc++, the LLVM port) moved from emulated to real thread-local storage | Long; runs unattended on The-Jat; it rebuilds the ports anyway |
+| **C** Std's ground, part 2: libc calls std uses | J3 `poll`, J5 `dl_iterate_phdr`, J6 pthread attributes, J7 `stat`, J8 `realpath` and `getcwd`, J9 `posix_spawn` with fd 3+, J12 `dlopen` stubs, J13 zlib, J37 environment, J38 `execvp` and `/bin`, J39 the real `argv[0]` | **Done (entry 100)** |
+| **D** TaajFS version 6 (versions 4 and 5 came in Era 6) | J17 file times, J18 files over 256 MiB, J19 long names (entry 094), J20 faster writes (entry 093), J35 a replacing `rename`, J55 `/bin` | **Done (entry 101)**; J55's moving of the programs stays open |
+| **E** LLVM 23 | J14, and C++ (libc++, the LLVM port) moved from emulated to real thread-local storage | Long; runs unattended on The-Jat; it rebuilds the ports anyway. libc++ 23 needs a host clang of 21 or later, so a host LLVM 23.1.5 is built first (`tools/build-host-llvm.sh`, with cmake and ninja) |
 | **F** R3 Rust's std | J15, J16 | Needs B-E |
-| **G** Memory for big programs | J26-J31 | Before rustc's 182 MB runs |
+| **G** Memory for big programs | J26-J31 | Before rustc's 182 MB runs. **Part 1 done (entry 102)**: J26, J27, J30, J31; **part 2 done (entry 103)**: J28. J29 needs sealed memory objects first (J58). Done before E because E waits |
 | **H** R4 rustc on TheTaaJ | J21 | |
 | **I** R5 the build without cargo | J22, J23 (nasm; the bootloader change is MaK's) | |
 | **J** R6 the milestone | J24, J25 | |
@@ -159,17 +159,16 @@ The order matters here: each item is needed by the ones after it.
 |---|---|---|---|
 | J1 | **Real thread-local storage (ELF TLS)**: `PT_TLS` loaded per thread, the FS base / `TPIDR_EL0` pointing at a proper TLS block, `__tls_get_addr` for the general model | M | **Done (entry 099)** for static programs (local-exec); C++ still emulated until step E; no `__tls_get_addr` (no shared libraries) |
 | J2 | **`getrandom`** in the kernel: RDRAND/RDSEED on x86, `RNDR` or virtio-rng on AArch64, mixed with timer jitter into a ChaCha20 generator; `getrandom()`, `getentropy()`, `/dev/urandom`-like call in libc | M | **Done (entry 099)**: ChaCha20, RDSEED/RDRAND/RNDR + timings; no virtio-rng, no `/dev/urandom` file |
-| J3 | **`poll`** (and `select` on top of it) over pipes, files, sockets and the keyboard | M | Needs "writable" readiness in `object_wait` (an open issue) |
+| J3 | **`poll`** (and `select` on top of it) over pipes, files, sockets and the keyboard | M | **Done (entry 100)**: in libc, over the read ends' channels; sockets always "ready" until the network service says when data comes |
 | J4 | **`sigaltstack`** and running a handler on it; SIGSEGV on a stack overflow reaches that handler | S | **Done (entry 099)** |
-| J5 | **`dl_iterate_phdr`** (for the program itself only, no shared libraries) | S | std's backtraces and unwinding look for it |
-| J6 | **`pthread_getattr_np`**, `pthread_attr_getstack`, `pthread_sigmask` | S | std's thread guard pages |
-| J7 | **`statx` or a full `stat`**: sizes, types, times (once TaajFS has them, see J17) | S | `std::fs::metadata` |
-| J8 | **`realpath`, `getcwd`, `fchdir`, `opendir` on handles** | S | std paths |
-| J9 | **`posix_spawn` file actions for fd 3+** (E11 left over from Era 6) | M | `std::process::Command` with pipes |
-| J10 | **`waitid`, `WNOHANG` everywhere, SIGCHLD** | S | **Done (entry 099)**: PROCESS_NOTIFY; WNOHANG and WNOWAIT MaK fixed an ordering bug in it (entry 101): the exit code is now published after the watchers' signals, so SIGCHLD's handler has run when `waitid` returns |
+| J5 | **`dl_iterate_phdr`** (for the program itself only, no shared libraries) | S | **Done (entry 100)**, with `getauxval` |
+| J6 | **`pthread_getattr_np`**, `pthread_attr_getstack`, `pthread_sigmask` | S | **Done (entry 100)**: glibc's 56-byte `pthread_attr_t`, `pthread_attr_setstack`, `pthread_getattr_np` (the main thread's too); `pthread_sigmask` was already there |
+| J8 | **`realpath`, `getcwd`, `fchdir`, `opendir` on handles** | S | **Done (entry 100)**: `realpath` and `getcwd` were there; `open` with O_DIRECTORY, `fchdir`, `fdopendir`, `dirfd` added |
+| J9 | **`posix_spawn` file actions for fd 3+** (E11 left over from Era 6) | M | **Done**: entry 092 (E11) for spawn; entry 100 checks it through exec too |
+| J10 | **`waitid`, `WNOHANG` everywhere, SIGCHLD** | S | **Done (entry 099)**: PROCESS_NOTIFY; WNOHANG and WNOWAIT. MaK fixed an ordering bug in it (entry 105): the exit code is now published after the watchers' signals, so SIGCHLD's handler has run when `waitid` returns |
 | J11 | **Wide characters**: `wchar_t` functions, `mbrtowc`, `wcrtomb` in UTF-8 | M | Also helps libc++'s missing parts |
-| J12 | **`dlopen`/`dlsym` stubs answering "unsupported"** honestly | S | rustc probes for codegen backends |
-| J13 | **zlib** ported (for rustc's metadata compression) | S | |
+| J12 | **`dlopen`/`dlsym` stubs answering "unsupported"** honestly | S | **Done (entry 100)**: `dlopen(NULL)` works, `dlsym` says no, `dlerror` says why |
+| J13 | **zlib** ported (for rustc's metadata compression) | S | **Done (entry 100)**: zlib 1.3.2 in `ports/zlib`, `make zlib64`/`zlib-aarch64` |
 | J14 | **LLVM 23** for TheTaaJ (our port is 18; rustc 1.100 needs 23) | L | Redo E1-E4's port on the new version, byte-for-byte checks again |
 
 ### Era 9 proper
@@ -178,10 +177,6 @@ The order matters here: each item is needed by the ones after it.
 |---|---|---|---|
 | J15 | **R3 Rust's std**: `x86_64-unknown-taaj` and `aarch64-unknown-taaj`, std over our libc, `panic = "abort"` first | L | Done when files, env, `Command`, threads and time work on both arches |
 | J16 | **R3b unwinding**, if rustc needs it (libunwind for TheTaaJ, `.eh_frame_hdr`) | M | |
-| J17 | **TaajFS metadata**: modification times (now there is a real clock), sizes in directory entries, `ls -l` | M | Needs a format version 4; `tfstool` follows |
-| J18 | **TaajFS files over 256 MiB** (one more level of indirection) | M | LLVM 23 and rustc may outgrow it |
-| J19 | **TaajFS names over 27 bytes** | M | Some AArch64 `.td` files are 28 |
-| J20 | **Faster writes**: a write buffer per open file, one commit per `fsync`/close instead of per `write()` | M | rustc writes many small pieces |
 | J21 | **R4 rustc runs on TheTaaJ**, cross-built with `x.py`; `taajfs.rlib` byte for byte as the host's | L | |
 | J22 | **R5 a Makefile driving rustc without cargo**, checked against cargo on the host | L | |
 | J23 | **R5 nasm ported**; the BIOS loader built with clang (`--target=i686-elf`) | M | The bootloader change itself is MaK's (rule 5); The-Jat ports nasm |
@@ -192,12 +187,8 @@ The order matters here: each item is needed by the ones after it.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J26 | **`mprotect` and `PROT_NONE`** really change page permissions | S | Guard pages, JITs |
-| J27 | **`MADV_DONTNEED`**: give pages back from inside a reservation | S | Big allocators (jemalloc-like) |
-| J28 | **`MAP_SHARED` file mappings that write back** | M | |
-| J29 | **Programs loaded page by page from their file** (not whole, not twice in memory) | M | A 182 MB rustc |
-| J30 | **The unmap race**: a system call copying into a page another thread is unmapping | S | Known open issue since entry 096 |
-| J31 | **Small malloc classes give memory back** | S | |
+| J29 | **Programs loaded page by page from their file** (not whole, not twice in memory) | M | A 182 MB rustc. Needs J58: sharing the program object's frames as code is only safe once nobody can write them (entry 103) |
+| J58 | **Sealed memory objects**: an object made read-only for good - no writable mapping or handle left - checked by the kernel before it shares the frames | M | For J29; maybe for real shared file mappings later |
 
 ### C and C++ library, left over from Era 6
 
@@ -206,11 +197,10 @@ The order matters here: each item is needed by the ones after it.
 | J32 | `scanf`/`fscanf` from streams | S | Only `sscanf` today |
 | J33 | `%a` in printf; long double done properly (`strtold`, `%Lf`) | M | |
 | J34 | `erf`, `erfc`, `tgamma`, `lgamma` and the long double math | S | Declared, not defined |
-| J35 | `rename` replaces an existing file atomically | S | TaajFS operation |
 | J36 | libc descriptors follow the file, not the name (rename/remove of an open file) | M | |
-| J37 | `getenv`/`setenv` with a real environment passed to children | S | Always NULL today |
-| J38 | `execvp`, `PATH` search; a `/bin` directory | S | |
-| J39 | `argv[0]` is the program's real name (not "program") | S | Fixes clang finding itself |
+| J37 | `getenv`/`setenv` with a real environment passed to children | S | **Done** before this list (`environ`, posix_spawn's envp; checked through exec in entry 100) |
+| J38 | `execvp`, `PATH` search; a `/bin` directory | S | **Done (entry 100)**: the exec family as spawn-and-wait with the exact exit code; PATH, or `/` then `/bin`. The `/bin` directory itself waits for step D |
+| J39 | `argv[0]` is the program's real name (not "program") | S | **Done**: argv[0] is the parent's (checked in entry 100) |
 | J40 | libc++ `<filesystem>`, `random_device` (after J2), wide streams | M | |
 | J41 | Double `free` and overrun detection in `malloc` (a debug mode) | S | |
 | J42 | Host tests for `malloc`'s family | S | |
@@ -236,6 +226,9 @@ The order matters here: each item is needed by the ones after it.
 | J52 | A test that fails when rule 1 or rule 3 of `threads.rs` is broken | S | Known gap |
 | J53 | A test for the ticks mutation from entry 097 (late timer interrupts) | S | Perhaps by stopping a CPU for a while |
 | J54 | A fresh `git clone --recurse-submodules` builds and passes (in a clean container) | S | Never tried |
+| J55 | Programs moved into `/bin` on the run disks (libc's exec and the shell both look there, entries 100 and 101) | S | The disk recipes and every test put programs in the root and look for them there |
+| J56 | zlib (and later other libraries) installed on TheTaaJ's disk with its header, for programs compiled there | S | With step E, when there is a place for libraries on the disk |
+| J57 | exec without the go-between: signals sent to it passed on to the program it started, and a keyboard handed on | M | Entry 100's exec is spawn-and-wait |
 
 ---
 
@@ -273,7 +266,7 @@ The order matters here: each item is needed by the ones after it.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K19 | **Run `make test64` under KVM repeatedly** (say 20 times) and fix every race found | M | **Done (entries 100, 101)**: the tests choose KVM themselves, the typed boot test's typing races; twenty rounds under KVM (`tools/race-hunt.sh`): SIGCHLD before `waitid` returns fixed in the kernel, upper time limits retried; one failure left open as K49 |
+| K19 | **Run `make test64` under KVM repeatedly** (say 20 times) and fix every race found | M | **Done (entries 104, 105)**: the tests choose KVM themselves, the typed boot test's typing races; twenty rounds under KVM (`tools/race-hunt.sh`): SIGCHLD before `waitid` returns fixed in the kernel, upper time limits retried; one failure left open as K50 |
 | K20 | Process priorities and choosing a thread's CPU (affinity) | M | Four busy programs make typing sluggish |
 | K21 | CPU time per process in `ps` | S | |
 | K22 | A transmit-interrupt serial writer (AArch64 output capped at ~3200 bytes/s) | S | |
@@ -303,6 +296,7 @@ The order matters here: each item is needed by the ones after it.
 | K36 | IPv6 | L | Later |
 | K37 | TLS 1.3 with its cryptography | L | After J2 |
 | K38 | HTTP server: several connections, keep-alive | S | |
+| K49 | Socket readiness for `poll`: the network service tells a socket's channel when bytes arrive, so poll can wait for it (entry 100 treats a socket as always ready) | S | After K33 |
 
 ### Desktop
 
@@ -323,7 +317,7 @@ The order matters here: each item is needed by the ones after it.
 |---|---|---|---|
 | K47 | Intel HD Audio driver and an audio service | L | Testable in QEMU (`-device intel-hda`) |
 | K48 | WAV playback, then a microphone recorded to a file | M | |
-| K49 | **`bigmem64-test` once did not finish its steps** under KVM (race hunt round 6 of 20, entry 101); not seen in 5 runs under full CPU load; its log was lost | S | Likeliest: host memory and CPU both short with 12 test machines on 11 GiB. `tools/race-hunt.sh` now keeps a failed round's files, so run it again and read them |
+| K50 | **`bigmem64-test` once did not finish its steps** under KVM (race hunt round 6 of 20, entry 105); not seen in 5 runs under full CPU load; its log was lost | S | Likeliest: host memory and CPU both short with 12 test machines on 11 GiB. `tools/race-hunt.sh` now keeps a failed round's files, so run it again and read them |
 
 ---
 

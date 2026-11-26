@@ -54,6 +54,7 @@ const O_CREAT: c_int = 0o100;
 const O_EXCL: c_int = 0o200;
 const O_TRUNC: c_int = 0o1000;
 const O_APPEND: c_int = 0o2000;
+pub(crate) const O_DIRECTORY: c_int = 0o200000;
 
 const SEEK_SET: c_int = 0;
 const SEEK_CUR: c_int = 1;
@@ -140,6 +141,20 @@ static INPUT: Mutex<Option<taaj::Input>> = Mutex::new(None);
 
 fn read_input(out: &mut [u8]) -> usize {
     INPUT.lock().get_or_insert_with(taaj::input).read(out)
+}
+
+/// Whether reading standard input would not wait - `(bytes, ended)` -
+/// and the channel to wait on until it would. None while another thread
+/// is reading it (and holds it): then only its channel is known.
+pub(crate) fn input_ready() -> Option<((bool, bool), Option<taaj::Handle>)> {
+    let mut input = INPUT.try_lock()?;
+    let input = input.get_or_insert_with(taaj::input);
+    Some((input.ready(), input.handle()))
+}
+
+/// What descriptor `fd` stands for now, if anything.
+pub(crate) fn open_at(fd: c_int) -> Option<Open> {
+    with(|state| usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::clone))
 }
 
 impl State {
@@ -347,7 +362,13 @@ pub unsafe extern "C" fn __taaj_open(path: *const c_char, flags: c_int) -> c_int
             }
         }
         let made_ready = match files.stat(&file.path) {
+            // A directory opens only when asked for as one, to read:
+            // a descriptor for fchdir, fdopendir and the like (its read
+            // gives EISDIR). Without O_DIRECTORY, EISDIR at once, as
+            // TheTaaJ always said.
+            Ok((Kind::Directory, _)) if flags & O_DIRECTORY != 0 && !file.writes() => Ok(()),
             Ok((Kind::Directory, _)) => return fail(EISDIR),
+            Ok((Kind::File, _)) if flags & O_DIRECTORY != 0 => return fail(ENOTDIR),
             Ok((Kind::File, _)) if flags & (O_CREAT | O_EXCL) == O_CREAT | O_EXCL => return fail(EEXIST),
             // Writing nothing over a file leaves it empty.
             Ok((Kind::File, _)) if flags & O_TRUNC != 0 && file.writes() => files.write(&file.path, &[]).map(|_| ()),
@@ -473,6 +494,72 @@ pub unsafe extern "C" fn write(fd: c_int, buffer: *const c_void, count: usize) -
             }
         }
         _ => fail(EBADF),
+    }
+}
+
+/// `pread(fd, buffer, count, offset)`: as read, from `offset` in the
+/// file, without moving where the next read or write starts. ESPIPE
+/// for a descriptor that is not a file, EINVAL for a negative offset.
+///
+/// # Safety
+/// `buffer` must be null with `count` 0, or valid for `count` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn pread(fd: c_int, buffer: *mut c_void, count: usize, offset: i64) -> isize {
+    if buffer.is_null() && count != 0 {
+        return fail(EFAULT);
+    }
+    let Some((open, files)) = with(|state| state.entry(fd)) else { return fail(EBADF) };
+    let Open::File(file) = open else { return fail(ESPIPE) };
+    let Ok(offset) = u64::try_from(offset) else { return fail(EINVAL) };
+    if count == 0 {
+        return 0;
+    }
+    // SAFETY: the caller's promise, and `buffer` is not null.
+    let out = unsafe { core::slice::from_raw_parts_mut(buffer.cast::<u8>(), count) };
+    let file = file.lock();
+    if !file.reads() {
+        return fail(EBADF);
+    }
+    let Some(files) = files else { return fail(EIO) };
+    let mut taken = 0;
+    let read = files.read_from(&file.path, offset, |piece| {
+        taken = piece.len().min(out.len());
+        out[..taken].copy_from_slice(&piece[..taken]);
+    });
+    match read {
+        Ok(_) => taken as isize,
+        Err(error) => fail(reason(error)),
+    }
+}
+
+/// `pwrite(fd, buffer, count, offset)`: as write, at `offset` in the
+/// file, without moving where the next read or write starts - even
+/// with O_APPEND, as POSIX says (Linux appends there instead). ESPIPE
+/// for a descriptor that is not a file, EINVAL for a negative offset.
+///
+/// # Safety
+/// `buffer` must be null with `count` 0, or valid for `count` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn pwrite(fd: c_int, buffer: *const c_void, count: usize, offset: i64) -> isize {
+    if buffer.is_null() && count != 0 {
+        return fail(EFAULT);
+    }
+    let Some((open, files)) = with(|state| state.entry(fd)) else { return fail(EBADF) };
+    let Open::File(file) = open else { return fail(ESPIPE) };
+    let Ok(offset) = u64::try_from(offset) else { return fail(EINVAL) };
+    if count == 0 {
+        return 0;
+    }
+    // SAFETY: the caller's promise: `count` readable bytes at `buffer`.
+    let bytes = unsafe { core::slice::from_raw_parts(buffer.cast::<u8>(), count) };
+    let file = file.lock();
+    if !file.writes() {
+        return fail(EBADF);
+    }
+    let Some(files) = files else { return fail(EIO) };
+    match files.write_from(&file.path, offset, bytes) {
+        Ok(_) => count as isize,
+        Err(error) => fail(reason(error)),
     }
 }
 
@@ -629,9 +716,11 @@ pub unsafe extern "C" fn unlink(path: *const c_char) -> c_int {
 }
 
 /// `rename(from, to)`: gives a file or a directory a new name, a new
-/// directory, or both. Unlike Unix, it replaces nothing: if `to` is
-/// already there, that is the failure (EEXIST) - the file service will
-/// not make a file vanish as a side effect of moving another.
+/// directory, or both. As on Unix, what is already called `to` is
+/// replaced, in the same step (TaajFS version 6): a file by a file, an
+/// empty directory by a directory. A directory with things in it is
+/// ENOTEMPTY; a directory onto a file ENOTDIR, a file onto a directory
+/// EISDIR.
 ///
 /// # Safety
 /// Both must be null or point to strings that end in a zero byte.

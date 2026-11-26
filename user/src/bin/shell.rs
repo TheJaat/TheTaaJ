@@ -1294,14 +1294,20 @@ impl Shell {
     }
 
     /// The file a program's name means, as a path from the root without
-    /// the '/' in front ("" is the root): a bare name is a file in the
-    /// root, a name with a '/' in it a path from here (see
-    /// `program_image`).
+    /// the '/' in front ("" is the root): a name with a '/' in it is a
+    /// path from here; a bare name is a file in the root, or else one in
+    /// /bin - the two places libc's exec looks without a PATH (see
+    /// `program_image`). If neither has it, the root's name, for the
+    /// message.
     fn program_path(&self, name: &str) -> String {
         if name.contains('/') {
-            path::resolve(&self.directory.borrow(), name)
-        } else {
-            String::from(name)
+            return path::resolve(&self.directory.borrow(), name);
+        }
+        let in_bin = alloc::format!("bin/{name}");
+        let files = self.look.as_ref().or(self.files.as_ref());
+        match files {
+            Some(files) if files.size(name).is_err() && matches!(files.stat(&in_bin), Ok((Kind::File, _))) => in_bin,
+            _ => String::from(name),
         }
     }
 

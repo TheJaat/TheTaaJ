@@ -1,6 +1,6 @@
 # The race hunt: twenty rounds under KVM, a SIGCHLD that came late, and tests that timed the host
 
-*Journal entry #101 · MaK's step A, item K19 (the race hunt), second part. Written on MaK. Entry 100 made the tests choose KVM and fixed the typed boot test's typing races. Then the x86_64 half of `make test64` ran twenty times over under KVM. Four rounds failed, each in a different part. One failure was a real ordering bug in the kernel: a parent's `waitid` could return before its SIGCHLD handler had run. Two were checks that timed the host as well as TheTaaJ. One could not be explained, and its log was lost; the hunt now keeps the logs of a failed round.*
+*Journal entry #105 · MaK's step A, item K19 (the race hunt), second part. Written on MaK as entry 101; The-Jat's steps C, D and G took 100 to 103 first (rule 5), so this is 105. Entry 104 made the tests choose KVM and fixed the typed boot test's typing races. Then the x86_64 half of `make test64` ran twenty times over under KVM. Four rounds failed, each in a different part. One failure was a real ordering bug in the kernel: a parent's `waitid` could return before its SIGCHLD handler had run. Two were checks that timed the host as well as TheTaaJ. One could not be explained, and its log was lost; the hunt now keeps the logs of a failed round.*
 
 ## Why
 
@@ -76,7 +76,7 @@ The kill selftest kills a program in five states and asks that each end within 3
 
 Every check with a tight upper limit had the same weakness: the kill selftest (at most 3 ticks), `sleep(5)` (5 to 7), `echoc`'s timed wait (3 to 5) and `fscheck`'s silent service (10 to 13). Each now checks its lower limit once, strictly, and its upper limit up to three times. `niccheck`'s "under a second" is far enough from anything a host does, and `hello` checks only a lower limit.
 
-**3. `bigmem64-test` once did not finish its steps.** Round 6: `FAIL: the steps did not all run`, QEMU stopped by `qemu-boot.sh` ("terminating on signal 15"). Its serial log was overwritten by round 7 39 seconds later, before it could be copied. Five runs under full CPU load passed, in 72 to 106 s instead of 33 (the waits it may use add up to 270 s for its big step). The likeliest cause is the host's memory and CPU both being short in that round - twelve machines, one of them touching 3 GiB, on 11 GiB - but that is a guess. Left open as K49; the hunt now keeps a failed round's files.
+**3. `bigmem64-test` once did not finish its steps.** Round 6: `FAIL: the steps did not all run`, QEMU stopped by `qemu-boot.sh` ("terminating on signal 15"). Its serial log was overwritten by round 7 39 seconds later, before it could be copied. Five runs under full CPU load passed, in 72 to 106 s instead of 33 (the waits it may use add up to 270 s for its big step). The likeliest cause is the host's memory and CPU both being short in that round - twelve machines, one of them touching 3 GiB, on 11 GiB - but that is a guess. Left open as K50; the hunt now keeps a failed round's files.
 
 **4. The first hunt script lost round 6's logs.** It saved only make's output. Rewritten (now `tools/race-hunt.sh`) to copy every file `build/` got during a failed round before the next one starts.
 
@@ -90,7 +90,7 @@ Every check with a tight upper limit had the same weakness: the kill selftest (a
 
 ## What is still missing
 
-- **K49**: why `bigmem64-test` once did not finish (round 6). The next failure's files will say.
+- **K50**: why `bigmem64-test` once did not finish (round 6). The next failure's files will say.
 - **Upper limits still time the host a little**: three slow tries in a row on a very busy host would still fail. That has not been seen.
 - **The hunt has run under KVM only.** Under emulation (The-Jat, or `TAAJ_ACCEL=tcg`) other races may show.
 - **Ticks counting host stalls** is right for the time of day and for sleeps, but a kernel that wants to measure only its own work (K21's CPU time per process) must count when its threads run, not the ticks in between.

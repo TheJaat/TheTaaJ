@@ -1,6 +1,6 @@
 #!/bin/bash
 # race-hunt.sh - runs test64's parts again and again, to find what fails
-# only sometimes (journal entry 101, MaK's item K19).
+# only sometimes (journal entry 105, MaK's item K19).
 #
 #   usage: tools/race-hunt.sh [ROUNDS] [FIRST]     (defaults: 20 rounds, from 1)
 #

@@ -1,8 +1,9 @@
 /* sys/stat.h - what a file is: stat, fstat, lstat; and mkdir.
  *
  * TheTaaJ's file system keeps a name, a kind (file or directory), a
- * size and a change stamp for each file, and nothing else yet: no
- * owner, permissions, times of day or links. So of struct stat:
+ * size, a change stamp and (since TaajFS version 6) the time of the last
+ * change for each file, and nothing else yet: no owner, permissions or
+ * links. So of struct stat:
  *
  *   st_mode    S_IFREG or S_IFDIR, and permissions 0644 or 0755 - what
  *              the file service would let a program given the files do
@@ -15,13 +16,15 @@
  *   st_dev     1 for every file: there is one file system
  *   st_nlink   1
  *   st_blksize 4096, and st_blocks the size in 512-byte blocks
- *   the times  all three the file's change stamp, in seconds: a number
- *              that only grows, given by the file system to each change
- *              (the generation of the commit that made it). Not a time
- *              of day; but of two files the one changed later has the
- *              higher st_mtime, which is what make asks. Never 0 (make
- *              would think the file missing): a file not changed since
- *              its disk began stamping is 1, a directory 1 too.
+ *   the times  all three the time the file last changed, to the
+ *              nanosecond, from the clock of whoever wrote it (TheTaaJ's,
+ *              or the host's tool). The disk never gives a later change
+ *              an earlier time, so of two files the one changed later has
+ *              the later st_mtim, which is what make asks. A file not
+ *              changed since its disk began keeping times has only its
+ *              change stamp, told as that many seconds - a date in 1970,
+ *              before every real time - and never 0 (make would think the
+ *              file missing); a directory is 1.
  *   st_uid, st_gid  0
  *
  * Standard input, output and error are character devices (S_IFCHR). */

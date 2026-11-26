@@ -222,8 +222,11 @@ static int check_streams(void)
     check(size_on_disk(MOVED) == BIG, "and the file is under the new one");
     out = fopen(SCRATCH, "w");
     fclose(out);
-    errno = 0;
-    check(rename(MOVED, SCRATCH) == -1 && errno == EEXIST, "rename onto a file that is there replaces nothing");
+    check(rename(MOVED, SCRATCH) == 0 && size_on_disk(SCRATCH) == BIG && size_on_disk(MOVED) == -1,
+          "rename onto a file that is there replaces it, in one step");
+    /* The moved name again, empty, for the removes below. */
+    out = fopen(MOVED, "w");
+    fclose(out);
     check(rename("cstdio.none", "cstdio.other") == -1 && errno == ENOENT, "rename of what is not there");
     check(remove(SCRATCH) == 0 && remove(MOVED) == 0, "remove");
     check(size_on_disk(SCRATCH) == -1 && size_on_disk(MOVED) == -1, "both are gone");

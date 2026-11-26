@@ -74,6 +74,38 @@ pub extern "C" fn __taaj_unmap(start: *mut c_void) -> core::ffi::c_int {
     if taaj::memory_unmap(start.cast()).is_ok() { 0 } else { -1 }
 }
 
+/// `__taaj_protect(start, length, access)` (for mmap.c): MEMORY_PROTECT
+/// - `access` 0 for none, 1 read, 2 read and write. 0, or -1 with
+/// errno: EINVAL for a range not of whole pages, ENOMEM for one not all
+/// in one piece of reserved memory (Linux's answer for "not mapped").
+#[no_mangle]
+pub extern "C" fn __taaj_protect(start: *mut c_void, length: usize, access: core::ffi::c_int) -> core::ffi::c_int {
+    match taaj::memory_protect(start.cast(), length as u64, access as u64) {
+        Ok(()) => 0,
+        Err(error) => memory_failure(error),
+    }
+}
+
+/// `__taaj_discard(start, length)` (for mmap.c): MEMORY_DISCARD - the
+/// pages' memory given back, each zeroed again when next touched. 0, or
+/// -1 with errno as for __taaj_protect.
+#[no_mangle]
+pub extern "C" fn __taaj_discard(start: *mut c_void, length: usize) -> core::ffi::c_int {
+    match taaj::memory_discard(start.cast(), length as u64) {
+        Ok(()) => 0,
+        Err(error) => memory_failure(error),
+    }
+}
+
+fn memory_failure(error: taaj::Error) -> core::ffi::c_int {
+    let code = match error {
+        taaj::Error::InvalidArgument => crate::errno::EINVAL,
+        _ => crate::errno::ENOMEM,
+    };
+    crate::errno::errno.store(code, core::sync::atomic::Ordering::Relaxed);
+    -1
+}
+
 /// `__taaj_memory_used()`: the bytes the kernel counts against this
 /// program now (MEMORY_USED) - for tests and reports; getrlimit says
 /// what it may.
@@ -95,17 +127,38 @@ const ALIGNMENT: usize = 16;
 /// The largest block, header included, kept on a list of its size.
 const SMALL_MAX: usize = 1024;
 
-/// How much is taken from the heap at a time to cut small blocks from.
+/// How much is taken from the heap at a time to cut small blocks of one
+/// size from: a piece, on a multiple of its own size, so the piece a
+/// block is in is its address with the low bits cleared.
 const PIECE: usize = 64 * 1024;
 
-/// The small blocks: a list of free ones for each size (16, 32, ...,
-/// SMALL_MAX, at index size / 16), each free block holding the address
-/// of the next in its first word; and the rest of the piece new blocks
-/// are being cut from.
+/// The start of every piece: which size its blocks are, how many are in
+/// use, its own list of free blocks, where uncut room begins, and its
+/// neighbours on its size's list of pieces with a block to spare.
+#[repr(C)]
+struct Piece {
+    class: usize,
+    in_use: usize,
+    free: *mut u8,
+    uncut: *mut u8,
+    previous: *mut Piece,
+    next: *mut Piece,
+}
+
+/// Room for the Piece at the start of each, kept a multiple of 16.
+const PIECE_HEADER: usize = 64;
+const _: () = assert!(core::mem::size_of::<Piece>() <= PIECE_HEADER);
+
+/// The small blocks: for each size (16, 32, ..., SMALL_MAX, at index
+/// size / 16), the pieces with a block to give - one free, or room not
+/// yet cut. A piece whose blocks are all taken is on no list, and comes
+/// back onto its list when one is freed. A piece whose blocks are all
+/// free goes back to the heap (whose memory goes back to the kernel:
+/// user/src/allocator.rs) - unless it is the only one its size has, so
+/// a program that takes and frees one block over and over does not
+/// make and break a piece each time.
 struct Small {
-    free: [*mut u8; SMALL_MAX / ALIGNMENT + 1],
-    next: *mut u8,
-    end: *mut u8,
+    pieces: [*mut Piece; SMALL_MAX / ALIGNMENT + 1],
 }
 
 /// The one Small, behind a futex lock (taaj::sync): the program's
@@ -120,11 +173,7 @@ unsafe impl Sync for SmallLock {}
 
 static SMALL: SmallLock = SmallLock {
     locked: taaj::sync::Lock::new(),
-    small: core::cell::UnsafeCell::new(Small {
-        free: [ptr::null_mut(); SMALL_MAX / ALIGNMENT + 1],
-        next: ptr::null_mut(),
-        end: ptr::null_mut(),
-    }),
+    small: core::cell::UnsafeCell::new(Small { pieces: [ptr::null_mut(); SMALL_MAX / ALIGNMENT + 1] }),
 };
 
 fn with_small<R>(f: impl FnOnce(&mut Small) -> R) -> R {
@@ -142,47 +191,137 @@ fn small_class(size: usize) -> Option<usize> {
     (whole <= SMALL_MAX).then(|| whole.div_ceil(ALIGNMENT))
 }
 
-/// A block of `class` * 16 bytes: off its list, or cut from the piece
-/// (and a new piece taken when this one has too little left).
+fn piece_layout() -> Layout {
+    // A power of two, so this cannot fail.
+    Layout::from_size_align(PIECE, PIECE).unwrap()
+}
+
+impl Small {
+    /// Puts `piece` at the front of its size's list.
+    ///
+    /// # Safety
+    /// `piece` is a live piece of this Small's, on no list.
+    unsafe fn push(&mut self, piece: *mut Piece) {
+        unsafe {
+            let class = (*piece).class;
+            (*piece).previous = ptr::null_mut();
+            (*piece).next = self.pieces[class];
+            if !self.pieces[class].is_null() {
+                (*self.pieces[class]).previous = piece;
+            }
+            self.pieces[class] = piece;
+        }
+    }
+
+    /// Takes `piece` off its size's list.
+    ///
+    /// # Safety
+    /// `piece` is a live piece of this Small's, on its list.
+    unsafe fn unlink(&mut self, piece: *mut Piece) {
+        unsafe {
+            let (previous, next) = ((*piece).previous, (*piece).next);
+            if previous.is_null() {
+                self.pieces[(*piece).class] = next;
+            } else {
+                (*previous).next = next;
+            }
+            if !next.is_null() {
+                (*next).previous = previous;
+            }
+            (*piece).previous = ptr::null_mut();
+            (*piece).next = ptr::null_mut();
+        }
+    }
+}
+
+/// Whether `piece` has a block to give: one free, or room for one more.
+///
+/// # Safety
+/// `piece` is a live piece.
+unsafe fn has_room(piece: *mut Piece) -> bool {
+    unsafe { !(*piece).free.is_null() || (*piece).uncut as usize + (*piece).class * ALIGNMENT <= piece as usize + PIECE }
+}
+
+/// A block of `class` * 16 bytes: from the first piece of its size with
+/// one to give, or from a new piece.
 fn take_small(class: usize) -> *mut u8 {
     with_small(|small| {
-        let block = small.free[class];
-        if !block.is_null() {
-            // SAFETY: a block on the list holds the next one's address in
-            // its first word (put there by give_small).
-            small.free[class] = unsafe { block.cast::<*mut u8>().read() };
-            return block;
-        }
-        let bytes = class * ALIGNMENT;
-        if (small.end as usize) - (small.next as usize) < bytes {
+        let mut piece = small.pieces[class];
+        if piece.is_null() {
             // SAFETY: the layout is of nonzero size.
-            let piece = unsafe { alloc(Layout::from_size_align(PIECE, ALIGNMENT).unwrap()) };
-            if piece.is_null() {
+            let memory = unsafe { alloc(piece_layout()) };
+            if memory.is_null() {
                 return ptr::null_mut();
             }
-            // The rest of the old piece, less than one block, is left.
-            small.next = piece;
-            // SAFETY: PIECE bytes from `piece`.
-            small.end = unsafe { piece.add(PIECE) };
+            piece = memory.cast::<Piece>();
+            // SAFETY: PIECE bytes, aligned for a Piece, ours alone.
+            unsafe {
+                piece.write(Piece {
+                    class,
+                    in_use: 0,
+                    free: ptr::null_mut(),
+                    uncut: memory.add(PIECE_HEADER),
+                    previous: ptr::null_mut(),
+                    next: ptr::null_mut(),
+                });
+                small.push(piece);
+            }
         }
-        let block = small.next;
-        // SAFETY: at least `bytes` are left in the piece.
-        small.next = unsafe { small.next.add(bytes) };
-        block
+        // SAFETY: a live piece on its list, so it has room (has_room).
+        unsafe {
+            let block = if (*piece).free.is_null() {
+                let block = (*piece).uncut;
+                (*piece).uncut = block.add(class * ALIGNMENT);
+                block
+            } else {
+                // A free block holds the next one's address in its first
+                // word (put there by give_small).
+                let block = (*piece).free;
+                (*piece).free = block.cast::<*mut u8>().read();
+                block
+            };
+            (*piece).in_use += 1;
+            if !has_room(piece) {
+                small.unlink(piece);
+            }
+            block
+        }
     })
 }
 
-/// Puts a small block back on the front of its list.
+/// Gives a small block back to its piece - and the piece back to the
+/// heap, if that was its last block in use and its size has another.
 ///
 /// # Safety
 /// `block` must be a block of `class` taken by take_small, not in use.
 unsafe fn give_small(block: *mut u8, class: usize) {
-    with_small(|small| {
-        // SAFETY: the block is the caller's to give, at least 16 bytes,
-        // and aligned for a pointer.
-        unsafe { block.cast::<*mut u8>().write(small.free[class]) };
-        small.free[class] = block;
+    let empty = with_small(|small| {
+        // SAFETY: the block is in a live piece (pieces are aligned to
+        // their size), at least 16 bytes and aligned for a pointer.
+        unsafe {
+            let piece = (block as usize & !(PIECE - 1)) as *mut Piece;
+            debug_assert_eq!((*piece).class, class);
+            let was_full = !has_room(piece);
+            block.cast::<*mut u8>().write((*piece).free);
+            (*piece).free = block;
+            (*piece).in_use -= 1;
+            if was_full {
+                small.push(piece);
+            }
+            let alone = small.pieces[class] == piece && (*piece).next.is_null();
+            if (*piece).in_use == 0 && !alone {
+                small.unlink(piece);
+                return piece;
+            }
+            ptr::null_mut()
+        }
     });
+    if !empty.is_null() {
+        // Outside the small lock: the heap has its own.
+        // SAFETY: a piece from `alloc` with this layout, on no list, no
+        // block of it in use.
+        unsafe { dealloc(empty.cast(), piece_layout()) };
+    }
 }
 
 /// The size written in front of a block that malloc returned.

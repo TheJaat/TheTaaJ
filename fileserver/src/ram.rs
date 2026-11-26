@@ -301,8 +301,20 @@ impl Store for RamStore {
         // Now that it is known not to lead through `from`: the
         // directories on the way to the new place must be there.
         self.place(to)?;
-        if self.nodes.contains_key(&new) {
-            return Err(Status::Exists);
+        // What is there already is replaced, as POSIX's rename does: a
+        // file by a file, an empty directory by a directory. Taken out
+        // here, so that from here on nothing can fail.
+        match self.nodes.get(&new) {
+            None => {}
+            Some(Node::Directory) if !directory => return Err(Status::IsDirectory),
+            Some(Node::File(_)) if directory => return Err(Status::NotDirectory),
+            Some(Node::Directory) if self.has_children(&new) => return Err(Status::NotEmpty),
+            Some(_) => {
+                if let Some(Node::File(file)) = self.nodes.remove(&new) {
+                    self.bytes -= file.len();
+                }
+                self.stamps.remove(&new);
+            }
         }
         // There is no tree to re-hang: every key under the old path is
         // taken out and put back under the new one. Nothing can fail
@@ -603,6 +615,22 @@ mod tests {
     }
 
     #[test]
+    fn a_rename_replaces_a_file_in_memory() {
+        let mut files = RamStore::new();
+        files.write("new", 0, b"the new one").unwrap();
+        files.write("old", 0, &[7; 900]).unwrap();
+        files.make_directory("empty").unwrap();
+        files.make_directory("d").unwrap();
+        files.write("d/in", 0, b"in").unwrap();
+        assert_eq!(files.rename("new", "old"), Ok(()));
+        assert_eq!(files.read("old", 0, &mut [0; 32]), Ok(11));
+        assert_eq!(files.bytes(), 11 + 2, "the replaced file's bytes are gone");
+        assert_eq!(files.rename("d", "empty"), Ok(()));
+        assert_eq!(files.read("empty/in", 0, &mut [0; 8]), Ok(2));
+        assert_eq!(listing(&mut files, ""), (Status::Ok, vec!["empty/".into(), "old".into()]));
+    }
+
+    #[test]
     fn renaming() {
         let mut files = RamStore::new();
         let rename = |files: &mut RamStore, from: &str, to: &str| {
@@ -630,8 +658,9 @@ mod tests {
         assert_eq!(rename(&mut files, "nothing", "x"), Status::NotFound);
         assert_eq!(rename(&mut files, "papers", "nowhere/x"), Status::NotFound);
         assert_eq!(rename(&mut files, "papers", "docs.txt/x"), Status::NotDirectory);
-        assert_eq!(rename(&mut files, "papers", "docs2"), Status::Exists);
-        assert_eq!(rename(&mut files, "docs.txt", "papers"), Status::Exists);
+        assert_eq!(rename(&mut files, "papers", "docs.txt"), Status::NotDirectory);
+        assert_eq!(rename(&mut files, "docs.txt", "papers"), Status::IsDirectory);
+        assert_eq!(rename(&mut files, "docs2", "papers"), Status::NotEmpty);
         assert_eq!(rename(&mut files, "papers", "papers/in"), Status::IntoItself);
         assert_eq!(rename(&mut files, "papers", "papers/notes/in"), Status::IntoItself);
         assert_eq!(rename(&mut files, "papers", "papers/nowhere/in"), Status::IntoItself);

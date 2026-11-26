@@ -80,7 +80,7 @@ fn main() -> i64 {
     // Never shorter than 3 ticks; at most 5, tried up to three times - a
     // host that stops this virtual machine for a moment makes one wait
     // late, a kernel that ends waits late does it every time (journal
-    // entry 101).
+    // entry 105).
     let mut waited = 0;
     for _ in 0..3 {
         let before = taaj::ticks();

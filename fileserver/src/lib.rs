@@ -62,7 +62,11 @@ pub mod protocol {
     pub const REMOVE: u8 = 5;
     /// Payload: the size, u64 LE, then the kind, u8, then the change
     /// stamp, u64 LE: of two files, the one changed later has the higher
-    /// stamp (0: not since stamping began, and always for a directory).
+    /// stamp (0: not since stamping began, and always for a directory);
+    /// then the time of that change, u64 LE, in nanoseconds since 1970
+    /// (0: not known - a directory, a file not changed since times
+    /// began (TaajFS version 6), the memory store). 25 bytes in all; an
+    /// older service sends the first 17.
     pub const STAT: u8 = 6;
     /// A test of what happens when the service stops answering: it
     /// answers this, then does nothing for `number` ticks (at most
@@ -79,8 +83,10 @@ pub mod protocol {
 
     /// Gives what the path names a new path instead: the data is the
     /// new path. A new name, a new directory, or both; a file, or a
-    /// directory with everything in it. Nothing is copied, and nothing
-    /// is replaced: a new path that already names something is refused.
+    /// directory with everything in it. Nothing is copied. What the new
+    /// path names already is replaced, as POSIX's rename does - a file
+    /// by a file, an empty directory by a directory - in one step; other
+    /// pairs are refused (IsDirectory, NotDirectory, NotEmpty).
     pub const RENAME: u8 = 10;
     /// Fills the memory object that comes with the request - its second
     /// handle, after the reply channel - with the file's bytes from
@@ -310,6 +316,12 @@ pub mod protocol {
     pub fn stamp(payload: &[u8]) -> u64 {
         payload.get(9..17).map_or(0, |bytes| u64::from_le_bytes(bytes.try_into().expect("8 bytes")))
     }
+
+    /// A STAT payload's time, in nanoseconds since 1970; 0 if not known
+    /// or from a service that sends none.
+    pub fn time(payload: &[u8]) -> u64 {
+        payload.get(17..25).map_or(0, |bytes| u64::from_le_bytes(bytes.try_into().expect("8 bytes")))
+    }
 }
 
 
@@ -358,6 +370,11 @@ pub trait Store {
     /// When what `path` names last changed: a number that only grows
     /// (protocol::STAT). 0 for a directory.
     fn stamp(&mut self, path: &str) -> Result<u64, Status>;
+    /// When it last changed, in nanoseconds since 1970: 0 if the store
+    /// does not know (protocol::STAT).
+    fn time(&mut self, _path: &str) -> Result<u64, Status> {
+        Ok(0)
+    }
     /// Marks the file changed now, changing nothing in it.
     fn touch(&mut self, name: &str) -> Result<(), Status>;
     /// The size of the file `path` names.
@@ -615,9 +632,11 @@ fn answer(store: &mut impl Store, access: Access, message: &[u8], out: &mut [u8]
         protocol::STAT => {
             let (kind, size) = store.stat(name)?;
             let stamp = store.stamp(name)?;
+            let time = store.time(name)?;
             out[8] = kind as u8;
             out[9..17].copy_from_slice(&stamp.to_le_bytes());
-            Ok(put_number(out, size) + 1 + 8)
+            out[17..25].copy_from_slice(&time.to_le_bytes());
+            Ok(put_number(out, size) + 1 + 8 + 8)
         }
         protocol::TOUCH => store.touch(name).map(|()| 0),
         protocol::MKDIR => store.make_directory(name).map(|()| 0),
@@ -652,7 +671,7 @@ mod tests {
     fn stamp(store: &mut impl Store, name: &str) -> u64 {
         let (status, payload) = ask(store, Access::ReadOnly, STAT, name, &[]);
         assert_eq!(status, Status::Ok, "{name}");
-        assert_eq!(payload.len(), 17, "size, kind, stamp");
+        assert_eq!(payload.len(), 25, "size, kind, stamp, time");
         protocol::stamp(&payload)
     }
 
