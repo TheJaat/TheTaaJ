@@ -59,6 +59,8 @@ To see the checks fail, I broke each rule and booted. On 1, 2, 4, 8 and 16 CPUs 
 
 One more, in how sessions work rather than in the kernel: my first full `make test64` failed `handles64-test` and `aarch64-handles-test` ("parameter not set" in `handles-test.sh`). I had branched TheKernel from its own `main`, as `start-here.md` said, and that `main` already held another session's next entry (118, a namespace per process), whose TheTaaJ half - the `Makefile` its new script needs - was not merged yet. Rule 12 merges TheKernel first, so between the two halves TheKernel's `main` is ahead of what TheTaaJ points to. A branch should start from the pair TheTaaJ's `main` names: `git submodule update && git -C kernel switch -c NAME`. `start-here.md` says so now, and I rebased my TheKernel work onto it.
 
+And a flaky check, met in the full run after `main` was merged in: an AArch64 boot (`aarch64-test`'s `reserved`) stopped with `KERNEL PANIC ... the clock counted 9 ticks in ten interrupts`. Five more runs of `aarch64-test` passed, and showed why: of some 270 timer self-tests, 208 counted exactly 10 ticks - the check's limit. It asked for 10 ticks *since boot* after ten interrupts, counting on the interrupt it lined up with being past the first tick; when it was the very first, ten periods rounded down to whole ticks can give 9. Now it measures the ticks *across* the ten interrupts, and asks for 9 - what ten periods always hold, with one lost to rounding (`selftest.rs`, `timer`).
+
 ## Design decisions
 
 | Decision | Instead of | Why (and the goals) |
