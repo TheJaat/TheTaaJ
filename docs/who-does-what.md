@@ -10,6 +10,23 @@ TheTaaJ is built on three machines. All push to the same three repositories (The
 | **MaK-WSL** | The real PC: Ubuntu under WSL2, with KVM | Fast boots, `make test64` in less time, timing races that only show at full speed, the real hardware itself (USB stick boot, R7) |
 | **TheJat-WSL** | Ubuntu under WSL2 on the PC that runs TheJat-VM, with KVM: 24 CPUs, 15 GiB | Fast boots like MaK-WSL, with more CPUs; not yet built or measured (2026-11-26) |
 
+## Goals
+
+Every design, review and item is judged against these. When a choice helps one and costs another, its journal entry says so.
+
+| Goal | What it means here |
+|---|---|
+| **A pure microkernel** | The kernel holds only generic mechanisms: handles and their rights, channels, memory objects, threads, interrupts, waiting (and later a generic pager). Files, paths, mount tables, a page cache, file permissions, network protocols and drivers live in user-space services and libraries. If an item seems to need one of them in the kernel, the item is redesigned; the kernel does not grow |
+| **Secure** | Capabilities: a program reaches only what it was handed, with only the rights it was handed. Least authority by default; untrusted input checked |
+| **Reliable** | A crash is contained in its process; services are restarted, and their clients told (`PeerClosed`), never left waiting |
+| **Modular** | Each driver, file system and protocol a separate program behind a protocol |
+| **Scalable** | No global locks or fixed-size tables on a hot path; it uses every CPU of a real PC |
+| **Portable** | x86_64 and AArch64 from the same code; what is specific to a CPU sits behind `arch/` |
+| **Maintainable** | Logic in crates tested on the host; rules written down where they are kept; small, documented changes |
+| **Extensible** | Open protocols that a new service can speak, not closed lists that must be edited |
+| **Performant** | Measured first: each speed item starts from a benchmark, and says what it moved |
+| **Stable** | `make test64` on both CPUs, race hunts under KVM, and no merge with a failing test |
+
 ## The machines
 
 Measured on MaK-WSL on 2026-11-25 and on TheJat-VM on 2026-11-26. TheJat-WSL's hardware was read on 2026-11-26; its times aren't measured yet (no built tree).
@@ -106,6 +123,7 @@ MaK-WSL's memory can grow: a `.wslconfig` gives WSL more of the laptop's memory,
 
 What the one who did the work checks, besides the tests of rule 2 (the lessons of entries 104 and 105):
 - **It does what its item says**, and nothing unrelated is mixed in.
+- **The kernel stays pure** (Goals): nothing new in the kernel knows about files, paths, mounts, protocols or devices; anything added to it is a generic mechanism, and the entry says why it could not live in user space.
 - **Correct under concurrency**, for anything shared between threads or CPUs: a waker changes what the waiter's condition reads **last**, after everything the waiter must find is in place (entry 105's SIGCHLD bug); locks are taken in the documented order; a wait re-checks its condition, and a wait that can be cut short (kill, signal) is checked by its caller.
 - **Untrusted input is checked** before it is used: system call arguments, what a device or a disk says, a file being loaded.
 - **The ABI stays in step**: a change to `kernel/abi` is matched in the kernel, `user/` and libc in the same item.
@@ -414,11 +432,37 @@ TheTaaJ runs on up to 16 CPUs (`smp.rs`), on both architectures, and a program's
 
 Processes: TheTaaJ starts programs with `posix_spawn`, not `fork` (on purpose: a microkernel copies nothing it isn't asked to), and `fork` says so with `ENOSYS`. What is missing for processes is on the list already: process groups and job control (K44, K45), CPU time per process (K21), priorities (K20).
 
-## Era 14 · TaajFS version 7
+## Era 14 · Files: a VFS and TaajFS version 7
 
-**Done when**: a 16 GiB volume holding a rustc build tree mounts in under a second; a bit flipped on the disk is reported, not read back as data; a version 6 volume is upgraded in place; the power-loss tests pass on version 7; and E1 (`fsck`) checks it. Whose it is, and when, is for the user to say.
+**Done when**: a program's files come from more than one place under one tree - `/` from TaajFS, `/tmp` from memory, `/dev`, `/proc` and a USB stick's FAT under `/mnt` - each served by its own service, and with **no file code in the kernel**; an open file is a handle that can be passed to another program and follows its file through a rename; and a 16 GiB TaajFS version 7 volume holding a rustc build tree mounts in under a second, a bit flipped on the disk is reported rather than read back as data, a version 6 volume is upgraded in place, the power-loss tests pass on version 7, and E1 (`fsck`) checks it. Whose it is, and when, is for the user to say. Era 13 comes first: every file operation is a message, so the IPC work makes this era fast.
 
-TaajFS is safe against power loss by design: copy-on-write, two superblocks, one written last, and tested by a disk that pretends to lose power. What it is not yet is fast at many small writes, quick on big volumes, big enough for a real PC's disk, or able to notice a damaged block. rustc's builds (J21) and the real PC (K1, K12) are where that will show. It is Era 14 because its milestone is one someone can see: a real PC's disk, big builds on it, and a damaged block caught. The ones that change the format are meant to be done together as **TaajFS version 7**, so volumes are upgraded once.
+### The VFS, with the kernel left out
+
+Today there is no VFS. The kernel knows no files (right for a microkernel), but nothing has taken a VFS's place either: one `fs` service serves one volume as the whole tree; an open file lives only in libc (a path, an offset, flags) and every request names the whole path from the root; what a descriptor can be is a closed list in `libc/src/descriptors.rs`; access is all-or-nothing (the read-write channel or the read-only one). So there are no mounts, no `/tmp`, `/dev` or `/proc` (LLVM's `/proc/self/exe` is patched to call `__taaj_executable()` instead), a USB stick can't be read beside `/`, an open file can't be handed on, and Rust programs (`taaj::Files`) and C programs (libc) each have their own client.
+
+The design is Fuchsia's and Plan 9's, not Linux's:
+
+- **An open file or directory is a handle**: a channel to the service that owns it. Requests go **straight to that service**; there is no central VFS server to pass through (MINIX 3's and the Hurd's extra hop).
+- **The mount table is in each process, in libc**: path prefixes to directory handles, handed to a child at `posix_spawn`. It need not be trusted, so it need not be in the kernel: a program can reach only the directories whose handles it holds, whatever its table says.
+- **One file protocol** that any service can speak, so `/tmp`, `/dev`, `/proc` and FAT are each just another service, and a crash in one takes away only its own directory.
+- **Never in the kernel**: paths, a mount table, a page cache, an object of type "file", file permission checks. What the kernel may gain is generic: `channel_call` (Era 13), a wait on many handles, sealed memory objects (J58), and a pager that fills a memory object from a channel - which knows memory objects, never files.
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| J?-vfs-handles | **Open files and directories as handles**: `open` returns a channel to that file or directory, served by its service; reads and writes go on it, without the path | L | First. Fixes J36 (a descriptor follows its file through a rename or a removal); lets an open file be passed to another program |
+| J?-vfs-protocol | **One file protocol** every file service speaks (today's 15 operations, made per handle), and **one client library** that `taaj::Files` and libc both use | M | With J?-vfs-handles. libc's descriptor becomes "a handle that speaks the protocol", plus the few local kinds - an open list, not a closed one |
+| J?-vfs-namespace | **A namespace per process** in libc: path prefixes to directory handles, given by the parent at `posix_spawn`; `..` and symbolic links across a mount resolved by the client; `rename` across mounts is `EXDEV`, as on Unix | M | After J?-vfs-handles. No kernel change |
+| J?-vfs-openat | The `openat` family (`openat`, `mkdirat`, `unlinkat`, `fstatat`, `renameat`), and a program given **only one directory** - a sandbox from capabilities, with no permission checks | M | After J?-vfs-namespace |
+| J?-vfs-tmp | **`/tmp` in memory**: the `fileserver` crate's `RamStore` as a service of its own | S | After J?-vfs-namespace |
+| J?-vfs-dev | **`/dev`**: `null`, `zero`, `urandom` (from J2's `getrandom`) and the terminal, served by a small device service | S | After J?-vfs-namespace; `isatty` then asks the terminal rather than being a special case |
+| J?-vfs-proc | **`/proc`**: `/proc/self/exe` (and the LLVM patch removed), `/proc/self/fd`, a directory per process with what `ps` shows | M | A service that asks init or a generic "describe this process" call: numbers out of the kernel, never files |
+| J?-vfs-mounts | **A second disk, partition or USB stick**: a second `fs` service for it, under `/mnt` | S | After J?-vfs-namespace; with K11 (GPT) |
+| J?-vfs-fat | **FAT32**, read and write, as its own service: USB sticks made elsewhere, and the EFI partition | M | After J?-vfs-protocol |
+| J?-vfs-watch | **Change notification**: a handle that is told when a directory or file changes | M | After J?-vfs-handles. For editors, build tools and the desktop |
+
+### TaajFS version 7
+
+TaajFS is safe against power loss by design: copy-on-write, two superblocks, one written last, and tested by a disk that pretends to lose power. What it is not yet is fast at many small writes, quick on big volumes, big enough for a real PC's disk, or able to notice a damaged block. rustc's builds (J21) and the real PC (K1, K12) are where that will show. Its half of Era 14's milestone is one someone can see: a real PC's disk, big builds on it, and a damaged block caught. The ones that change the format are meant to be done together as **TaajFS version 7**, so volumes are upgraded once.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
@@ -468,5 +512,5 @@ As drafted in `docs/ai-assistant.md`, and added since:
 - **Era 8 · AI engine**: XSAVE/AVX2, a tensor crate, stories15M then Qwen3 on TheTaaJ.
 - **Era 10 · Sound**, **Era 11 · Voice**, **Era 12 · Web** (DNS, TLS, HTML to text, and the network items above).
 - **Era 13 · A fast core**: IPC, threads and several CPUs (above).
-- **Era 14 · TaajFS version 7** (above).
+- **Era 14 · Files: a VFS and TaajFS version 7** (above).
 - **The assistant** (drafted as Era 9, which is now rustc) takes the next free number, 15: the `infer` service, tools published by services, confirmation, undo.

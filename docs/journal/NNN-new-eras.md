@@ -1,6 +1,6 @@
-# Eras 13 and 14, and the network and threads items
+# Goals, Eras 13 and 14, and the network, threads and VFS items
 
-*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads and several-CPU support are, and for all the items found - IPC, TaajFS, network, threads - to be put into eras.*
+*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support and VFS are, for all the items found - IPC, TaajFS, network, threads, VFS - to be put into eras, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
 
 ## Why
 
@@ -23,17 +23,43 @@ Up to 16 CPUs on both architectures; a program's threads run on all of them. The
 
 What does not scale: one lock, `THREADS`, around one run queue that every CPU takes from; one lock each around the kernel heap (`mm.rs`) and the frame allocator (`FRAMES`); one list of futex waiters (`WAITERS`), and a wake that wakes a whole queue; on x86 a shootdown reloads all of CR3; and every service is a single thread. Also: round-robin with 20 ms slices and no priorities (K20, in progress on MaK-WSL), every idle CPU woken by each 10 ms tick, no semaphores, barriers or `pthread_cancel`. `fork` is refused with `ENOSYS` on purpose: TheTaaJ starts programs with `posix_spawn`.
 
+## What the VFS review found
+
+There is no VFS. The kernel knows no files - right for a microkernel - but nothing has taken a VFS's place:
+
+- one `fs` service serves one volume as the whole tree: no mounts, no second disk or USB stick beside `/`, no `/tmp`, `/dev` or `/proc`;
+- an open file lives only in libc (`libc/src/descriptors.rs`): a path, an offset and flags. The service is stateless and every request names the whole path from the root, so a descriptor follows the name, not the file (J36), and an open file can't be handed to another program;
+- what a descriptor can be is a closed list (`Open`: the three standard ones, a file, a socket, a pipe's ends);
+- access is all or nothing: the read-write channel or the read-only one;
+- the gaps already show as workarounds: LLVM's `/proc/self/exe` is patched to call `__taaj_executable()`, and `isatty` is a special case;
+- Rust programs (`taaj::Files`) and C programs (libc) each have their own client of the file protocol.
+
+## A VFS with the kernel left out
+
+The question the user asked next: would a VFS still leave TheTaaJ a pure microkernel? Yes, done as Fuchsia does it, not as Linux or even Plan 9 do:
+
+- **An open file is a handle**, a channel to the service that owns it, and requests go straight there. No central VFS server, so no extra hop on every request (MINIX 3 and the Hurd have one) and no single process whose crash takes every file away.
+- **The mount table lives in each process, in libc.** On Linux and Plan 9 the kernel keeps it because it is the security boundary. Here the handles are: a program can write anything into its own table and still reach only the directories whose handles it was given. Something that need not be trusted need not be in the kernel.
+- **One protocol for every file service**, so `/tmp`, `/dev`, `/proc` and FAT are each another service.
+- What the kernel may still gain is generic: `channel_call`, a wait on many handles, sealed memory objects, a pager filling a memory object from a channel. Nothing that knows what a file is.
+
+The cost is a message per operation where a monolithic kernel makes a function call - which is why Era 13 (a fast core) comes before Era 14.
+
 ## What changed in `docs/who-does-what.md`
 
 - **Era 12 · Web** (its ground was already the "Network" section): an introduction to the section, and seven `K?-net-...` items - a benchmark, shared rings for frames, more sockets, a port filter, a routing table, offload, and sockets surviving a restart.
 - **Era 13 · A fast core: IPC, threads and several CPUs**, new: the seven `K?-ipc-...` items (moved from MaK-WSL's list), and nine new ones for threads - `K?-smp-bench`, `-queues`, `-alloc`, `-futex`, `-tlb`, `-idle`, `-services`, `-max`, and `J?-threads-posix`.
-- **Era 14 · TaajFS version 7**, new: the ten `J?-fs-...` items (moved from The-Jat's list).
+- **Goals**, a new section at the top: a pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performant, stable - each with what it means here. Every design, review and item is judged against them.
+- **Before merging** gains a check: the kernel stays pure - nothing new in it knows about files, paths, mounts, protocols or devices, and anything added is a generic mechanism whose entry says why it could not live in user space.
+- **Era 14 · Files: a VFS and TaajFS version 7**, new: ten `J?-vfs-...` items (handles, one protocol and one client library, a namespace per process, `openat` and one-directory sandboxes, `/tmp`, `/dev`, `/proc`, a second disk or USB stick, FAT32, change notification), and the ten `J?-fs-...` items (moved from The-Jat's list).
 - **Later eras**: 13 and 14 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 15.
 
 ## Design decisions
 
-- **Eras need a milestone you can see.** Era 13's: the IPC and threads benchmarks in `make test64`, a round trip and a context switch at least twice as fast as first measured, and a parallel job at least 3 times as fast on 4 CPUs as on 1. Era 14's: a 16 GiB volume with a rustc build tree mounting in under a second, a flipped bit reported, version 6 upgraded in place, the power-loss tests passing, `fsck` checking it. Numbers can be argued with, which is the point.
+- **Eras need a milestone you can see.** Era 13's: the IPC and threads benchmarks in `make test64`, a round trip and a context switch at least twice as fast as first measured, and a parallel job at least 3 times as fast on 4 CPUs as on 1. Era 14's: files from several services under one tree with no file code in the kernel, an open file passed between programs and following its file through a rename, and a 16 GiB volume with a rustc build tree mounting in under a second, a flipped bit reported, version 6 upgraded in place, the power-loss tests passing, `fsck` checking it. Numbers can be argued with, which is the point.
 - **IPC and threads in one era.** They are the same work from two sides: a request's cost is two context switches and the scheduler's lock as much as the copies, and `channel_call`'s direct switch is a scheduler change.
+- **The VFS and TaajFS version 7 in one era.** Handles change the file protocol and version 7 changes the format; together the file service is rebuilt once. The handles and the namespace come first: J36, the real PC's USB sticks and sandboxing all wait on them.
+- **The goals in the repository, not only in a session's memory.** All three machines read this file after every pull; the rule that keeps the kernel pure has to be where each of them will see it, and in the checklist they each go through before merging.
 - **The network items in Era 12, not a new era.** Era 12 was already the network's era; the new items are its scale and speed.
 - **Every era starts with a benchmark.** Each section's first item measures; the rest are judged by it.
 - **No owner given.** The eras are not put in either machine's decided order: that is for the user.
@@ -42,6 +68,7 @@ What does not scale: one lock, `THREADS`, around one run queue that every CPU ta
 ## How I checked it
 
 - Each claim against the code: `MAX_CPUS = 16` (`smp.rs`), the one queue and `THREADS` (`sched.rs`, `threads.rs`), `SLICE = 2` ticks, the kernel heap's one `IrqLock` (`mm.rs`), `FRAMES`, the futex `WAITERS` list and its 64 queues (`futex.rs`), the CR3 reload (`tlb.rs`), `fork`'s `ENOSYS` (`libc/src/system.rs`), only `sched_yield` in `sched.h` and no `semaphore.h`; the network's limits (`TCP_CONNECTIONS` 16, `TCP_LISTENERS` 8, `TCP_BACKLOG` 4 in `net/src/stack.rs`; `SOCKETS` 10, `LISTENERS` 4 and the `WAIT_HANDLES_MAX` assertion in `user/src/bin/net.rs`), the fixed address there, what `tcp.rs` says it does not do, and the frame split into pieces (`user/src/nic.rs`).
+- The VFS claims: the stateless whole-path protocol and its 15 operations (`fileserver/src/lib.rs`), one store per `fs` service (`user/src/bin/fs.rs`), the `Open` enum and the path-and-offset open file (`libc/src/descriptors.rs`), `__taaj_executable` (`libc/src/lib.rs`), `isatty`'s cases, and init's namespaces table (`user/src/bin/init.rs`).
 - Nothing was built or run: this changes only documents.
 
 ## What is still missing
@@ -51,6 +78,7 @@ What does not scale: one lock, `THREADS`, around one run queue that every CPU ta
 ## What I learned
 
 - **A microkernel's speed is its IPC and its scheduler together.** Every file read and every packet is a request to a service, so the cost of a message and the cost of a switch are paid on everything, and they are worth an era of their own.
+- **What must be trusted decides what must be in the kernel.** A mount table is in the Unix kernel because it is where access is decided; with capabilities it decides nothing, so it can live in the program.
 - **Fixed tables hide in waits.** The network's socket limit isn't a setting: it is how many handles one wait can take.
 
 ## Testing note
@@ -58,12 +86,14 @@ What does not scale: one lock, `THREADS`, around one run queue that every CPU ta
 Nothing to boot: this changes only `docs/`. To see the eras and items:
 
 ```
-grep -n '^## Era\|K?-\|J?-' docs/who-does-what.md
+grep -n '^## Goals\|^## Era\|kernel stays pure\|K?-\|J?-' docs/who-does-what.md
 ```
 
 | Look for | You should see |
 |---|---|
 | `## Era 13 · A fast core` | the IPC section (7 items) and the threads section (9 items) |
-| `## Era 14 · TaajFS version 7` | 10 `J?-fs` items |
+| `## Goals` | ten goals, before "The machines" |
+| `The kernel stays pure` | a line in "Before merging" |
+| `## Era 14 · Files: a VFS and TaajFS version 7` | 10 `J?-vfs` items, then 10 `J?-fs` items |
 | `K?-net-bench` ... `K?-net-keep` | 7 rows in "Network (Era 12's ground)", after K49 |
 | `## Later eras` | Eras 13 and 14, and the assistant as 15 |
