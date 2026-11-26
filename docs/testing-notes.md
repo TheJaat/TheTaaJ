@@ -4213,3 +4213,36 @@ grep -l "blk has not answered" build/times-64.log build/aarch64/times.log
 | Nothing from the `grep` | The disk driver was not stopped as hung during the file-time tests |
 
 Automated: `make test64`.
+
+---
+
+## 118 · A namespace per process: a directory seen where a program chooses
+
+[The entry](journal/118-namespaces.md)
+
+Start TheTaaJ:
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `with programs namespace` | `namespace: 38 checks, all passed` |
+| `with programs handles` | `handles: 45 checks, all passed`: entry 115's checks, unchanged |
+| `ls` | no `ns`, `shadow`, `m` or `ro` left behind |
+
+The same on AArch64 with `make run-aarch64`: `with programs namespace` gives the same line.
+
+On the host:
+
+```
+cd kernel/abi && cargo test
+```
+
+| Look for | You should see |
+|---|---|
+| `tests::a_mount_goes_with_the_descriptors` | `ok` |
+| the last line | `test result: ok. 35 passed` |
+
+Automated: `make handles64-test aarch64-handles-test`, and `make test64`.
