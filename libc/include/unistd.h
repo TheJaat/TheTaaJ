@@ -33,6 +33,11 @@ ssize_t write(int fd, const void *buffer, size_t count);
  * the end; 0 is. */
 ssize_t read(int fd, void *buffer, size_t count);
 
+/* read and write at a place in a file, without moving where the next
+ * read or write starts: ESPIPE for a descriptor that is not a file. */
+ssize_t pread(int fd, void *buffer, size_t count, off_t offset);
+ssize_t pwrite(int fd, const void *buffer, size_t count, off_t offset);
+
 /* Done with the descriptor: its number may be given out again. */
 int close(int fd);
 

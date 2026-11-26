@@ -3831,3 +3831,40 @@ make pages64-test
 make aarch64-pages-test
 make test64
 ```
+
+---
+
+## 103 · Memory for big programs, part 2: shared file mappings that are written back, pread and pwrite, and why programs are not loaded page by page yet
+
+[The entry](journal/103-shared-mappings.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`. It puts the new `pages` on the disk.
+
+| Type | You should see |
+|---|---|
+| `with programs pages` | `pages: N copies went in, M were refused`, then `pages: 77 checks, all passed`; between them a second `pages` started "for a program" exits with code 0 (the child that writes through a mapping and exits) |
+| `ls` afterwards | no `p.file` or `p.exit`: the checks clean up after themselves |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make pages64-test
+make aarch64-pages-test
+make test64
+```

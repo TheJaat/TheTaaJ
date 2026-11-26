@@ -497,6 +497,72 @@ pub unsafe extern "C" fn write(fd: c_int, buffer: *const c_void, count: usize) -
     }
 }
 
+/// `pread(fd, buffer, count, offset)`: as read, from `offset` in the
+/// file, without moving where the next read or write starts. ESPIPE
+/// for a descriptor that is not a file, EINVAL for a negative offset.
+///
+/// # Safety
+/// `buffer` must be null with `count` 0, or valid for `count` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn pread(fd: c_int, buffer: *mut c_void, count: usize, offset: i64) -> isize {
+    if buffer.is_null() && count != 0 {
+        return fail(EFAULT);
+    }
+    let Some((open, files)) = with(|state| state.entry(fd)) else { return fail(EBADF) };
+    let Open::File(file) = open else { return fail(ESPIPE) };
+    let Ok(offset) = u64::try_from(offset) else { return fail(EINVAL) };
+    if count == 0 {
+        return 0;
+    }
+    // SAFETY: the caller's promise, and `buffer` is not null.
+    let out = unsafe { core::slice::from_raw_parts_mut(buffer.cast::<u8>(), count) };
+    let file = file.lock();
+    if !file.reads() {
+        return fail(EBADF);
+    }
+    let Some(files) = files else { return fail(EIO) };
+    let mut taken = 0;
+    let read = files.read_from(&file.path, offset, |piece| {
+        taken = piece.len().min(out.len());
+        out[..taken].copy_from_slice(&piece[..taken]);
+    });
+    match read {
+        Ok(_) => taken as isize,
+        Err(error) => fail(reason(error)),
+    }
+}
+
+/// `pwrite(fd, buffer, count, offset)`: as write, at `offset` in the
+/// file, without moving where the next read or write starts - even
+/// with O_APPEND, as POSIX says (Linux appends there instead). ESPIPE
+/// for a descriptor that is not a file, EINVAL for a negative offset.
+///
+/// # Safety
+/// `buffer` must be null with `count` 0, or valid for `count` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn pwrite(fd: c_int, buffer: *const c_void, count: usize, offset: i64) -> isize {
+    if buffer.is_null() && count != 0 {
+        return fail(EFAULT);
+    }
+    let Some((open, files)) = with(|state| state.entry(fd)) else { return fail(EBADF) };
+    let Open::File(file) = open else { return fail(ESPIPE) };
+    let Ok(offset) = u64::try_from(offset) else { return fail(EINVAL) };
+    if count == 0 {
+        return 0;
+    }
+    // SAFETY: the caller's promise: `count` readable bytes at `buffer`.
+    let bytes = unsafe { core::slice::from_raw_parts(buffer.cast::<u8>(), count) };
+    let file = file.lock();
+    if !file.writes() {
+        return fail(EBADF);
+    }
+    let Some(files) = files else { return fail(EIO) };
+    match files.write_from(&file.path, offset, bytes) {
+        Ok(_) => count as isize,
+        Err(error) => fail(reason(error)),
+    }
+}
+
 /// `lseek(fd, offset, whence)`: moves where the next read or write
 /// starts - to `offset` from the start (SEEK_SET), from where it is
 /// (SEEK_CUR) or from the end (SEEK_END). Returns the new place, from

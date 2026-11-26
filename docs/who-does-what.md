@@ -108,7 +108,7 @@ Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 
 | Machine | Step | Branch |
 |---|---|---|
-| The-Jat | G, part 1: memory for big programs (E waits: see below) | `big-memory` |
+| The-Jat | G, part 2: shared file mappings (E waits: see below) | `big-memory-2` |
 | MaK | A: the scheduler and timing step | `timing` |
 
 ## The decided order
@@ -125,7 +125,7 @@ Each step below is one branch, one journal entry and one test64 run. The items a
 | **D** TaajFS version 6 (versions 4 and 5 came in Era 6) | J17 file times, J18 files over 256 MiB, J19 long names (entry 094), J20 faster writes (entry 093), J35 a replacing `rename`, J55 `/bin` | **Done (entry 101)**; J55's moving of the programs stays open |
 | **E** LLVM 23 | J14, and C++ (libc++, the LLVM port) moved from emulated to real thread-local storage | Long; runs unattended on The-Jat; it rebuilds the ports anyway. **Waiting (entry 102)**: libc++ 23 needs a host clang of 21 or later, so a host LLVM 23.1.5 is built first - which needs cmake and ninja (`sudo apt install cmake ninja-build`), or apt.llvm.org's LLVM 23 |
 | **F** R3 Rust's std | J15, J16 | Needs B-E |
-| **G** Memory for big programs | J26-J31 | Before rustc's 182 MB runs. **Part 1 done (entry 102)**: J26, J27, J30, J31; J28 and J29 are part 2. Done before E because E waits |
+| **G** Memory for big programs | J26-J31 | Before rustc's 182 MB runs. **Part 1 done (entry 102)**: J26, J27, J30, J31; **part 2 (entry 103)**: J28. J29 needs sealed memory objects first (J58). Done before E because E waits |
 | **H** R4 rustc on TheTaaJ | J21 | |
 | **I** R5 the build without cargo | J22, J23 (nasm; the bootloader change is MaK's) | |
 | **J** R6 the milestone | J24, J25 | |
@@ -187,8 +187,8 @@ The order matters here: each item is needed by the ones after it.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J28 | **`MAP_SHARED` file mappings that write back** | M | |
-| J29 | **Programs loaded page by page from their file** (not whole, not twice in memory) | M | A 182 MB rustc |
+| J29 | **Programs loaded page by page from their file** (not whole, not twice in memory) | M | A 182 MB rustc. Needs J58: sharing the program object's frames as code is only safe once nobody can write them (entry 103) |
+| J58 | **Sealed memory objects**: an object made read-only for good - no writable mapping or handle left - checked by the kernel before it shares the frames | M | For J29; maybe for real shared file mappings later |
 
 ### C and C++ library, left over from Era 6
 

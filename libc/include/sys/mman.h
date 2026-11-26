@@ -16,7 +16,14 @@
  *                      means anyway. A change to the file afterwards is
  *                      not seen.
  *   a file, MAP_SHARED and PROT_WRITE
- *                      fails (ENODEV): changes could not reach the file
+ *                      read in the same way, and written back to the
+ *                      file on msync, on munmap and when the program
+ *                      exits: as far as the file went when it was
+ *                      mapped (a mapping never makes a file longer). In
+ *                      between, the file and the mapping are two copies:
+ *                      a read() of the file, or another program's
+ *                      mapping of it, sees the change only once it is
+ *                      written back
  *   PROT_EXEC          fails (EACCES): a program cannot make memory it
  *                      can run - the kernel maps nothing both writable
  *                      and executable, and code only from a program's
