@@ -1,6 +1,6 @@
-# Goals, Eras 13 to 15, and the network, threads, VFS and driver items
+# Goals, Eras 13 to 16, and the network, threads, VFS, driver and memory items
 
-*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support, VFS and device drivers are, for all the items found - IPC, TaajFS, network, threads, VFS, drivers - to be put into eras, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
+*Journal entry #NNN · a work-list change, not a feature. Written on TheJat-VM, on the branch `new-eras`, which has `ipc-items` and `fs-items` merged into it. The user asked how TheTaaJ's network, threads, several-CPU support, VFS, device drivers and memory management are, for all the items found - IPC, TaajFS, network, threads, VFS, drivers, memory - to be put into eras, and for the project's goals to be written down: "always remember our goal as pure microkernel, secure, reliable, modular, scalable, portable, maintainable, extensible, performance, stable".*
 
 ## Why
 
@@ -53,6 +53,12 @@ Every driver is a user-space program, handed its registers, a contiguous DMA mem
 - **Nothing confines DMA.** No IOMMU, and bus mastering, turned on at hand-out, is never turned off. The CPU confines a driver; the bus does not.
 - init has fixed slots for one disk, one card and one USB controller, with each driver's handles numbered by hand; one `usb` program is the controller and all its devices; one interrupt vector per device; data copied through one fixed DMA region; only virtio's legacy interface; no test that kills a driver mid-I/O.
 
+## What the memory review found
+
+One of the cleanest parts of the kernel: one page-table implementation for both CPUs, tested on the host; physical and virtual addresses as different types; a frame bitmap that starts "in use", so a wrong memory map wastes memory rather than inventing it; kernel code read-only and data never executable; memory objects shared without copying, a mapping counted as a reference; reserved memory filled on first touch; a guard page after every mapping; every page a process takes counted against a limit that only goes down; a documented lock order.
+
+What it lacks is everything above "map this": nothing shared but explicit memory objects (programs loaded whole into each process, no copy-on-write); nothing reclaimed (no dropping of clean pages, no swap, no pressure signal); the kernel heap turns a failed allocation into a panic and never shrinks; SMEP, SMAP and PAN are off, and there is no KPTI; the frame allocator scans a bitmap under one lock; no huge pages for programs; memory objects at most 512 MiB.
+
 ## What changed in `docs/who-does-what.md`
 
 - **Era 12 · Web** (its ground was already the "Network" section): an introduction to the section, and seven `K?-net-...` items - a benchmark, shared rings for frames, more sockets, a port filter, a routing table, offload, and sockets surviving a restart.
@@ -61,7 +67,8 @@ Every driver is a user-space program, handed its registers, a contiguous DMA mem
 - **Before merging** gains a check: the kernel stays pure - nothing new in it knows about files, paths, mounts, protocols or devices, and anything added is a generic mechanism whose entry says why it could not live in user space.
 - **Era 14 · Files: a VFS and TaajFS version 7**, new: ten `J?-vfs-...` items (handles, one protocol and one client library, a namespace per process, `openat` and one-directory sandboxes, `/tmp`, `/dev`, `/proc`, a second disk or USB stick, FAT32, change notification), and the ten `J?-fs-...` items (moved from The-Jat's list).
 - **Era 15 · Devices: a device manager and confined drivers**, new: nine `K?-dev-...` items (every device handed out the same way, a device manager, bus mastering tied to a handle, USB as a bus with class drivers, several vectors and queues, DMA into a program's memory, virtio 1.x, a test that kills drivers mid-I/O, device power states), and K27, the IOMMU, moved there from Security.
-- **Later eras**: 13, 14 and 15 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 16.
+- **Era 16 · Memory: sharing, reclaim and hardening**, new: eleven `K?-mm-...` items (SMEP, SMAP and PAN; no kernel panic for want of memory; a pressure signal; copy-on-write objects; a generic pager; reclaim; a buddy allocator; huge pages; a zero page; objects over 512 MiB; KPTI where needed). J29, J58, K25 and E5 stay where they are, pointed to.
+- **Later eras**: 13, 14, 15 and 16 added; the assistant, drafted as Era 9 before Era 9 became rustc, takes the next free number, 17.
 
 ## Design decisions
 
@@ -71,6 +78,7 @@ Every driver is a user-space program, handed its registers, a contiguous DMA mem
 - **The goals in the repository, not only in a session's memory.** All three machines read this file after every pull; the rule that keeps the kernel pure has to be where each of them will see it, and in the checklist they each go through before merging.
 - **Drivers as their own era, not in Era 7.** Era 7 is the real PC's drivers (hubs, I219, Realtek); Era 15 is how every driver is found, started, confined and restarted - the same for a virtual card as for a real one. Its milestone: no device kinds in the kernel, a new driver without a kernel change, two disks and two cards at once, the IOMMU on the real PC, every driver killed mid-I/O and recovered from.
 - **The device manager is Zircon's answer**: the kernel hands out every device the same way, and one table in user space decides which driver gets it. The IOMMU stays mechanism too: the kernel programs it from the memory objects a driver holds.
+- **Memory as its own era, with policy kept out of the kernel.** The kernel shares, copies on write and drops pages; which pages to evict and which program to stop when memory runs out is decided in user space, as the Goals ask. Its milestone: shared code pages, copy-on-write private mappings, running out of memory without a kernel panic, SMEP, SMAP and PAN on. Hardening first: K?-mm-smap is small, and K?-mm-oom is what the milestone tests.
 - **The network items in Era 12, not a new era.** Era 12 was already the network's era; the new items are its scale and speed.
 - **Every era starts with a benchmark.** Each section's first item measures; the rest are judged by it.
 - **No owner given.** The eras are not put in either machine's decided order: that is for the user.
@@ -81,6 +89,7 @@ Every driver is a user-space program, handed its registers, a contiguous DMA mem
 - Each claim against the code: `MAX_CPUS = 16` (`smp.rs`), the one queue and `THREADS` (`sched.rs`, `threads.rs`), `SLICE = 2` ticks, the kernel heap's one `IrqLock` (`mm.rs`), `FRAMES`, the futex `WAITERS` list and its 64 queues (`futex.rs`), the CR3 reload (`tlb.rs`), `fork`'s `ENOSYS` (`libc/src/system.rs`), only `sched_yield` in `sched.h` and no `semaphore.h`; the network's limits (`TCP_CONNECTIONS` 16, `TCP_LISTENERS` 8, `TCP_BACKLOG` 4 in `net/src/stack.rs`; `SOCKETS` 10, `LISTENERS` 4 and the `WAIT_HANDLES_MAX` assertion in `user/src/bin/net.rs`), the fixed address there, what `tcp.rs` says it does not do, and the frame split into pieces (`user/src/nic.rs`).
 - The VFS claims: the stateless whole-path protocol and its 15 operations (`fileserver/src/lib.rs`), one store per `fs` service (`user/src/bin/fs.rs`), the `Open` enum and the path-and-offset open file (`libc/src/descriptors.rs`), `__taaj_executable` (`libc/src/lib.rs`), `isatty`'s cases, and init's namespaces table (`user/src/bin/init.rs`).
 - The driver claims: `offered()` and its class and vendor matches, `prepare`'s per-kind choices and the bus-master bit set (`kernel64/src/devices.rs`), the virtio identification (`mmio_devices.rs`), the DMA note at the top of `devices.rs`, init's fixed grants for one disk, card and USB controller and its keeping of their DMA memory (`user/src/bin/init.rs`), and what `usb.rs` serves.
+- The memory claims: `paging.rs`'s `Format`, `frame.rs`'s bitmap and lowest-first search, the panic for a null `alloc` in `mm.rs`, the protections `enable_protection` turns on (NXE, CR0.WP, CR4.PGE - not SMEP or SMAP) and PXN and UXN on AArch64, `fault_in` and the account (`process.rs`, `account.rs`), `MEMORY_MAX` 512 MiB and `RESERVE_MAX` 64 GiB (`abi`).
 - Nothing was built or run: this changes only documents.
 
 ## What is still missing
@@ -109,4 +118,5 @@ grep -n '^## Goals\|^## Era\|kernel stays pure\|K?-\|J?-\|^| K27' docs/who-does-
 | `## Era 14 · Files: a VFS and TaajFS version 7` | 10 `J?-vfs` items, then 10 `J?-fs` items |
 | `K?-net-bench` ... `K?-net-keep` | 7 rows in "Network (Era 12's ground)", after K49 |
 | `## Era 15 · Devices: a device manager and confined drivers` | 9 `K?-dev` items and K27 |
-| `## Later eras` | Eras 13, 14 and 15, and the assistant as 16 |
+| `## Era 16 · Memory: sharing, reclaim and hardening` | 11 `K?-mm` items |
+| `## Later eras` | Eras 13 to 16, and the assistant as 17 |
