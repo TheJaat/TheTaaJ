@@ -164,7 +164,7 @@ Asked whether everything was covered, I listed eight areas not yet reviewed; the
 
 ## What is still missing
 
-- Which machine takes Eras 13 and 14, and when; the numbers given to the new items at merge.
+- Which machine takes each of Eras 13 to 28, and in what order (Era 21 is MaK-WSL's, as TheBootloader's owner); the numbers given to the new items at merge.
 
 ## What I learned
 
