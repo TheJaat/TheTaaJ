@@ -184,6 +184,8 @@ int remove(const char *path);
 /* Gives a file or a directory a new name or place. Nothing is
  * replaced: if `to` is there already, this fails with EEXIST. */
 int rename(const char *from, const char *to);
+/* rename, each name from its own directory descriptor (fcntl.h). */
+int renameat(int fromfd, const char *from, int tofd, const char *to);
 
 /* Each returns how many bytes the text came to, or EOF. The compiler
  * is told which argument is the format, and checks the others against

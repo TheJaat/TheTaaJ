@@ -4262,3 +4262,26 @@ Automated: `make handles64-test aarch64-handles-test`, and `make test64`.
 | In `WaitQueue::wake_all`, take the waiters out (`core::mem::take(&mut *self.waiters.lock())`), then `make smp64-test` | `rule 3 of threads.rs: a wake-up took a waiter out of its queue` in the log - with 20 CPUs too. Change it back |
 
 Automated: `make test64`.
+
+---
+
+## 120 · Names from a directory, and a program given one directory
+
+[The entry](journal/120-openat.md)
+
+Start TheTaaJ:
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `with programs at` | `at: 30 checks, all passed` |
+| `with programs namespace` | `namespace: 38 checks, all passed` (entry 118's) |
+| `with programs handles` | `handles: 45 checks, all passed` (entry 115's) |
+| `ls` | no `atdir`, `moved`, `box` or `outside` left behind |
+
+The same on AArch64 with `make run-aarch64`: `with programs at` gives the same line.
+
+Automated: `make handles64-test aarch64-handles-test`, and `make test64`.
