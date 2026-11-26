@@ -1,6 +1,6 @@
 # CPU time: what each process has used, in `ps`, `clock()` and `CLOCK_PROCESS_CPUTIME_ID`
 
-*Journal entry #NNN · MaK-WSL's step A, item K21. Written on MaK-WSL. Until now TheTaaJ knew how much the CPUs worked in all (`busy_ticks`, what the shell's `time` prints), but not who used it. Now the kernel counts, for each process, the time its threads were on a CPU; `ps` shows it, and a C program gets it from `clock()` and `clock_gettime(CLOCK_PROCESS_CPUTIME_ID)`.*
+*Journal entry #114 · MaK-WSL's step A, item K21. Written on MaK-WSL. Until now TheTaaJ knew how much the CPUs worked in all (`busy_ticks`, what the shell's `time` prints), but not who used it. Now the kernel counts, for each process, the time its threads were on a CPU; `ps` shows it, and a C program gets it from `clock()` and `clock_gettime(CLOCK_PROCESS_CPUTIME_ID)`.*
 
 ## Why
 

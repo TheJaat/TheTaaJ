@@ -1196,7 +1196,7 @@ A64_BUSY_KEYS   = f o r e v e r spc shift-7 ret e c h o spc s t i l l spc h e r 
                   c p r i m e s spc 1 0 0 spc shift-dot spc o u t spc shift-7 ret see:exited
 # kernel-aarch64 too: the image it boots carries the user programs (the
 # shell among them), and without it, run on its own, this booted the last
-# image built - an old shell (journal entry NNN).
+# image built - an old shell (journal entry 114).
 aarch64-keys-test: aarch64-test-disk kernel-aarch64
 ifeq ($(HAVE_A64),yes)
 	@echo "Booting the AArch64 kernel and typing at its serial port (log: $(A64_KEYS_LOG))..."

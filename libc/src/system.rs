@@ -219,7 +219,7 @@ pub unsafe extern "C" fn timespec_get(t: *mut Timespec, base: c_int) -> c_int {
 
 /// `clock()`: the processor time this program has used, all its
 /// threads together, in microseconds (CLOCKS_PER_SEC): the kernel's
-/// CPU-time clock (journal entry NNN). Until then it was the time since
+/// CPU-time clock (journal entry 114). Until then it was the time since
 /// boot, which counted every other program's time too.
 #[no_mangle]
 pub extern "C" fn clock() -> c_long {

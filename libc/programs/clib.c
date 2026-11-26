@@ -182,7 +182,7 @@ static long long nanoseconds(struct timespec t)
     return (long long)t.tv_sec * 1000000000LL + t.tv_nsec;
 }
 
-/* CPU time (journal entry NNN): the time this program was on a CPU.
+/* CPU time (journal entry 114): the time this program was on a CPU.
  * Busy, it grows with the time; asleep, it hardly does. The limits are
  * generous on purpose - a busy host or another program on the same CPU
  * takes some of the time - but they still tell the CPU time apart from

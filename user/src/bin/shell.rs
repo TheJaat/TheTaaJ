@@ -1064,7 +1064,7 @@ impl Shell {
             Err(error) => return say!(self, "cannot list processes: {error:?}\n"),
         };
         // CPU: the time the process's threads were on a CPU (journal
-        // entry NNN), in seconds to the millisecond.
+        // entry 114), in seconds to the millisecond.
         self.write(b"  PID  NAME        STATE           CPU\n");
         for entry in &entries[..total.min(entries.len())] {
             let state = match entry.exit_code {
