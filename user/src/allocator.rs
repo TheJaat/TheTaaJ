@@ -75,6 +75,11 @@ fn grow(heap: &mut Heap, bytes: u64) -> bool {
     true
 }
 
+// SAFETY: `alloc` returns null or a block of the heap of at least
+// `layout`'s size and alignment, handed to no one else until `dealloc`
+// gives it back (heap crate, tested on the host); `dealloc` is given only
+// what `alloc` returned, with its layout - GlobalAlloc's contract on the
+// caller. `with` keeps two threads out of the heap at once.
 unsafe impl GlobalAlloc for UserHeap {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         self.with(|heap| loop {

@@ -137,7 +137,7 @@ impl Device {
         if !registers.is_aligned() {
             return Err("no usable device description");
         }
-        // SAFETY (every register access below): a mapping of the device's
+        // SAFETY: (every register access below) a mapping of the device's
         // registers, checked to reach as far as the configuration's end.
         unsafe {
             let status = |bits: u8| write(registers, mmio::STATUS, u32::from(bits));

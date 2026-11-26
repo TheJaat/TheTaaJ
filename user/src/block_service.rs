@@ -84,11 +84,13 @@ fn transfer_many(device: &mut impl Device, write: bool, sector: u64, count: u32,
     // client may change the bytes meanwhile; then it reads or writes
     // its own garbage, and nothing else.
     let status = if write {
+        // SAFETY: as above; the device's buffer is ours and holds `length`.
         unsafe { theirs.copy_to_nonoverlapping(device.data(length).as_mut_ptr(), length) };
         transfer(device, true, sector, count)
     } else {
         let status = transfer(device, false, sector, count);
         if status == block::OK {
+            // SAFETY: as above, the other way.
             unsafe { theirs.copy_from_nonoverlapping(device.data(length).as_ptr(), length) };
         }
         status

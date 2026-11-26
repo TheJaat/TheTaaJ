@@ -283,6 +283,7 @@ unsafe fn spawn(
     // SAFETY: the caller's promise: null, or made by
     // posix_spawn_file_actions_init and added to.
     let actions: &[Action] = match unsafe { actions.as_ref() } {
+        // SAFETY: the list the add functions made and `actions` keeps, live until `posix_spawn_file_actions_destroy`.
         Some(actions) if !actions.list.is_null() => unsafe { &*actions.list },
         _ => &[],
     };
@@ -296,7 +297,9 @@ unsafe fn spawn(
         let mut at = argv;
         // SAFETY: an array of strings ending in null, as promised.
         while let Some(word) = unsafe { at.read().as_ref() } {
+            // SAFETY: a string of the array, which ends in a zero byte, as promised.
             words.push(unsafe { CStr::from_ptr(word) }.to_string_lossy().into_owned());
+            // SAFETY: not past the null that ends the array: the entry at `at` was not it.
             at = unsafe { at.add(1) };
         }
     }
@@ -353,11 +356,13 @@ pub(crate) unsafe fn environment_of(list: *const *const c_char) -> Vec<u8> {
     let mut out = Vec::new();
     // SAFETY: the caller's promise, or environ's.
     while let Some(entry) = unsafe { at.read().as_ref() } {
+        // SAFETY: an entry of the environment: a string ending in a zero byte.
         let entry = unsafe { CStr::from_ptr(entry) }.to_bytes();
         if entry.contains(&b'=') {
             out.extend_from_slice(entry);
             out.push(0);
         }
+        // SAFETY: not past the null that ends the array: the entry at `at` was not it.
         at = unsafe { at.add(1) };
     }
     out
@@ -845,7 +850,9 @@ unsafe fn exec(path: *const c_char, argv: *const *const c_char, envp: *const *co
         let mut at = argv;
         // SAFETY: an array of strings ending in null, as promised.
         while let Some(word) = unsafe { at.read().as_ref() } {
+            // SAFETY: a string of the array, which ends in a zero byte, as promised.
             words.push(unsafe { CStr::from_ptr(word) }.to_string_lossy().into_owned());
+            // SAFETY: not past the null that ends the array: the entry at `at` was not it.
             at = unsafe { at.add(1) };
         }
     }

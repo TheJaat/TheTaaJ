@@ -153,6 +153,7 @@ fn main() -> i64 {
     // The handle can go while the mapping stays: the mapping keeps the
     // pages alive.
     check!(taaj::close(memory) == Ok(()), "close the memory handle");
+    // SAFETY: the same third page, still mapped: only the handle is gone.
     check!(unsafe { base.add(2 * 4096).read_volatile() } == b'S', "the mapping outlives the handle");
     check!(taaj::memory_unmap(base) == Ok(()), "unmap");
     check!(taaj::memory_unmap(base) == Err(Error::InvalidArgument), "unmapped twice");

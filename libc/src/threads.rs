@@ -308,6 +308,8 @@ pub(crate) fn current() -> *mut Thread {
     unsafe {
         core::arch::asm!("mov {}, fs:8", out(reg) pointer, options(nostack, readonly, preserves_flags))
     };
+    // SAFETY: AArch64's way of the same: TPIDR_EL0 is 0 or a live TCB,
+    // whose first word says where the record is.
     #[cfg(target_arch = "aarch64")]
     unsafe {
         let tp: usize;
@@ -407,6 +409,8 @@ impl Attributes {
     }
 }
 
+/// # Safety
+/// `attr` must point to writable room for a `pthread_attr_t`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_attr_init(attr: *mut Attributes) -> c_int {
     // SAFETY: the caller's promise.
@@ -419,6 +423,8 @@ pub extern "C" fn pthread_attr_destroy(_attr: *mut Attributes) -> c_int {
     0
 }
 
+/// # Safety
+/// `attr` must point to an attributes object from `pthread_attr_init`, not yet destroyed.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_attr_setdetachstate(attr: *mut Attributes, state: c_int) -> c_int {
     // SAFETY: the caller's promise.
@@ -430,6 +436,8 @@ pub unsafe extern "C" fn pthread_attr_setdetachstate(attr: *mut Attributes, stat
     0
 }
 
+/// # Safety
+/// `attr` must point to an attributes object from `pthread_attr_init`, not yet destroyed; `state` must be writable.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_attr_getdetachstate(attr: *const Attributes, state: *mut c_int) -> c_int {
     // SAFETY: the caller's promise.
@@ -437,6 +445,8 @@ pub unsafe extern "C" fn pthread_attr_getdetachstate(attr: *const Attributes, st
     0
 }
 
+/// # Safety
+/// `attr` must point to an attributes object from `pthread_attr_init`, not yet destroyed.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_attr_setstacksize(attr: *mut Attributes, size: usize) -> c_int {
     if size < STACK_MIN {
@@ -447,6 +457,8 @@ pub unsafe extern "C" fn pthread_attr_setstacksize(attr: *mut Attributes, size: 
     0
 }
 
+/// # Safety
+/// `attr` must point to an attributes object from `pthread_attr_init`, not yet destroyed; `size` must be writable.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_attr_getstacksize(attr: *const Attributes, size: *mut usize) -> c_int {
     // SAFETY: the caller's promise.
@@ -458,6 +470,9 @@ pub unsafe extern "C" fn pthread_attr_getstacksize(attr: *const Attributes, size
 /// the program's own memory, `size` bytes from `address` (its lowest),
 /// which the program frees after the thread has ended. EINVAL below
 /// PTHREAD_STACK_MIN.
+///
+/// # Safety
+/// `attr` must point to an attributes object from `pthread_attr_init`, not yet destroyed; `address` must be the lowest of `size` bytes the program owns and keeps until the thread made with them has ended.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_attr_setstack(attr: *mut Attributes, address: *mut c_void, size: usize) -> c_int {
     if size < STACK_MIN || address.is_null() {
@@ -473,6 +488,9 @@ pub unsafe extern "C" fn pthread_attr_setstack(attr: *mut Attributes, address: *
 /// `pthread_attr_getstack(attr, address, size)`: the stack's lowest
 /// address and size - 0 and the size for a stack pthread_create is to
 /// make; the thread's own, from pthread_getattr_np.
+///
+/// # Safety
+/// `attr` must point to an attributes object from `pthread_attr_init`, not yet destroyed; `address` and `size` must be writable.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_attr_getstack(attr: *const Attributes, address: *mut *mut c_void, size: *mut usize) -> c_int {
     // SAFETY: the caller's promise.
@@ -483,6 +501,8 @@ pub unsafe extern "C" fn pthread_attr_getstack(attr: *const Attributes, address:
     0
 }
 
+/// # Safety
+/// `attr` must point to an attributes object from `pthread_attr_init`, not yet destroyed.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_attr_setguardsize(attr: *mut Attributes, size: usize) -> c_int {
     // SAFETY: the caller's promise.
@@ -490,6 +510,8 @@ pub unsafe extern "C" fn pthread_attr_setguardsize(attr: *mut Attributes, size: 
     0
 }
 
+/// # Safety
+/// `attr` must point to an attributes object from `pthread_attr_init`, not yet destroyed; `size` must be writable.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_attr_getguardsize(attr: *const Attributes, size: *mut usize) -> c_int {
     // SAFETY: the caller's promise.
@@ -517,6 +539,9 @@ fn main_stack() -> (usize, usize) {
 /// are now - detached or not, and where its stack is: what Rust's std
 /// asks to find the bottom of the main thread's stack, for its overflow
 /// message. ESRCH for a thread that is not one of the program's.
+///
+/// # Safety
+/// `thread` must be a `pthread_t` this program got from `pthread_create` (or `pthread_self`) that is still running; `attr` must point to writable room for a `pthread_attr_t`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_getattr_np(thread: usize, attr: *mut Attributes) -> c_int {
     let thread = thread as *mut Thread;
@@ -550,6 +575,9 @@ extern "C" fn begin(thread: *mut Thread) -> ! {
 /// `pthread_create(thread, attr, start, argument)`: runs `start(argument)`
 /// on a new thread. 0, or EAGAIN (no more threads, or no memory for
 /// its stack).
+///
+/// # Safety
+/// `out` must be writable; `attr` null or from `pthread_attr_init`; `start` must be safe to call with `argument` on another thread.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_create(
     out: *mut usize,
@@ -615,6 +643,9 @@ pub unsafe extern "C" fn pthread_create(
 /// destructors of its pthread_setspecific values. The program ends
 /// when its last thread does - and at once, with all of them, if any
 /// thread calls `exit` or returns from `main`.
+///
+/// # Safety
+/// Ends the calling thread: nothing may use what lives on its stack after this, as with C's `pthread_exit`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_exit(result: *mut c_void) -> ! {
     let thread = current();
@@ -635,6 +666,9 @@ pub unsafe extern "C" fn pthread_exit(result: *mut c_void) -> ! {
 /// `pthread_join(thread, result)`: waits for `thread` to end; what it
 /// returned, in `*result` unless null. Its stack and record are freed:
 /// a thread is joined once.
+///
+/// # Safety
+/// `thread` must be a `pthread_t` this program got from `pthread_create` (or `pthread_self`), not yet joined or detached; `result` null or writable.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_join(thread: usize, result: *mut *mut c_void) -> c_int {
     let record = thread as *mut Thread;
@@ -667,6 +701,9 @@ pub unsafe extern "C" fn pthread_join(thread: usize, result: *mut *mut c_void) -
 
 /// `pthread_detach(thread)`: nobody will join it; its stack and record
 /// are freed once it has ended.
+///
+/// # Safety
+/// `thread` must be a `pthread_t` this program got from `pthread_create` (or `pthread_self`), not yet joined or detached.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_detach(thread: usize) -> c_int {
     let record = thread as *mut Thread;
@@ -768,6 +805,8 @@ pub struct MutexAttributes {
     kind: c_int,
 }
 
+/// # Safety
+/// `attr` must point to writable room for a `pthread_mutexattr_t`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutexattr_init(attr: *mut MutexAttributes) -> c_int {
     // SAFETY: the caller's promise.
@@ -780,6 +819,8 @@ pub extern "C" fn pthread_mutexattr_destroy(_attr: *mut MutexAttributes) -> c_in
     0
 }
 
+/// # Safety
+/// `attr` must point to a `pthread_mutexattr_t` from `pthread_mutexattr_init`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutexattr_settype(attr: *mut MutexAttributes, kind: c_int) -> c_int {
     if !(NORMAL..=ERRORCHECK).contains(&kind) {
@@ -790,6 +831,8 @@ pub unsafe extern "C" fn pthread_mutexattr_settype(attr: *mut MutexAttributes, k
     0
 }
 
+/// # Safety
+/// `attr` must point to a `pthread_mutexattr_t` from `pthread_mutexattr_init`; `kind` must be writable.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutexattr_gettype(attr: *const MutexAttributes, kind: *mut c_int) -> c_int {
     // SAFETY: the caller's promise.
@@ -797,6 +840,8 @@ pub unsafe extern "C" fn pthread_mutexattr_gettype(attr: *const MutexAttributes,
     0
 }
 
+/// # Safety
+/// `mutex` must point to writable room for a `pthread_mutex_t` that no thread is using; `attr` null or from `pthread_mutexattr_init`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutex_init(mutex: *mut PthreadMutex, attr: *const MutexAttributes) -> c_int {
     // SAFETY: the caller's promise.
@@ -806,6 +851,8 @@ pub unsafe extern "C" fn pthread_mutex_init(mutex: *mut PthreadMutex, attr: *con
     0
 }
 
+/// # Safety
+/// `mutex` must point to a mutex from `PTHREAD_MUTEX_INITIALIZER` or `pthread_mutex_init`, not destroyed, and locked by nobody.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut PthreadMutex) -> c_int {
     // SAFETY: the caller's promise.
@@ -815,6 +862,9 @@ pub unsafe extern "C" fn pthread_mutex_destroy(mutex: *mut PthreadMutex) -> c_in
 /// `pthread_mutex_lock(mutex)`: waits for it. A normal mutex locked
 /// again by its owner is the deadlock POSIX describes: EDEADLK, rather
 /// than waiting for ever. A recursive one counts.
+///
+/// # Safety
+/// `mutex` must point to a mutex from `PTHREAD_MUTEX_INITIALIZER` or `pthread_mutex_init`, not destroyed.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut PthreadMutex) -> c_int {
     // SAFETY: the caller's promise.
@@ -834,6 +884,8 @@ pub unsafe extern "C" fn pthread_mutex_lock(mutex: *mut PthreadMutex) -> c_int {
     0
 }
 
+/// # Safety
+/// `mutex` must point to a mutex from `PTHREAD_MUTEX_INITIALIZER` or `pthread_mutex_init`, not destroyed.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut PthreadMutex) -> c_int {
     // SAFETY: the caller's promise.
@@ -851,6 +903,9 @@ pub unsafe extern "C" fn pthread_mutex_trylock(mutex: *mut PthreadMutex) -> c_in
 
 /// `pthread_mutex_unlock(mutex)`: EPERM unless the running thread holds
 /// it.
+///
+/// # Safety
+/// `mutex` must point to a mutex from `PTHREAD_MUTEX_INITIALIZER` or `pthread_mutex_init`, not destroyed.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_mutex_unlock(mutex: *mut PthreadMutex) -> c_int {
     // SAFETY: the caller's promise.
@@ -887,6 +942,8 @@ pub extern "C" fn pthread_condattr_destroy(_attr: *mut c_int) -> c_int {
     0
 }
 
+/// # Safety
+/// `cond` must point to writable room for a `pthread_cond_t` that no thread waits on.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_init(cond: *mut Condition, _attr: *const c_int) -> c_int {
     // SAFETY: the caller's promise.
@@ -899,6 +956,8 @@ pub extern "C" fn pthread_cond_destroy(_cond: *mut Condition) -> c_int {
     0
 }
 
+/// # Safety
+/// `cond` must point to a condition from `PTHREAD_COND_INITIALIZER` or `pthread_cond_init`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_signal(cond: *mut Condition) -> c_int {
     // SAFETY: the caller's promise.
@@ -908,6 +967,8 @@ pub unsafe extern "C" fn pthread_cond_signal(cond: *mut Condition) -> c_int {
     0
 }
 
+/// # Safety
+/// `cond` must point to a condition from `PTHREAD_COND_INITIALIZER` or `pthread_cond_init`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_broadcast(cond: *mut Condition) -> c_int {
     // SAFETY: the caller's promise.
@@ -937,6 +998,8 @@ fn wait(cond: &Condition, mutex: &mut PthreadMutex, deadline: u64) -> c_int {
     }
 }
 
+/// # Safety
+/// `cond` must point to a condition from `PTHREAD_COND_INITIALIZER` or `pthread_cond_init`; `mutex` must point to a mutex from `PTHREAD_MUTEX_INITIALIZER` or `pthread_mutex_init`, not destroyed, and locked by this thread.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_wait(cond: *mut Condition, mutex: *mut PthreadMutex) -> c_int {
     // SAFETY: the caller's promise.
@@ -972,6 +1035,8 @@ fn boot_time() -> u64 {
     now.saturating_sub(taaj::monotonic_ns())
 }
 
+/// # Safety
+/// `cond` must point to a condition from `PTHREAD_COND_INITIALIZER` or `pthread_cond_init`; `mutex` must point to a mutex from `PTHREAD_MUTEX_INITIALIZER` or `pthread_mutex_init`, not destroyed, and locked by this thread; `deadline` must point to a `timespec`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_cond_timedwait(
     cond: *mut Condition,
@@ -1021,6 +1086,8 @@ impl ReadWriteLock {
     }
 }
 
+/// # Safety
+/// `lock` must point to writable room for a `pthread_rwlock_t` that no thread is using.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_rwlock_init(lock: *mut ReadWriteLock, _attr: *const c_int) -> c_int {
     // SAFETY: the caller's promise.
@@ -1028,12 +1095,16 @@ pub unsafe extern "C" fn pthread_rwlock_init(lock: *mut ReadWriteLock, _attr: *c
     0
 }
 
+/// # Safety
+/// `lock` must point to a lock from `PTHREAD_RWLOCK_INITIALIZER` or `pthread_rwlock_init`, held by nobody.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_rwlock_destroy(lock: *mut ReadWriteLock) -> c_int {
     // SAFETY: the caller's promise.
     if unsafe { (*lock).state.load(Ordering::Relaxed) } != 0 { EBUSY } else { 0 }
 }
 
+/// # Safety
+/// `lock` must point to a lock from `PTHREAD_RWLOCK_INITIALIZER` or `pthread_rwlock_init`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_rwlock_rdlock(lock: *mut ReadWriteLock) -> c_int {
     // SAFETY: the caller's promise.
@@ -1044,12 +1115,16 @@ pub unsafe extern "C" fn pthread_rwlock_rdlock(lock: *mut ReadWriteLock) -> c_in
     0
 }
 
+/// # Safety
+/// `lock` must point to a lock from `PTHREAD_RWLOCK_INITIALIZER` or `pthread_rwlock_init`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_rwlock_tryrdlock(lock: *mut ReadWriteLock) -> c_int {
     // SAFETY: the caller's promise.
     if unsafe { (*lock).try_read() } { 0 } else { EBUSY }
 }
 
+/// # Safety
+/// `lock` must point to a lock from `PTHREAD_RWLOCK_INITIALIZER` or `pthread_rwlock_init`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_rwlock_wrlock(lock: *mut ReadWriteLock) -> c_int {
     // SAFETY: the caller's promise.
@@ -1060,12 +1135,16 @@ pub unsafe extern "C" fn pthread_rwlock_wrlock(lock: *mut ReadWriteLock) -> c_in
     0
 }
 
+/// # Safety
+/// `lock` must point to a lock from `PTHREAD_RWLOCK_INITIALIZER` or `pthread_rwlock_init`.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_rwlock_trywrlock(lock: *mut ReadWriteLock) -> c_int {
     // SAFETY: the caller's promise.
     if unsafe { (*lock).try_write() } { 0 } else { EBUSY }
 }
 
+/// # Safety
+/// `lock` must point to a lock from `PTHREAD_RWLOCK_INITIALIZER` or `pthread_rwlock_init`, held by this thread.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_rwlock_unlock(lock: *mut ReadWriteLock) -> c_int {
     // SAFETY: the caller's promise.
@@ -1089,6 +1168,9 @@ pub unsafe extern "C" fn pthread_rwlock_unlock(lock: *mut ReadWriteLock) -> c_in
 
 /// `pthread_once(once, function)`: runs `function` the first time any
 /// thread gets here; the others wait until it has returned.
+///
+/// # Safety
+/// `once` must point to a `pthread_once_t` from `PTHREAD_ONCE_INIT`, used for this `function` only.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_once(once: *mut c_int, function: extern "C" fn()) -> c_int {
     // SAFETY: the caller's promise: an int, used for nothing else.
@@ -1113,6 +1195,8 @@ pub unsafe extern "C" fn pthread_once(once: *mut c_int, function: extern "C" fn(
 /// The keys in use, and each one's destructor.
 static KEYS: Mutex<[Option<Option<Destructor>>; KEYS_MAX]> = Mutex::new([None; KEYS_MAX]);
 
+/// # Safety
+/// `key` must be writable; `destructor`, if given, must be safe to call with any value set for the key.
 #[no_mangle]
 pub unsafe extern "C" fn pthread_key_create(key: *mut u32, destructor: Option<Destructor>) -> c_int {
     let mut keys = KEYS.lock();
@@ -1200,6 +1284,9 @@ static NEXT_INDEX: AtomicUsize = AtomicUsize::new(1);
 
 /// The running thread's copy of the variable `control` describes: made
 /// the first time this thread asks, from the bytes it starts with.
+///
+/// # Safety
+/// `control` must be the compiler's control block for one thread-local variable (`__emutls_v.NAME`), as Clang emits it.
 #[no_mangle]
 pub unsafe extern "C" fn __emutls_get_address(control: *mut EmutlsControl) -> *mut c_void {
     // SAFETY: the compiler's record.
