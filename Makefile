@@ -839,7 +839,7 @@ BIG64_DIR = $(BUILD_DIR)/big64
 BIG64_ISO = $(BUILD_DIR)/big64.iso
 BIG64_ELF = $(KERNEL64_DIR)/target/big-image/x86_64-unknown-none/release/kernel64
 BIG64_LOG = $(BUILD_DIR)/big64
-BIG64_SAID = \[test\] big image: the kernel ends at 0x[0-9a-f]+, above 2 MiB; 512 KiB of it at 0x[0-9a-f]+-0x[0-9a-f]+ is byte for byte what was built
+BIG64_SAID = \[test\] big image: the kernel ends at 0x[0-9a-f]+, above 2 MiB; 256 KiB of it at 0x[0-9a-f]+-0x[0-9a-f]+ is byte for byte what was built
 big64-test: build-bootloader user64 uefi-loader
 	@echo "Building a kernel that ends above 2 MiB..."
 	cd $(KERNEL64_DIR) && cargo build --release --quiet --features big-image --target-dir target/big-image

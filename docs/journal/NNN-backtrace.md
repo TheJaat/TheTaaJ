@@ -81,6 +81,7 @@ What it costs: the kernel image grew by 52 KiB - the 64 KiB block, in read-only 
 
 - **The x86 nx test's frame was one further down than I expected**: `run_fault_test` was not inlined into `kernel_main` in that build, so `kernel_main` was frame 2, not 1. The fault tests now look for it in the first four frames.
 - **AArch64's nx test had no `kernel_main` at all** in the first version - only `(past the code)` and the entry point - until the link register was printed.
+- **The big-image test crossed the 3 MiB wall.** `big64-test` builds a kernel with 512 KiB of ballast, to check that one above 2 MiB loads whole; with the table, that kernel ended above 3 MiB and did not link. The kernel itself now ends above 2 MiB (`0x281000`), so the ballast is 256 KiB: the big image still tests what it was for, and fails first - while the kernel still has 256 KiB left under the wall, close to where J51 says to hurry.
 - **A section boundary named a fault in data**: `__rodata_start+0x126260`. It is the first symbol after the code, which the linker marks as code; the table now calls that address `(past the code)`.
 
 ## How I checked it
