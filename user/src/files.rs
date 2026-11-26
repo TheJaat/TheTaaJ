@@ -443,11 +443,13 @@ impl Files {
     pub fn rename(&self, from: &str, to: &str) -> Result<(), FileError> {
         let (channel, from, from_mount) = self.route(from);
         let (other, to, to_mount) = self.route(to);
-        if channel != other {
-            return Err(FileError::Refused(Status::CrossMount));
-        }
+        // A mount point first, as Linux answers: EBUSY wherever it was
+        // to go.
         if from_mount || to_mount {
             return Err(FileError::Refused(Status::MountPoint));
+        }
+        if channel != other {
+            return Err(FileError::Refused(Status::CrossMount));
         }
         let mut reply = [0u8; MESSAGE_MAX];
         let request = Request { op: protocol::RENAME, name: &from, number: 0, data: to.as_bytes() };

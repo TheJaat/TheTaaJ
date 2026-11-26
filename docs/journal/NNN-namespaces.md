@@ -83,6 +83,10 @@ The child's mounts are made when it starts, before `main`, not on first use. So 
 - **`at` need not exist.** Unix wants a directory to mount on. Plan 9 doesn't, and a sandbox that mounts a directory at `/data` shouldn't have to make `/data` first in a tree it can't write. The listing shows the mount anyway.
 - **Mounting at `/`** replaces the whole tree, root included (`under("", path)` matches everything). That is the sandbox J63 needs, and costs nothing extra here.
 
+## Bugs met
+
+- **Which error comes first.** `rename("/m", "/elsewhere")`, with `/m` a mount, is two things wrong at once: it renames a mount point, and to a place under another mount (the root). The first boot answered `EXDEV`, because `rename` checked the mounts before the mount point. Linux answers `EBUSY`: a mount point can't be renamed anywhere, so that is the more useful error. The check that caught it is the 38th in `namespace.c`. The order of the two checks in `Files::rename` is now Linux's.
+
 ## How I checked it
 
 - **`abi`'s host tests**, 35 in all, one new: `a_mount_goes_with_the_descriptors` covers:
