@@ -62,16 +62,18 @@ MaK's memory can grow: a `.wslconfig` gives WSL more of the laptop's memory, if 
 
 ### Rules for both machines
 
-1. **A separate branch for everything**: every step, fix or document change, with the same name in every repository it touches (for example `r3-std`, `usb-hubs`). Nothing is committed straight to `main`.
-2. **Nothing is merged into `main` without asking the user first**, and only after full testing:
-   - pull `main` and merge it into the branch;
-   - `make test64` passes on the branch with `main` merged in;
+How a change gets from a branch into `main` - pull requests, the reviewer, the labels, the rules for public repositories - is in [`how-we-work.md`](how-we-work.md); what the reviewer checks is in [`review.md`](review.md).
+
+1. **A separate branch for everything**: every step, fix or document change, with the same name in every repository it touches (for example `r3-std`, `usb-hubs`), and a **pull request** for it in each. Nothing is committed straight to `main`.
+2. **Only the reviewer merges into `main`**, and only a pull request with `review:pass` (its review found nothing more to change) and `merge-ok` (the user's yes), and after full testing:
+   - `main` merged into the branch;
+   - `make test64` passes on the result;
    - the step's own new tests pass, and its testing note was checked by a scripted boot;
-   - the user is asked and says yes;
    - then merge and push, TheKernel and TheBootloader first, TheTaaJ last.
-3. **The same commit author on both machines: `The-Jat`**, with the same email. Set it once in each repository (`git config user.name "The-Jat"`, and the email the user gives). Nothing else goes in a commit message's author or trailers: no "Claude" and no `Co-Authored-By` line.
+   Workers never merge into `main` (`how-we-work.md`).
+3. **The same commit author on both machines: `The-Jat`**, with the same email. Set it once in each repository (`git config user.name "The-Jat"`, and the email the user gives). Nothing else goes in a commit message's author or trailers: no `Co-Authored-By` line, nothing that names the tools used to write the change.
 4. **Work follows the dependencies.** An item is started only when the items it depends on are done. Among the items that are ready, the one that most other items wait for goes first (see "What waits for what" below). If an item turns out to block more work than this file says, move it up and write down why.
-5. **Journal numbers are taken at merge time.** Whoever merges into `main` first takes the next number. The other renumbers their entry (file name, title, README row) before merging.
+5. **Journal numbers are given at merge time, by the reviewer.** A branch's entry is `docs/journal/NNN-name.md`, and its README row and Notes say `NNN`, until the reviewer merges it and gives it the next free number. Two workers can't take the same number: only one merges.
 6. **Keep this file current**, in the step's own branch:
    - when a step starts, put it and its branch under "Now";
    - when an item is done, write **Done (entry NNN)** in its Notes;
@@ -109,7 +111,7 @@ Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 | Machine | Step | Branch |
 |---|---|---|
 | The-Jat | E: LLVM 23 | `llvm-23` |
-| MaK | A: the scheduler and timing step, one branch per item: now K20, priorities and the CPU a thread runs on | `k20-priorities` |
+| MaK | How we work: pull requests, one reviewer who merges (docs/how-we-work.md, docs/review.md); then K20 | `how-we-work` |
 
 ## The decided order
 
