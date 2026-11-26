@@ -85,3 +85,5 @@ make boot64-test
 |---|---|
 | `library: N checks, all passed` | clib's CPU-time checks passed with the rest |
 | `boot64-test passed` | `ps` printed the CPU column the test expects |
+
+Automated: `make test64`
