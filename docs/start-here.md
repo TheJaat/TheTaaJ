@@ -75,7 +75,7 @@ Each session has its own tree (rule 13), with its own `build/` and submodules, a
 ## 5. Doing an item
 
 1. **Pick it.** Take the first item of your lane (`docs/lanes.md`) that is not done in `who-does-what.md` and whose dependencies are merged ("Across lanes" in `lanes.md`, and the item's Notes). If none is ready, take the next one that is. If none of your lane's items is ready, tell the user and take from your machine's next lane, or from the "Either machine" list. **The user's approval of `docs/lanes.md` is the go-ahead to start your lane's items in order. You ask only before merging.**
-2. **Branch.** `git fetch && git switch -c NAME origin/main`. Use the same `NAME` in each repository the item changes (`git -C kernel switch -c NAME origin/main`), short and about the item, for example `k60-ipc-bench`.
+2. **Branch.** `git fetch && git switch -c NAME origin/main`. Use the same `NAME` in each repository the item changes (`git submodule update && git -C kernel switch -c NAME`: from the commit TheTaaJ's `main` points to, not TheKernel's `main`, which is ahead of it while another session is between merging its TheKernel half and its TheTaaJ half - a branch from there runs that session's new scripts with the old `Makefile`; entry NNN), short and about the item, for example `k60-ipc-bench`.
 3. **Say so.** Add a row for your session to your machine's "Now" table in `who-does-what.md`: the session name, the item and the branch. Edit only your own row.
 4. **Read before writing.** Read the code your item changes and the journal entries that built it (`grep -l` the file names in `docs/journal/`). Match the style: comments that say why, and logic in crates with host tests.
 5. **Build it, and test it:**
