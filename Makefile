@@ -1770,7 +1770,7 @@ NAMESPACE_C     = $(KERNEL64_DIR)/scripts/namespace.c
 # Names from a directory descriptor (J63, journal entry 120): the *at
 # calls, and a child in a tree of its own. at.c runs in the same boot.
 AT_C            = $(KERNEL64_DIR)/scripts/at.c
-# /tmp in memory (J64, journal entry NNN): tmp.c, as the program
+# /tmp in memory (J64, journal entry 122): tmp.c, as the program
 # tmptest (a program called tmp would be under the /tmp mount).
 TMP_C           = $(KERNEL64_DIR)/scripts/tmp.c
 handles64-test: iso64 user64 libc64 tfstool-rs
