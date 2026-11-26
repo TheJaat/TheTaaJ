@@ -166,7 +166,7 @@ Each machine has its own table and changes only its own, so two machines never e
 | Step | Branch |
 |---|---|
 | E: LLVM 23 - **paused**: a work-in-progress commit on `llvm-23` in TheTaaJ and TheKernel, to be finished later (what is left is in its commit message) | `llvm-23` |
-| TheJat-VM/files: J63, the `openat` family and a program given one directory (J62 merged, entry 118) | `j63-openat` |
+| TheJat-VM/files: J64, `/tmp` in memory (J63 merged, entry 120) | `j64-tmp` |
 
 ### Now: MaK-WSL
 
@@ -178,7 +178,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| TheJat-WSL/ci: J51, test programs out of the kernel image (no branch yet) | - |
+| TheJat-WSL/ci: K112, every `unsafe` with a reason, checked (J51 waits for U7, J92 for U8) | `k112-unsafe-reasons` |
 
 ## The decided order
 
@@ -294,7 +294,7 @@ The order matters here: each item is needed by the ones after it.
 | # | Item | Size | Notes |
 |---|---|---|---|
 | J51 | Test programs out of the kernel image (onto the test disk) | M | The kernel image has ~680 KiB left under 3 MiB |
-| J52 | A test that fails when rule 1 or rule 3 of `threads.rs` is broken | S | Known gap |
+| J52 | A test that fails when rule 1 or rule 3 of `threads.rs` is broken | S | **Done (entry 119)**: rule 1 checked at every switch (the lock still held where it is released), rule 3 by the threads self-test (a waiter woken before it waits is still in its queue); each broken on purpose panics. Found and fixed with it: a panic on a machine with more CPUs than the kernel uses was a triple fault (the stopping NMI reached the CPUs left asleep); `fault-test.sh`'s new `page@20` checks it |
 | J53 | A test for the ticks mutation from entry 097 (late timer interrupts) | S | Perhaps by stopping a CPU for a while |
 | J54 | A fresh `git clone --recurse-submodules` builds and passes (in a clean container) | S | Never tried |
 | J55 | Programs moved into `/bin` on the run disks (libc's exec and the shell both look there, entries 100 and 101) | S | The disk recipes and every test put programs in the root and look for them there |
@@ -464,7 +464,7 @@ The design is Fuchsia's and Plan 9's, not Linux's:
 | J60 | **Open files and directories as handles**: `open` returns a channel to that file or directory, served by its service; reads and writes go on it, without the path | L | **Done (entry 115)**: `OPEN` gives a channel per file or directory (fileserver's `nodes`), paths kept by the service through renames, a removed open file kept in a hidden `.taaj-removed` until its last close (emptied at start after a crash); libc descriptors and `fstat`, `ftruncate`, `futimens` use it; a descriptor is handed to a child as its channel. Up to 200 open at once per service (`OPEN_MAX`), which needed `WAIT_HANDLES_MAX` raised to 256 - K?-port is the way past it |
 | J61 | **One file protocol** every file service speaks (today's 15 operations, made per handle), and **one client library** that `taaj::Files` and libc both use | M | **Done (entry 115)** with J60: one protocol on every channel - the service's request channels are the root directory, open to change and to read - and `taaj::files::File`, which libc uses. Left: libc's `Open` is still a closed list of kinds (J62 opens it) |
 | J62 | **A namespace per process** in libc: path prefixes to directory handles, given by the parent at `posix_spawn`; `..` and symbolic links across a mount resolved by the client; `rename` across mounts is `EXDEV`, as on Unix | M | **Done (entry 118)**: `taaj_mount(at, directory, flags)` and `taaj_unmount` (taaj.h); the table is `taaj::files::Files`'s, so libc and Rust share it; the deepest mount wins; `..` worked out by name in the namespace; `EXDEV` between mounts, `EBUSY` on a mount point; a read-only mount; mounts handed down by `posix_spawn` (abi::descriptors' MOUNT). No kernel change. Left: Rust programs started by the shell get no mounts (only libc reads them); symbolic links wait for J77 |
-| J63 | The `openat` family (`openat`, `mkdirat`, `unlinkat`, `fstatat`, `renameat`), and a program given **only one directory** - a sandbox from capabilities, with no permission checks | M | After J62 |
+| J63 | The `openat` family (`openat`, `mkdirat`, `unlinkat`, `fstatat`, `renameat`), and a program given **only one directory** - a sandbox from capabilities, with no permission checks | M | **Done (entry 120)**: `openat`, `fstatat` (`AT_EMPTY_PATH`), `mkdirat`, `unlinkat` (`AT_REMOVEDIR`), `renameat`, `faccessat`, `utimensat`, `fchmodat`, `fchownat`, `readlinkat`; a plain name goes on the directory's own channel (it follows the directory), `..` by name; the old path calls are the `*at` calls with `AT_FDCWD`; a directory descriptor may change what is in it if its program may; `posix_spawn_file_actions_addroot_np`: the child's whole tree is one directory, and its registry has no `files` |
 | J64 | **`/tmp` in memory**: the `fileserver` crate's `RamStore` as a service of its own | S | After J62 |
 | J65 | **`/dev`**: `null`, `zero`, `urandom` (from J2's `getrandom`) and the terminal, served by a small device service | S | After J62; `isatty` then asks the terminal rather than being a special case |
 | J66 | **`/proc`**: `/proc/self/exe` (and the LLVM patch removed), `/proc/self/fd`, a directory per process with what `ps` shows | M | A service that asks init or a generic "describe this process" call: numbers out of the kernel, never files |

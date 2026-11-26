@@ -74,6 +74,10 @@ int posix_spawn_file_actions_addopen(posix_spawn_file_actions_t *actions, int de
                                      int flags, mode_t mode);
 int posix_spawn_file_actions_addclose(posix_spawn_file_actions_t *actions, int descriptor);
 int posix_spawn_file_actions_adddup2(posix_spawn_file_actions_t *actions, int from, int to);
+/* TheTaaJ's own (journal entry 120): the new program's whole tree is
+ * the directory path names - "/" is that directory - and it is given
+ * no other way to the files: a sandbox made of what it is handed. */
+int posix_spawn_file_actions_addroot_np(posix_spawn_file_actions_t *actions, const char *path);
 
 int posix_spawnattr_init(posix_spawnattr_t *attributes);
 int posix_spawnattr_destroy(posix_spawnattr_t *attributes);
