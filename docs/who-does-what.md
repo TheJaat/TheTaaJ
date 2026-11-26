@@ -155,7 +155,7 @@ Each machine (or session) has its own table and changes only its own, so two mac
 
 | Step | Branch |
 |---|---|
-| Faster tests: the 20-CPU boot no longer holds up the suite | `smp-boot-first` |
+| Faster tests: typing less in the typed boots (boot64, boot64-uefi, aarch64-keys) | `typed-boots` |
 
 ## The decided order
 

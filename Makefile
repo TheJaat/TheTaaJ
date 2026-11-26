@@ -807,7 +807,7 @@ endif
 # them it holds boot-slots.sh's gate, so no other boot can start. It once
 # waited behind boot64-test's typed boot, 7 minutes long, and the whole
 # suite stood still for 6 of them, with boot64-uefi-test, as long, queued
-# behind (journal entry NNN). So the two typed boots wait for smp64-test
+# behind (journal entry 108). So the two typed boots wait for smp64-test
 # (an order-only prerequisite, about 20 s), and its 20-CPU boot comes first.
 SMP64_LOG = $(BUILD_DIR)/smp64
 smp64-test: iso64

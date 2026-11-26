@@ -1,6 +1,6 @@
 # The 20-CPU boot first: test64's parts in 573 s instead of 940
 
-*Journal entry #NNN · a test fix. Written on TheJat-WSL. `make test64` stood still for six minutes in the middle of every run: one boot waiting for 20 boot slots held the gate that every other boot goes through, and it was waiting for the longest boot of all. The two typed boots now wait for `smp64-test` (about 20 s), and its 20-CPU boot comes first. On TheJat-WSL the test parts took 940 s before and 573 s after.*
+*Journal entry #108 · a test fix. Written on TheJat-WSL. `make test64` stood still for six minutes in the middle of every run: one boot waiting for 20 boot slots held the gate that every other boot goes through, and it was waiting for the longest boot of all. The two typed boots now wait for `smp64-test` (about 20 s), and its 20-CPU boot comes first. On TheJat-WSL the test parts took 940 s before and 573 s after.*
 
 ## Why
 
