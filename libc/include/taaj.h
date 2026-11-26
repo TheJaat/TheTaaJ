@@ -6,7 +6,7 @@
 extern "C" {
 #endif
 
-/* A namespace per process (journal entry 117, J62). Every name this
+/* A namespace per process (journal entry 118, J62). Every name this
  * program uses is worked out by its C library, not by the kernel: a
  * directory mounted at a path is seen there, in place of what was
  * there, by this program and every program it starts from now on.

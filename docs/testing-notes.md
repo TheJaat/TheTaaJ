@@ -4194,9 +4194,9 @@ Automated: `make test64`
 
 ---
 
-## 117 · A namespace per process: a directory seen where a program chooses
+## 118 · A namespace per process: a directory seen where a program chooses
 
-[The entry](journal/117-namespaces.md)
+[The entry](journal/118-namespaces.md)
 
 Start TheTaaJ:
 
