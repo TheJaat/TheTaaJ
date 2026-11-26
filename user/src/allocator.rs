@@ -16,9 +16,14 @@
 //! here: a program past its memory limit is ended at the page that
 //! would pass it (with "out of memory" in the log), as Linux does with
 //! overcommitted memory. What fails here is only address space.
-//! Memory is not given back to the kernel while the program runs - like
-//! most allocators - but all of it is when the program exits, with its
-//! address space.
+//! Freeing 64 KiB or more gives the whole pages it frees back to the
+//! kernel (MEMORY_DISCARD, entry 102): they stop counting against the
+//! program's limit, and the address space stays the heap's, each page
+//! zeroed again when next used. Smaller frees keep their pages - one
+//! system call per free would cost more than the memory is worth - but
+//! libc's small blocks come back in 64 KiB pieces when a piece empties
+//! (libc/src/memory.rs), and so are given back then. Everything goes
+//! back when the program exits, with its address space.
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::ptr;
@@ -30,6 +35,8 @@ use heap::Heap;
 const REGION_MIN: u64 = 1 << 20;
 const REGION_MAX: u64 = 4 << 30;
 const PAGE: u64 = 4096;
+/// The smallest free whose pages go back to the kernel.
+const GIVE_BACK_MIN: usize = 64 << 10;
 
 struct UserHeap {
     /// One thread at a time. A futex lock (sync.rs): taking it when
@@ -83,9 +90,19 @@ unsafe impl GlobalAlloc for UserHeap {
     }
 
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
-        // SAFETY: the caller's promise - `pointer` came from `alloc` with
-        // this layout - is the heap's requirement too.
-        self.with(|heap| unsafe { heap.deallocate(pointer, layout) });
+        self.with(|heap| {
+            // SAFETY: the caller's promise - `pointer` came from `alloc`
+            // with this layout - is the heap's requirement too.
+            let merged = unsafe { heap.deallocate(pointer, layout) };
+            // Still under the lock: once it is let go, another thread may
+            // be handed these pages, and what it wrote would be lost.
+            if layout.size() >= GIVE_BACK_MIN {
+                let freed = (pointer as usize, layout.size());
+                if let Some((start, length)) = heap::pages_to_give_back(merged, freed, PAGE as usize) {
+                    let _ = crate::memory_discard(start as *mut u8, length as u64);
+                }
+            }
+        });
     }
 }
 

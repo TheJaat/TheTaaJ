@@ -108,7 +108,7 @@ Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 
 | Machine | Step | Branch |
 |---|---|---|
-| The-Jat | D: TaajFS version 6 | `taajfs-6` |
+| The-Jat | G, part 1: memory for big programs (E waits: see below) | `big-memory` |
 | MaK | A: the scheduler and timing step | `timing` |
 
 ## The decided order
@@ -123,9 +123,9 @@ Each step below is one branch, one journal entry and one test64 run. The items a
 | **B** Std's ground, part 1: randomness, real thread-local storage, signals std uses | J2 `getrandom`, J1 ELF TLS, J4 `sigaltstack`, J10 `waitid` and SIGCHLD | **Done (entry 099)** |
 | **C** Std's ground, part 2: libc calls std uses | J3 `poll`, J5 `dl_iterate_phdr`, J6 pthread attributes, J7 `stat`, J8 `realpath` and `getcwd`, J9 `posix_spawn` with fd 3+, J12 `dlopen` stubs, J13 zlib, J37 environment, J38 `execvp` and `/bin`, J39 the real `argv[0]` | **Done (entry 100)** |
 | **D** TaajFS version 6 (versions 4 and 5 came in Era 6) | J17 file times, J18 files over 256 MiB, J19 long names (entry 094), J20 faster writes (entry 093), J35 a replacing `rename`, J55 `/bin` | **Done (entry 101)**; J55's moving of the programs stays open |
-| **E** LLVM 23 | J14, and C++ (libc++, the LLVM port) moved from emulated to real thread-local storage | Long; runs unattended on The-Jat; it rebuilds the ports anyway |
+| **E** LLVM 23 | J14, and C++ (libc++, the LLVM port) moved from emulated to real thread-local storage | Long; runs unattended on The-Jat; it rebuilds the ports anyway. **Waiting (entry 102)**: libc++ 23 needs a host clang of 21 or later, so a host LLVM 23.1.5 is built first - which needs cmake and ninja (`sudo apt install cmake ninja-build`), or apt.llvm.org's LLVM 23 |
 | **F** R3 Rust's std | J15, J16 | Needs B-E |
-| **G** Memory for big programs | J26-J31 | Before rustc's 182 MB runs |
+| **G** Memory for big programs | J26-J31 | Before rustc's 182 MB runs. **Part 1 done (entry 102)**: J26, J27, J30, J31; J28 and J29 are part 2. Done before E because E waits |
 | **H** R4 rustc on TheTaaJ | J21 | |
 | **I** R5 the build without cargo | J22, J23 (nasm; the bootloader change is MaK's) | |
 | **J** R6 the milestone | J24, J25 | |
@@ -187,12 +187,8 @@ The order matters here: each item is needed by the ones after it.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J26 | **`mprotect` and `PROT_NONE`** really change page permissions | S | Guard pages, JITs |
-| J27 | **`MADV_DONTNEED`**: give pages back from inside a reservation | S | Big allocators (jemalloc-like) |
 | J28 | **`MAP_SHARED` file mappings that write back** | M | |
 | J29 | **Programs loaded page by page from their file** (not whole, not twice in memory) | M | A 182 MB rustc |
-| J30 | **The unmap race**: a system call copying into a page another thread is unmapping | S | Known open issue since entry 096 |
-| J31 | **Small malloc classes give memory back** | S | |
 
 ### C and C++ library, left over from Era 6
 

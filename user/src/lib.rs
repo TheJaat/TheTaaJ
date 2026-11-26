@@ -820,6 +820,21 @@ pub fn memory_reserve(size: u64, writable: bool) -> Result<*mut u8, Error> {
     abi::decode(syscall(call::MEMORY_RESERVE, size, u64::from(writable), 0)).map(|a| a as *mut u8)
 }
 
+/// What this program may do with the pages of `start..start+length`
+/// in its reserved memory: `access` is one of abi::access's - nothing,
+/// read, or read and write. Pages keep their bytes whatever the access.
+/// Whole pages, in one reservation (MEMORY_PROTECT).
+pub fn memory_protect(start: *mut u8, length: u64, access: u64) -> Result<(), Error> {
+    abi::decode(syscall(call::MEMORY_PROTECT, start as u64, length, access)).map(|_| ())
+}
+
+/// Gives back the memory of the pages of `start..start+length` in this
+/// program's reserved memory; the address space stays, and each page is
+/// zeroed again when next touched (MEMORY_DISCARD).
+pub fn memory_discard(start: *mut u8, length: u64) -> Result<(), Error> {
+    abi::decode(syscall(call::MEMORY_DISCARD, start as u64, length, 0)).map(|_| ())
+}
+
 /// Lowers this program's memory limit to `bytes` if that is lower (0
 /// only asks); the limit now, in bytes. Programs it starts later start
 /// with it.

@@ -3794,3 +3794,40 @@ make times64-test
 make aarch64-times-test
 make test64
 ```
+
+---
+
+## 102 · Memory for big programs, part 1: mprotect for real, memory given back, a heap that returns it, and copies that cannot race an unmap
+
+[The entry](journal/102-pages.md)
+
+**1. The PC**
+
+```
+make run-disk
+make run64
+```
+
+Close QEMU before `make run-disk`. It puts `pages` on the disk.
+
+| Type | You should see |
+|---|---|
+| `with programs pages` | after some seconds `pages: N copies went in, M were refused` (the two add up to 20000) and `pages: 54 checks, all passed`, then `"pages" exited with code 0` |
+| `mem` before and after | the memory in use back where it was: what pages took, it gave back |
+
+**2. AArch64**
+
+```
+make run-aarch64-disk
+make run-aarch64
+```
+
+The same as part 1.
+
+**3. The tests by themselves**
+
+```
+make pages64-test
+make aarch64-pages-test
+make test64
+```

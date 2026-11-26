@@ -6,7 +6,7 @@ KERNEL_DIR = kernel
         kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
-        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test times64-test aarch64-times-test zlib64 zlib-aarch64 \
+        pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test times64-test aarch64-times-test pages64-test aarch64-pages-test zlib64 zlib-aarch64 \
         llvm64 llvm-aarch64 clang-tblgen llvm64-test clang64-test aarch64-clang-test aarch64-llvm-test llvm-put llvm-put-aarch64
 
 # Default target
@@ -533,6 +533,8 @@ ifeq ($(HAVE_CC),yes)
 	@$(TFSTOOL_RS) rm $(RUN_DISK) ground > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) ground $(C_BIN)/ground > /dev/null
 	@clang $(TAAJ_CFLAGS) $(ZLIB_CFLAGS) -c $(GROUND2_C) -o $(C_BIN)/ground2.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/ground2.o $(C_BIN)/libz.a $(LIBC_A) -o $(C_BIN)/ground2
 	@$(TFSTOOL_RS) rm $(RUN_DISK) ground2 > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) ground2 $(C_BIN)/ground2 > /dev/null
+	@clang $(TAAJ_CFLAGS) -c $(PAGES_C) -o $(C_BIN)/pages.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/pages.o $(LIBC_A) -o $(C_BIN)/pages
+	@$(TFSTOOL_RS) rm $(RUN_DISK) pages > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) pages $(C_BIN)/pages > /dev/null
 endif
 	@$(TFSTOOL_RS) rm $(RUN_DISK) threadcheck > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) threadcheck $(USER_BIN)/threadcheck > /dev/null
 
@@ -1103,6 +1105,8 @@ ifeq ($(HAVE_CC),yes)
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) ground > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) ground $(C_A64_BIN)/ground > /dev/null
 	@clang $(TAAJ_A64_CFLAGS) $(ZLIB_CFLAGS) -c $(GROUND2_C) -o $(C_A64_BIN)/ground2.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/ground2.o $(C_A64_BIN)/libz.a $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/ground2
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) ground2 > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) ground2 $(C_A64_BIN)/ground2 > /dev/null
+	@clang $(TAAJ_A64_CFLAGS) -c $(PAGES_C) -o $(C_A64_BIN)/pages.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/pages.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/pages
+	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) pages > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) pages $(C_A64_BIN)/pages > /dev/null
 endif
 	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) threadcheck > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) threadcheck $(A64_USER_BIN)/threadcheck > /dev/null
 
@@ -1708,6 +1712,33 @@ else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 times boot is not run"
 endif
 
+# Memory for big programs, part 1 (The-Jat's step G, journal entry
+# 102): mprotect and PROT_NONE really changing what pages allow,
+# madvise(MADV_DONTNEED) and munmap of part of a mapping giving memory
+# back, the heap giving freed memory back, and system calls racing a
+# thread that takes their buffer away. pages.c checks them in one boot.
+PAGES_LOG     = $(BUILD_DIR)/pages-64.log
+PAGES_A64_LOG = $(BUILD_DIR)/aarch64/pages.log
+PAGES_C       = $(KERNEL64_DIR)/scripts/pages.c
+pages64-test: iso64 user64 libc64 tfstool-rs
+ifeq ($(HAVE_CC),yes)
+	@clang $(TAAJ_CFLAGS) -c $(PAGES_C) -o $(C_BIN)/pages.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/pages.o $(LIBC_A) -o $(C_BIN)/pages
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/pages-test.sh x86_64 $(ISO64_IMG) $(PAGES_LOG).disk $(PAGES_LOG) $(C_BIN)/pages
+	@echo "pages64-test passed"
+else
+	@echo "FAIL: the pages test needs clang and lld (sudo apt install clang lld)"; exit 1
+endif
+
+aarch64-pages-test: kernel-aarch64 user-aarch64 tfstool-rs
+ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@clang $(TAAJ_A64_CFLAGS) -c $(PAGES_C) -o $(C_A64_BIN)/pages.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/pages.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/pages
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/pages-test.sh aarch64 $(KERNEL_A64_IMAGE) $(PAGES_A64_LOG).disk $(PAGES_A64_LOG) $(C_A64_BIN)/pages
+	@echo "aarch64-pages-test passed"
+else
+	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 pages boot is not run"
+endif
+
 aarch64-tcc-test: kernel-aarch64 user-aarch64 tcc-aarch64 tfstool-rs
 ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@mkdir -p $(BUILD_DIR)/aarch64
@@ -1939,7 +1970,7 @@ endif
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
 TEST_JOBS ?= 12
-TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test times64-test aarch64-times-test
+TEST64_PARTS = boot64-test boot64-uefi-test ahci64-test nvme64-test power64-test aarch64-power-test aarch64-keys-test clang64-test aarch64-clang-test llvm64-test aarch64-llvm-test aarch64-tcc-test tcc64-test make64-test aarch64-make-test libmake64-test aarch64-libmake-test kernel64-test smp64-test big64-test fault64-test aarch64-test aarch64-uefi-test net64-test e1000-64-test usb64-test stick64-test aarch64-net-test ip64-test aarch64-ip-test tcp64-test aarch64-tcp-test http64-test aarch64-http-test screen64-test aarch64-screen-test gui64-test aarch64-gui-test edit64-test aarch64-edit-test cxx64-test aarch64-cxx-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test times64-test aarch64-times-test pages64-test aarch64-pages-test
 
 test64:
 	@$(MAKE) --no-print-directory test64-shared

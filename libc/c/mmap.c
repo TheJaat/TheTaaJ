@@ -6,7 +6,9 @@
  * zeroed memory only when first touched. So a program may map 1 GiB
  * and pay for the pages it uses - what allocators and compilers that
  * mmap big arenas count on - and munmap gives every page back. A file
- * is read into such memory: a private copy. */
+ * is read into such memory: a private copy. mprotect, madvise's
+ * MADV_DONTNEED and munmap of part of a mapping are the kernel's
+ * MEMORY_PROTECT and MEMORY_DISCARD on that memory. */
 
 #include <errno.h>
 #include <pthread.h>
@@ -20,6 +22,17 @@
 
 void *__taaj_reserve(size_t size);
 int __taaj_unmap(void *start);
+int __taaj_protect(void *start, size_t length, int access);
+int __taaj_discard(void *start, size_t length);
+
+/* MEMORY_PROTECT's access for a protection: PROT_WRITE means reading
+ * too, as on every CPU TheTaaJ runs on. */
+static int access_for(int protection)
+{
+    if (protection & PROT_WRITE)
+        return 2;
+    return (protection & PROT_READ) ? 1 : 0;
+}
 
 /* The mappings made, so that munmap knows a start from any other
  * pointer and how long each is. Threads may map and unmap at once:
@@ -108,6 +121,14 @@ void *mmap(void *address, size_t length, int protection, int flags, int fd, off_
         }
         lseek(fd, was, SEEK_SET);
     }
+    /* Read-only or out of reach, once filled: the file was read in
+     * while the pages could still be written. */
+    if (access_for(protection) != 2 && __taaj_protect(memory, rounded, access_for(protection)) != 0) {
+        int why = errno;
+        __taaj_unmap(memory);
+        errno = why;
+        return MAP_FAILED;
+    }
     if (remember(memory, rounded) != 0) {
         __taaj_unmap(memory);
         errno = ENOMEM;
@@ -118,20 +139,29 @@ void *mmap(void *address, size_t length, int protection, int flags, int fd, off_
 
 int munmap(void *address, size_t length)
 {
-    if (length == 0) {
+    if (length == 0 || (size_t)address % PAGE != 0) {
         errno = EINVAL;
         return -1;
     }
+    char *from = address;
+    size_t rounded = (length + PAGE - 1) / PAGE * PAGE;
     pthread_mutex_lock(&lock);
     for (size_t i = 0; i < mapping_count; i++) {
-        if (mappings[i].start == address) {
-            /* Less than the whole: it stays, whole (sys/mman.h). */
-            if (length >= mappings[i].length) {
-                __taaj_unmap(address);
-                mappings[i] = mappings[--mapping_count];
-            }
-            break;
+        char *start = mappings[i].start, *end = start + mappings[i].length;
+        if (from < start || from >= end)
+            continue;
+        if (from == start && rounded >= mappings[i].length) {
+            __taaj_unmap(address);
+            mappings[i] = mappings[--mapping_count];
+        } else {
+            /* Part of one: its memory goes back, and it is put out of
+             * reach, as an unmapped page would be; the address space
+             * stays reserved until the whole is unmapped (sys/mman.h). */
+            size_t part = rounded < (size_t)(end - from) ? rounded : (size_t)(end - from);
+            __taaj_discard(from, part);
+            __taaj_protect(from, part, 0);
         }
+        break;
     }
     pthread_mutex_unlock(&lock);
     /* Not a mapping's start: POSIX lets unmapping what is not mapped
@@ -141,13 +171,25 @@ int munmap(void *address, size_t length)
 
 int mprotect(void *address, size_t length, int protection)
 {
-    (void)address;
-    (void)length;
     if (protection & PROT_EXEC) {
         errno = EACCES;
         return -1;
     }
-    return 0;
+    if ((size_t)address % PAGE != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (length == 0)
+        return 0;
+    size_t rounded = (length + PAGE - 1) / PAGE * PAGE;
+    if (rounded < length) {
+        errno = ENOMEM;
+        return -1;
+    }
+    /* The kernel checks the rest: whole pages of reserved memory, all
+     * in one piece - what mmap gives, and what malloc and the thread
+     * stacks are made of. */
+    return __taaj_protect(address, rounded, access_for(protection));
 }
 
 int msync(void *address, size_t length, int flags)
@@ -160,10 +202,14 @@ int msync(void *address, size_t length, int flags)
 
 int madvise(void *address, size_t length, int advice)
 {
-    (void)address;
-    (void)length;
-    (void)advice;
-    return 0;
+    if ((size_t)address % PAGE != 0) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (advice != MADV_DONTNEED || length == 0)
+        return 0; /* the others are hints, and there is nothing to tune */
+    size_t rounded = (length + PAGE - 1) / PAGE * PAGE;
+    return __taaj_discard(address, rounded);
 }
 
 int posix_madvise(void *address, size_t length, int advice)

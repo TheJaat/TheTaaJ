@@ -57,6 +57,21 @@ fn block_size(layout: &Layout) -> usize {
     round_up(layout.size().max(UNIT), UNIT)
 }
 
+/// The whole pages of a free block that a freed range lets go of:
+/// those inside `merged` (the free block `deallocate` returned) less its
+/// first UNIT bytes - the free list's header, which stays - that the
+/// freed range `freed` covers at least partly. (start, length), or None
+/// if there is not one whole page. Only what was just freed is looked
+/// at: the rest of the block was given back when it was freed, so a big
+/// free block is not walked again on every free beside it.
+pub fn pages_to_give_back(merged: (usize, usize), freed: (usize, usize), page: usize) -> Option<(usize, usize)> {
+    let inside_start = round_up(merged.0 + UNIT, page);
+    let inside_end = (merged.0 + merged.1) & !(page - 1);
+    let start = inside_start.max(freed.0 & !(page - 1));
+    let end = inside_end.min(round_up(freed.0 + freed.1, page));
+    (end > start).then(|| (start, end - start))
+}
+
 pub struct Heap {
     /// The lowest free block; the list is sorted by address.
     head: *mut FreeBlock,
@@ -161,20 +176,24 @@ impl Heap {
         None
     }
 
-    /// Returns memory from `allocate`.
+    /// Returns memory from `allocate`. Returns the free block it is now
+    /// part of, merged with its neighbours: (start, size). A user
+    /// program's heap gives the whole pages inside it back to the kernel
+    /// (MEMORY_DISCARD) - all but the block's first UNIT bytes, where
+    /// the free list's header lives.
     ///
     /// # Safety
     /// `pointer` must have come from `allocate` on this heap with the same
     /// `layout`, and not been freed since.
-    pub unsafe fn deallocate(&mut self, pointer: *mut u8, layout: Layout) {
+    pub unsafe fn deallocate(&mut self, pointer: *mut u8, layout: Layout) -> (usize, usize) {
         let size = block_size(&layout);
         self.used -= size;
-        self.insert(pointer as usize, size);
+        self.insert(pointer as usize, size)
     }
 
     /// Adds `start..start + size` to the free list, in address order,
-    /// merging it with any neighbour it touches.
-    unsafe fn insert(&mut self, start: usize, size: usize) {
+    /// merging it with any neighbour it touches; the merged block.
+    unsafe fn insert(&mut self, start: usize, size: usize) -> (usize, usize) {
         let end = start + size;
 
         // Find the last block before `start` (or none).
@@ -205,7 +224,7 @@ impl Heap {
         if !previous.is_null() && previous as usize + (*previous).size == start {
             (*previous).size += size;
             (*previous).next = following;
-            return;
+            return (previous as usize, (*previous).size);
         }
 
         let block = start as *mut FreeBlock;
@@ -215,6 +234,7 @@ impl Heap {
         } else {
             (*previous).next = block;
         }
+        (start, size)
     }
 }
 
@@ -277,6 +297,40 @@ mod tests {
         let (mut h, _) = heap(4096);
         assert!(h.allocate(layout(4096, 16)).is_some());
         assert!(h.allocate(layout(16, 16)).is_none());
+    }
+
+    #[test]
+    fn the_pages_a_free_lets_go_of() {
+        const P: usize = 4096;
+        // A block freed alone, page-aligned: all its pages but the one
+        // holding the free list's header.
+        assert_eq!(pages_to_give_back((0x10000, 16 * P), (0x10000, 16 * P), P), Some((0x10000 + P, 15 * P)));
+        // Freed beside a big free block it joined: only around what was
+        // freed, the rest of the block having gone back already.
+        assert_eq!(pages_to_give_back((0x10000, 100 * P), (0x10000 + 50 * P, 8 * P), P), Some((0x10000 + 50 * P, 8 * P)));
+        // Not page-aligned: the pages it touches that are wholly free.
+        assert_eq!(pages_to_give_back((0x10000, 100 * P), (0x10000 + 50 * P + 8, 2 * P), P), Some((0x10000 + 50 * P, 3 * P)));
+        // The block ends mid-page: that page stays.
+        assert_eq!(pages_to_give_back((0x10000, 3 * P + 100), (0x10000, 3 * P + 100), P), Some((0x10000 + P, 2 * P)));
+        // Less than a whole page: nothing.
+        assert_eq!(pages_to_give_back((0x10000 + 8, 2 * P), (0x10000 + 8, 2 * P), P), Some((0x10000 + P, P)));
+        assert_eq!(pages_to_give_back((0x10000, P + 16), (0x10000, P + 16), P), None);
+    }
+
+    #[test]
+    fn deallocate_says_which_free_block_the_memory_joined() {
+        let (mut heap, base) = heap(4096);
+        let layout = Layout::from_size_align(256, 16).unwrap();
+        let a = heap.allocate(layout).unwrap() as usize;
+        let b = heap.allocate(layout).unwrap() as usize;
+        let c = heap.allocate(layout).unwrap() as usize;
+        assert_eq!((a, b, c), (base, base + 256, base + 512));
+        // Alone between two blocks in use: itself.
+        assert_eq!(unsafe { heap.deallocate(b as *mut u8, layout) }, (b, 256));
+        // Then a, before it: the two together, from a.
+        assert_eq!(unsafe { heap.deallocate(a as *mut u8, layout) }, (a, 512));
+        // Then c: all of the heap, one block.
+        assert_eq!(unsafe { heap.deallocate(c as *mut u8, layout) }, (base, 4096));
     }
 
     #[test]
