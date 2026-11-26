@@ -111,7 +111,7 @@ Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 | Machine | Step | Branch |
 |---|---|---|
 | The-Jat | E: LLVM 23 | `llvm-23` |
-| MaK | How we work: pull requests, one reviewer who merges (docs/how-we-work.md, docs/review.md); then K20 | `how-we-work` |
+| MaK | A: the scheduler and timing step, one branch per item: now K20, priorities and the CPU a thread runs on | `k20-priorities` |
 
 ## The decided order
 

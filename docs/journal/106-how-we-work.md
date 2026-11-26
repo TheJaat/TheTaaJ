@@ -1,6 +1,6 @@
 # How we work: pull requests, one reviewer, and the one who merges
 
-*Journal entry #NNN · a working step, not a feature. Written on MaK. TheTaaJ is built by more than one worker now, on more than one account, and more may join. From here on every change is a pull request; one reviewer reviews them all and is the only one who merges into `main`. The flow is in `docs/how-we-work.md`, the reviewer's checklist in `docs/review.md`.*
+*Journal entry #106 · a working step, not a feature. Written on MaK. TheTaaJ is built by more than one worker now, on more than one account, and more may join. From here on every change is a pull request; one reviewer reviews them all and is the only one who merges into `main`. The flow is in `docs/how-we-work.md`, the reviewer's checklist in `docs/review.md`.*
 
 ## Why
 

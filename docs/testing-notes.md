@@ -3936,3 +3936,20 @@ tools/race-hunt.sh 20
 |---|---|
 | `round N: exit 0, ... failed: none` | A clean round |
 | `failed: <part>` | That part failed; `build/race-hunt/round-N/` holds every file the round wrote |
+
+---
+
+## 106 · How we work: pull requests, one reviewer, and the one who merges
+
+[The entry](journal/106-how-we-work.md)
+
+With the reviewer running (in WSL on the laptop):
+
+```
+gh pr list --repo TheJaat/TheTaaJ
+```
+
+| Look for | Meaning |
+|---|---|
+| A pull request labelled `review:pass` or `review:changes`, with a comment headed **Review** | The reviewer has looked at it |
+| After `merge-ok`: the pull request merged, its branch gone, its journal entry numbered in `docs/journal/README.md` | The reviewer merged it as `how-we-work.md` says |
