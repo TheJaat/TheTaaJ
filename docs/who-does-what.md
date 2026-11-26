@@ -171,7 +171,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| MaK-WSL/sched: K21, CPU time per process in `ps`; then K20 | `k21-cpu-time` |
+| MaK-WSL/sched: K67 and K95, the threads and scheduling benchmark; then K20 with J80 | `k67-sched-bench` |
 
 ### Now: TheJat-WSL
 
@@ -429,7 +429,7 @@ TheTaaJ runs on up to 16 CPUs (`smp.rs`), on both architectures, and a program's
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K67 | **A threads benchmark**: a context switch, a futex hand-off between two threads, thread creation, `posix_spawn` to exit, and the same work on 1, 2, 4 ... CPUs to see how it scales; KVM and emulated, the numbers kept in the journal | S | First: the items below are measured against it |
+| K67 | **A threads benchmark**: a context switch, a futex hand-off between two threads, thread creation, `posix_spawn` to exit, and the same work on 1, 2, 4 ... CPUs to see how it scales; KVM and emulated, the numbers kept in the journal | S | **Done (entry NNN)**: `schedbench` (`make schedbench64-test`, in `make test64`) on 1, 2 and 4 CPUs, KVM and emulated; still missing: AArch64, and more than 4 CPUs |
 | K68 | **A run queue per CPU**, with an idle CPU taking work from a busy one, instead of one queue under one lock | M | After K67 and K20 (priorities and affinity are in the same code) |
 | K69 | **Per-CPU caches** in the kernel heap and the frame allocator, so most allocations take no shared lock | M | After K67 |
 | K70 | **Futexes without one shared list**: a lock per bucket, a wake that touches only its own address's waiters, `FUTEX_REQUEUE` (so `pthread_cond_broadcast` doesn't wake everyone to fight for the mutex) | M | Today a wake wakes its whole queue and those whose flag is clear sleep again |
@@ -562,7 +562,7 @@ What it lacks: any policy - every thread is equal, with no priorities or classes
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K95 | **A scheduling benchmark**: wake-to-run latency, the cost of a switch, fairness between busy programs, and key press to screen with four busy programs, on KVM and emulated; the numbers kept in the journal | S | First. With K67 |
+| K95 | **A scheduling benchmark**: wake-to-run latency, the cost of a switch, fairness between busy programs, and key press to screen with four busy programs, on KVM and emulated; the numbers kept in the journal | S | **Done (entry NNN)**, with K67: wake-to-run, a switch, a hand-off and fairness in `schedbench`. Key press to screen with four busy programs is measured by `desktop`'s K114, which is that benchmark |
 | K96 | **Sleepers in a timer queue** sorted by their time, so a tick looks only at the first; no scan of every thread and no allocation in the tick | S | Early; with K24's one-shot timer it becomes "set the timer for the first sleeper" |
 | K97 | **Scheduling contexts as capabilities**: a priority, a budget and a period per context; a thread runs on its context's time; made and handed out by init or a resource manager, never by a program for itself | L | After K20. The core of the era |
 | K98 | **A server runs on its client's context** for the length of a call, and the client is charged | M | After K97, K61; replaces K65's separate mechanism |
@@ -570,7 +570,7 @@ What it lacks: any policy - every thread is equal, with no priorities or classes
 | K100 | **Fairness between processes, or groups of them**, not between threads: a group's share split among its threads | M | After K99 |
 | K101 | **A thread prefers the CPU it last ran on** while its data is still in that CPU's cache; moved only when another CPU would otherwise idle | S | With K68 |
 | K102 | **More than 64 CPUs** in the scheduler (`pokes` and the CPU sets as bitmaps of any size) | S | With K74 |
-| J80 | `nice`, `getpriority`/`setpriority`, `sched_setscheduler`, `sched_getaffinity`/`sched_setaffinity`, `pthread_setschedparam`, mapped onto contexts: allowed only as far as the program's context lets | S | After K97; with J59 |
+| J80 | `nice`, `getpriority`/`setpriority`, `sched_setscheduler`, `sched_getaffinity`/`sched_setaffinity`, `pthread_setschedparam`, mapped onto contexts: allowed only as far as the program's context lets | S | With K20 (the user's decision, 2026-11-26), on K20's priorities; mapped onto contexts when K97 comes |
 
 ---
 
@@ -619,7 +619,7 @@ All of it stays out of the kernel: the compositor, window manager, toolkit, font
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K114 | **A desktop benchmark**: key to screen with four busy programs, frames per second dragging a window, the cost of one composition at the screen's size | S | First. With K95 |
+| K114 | **A desktop benchmark**: key to screen with four busy programs, frames per second dragging a window, the cost of one composition at the screen's size | S | First. With K95 (K95's own numbers are in entry NNN; the key-to-screen part is this item's) |
 | K115 | **`display` split**: the compositor, the window manager, the terminal (K44) and the boot console as programs of their own; a crash in the terminal leaves the screen | M | Early: everything else builds on it |
 | K116 | **Real key events** through the window protocol: key codes, down and up, modifiers, repeat, a keyboard layout chosen in user space; the terminal turns them into bytes for programs that want bytes | M | With K42; Era 11's push-to-talk key needs it |
 | K117 | **Text for every language**: UTF-8 drawn with a TrueType rasteriser (our own, or a port), several sizes, fallback fonts; left-to-right first | L | With K43 |
