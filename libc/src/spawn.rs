@@ -23,6 +23,8 @@
 //!     standard input, though, unless a file action gives it one: a
 //!     keyboard is read by whoever asked for the line;
 //!   - this program's services;
+//!   - this program's namespace: each directory it mounted, at the same
+//!     place (J62, namespace.rs), with the descriptors;
 //!   - the environment, `envp` (abi::init::ENVIRONMENT), which libc's
 //!     start makes `environ` (lib.rs).
 //!
@@ -386,6 +388,9 @@ enum Given {
     File { handle: Handle, path: String, offset: u64, flags: c_int },
     Read(Handle),
     Write(Handle),
+    /// A directory mounted in this program's namespace (J62): a copy of
+    /// its channel, and where.
+    Mount { handle: Handle, path: String },
 }
 
 /// The new program's descriptors: its standard input, output and error,
@@ -407,7 +412,7 @@ impl Standard {
             let _ = taaj::close(handle);
         }
         for (_, given) in self.rest {
-            let (Given::Read(handle) | Given::Write(handle) | Given::File { handle, .. }) = given;
+            let (Given::Read(handle) | Given::Write(handle) | Given::File { handle, .. } | Given::Mount { handle, .. }) = given;
             let _ = taaj::close(handle);
         }
     }
@@ -592,19 +597,24 @@ fn standard_for(actions: &[Action]) -> Result<Standard, c_int> {
 /// them; the far end closed, so that the program reads them all and
 /// does not wait. None if there are none. The handles in `rest` go
 /// with the messages, or are closed.
-fn descriptors_channel(rest: Vec<(u8, Given)>) -> Result<Option<Handle>, c_int> {
+fn descriptors_channel(rest: Vec<(u8, Given)>, mounts: Vec<(String, Handle)>) -> Result<Option<Handle>, c_int> {
     use abi::descriptors::Entry;
-    if rest.is_empty() {
+    if rest.is_empty() && mounts.is_empty() {
         return Ok(None);
     }
     let channel = taaj::channel_create();
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
     let mut failed = channel.is_err();
-    for (descriptor, given) in rest {
+    // The mounts first, in the order they were made (a later one at the
+    // same place, or deeper, is seen over an earlier one): the namespace
+    // (J62, namespace.rs).
+    let mounts = mounts.into_iter().map(|(path, handle)| (0u8, Given::Mount { handle, path }));
+    for (descriptor, given) in mounts.chain(rest) {
         let (entry, handle) = match &given {
             Given::File { handle, path, offset, flags } => (Entry::File { descriptor, flags: *flags, offset: *offset, path }, Some(*handle)),
             Given::Read(handle) => (Entry::Read { descriptor }, Some(*handle)),
             Given::Write(handle) => (Entry::Write { descriptor }, Some(*handle)),
+            Given::Mount { handle, path } => (Entry::Mount { path }, Some(*handle)),
         };
         let sent = match (&channel, entry.encode(&mut message)) {
             (Ok((tx, _)), Some(length)) if !failed => taaj::send(*tx, &message[..length], handle.as_slice()).is_ok(),
@@ -746,8 +756,21 @@ fn ask_init(
     if output.is_some() && screen {
         flags |= SCREEN as u8;
     }
-    // Then the descriptors from 3 on, if there are any: one channel.
-    let descriptors = match descriptors_channel(rest) {
+    // This program's mounts, each directory's channel shared: the child
+    // sees the same names (J62). A mount whose channel can't be copied
+    // is left out.
+    let mounts = with(|state| state.files().cloned())
+        .map(|files| {
+            files
+                .mounts()
+                .iter()
+                .filter_map(|mount| mount.directory.share().ok().map(|handle| (alloc::format!("/{}", mount.at), handle)))
+                .collect()
+        })
+        .unwrap_or_default();
+    // Then the descriptors from 3 on, and the mounts, if there are any:
+    // one channel.
+    let descriptors = match descriptors_channel(rest, mounts) {
         Ok(descriptors) => descriptors,
         Err(code) => {
             close_given(&given);

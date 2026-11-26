@@ -645,7 +645,8 @@ pub unsafe extern "C" fn chdir(path: *const c_char) -> c_int {
             Ok((Kind::File, _)) => return fail(ENOTDIR),
             Err(error) => return fail(reason(error)),
         }
-        let moved = taaj::files::Files::in_directory(files.channel(), &files.resolve(name));
+        // The same namespace, with names taken from there.
+        let moved = files.moved_to(name);
         state.files = Some(Some(alloc::sync::Arc::new(moved)));
         0
     })
