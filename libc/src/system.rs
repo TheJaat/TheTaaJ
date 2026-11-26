@@ -170,6 +170,7 @@ pub struct Timespec {
 /// boot.
 const CLOCK_REALTIME: c_int = 0;
 const CLOCK_MONOTONIC: c_int = 1;
+const CLOCK_PROCESS_CPUTIME_ID: c_int = 2;
 /// timespec_get's one time base.
 const TIME_UTC: c_int = 1;
 
@@ -178,8 +179,9 @@ fn timespec(nanoseconds: u64) -> Timespec {
     Timespec { tv_sec: (nanoseconds / 1_000_000_000) as c_long, tv_nsec: (nanoseconds % 1_000_000_000) as c_long }
 }
 
-/// `clock_gettime(clock, t)`: the time on CLOCK_REALTIME (since 1970)
-/// or CLOCK_MONOTONIC (since boot), to the nanosecond. 0, or -1 with
+/// `clock_gettime(clock, t)`: the time on CLOCK_REALTIME (since 1970),
+/// CLOCK_MONOTONIC (since boot) or CLOCK_PROCESS_CPUTIME_ID (the CPU
+/// time this program has used), to the nanosecond. 0, or -1 with
 /// errno EINVAL for any other clock.
 ///
 /// # Safety
@@ -189,6 +191,7 @@ pub unsafe extern "C" fn clock_gettime(clock: c_int, t: *mut Timespec) -> c_int 
     let nanoseconds = match clock {
         CLOCK_REALTIME => taaj::realtime_ns(),
         CLOCK_MONOTONIC => taaj::monotonic_ns(),
+        CLOCK_PROCESS_CPUTIME_ID => taaj::process_cpu_ns(),
         _ => {
             crate::errno::errno.store(crate::errno::EINVAL, core::sync::atomic::Ordering::Relaxed);
             return -1;
@@ -214,13 +217,13 @@ pub unsafe extern "C" fn timespec_get(t: *mut Timespec, base: c_int) -> c_int {
     base
 }
 
-/// `clock()`: the processor time used, in microseconds
-/// (CLOCKS_PER_SEC). TheTaaJ does not tell a program its own share of
-/// the CPU yet, so this is the time since boot - which, measured twice
-/// and subtracted, is at least an upper bound on the time used between.
+/// `clock()`: the processor time this program has used, all its
+/// threads together, in microseconds (CLOCKS_PER_SEC): the kernel's
+/// CPU-time clock (journal entry NNN). Until then it was the time since
+/// boot, which counted every other program's time too.
 #[no_mangle]
 pub extern "C" fn clock() -> c_long {
-    (taaj::monotonic_ns() / 1000) as c_long
+    (taaj::process_cpu_ns() / 1000) as c_long
 }
 
 /// `nanosleep(wanted, left)`: sleeps for at least `*wanted` - unless a

@@ -149,7 +149,7 @@ Each machine (or session) has its own table and changes only its own, so two mac
 
 | Step | Branch |
 |---|---|
-| A: the scheduler and timing step, one branch per item: now K20, priorities and the CPU a thread runs on | `k20-priorities` |
+| A: the scheduler and timing step, one branch per item: now K21, CPU time per process in `ps` (small, while TheJat-WSL takes the test64 speed); then K20 | `k21-cpu-time` |
 
 ### Now: TheJat-WSL
 
@@ -314,7 +314,7 @@ The order matters here: each item is needed by the ones after it.
 |---|---|---|---|
 | K19 | **Run `make test64` under KVM repeatedly** (say 20 times) and fix every race found | M | **Done (entries 104, 105)**: the tests choose KVM themselves, the typed boot test's typing races; twenty rounds under KVM (`tools/race-hunt.sh`): SIGCHLD before `waitid` returns fixed in the kernel, upper time limits retried; one failure left open as K50 |
 | K20 | Process priorities and choosing a thread's CPU (affinity) | M | Four busy programs make typing sluggish |
-| K21 | CPU time per process in `ps` | S | |
+| K21 | CPU time per process in `ps` | S | **Done (entry NNN)**: the kernel counts each process's CPU time at every switch and tick (`clock::PROCESS_CPU`, one more word in `ProcessEntry`); `ps` has a CPU column; libc's `clock()` and `CLOCK_PROCESS_CPUTIME_ID` give it |
 | K22 | A transmit-interrupt serial writer (AArch64 output capped at ~3200 bytes/s) | S | |
 | K23 | The faster boots: measure boot time on KVM and on the real PC, cut the slow parts | S | |
 | K24 | Timer: alarms and sleeps finer than a 10 ms tick (one-shot timer, `setitimer`, `timer_create`) | M | |

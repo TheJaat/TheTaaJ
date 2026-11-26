@@ -443,6 +443,12 @@ pub fn realtime_ns() -> u64 {
     abi::decode(syscall(call::CLOCK, abi::clock::REALTIME, 0, 0)).unwrap_or(0)
 }
 
+/// The CPU time this process has used, all its threads together, in
+/// nanoseconds: the time they were on a CPU (clock::PROCESS_CPU).
+pub fn process_cpu_ns() -> u64 {
+    abi::decode(syscall(call::CLOCK, abi::clock::PROCESS_CPU, 0, 0)).unwrap_or(0)
+}
+
 /// A new channel: the handles of its two ends.
 pub fn channel_create() -> Result<(Handle, Handle), Error> {
     let mut ends = [0u64; 2];

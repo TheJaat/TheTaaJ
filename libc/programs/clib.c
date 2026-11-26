@@ -177,6 +177,43 @@ static int is_date(time_t when, int year, int mon, int mday, int hour, int min, 
         && t->tm_sec == sec && t->tm_wday == wday && t->tm_yday == yday && t->tm_isdst == 0;
 }
 
+static long long nanoseconds(struct timespec t)
+{
+    return (long long)t.tv_sec * 1000000000LL + t.tv_nsec;
+}
+
+/* CPU time (journal entry NNN): the time this program was on a CPU.
+ * Busy, it grows with the time; asleep, it hardly does. The limits are
+ * generous on purpose - a busy host or another program on the same CPU
+ * takes some of the time - but they still tell the CPU time apart from
+ * the time since boot, which clock() used to be. */
+static void cpu_time(void)
+{
+    struct timespec cpu0, cpu1, wall0, wall1;
+    check(clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu0) == 0, "clock_gettime(CLOCK_PROCESS_CPUTIME_ID)");
+    clock_t clock0 = clock();
+    clock_gettime(CLOCK_MONOTONIC, &wall0);
+    volatile unsigned long spins = 0;
+    do {
+        spins++;
+        clock_gettime(CLOCK_MONOTONIC, &wall1);
+    } while (nanoseconds(wall1) - nanoseconds(wall0) < 200000000LL);
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu1);
+    clock_t clock1 = clock();
+    long long wall = nanoseconds(wall1) - nanoseconds(wall0);
+    long long cpu = nanoseconds(cpu1) - nanoseconds(cpu0);
+    check(cpu >= wall / 2 && cpu <= wall + 20000000LL, "busy for 200 ms: about as much CPU time");
+    check((long long)(clock1 - clock0) >= wall / 2000, "clock() counts the busy time");
+
+    struct timespec nap = {0, 200000000};
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu0);
+    clock0 = clock();
+    nanosleep(&nap, NULL);
+    clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu1);
+    check(nanoseconds(cpu1) - nanoseconds(cpu0) < 50000000LL && clock() - clock0 < 50000,
+          "asleep for 200 ms: almost no CPU time");
+}
+
 static void times(void)
 {
     time_t first = time(NULL);
@@ -475,6 +512,7 @@ int main(int argc, char **argv)
     jumps();
     numbers();
     times();
+    cpu_time();
     files();
     for_cxx();
     for_llvm();
