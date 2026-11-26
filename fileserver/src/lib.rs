@@ -17,19 +17,25 @@
 //! a channel and `serve`.
 //!
 //! What a request names is a path: names separated by '/', from the
-//! root down - "docs/notes/today". Every request carries the whole path;
-//! the service keeps nothing about a client between requests, so there
-//! is no "current directory" here. That belongs to whoever types paths.
+//! directory the channel it came on stands for. On the service's own
+//! request channels that is the root - "docs/notes/today". A client can
+//! also OPEN a file or a directory: it gets a channel of its own to it
+//! (`nodes`), which speaks this same protocol - a file's with no name
+//! at all, a directory's with names taken from there - and which follows
+//! the file through a rename or a removal. There is still no "current
+//! directory" here: that belongs to whoever types paths.
 
 #![cfg_attr(not(test), no_std)]
 
 extern crate alloc;
 
 pub mod disk;
+pub mod nodes;
 pub mod path;
 pub mod ram;
 
 pub use disk::DiskStore;
+pub use nodes::{NodeId, Nodes};
 pub use ram::RamStore;
 
 /// The protocol: one request per message, one reply per request.
@@ -131,6 +137,37 @@ pub mod protocol {
     /// a write is slower than a read - every block goes to the disk.
     pub const WRITE_FROM_MAX: usize = 1 << 20;
 
+    /// OPEN name, number: the file or directory `name` names, as a
+    /// channel of its own. The request carries, after its reply channel,
+    /// one end of a new channel: the service keeps it, and every request
+    /// that comes on it is about what was opened (`nodes`). `number` is
+    /// a set of `open` flags. Payload: STAT's, of what was opened.
+    pub const OPEN: u8 = 16;
+    /// What OPEN's `number` may say.
+    pub mod open {
+        /// To read. Every open allows that; the flag is for clarity.
+        pub const READ: u64 = 1;
+        /// To change: a file's bytes, or what is in a directory. Refused
+        /// on a channel that is for reading only.
+        pub const WRITE: u64 = 2;
+        /// It must be a directory; without this, a directory is refused
+        /// (IsDirectory), as C's open does.
+        pub const DIRECTORY: u64 = 4;
+        /// Made if it is not there: an empty file. Needs a channel that
+        /// may change files.
+        pub const CREATE: u64 = 8;
+        /// With CREATE: refused (Exists) if it is there already.
+        pub const EXCLUSIVE: u64 = 16;
+        /// With WRITE: a file is emptied.
+        pub const TRUNCATE: u64 = 32;
+        /// Every flag there is; others are a bad request.
+        pub const ALL: u64 = READ | WRITE | DIRECTORY | CREATE | EXCLUSIVE | TRUNCATE;
+    }
+    /// Most files and directories one service keeps open at once, for all
+    /// its clients together. Each is a channel the service waits on, with
+    /// its two request channels and its streams, in one object_wait.
+    pub const OPEN_MAX: usize = 200;
+
     /// The longest STALL: 30 seconds of 100 Hz ticks.
     pub const STALL_MAX: u64 = 3000;
 
@@ -196,8 +233,8 @@ pub mod protocol {
         Exists = 11,
         /// A directory cannot be moved to a place inside itself.
         IntoItself = 12,
-        /// The service has as many streams open as it keeps
-        /// (STREAMS_MAX).
+        /// The service has as many streams (STREAMS_MAX) or open files
+        /// (OPEN_MAX) as it keeps.
         Busy = 13,
     }
 
@@ -236,7 +273,7 @@ pub mod protocol {
                 Status::NotEmpty => "the directory is not empty",
                 Status::Exists => "there is already something with that name",
                 Status::IntoItself => "a directory cannot be moved into itself",
-                Status::Busy => "the file service has too many streams open",
+                Status::Busy => "the file service has too many streams or files open",
             }
         }
     }
@@ -421,6 +458,12 @@ pub fn serve(store: &mut impl Store, access: Access, message: &[u8], reply: &mut
 /// no permission beyond either channel's.
 pub fn serve_into(store: &mut impl Store, message: &[u8], into: &mut [u8], reply: &mut [u8; MESSAGE_MAX]) -> Option<usize> {
     let request = Request::decode(message).filter(|request| request.op == protocol::READ_INTO)?;
+    Some(serve_into_request(store, &request, into, reply))
+}
+
+/// `serve_into`, for a request already read, whose name is a path from
+/// the root (`nodes` works it out).
+pub(crate) fn serve_into_request(store: &mut impl Store, request: &Request, into: &mut [u8], reply: &mut [u8; MESSAGE_MAX]) -> usize {
     // The window: from the offset, at most READ_INTO_MAX, and none of
     // it past the object's end.
     let start = usize::try_from(request.number).unwrap_or(usize::MAX).min(into.len());
@@ -429,11 +472,11 @@ pub fn serve_into(store: &mut impl Store, message: &[u8], into: &mut [u8], reply
         Ok(n) => {
             reply[0] = Status::Ok as u8;
             reply[1..9].copy_from_slice(&(n as u64).to_le_bytes());
-            Some(9)
+            9
         }
         Err(status) => {
             reply[0] = status as u8;
-            Some(1)
+            1
         }
     }
 }
@@ -445,6 +488,12 @@ pub fn serve_into(store: &mut impl Store, message: &[u8], into: &mut [u8], reply
 /// change: refused on the read-only channel.
 pub fn serve_from(store: &mut impl Store, access: Access, message: &[u8], from: &[u8], reply: &mut [u8; MESSAGE_MAX]) -> Option<usize> {
     let request = Request::decode(message).filter(|request| request.op == protocol::WRITE_FROM)?;
+    Some(serve_from_request(store, access, &request, from, reply))
+}
+
+/// `serve_from`, for a request already read, its name a path from the
+/// root.
+pub(crate) fn serve_from_request(store: &mut impl Store, access: Access, request: &Request, from: &[u8], reply: &mut [u8; MESSAGE_MAX]) -> usize {
     let written = (|| {
         if access == Access::ReadOnly {
             return Err(Status::ReadOnly);
@@ -463,11 +512,11 @@ pub fn serve_from(store: &mut impl Store, access: Access, message: &[u8], from: 
         Ok(size) => {
             reply[0] = Status::Ok as u8;
             reply[1..9].copy_from_slice(&size.to_le_bytes());
-            Some(9)
+            9
         }
         Err(status) => {
             reply[0] = status as u8;
-            Some(1)
+            1
         }
     }
 }
@@ -496,7 +545,19 @@ pub enum Stream {
 /// ready (emptied, made), and what to keep. Writes the reply into
 /// `reply` and returns its length, with the stream if the reply is Ok.
 pub fn open_stream(store: &mut impl Store, access: Access, message: &[u8], reply: &mut [u8; MESSAGE_MAX]) -> (usize, Option<Stream>) {
-    let opened = Request::decode(message).ok_or(Status::BadRequest).and_then(|request| {
+    match Request::decode(message) {
+        Some(request) => open_stream_request(store, access, &request, reply),
+        None => {
+            reply[0] = Status::BadRequest as u8;
+            (1, None)
+        }
+    }
+}
+
+/// `open_stream`, for a request already read, its name a path from the
+/// root.
+pub(crate) fn open_stream_request(store: &mut impl Store, access: Access, request: &Request, reply: &mut [u8; MESSAGE_MAX]) -> (usize, Option<Stream>) {
+    let opened = (|| {
         let path = alloc::string::String::from(request.name);
         match (request.op, request.number) {
             (protocol::STREAM_OUT, _) if access == Access::ReadOnly => Err(Status::ReadOnly),
@@ -518,7 +579,7 @@ pub fn open_stream(store: &mut impl Store, access: Access, message: &[u8], reply
             },
             _ => Err(Status::BadRequest),
         }
-    });
+    })();
     match opened {
         Ok(stream) => {
             reply[0] = Status::Ok as u8;
@@ -587,6 +648,15 @@ pub enum Access {
 /// The payload of the reply, written into `out`.
 fn answer(store: &mut impl Store, access: Access, message: &[u8], out: &mut [u8]) -> Result<usize, Status> {
     let request = Request::decode(message).ok_or(Status::BadRequest)?;
+    answer_request(store, access, &request, out, None)
+}
+
+/// The payload of the reply to a request already read, its name a path
+/// from the root. `hidden`, if given, is a name LIST leaves out of the
+/// directory it lists, with the place it is at: the entry numbers a
+/// client gives are counted without it (`nodes`, for its REMOVED).
+pub(crate) fn answer_request(store: &mut impl Store, access: Access, request: &Request, out: &mut [u8], hidden: Option<(&str, usize)>) -> Result<usize, Status> {
+    let request = *request;
     // Checked here, once, before anything is done - not in each
     // operation, where a new one could forget.
     let changes = matches!(
@@ -610,8 +680,16 @@ fn answer(store: &mut impl Store, access: Access, message: &[u8], out: &mut [u8]
     match request.op {
         protocol::LIST => {
             let mut at = 0;
-            let from = usize::try_from(request.number).unwrap_or(usize::MAX);
+            let mut from = usize::try_from(request.number).unwrap_or(usize::MAX);
+            if let Some((_, place)) = hidden {
+                if from >= place {
+                    from = from.saturating_add(1);
+                }
+            }
             store.list(name, from, &mut |name, kind, size| {
+                if hidden.is_some_and(|(hidden, _)| hidden == name) {
+                    return true;
+                }
                 let entry = 1 + name.len() + 1 + 8;
                 if at + entry > out.len() {
                     return false;
