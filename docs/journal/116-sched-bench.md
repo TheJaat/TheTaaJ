@@ -1,6 +1,6 @@
 # The threads and scheduling benchmark: what a switch, a wake-up and a fair share cost today
 
-*Journal entry #NNN · a benchmark, MaK-WSL/sched's K67 and K95. Written on MaK-WSL/sched. Every scheduling item after this one says what it moved, so first the numbers to move: a switch, a hand-off between two threads, making a thread and a program, how long a woken thread waits for a CPU, how the same work spreads over more CPUs, and how evenly four busy programs share them. On 1, 2 and 4 CPUs, under KVM and emulated.*
+*Journal entry #116 · a benchmark, MaK-WSL/sched's K67 and K95. Written on MaK-WSL/sched. Every scheduling item after this one says what it moved, so first the numbers to move: a switch, a hand-off between two threads, making a thread and a program, how long a woken thread waits for a CPU, how the same work spreads over more CPUs, and how evenly four busy programs share them. On 1, 2 and 4 CPUs, under KVM and emulated.*
 
 ## Why
 

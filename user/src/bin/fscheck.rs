@@ -165,7 +165,7 @@ fn main() -> i64 {
             // tighter bound (13 ticks, measured up to three times, entry
             // 105) still failed emulated on a busy host, three slow tries
             // in a row; what this checks is that the client gives up, and
-            // a second is far from "never" (journal entry NNN).
+            // a second is far from "never" (journal entry 116).
             let start = taaj::ticks();
             let answer = deaf.list("", |_, _, _| {});
             let waited = taaj::ticks() - start;

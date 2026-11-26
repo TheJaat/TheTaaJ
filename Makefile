@@ -1579,7 +1579,7 @@ else
 endif
 
 # The threads and scheduling benchmark (MaK-WSL/sched's K67 and K95, journal
-# entry NNN): boots with 1, 2 and 4 CPUs and measures a switch, a futex
+# entry 116): boots with 1, 2 and 4 CPUs and measures a switch, a futex
 # hand-off, thread and program creation, wake-to-run latency, scaling and
 # fairness. It checks that every measurement ran, never how fast: the
 # numbers are in $(SCHEDBENCH64_LOG).summary, for the journal.
