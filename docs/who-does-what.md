@@ -172,7 +172,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| MaK-WSL/sched: K67 and K95, the threads and scheduling benchmark; then K20 with J80 | `k67-sched-bench` |
+| MaK-WSL/sched: K20 with J80, priorities, affinity, `nice` and the `sched_*` calls; then K24 with K96 and J53 | `k20-priorities` |
 
 ### Now: TheJat-WSL
 
@@ -338,8 +338,9 @@ The order matters here: each item is needed by the ones after it.
 | # | Item | Size | Notes |
 |---|---|---|---|
 | K19 | **Run `make test64` under KVM repeatedly** (say 20 times) and fix every race found | M | **Done (entries 104, 105)**: the tests choose KVM themselves, the typed boot test's typing races; twenty rounds under KVM (`tools/race-hunt.sh`): SIGCHLD before `waitid` returns fixed in the kernel, upper time limits retried; one failure left open as K50 |
-| K20 | Process priorities and choosing a thread's CPU (affinity) | M | Four busy programs make typing sluggish |
+| K20 | Process priorities and choosing a thread's CPU (affinity) | M | **Done (entry NNN)**, with J80: a priority (-20 to 19) and an affinity per thread, strict priorities and taking a CPU at once, a ceiling per process (init's the highest), SCHED_SET/SCHED_GET; init raises the keyboard-to-screen services to -5. Left: shares (K100), real-time classes (K99), K?-nice-inherit |
 | K21 | CPU time per process in `ps` | S | **Done (entry 114)**: the kernel counts each process's CPU time at every switch and tick (`clock::PROCESS_CPU`, one more word in `ProcessEntry`); `ps` has a CPU column; libc's `clock()` and `CLOCK_PROCESS_CPUTIME_ID` give it |
+| K?-nice-inherit | A child takes its parent's `nice` - through `posix_spawn` and the shell, as the memory limit travels with the program file (entry 096) - instead of always starting at 0 | S | After K20 (entry NNN) |
 | K22 | A transmit-interrupt serial writer (AArch64 output capped at ~3200 bytes/s) | S | |
 | K23 | The faster boots: measure boot time on KVM and on the real PC, cut the slow parts | S | |
 | K24 | Timer: alarms and sleeps finer than a 10 ms tick (one-shot timer, `setitimer`, `timer_create`) | M | |
@@ -572,7 +573,7 @@ What it lacks: any policy - every thread is equal, with no priorities or classes
 | K100 | **Fairness between processes, or groups of them**, not between threads: a group's share split among its threads | M | After K99 |
 | K101 | **A thread prefers the CPU it last ran on** while its data is still in that CPU's cache; moved only when another CPU would otherwise idle | S | With K68 |
 | K102 | **More than 64 CPUs** in the scheduler (`pokes` and the CPU sets as bitmaps of any size) | S | With K74 |
-| J80 | `nice`, `getpriority`/`setpriority`, `sched_setscheduler`, `sched_getaffinity`/`sched_setaffinity`, `pthread_setschedparam`, mapped onto contexts: allowed only as far as the program's context lets | S | With K20 (the user's decision, 2026-11-26), on K20's priorities; mapped onto contexts when K97 comes |
+| J80 | `nice`, `getpriority`/`setpriority`, `sched_setscheduler`, `sched_getaffinity`/`sched_setaffinity`, `pthread_setschedparam`, mapped onto contexts: allowed only as far as the program's context lets | S | **Done (entry NNN)**, with K20 (the user's decision): `nice`, `get/setpriority`, `sched_get/setaffinity`, `sched_*scheduler` and `*param` (SCHED_OTHER only), `pthread_*affinity_np`, `pthread_*schedparam`; mapped onto contexts when K97 comes |
 
 ---
 
