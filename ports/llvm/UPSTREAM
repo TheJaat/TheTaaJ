@@ -49,6 +49,13 @@ only kind TheTaaJ has), tools/lld (the program), its top CMakeLists.txt
 (the version) and its licence. Not lld's tests, documentation, or its
 linkers for Windows (COFF, MinGW), Apple (MachO) or WebAssembly.
 
+Of LLVM's libc (libc/): shared/, the headers LLVM and libc++ use since
+20 (exact reading of floating-point numbers for libc++'s from_chars,
+correctly rounded math for LLVM's APFloat), and what they include:
+hdr/, include/llvm-libc-macros, include/llvm-libc-types and
+src/__support, without ryu_long_double_constants.h (12 MB, for printf
+only). Not the C library itself: TheTaaJ has its own.
+
 LLVM is not built with CMake here but by tools/build-llvm.py, which
 reads the same CMakeLists.txt for its lists of sources. The settings
 CMake would have found out by trying the C library are in

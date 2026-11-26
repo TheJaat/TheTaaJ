@@ -33,6 +33,15 @@ copy libcxx/include libcxx/src libcxx/vendor libcxx/LICENSE.TXT
 copy libcxxabi/include libcxxabi/src libcxxabi/LICENSE.TXT
 copy libunwind/include libunwind/src libunwind/LICENSE.TXT
 
+# LLVM's libc, the part LLVM and libc++ build on since 20: its "shared"
+# headers - floating-point numbers read and written exactly (libc++'s
+# from_chars), math correctly rounded (LLVM's APFloat) - and the support
+# code and headers they include. Not the C library itself; and not the
+# 12 MB table of powers of ten for printing long doubles, which only
+# printf uses.
+copy libc/shared libc/hdr libc/include/llvm-libc-macros libc/include/llvm-libc-types libc/src/__support libc/LICENSE.TXT
+rm -f "$PORT/libc/src/__support/ryu_long_double_constants.h"
+
 # LLVM: every library, but of the targets only X86 and AArch64 (and the
 # files common to all), and RISC-V's .td files - the TargetParser is
 # written from RISCV.td whatever the targets.
