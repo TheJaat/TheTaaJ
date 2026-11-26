@@ -236,6 +236,15 @@ pub mod protocol {
         /// The service has as many streams (STREAMS_MAX) or open files
         /// (OPEN_MAX) as it keeps.
         Busy = 13,
+        /// Never sent by a service: a client's namespace (J62) says it.
+        /// The two names are under different mounts - different
+        /// directories, perhaps of different services - and one
+        /// request can't reach both (C's EXDEV).
+        CrossMount = 14,
+        /// Never sent by a service either: the name is where something
+        /// is mounted in the client's namespace, and can't be removed
+        /// or renamed (C's EBUSY).
+        MountPoint = 15,
     }
 
     impl Status {
@@ -254,6 +263,8 @@ pub mod protocol {
                 11 => Status::Exists,
                 12 => Status::IntoItself,
                 13 => Status::Busy,
+                14 => Status::CrossMount,
+                15 => Status::MountPoint,
                 _ => Status::BadRequest,
             }
         }
@@ -274,6 +285,8 @@ pub mod protocol {
                 Status::Exists => "there is already something with that name",
                 Status::IntoItself => "a directory cannot be moved into itself",
                 Status::Busy => "the file service has too many streams or files open",
+                Status::CrossMount => "not under the same mount",
+                Status::MountPoint => "something is mounted there",
             }
         }
     }

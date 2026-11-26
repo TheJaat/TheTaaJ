@@ -4213,3 +4213,52 @@ grep -l "blk has not answered" build/times-64.log build/aarch64/times.log
 | Nothing from the `grep` | The disk driver was not stopped as hung during the file-time tests |
 
 Automated: `make test64`.
+
+---
+
+## 118 · A namespace per process: a directory seen where a program chooses
+
+[The entry](journal/118-namespaces.md)
+
+Start TheTaaJ:
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `with programs namespace` | `namespace: 38 checks, all passed` |
+| `with programs handles` | `handles: 45 checks, all passed`: entry 115's checks, unchanged |
+| `ls` | no `ns`, `shadow`, `m` or `ro` left behind |
+
+The same on AArch64 with `make run-aarch64`: `with programs namespace` gives the same line.
+
+On the host:
+
+```
+cd kernel/abi && cargo test
+```
+
+| Look for | You should see |
+|---|---|
+| `tests::a_mount_goes_with_the_descriptors` | `ok` |
+| the last line | `test result: ok. 35 passed` |
+
+Automated: `make handles64-test aarch64-handles-test`, and `make test64`.
+
+---
+
+## 119 · Rules 1 and 3 of threads.rs, tested - and a panic that a 20-CPU machine swallowed
+
+[The entry](journal/119-thread-rules.md)
+
+`make run64` boots as before; the checks say nothing while they hold. To see them:
+
+| Do | You should see |
+|---|---|
+| `make test64` | `fault-page@20: ok (kernel read at 0x4000000000: page not present)` among the fault tests, and `test64: all passed` |
+| In `kernel/kernel64/src/threads.rs`, change `core::mem::forget(guard);` in `schedule` to `drop(guard);`, then `make smp64-test` | `KERNEL PANIC: panicked at src/threads.rs:...: rule 1 of threads.rs: the lock was released before the switch` in `build/smp64-20.log`. Change it back |
+| In `WaitQueue::wake_all`, take the waiters out (`core::mem::take(&mut *self.waiters.lock())`), then `make smp64-test` | `rule 3 of threads.rs: a wake-up took a waiter out of its queue` in the log - with 20 CPUs too. Change it back |
+
+Automated: `make test64`.

@@ -197,9 +197,17 @@ impl State {
         let Some(channel) = taaj::descriptors() else { return };
         let mut message = [0u8; abi::MESSAGE_MAX as usize];
         let mut handles = [0u64; 1];
+        let mut mounts = Vec::new();
         while let Ok((length, count)) = taaj::receive(channel, &mut message, &mut handles) {
             let handle = (count == 1).then_some(handles[0]);
             let entry = Entry::decode(&message[..length]).filter(|entry| entry.has_handle() == handle.is_some());
+            // One of the parent's mounts: kept for the namespace, below.
+            if let (Some(Entry::Mount { path }), Some(handle)) = (&entry, handle) {
+                if let Ok(directory) = taaj::files::File::from_handle(handle) {
+                    mounts.push((String::from(*path), directory));
+                }
+                continue;
+            }
             let slot = entry.as_ref().map(|entry| usize::from(entry.descriptor())).filter(|&slot| (3..OPEN_MAX).contains(&slot));
             let (Some(entry), Some(slot)) = (entry, slot) else {
                 // Not one this library can use: dropped, its handle closed.
@@ -225,6 +233,25 @@ impl State {
             self.table[slot] = Some(open);
         }
         let _ = taaj::close(channel);
+        if !mounts.is_empty() {
+            self.namespace(mounts);
+        }
+    }
+
+    /// The parent's namespace (J62), its mounts in the order they were
+    /// made: the files this program reaches by name. Made now, not when
+    /// first used, so that the directories are this program's from the
+    /// start. A program given mounts and no file service still has
+    /// what is mounted (handle 0 for the root: every request there
+    /// fails).
+    fn namespace(&mut self, mounts: Vec<(String, taaj::files::File)>) {
+        let mut files = taaj::file_service().unwrap_or_else(|| Files::new(0));
+        for (path, directory) in mounts {
+            if let Ok(mounted) = files.mounted(&path, directory) {
+                files = mounted;
+            }
+        }
+        self.files = Some(Some(Arc::new(files)));
     }
 
     /// The lowest number not in use: what C promises `open` returns.
@@ -305,6 +332,8 @@ pub(crate) fn reason(error: FileError) -> c_int {
         FileError::Refused(No::NotEmpty) => ENOTEMPTY,
         FileError::Refused(No::Exists) => EEXIST,
         FileError::Refused(No::Busy) => ENFILE,
+        FileError::Refused(No::CrossMount) => crate::errno::EXDEV,
+        FileError::Refused(No::MountPoint) => crate::errno::EBUSY,
         FileError::Refused(No::BadRequest | No::DiskError | No::Ok) => EIO,
         FileError::Unreachable(Error::TimedOut) => ETIMEDOUT,
         FileError::Unreachable(_) => EIO,
