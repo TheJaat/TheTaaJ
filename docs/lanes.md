@@ -195,11 +195,10 @@ Its files: `kernel/kernel64/src/sched.rs`, `smp.rs`, `futex.rs`, `alarms.rs`, `c
 
 | Item | Wave | Note |
 |---|---|---|
-| K20 | 1 | Priorities and affinity: **in progress** (`k20-priorities`) |
+| K20 | 1 | Priorities and affinity, with J80 (the user's decision, 2026-11-26) |
+| J80 | 1 | `nice` and the `sched_*` calls: with K20 |
 | K24 | 1 | Fine timers |
 | J53 | 1 | The ticks mutation test |
-| K67 | 1 | The threads benchmark |
-| K95 | 1 | The scheduling benchmark (with K67) |
 | K96 | 1 | Sleepers in a sorted timer queue |
 | K68 | 1 | A run queue per CPU; `devices`' K79 waits for it |
 | K101 | 2 | A thread prefers its last CPU |
@@ -213,7 +212,6 @@ Its files: `kernel/kernel64/src/sched.rs`, `smp.rs`, `futex.rs`, `alarms.rs`, `c
 | K98 | 3 | A server on its client's context (after `ipc`'s K61; replaces K65) |
 | K65 | 3 | Done by K98, or alone if K98 is far |
 | K100 | 3 | Fairness between processes |
-| J80 | 3 | `nice` and the `sched_*` calls |
 | K157 | 3 | CPU idle states and frequency (Era 27) |
 
 ### `boot` - MaK-WSL/boot · Era 21, the bootloader (MaK-WSL's alone, rule 7)
