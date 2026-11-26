@@ -236,25 +236,6 @@ The order matters here: each item is needed by the ones after it.
 | J29 | **Programs loaded page by page from their file** (not whole, not twice in memory) | M | A 182 MB rustc. Needs J58: sharing the program object's frames as code is only safe once nobody can write them (entry 103) |
 | J58 | **Sealed memory objects**: an object made read-only for good - no writable mapping or handle left - checked by the kernel before it shares the frames | M | For J29; maybe for real shared file mappings later |
 
-### TaajFS: speed, scale and checking (entry NNN)
-
-TaajFS is safe against power loss by design: copy-on-write, two superblocks, one written last, and tested by a disk that pretends to lose power. What it is not yet is fast at many small writes, quick on big volumes, big enough for a real PC's disk, or able to notice a damaged block. rustc's builds (J21) and the real PC (K1, K12) are where that will show. Not a new era: each item serves one that exists (Era 9's builds, Era 7's real PC). The ones that change the format are meant to be done together as **TaajFS version 7**, so volumes are upgraded once.
-
-| # | Item | Size | Notes |
-|---|---|---|---|
-| J?-fs-bench | **A file-system benchmark**: many small files made, written and removed; one big file written and read; a directory of thousands of names looked up; mount time of a full volume; blocks written per request. Both CPUs, KVM and emulated, the numbers kept in the journal | S | First: the items below are measured against it |
-| J?-fs-group | **Group commits**: the requests that arrive while one commit is being written go into the next commit together, so many small writes don't each rewrite the path to the root and the superblock. A reply still goes out only once its commit is on the disk | M | After J?-fs-bench. Not a format change. Covers E4 |
-| J?-fs-dirs | **Directories that aren't scanned**: a name found by its hash (hashed blocks or a B-tree), not by reading the directory from the start | M | Version 7. Only directories over a few blocks need it |
-| J?-fs-freemap | **The free map kept on the disk**, written with each commit, so mount doesn't walk the whole tree (today it does, `volume.rs`) | M | Version 7. The walk stays as the check (E1, and the debug check that already compares the two) |
-| J?-fs-sums | **Checksums**: each block's checksum kept where it is pointed to from (as ZFS does), checked on every read; a bad block is an error, never silently wrong data | M | Version 7. Copy-on-write protects against a crash, not against a disk that returns wrong bytes |
-| J?-fs-64 | **64-bit sizes and block numbers**: volumes and files past 4 GiB (today 2^20 blocks of 4 KiB, and a 32-bit file size) | M | Version 7; the `abi`'s file sizes and offsets with it. Needed for the real PC's disk (K12) |
-| J?-fs-owners | **Owners, permission bits, and access and change times** stored per file, so `stat` stops making them up | M | Version 7. What enforces them waits for users on TheTaaJ; storing them comes first |
-| J?-fs-links | **Symbolic links and hard links** (`symlink`, `readlink`, `link`, a link count) | M | Version 7. Many build systems and `make install`s use them |
-| J?-fs-many | **More than one request at a time** in the file service: reads served while a commit is being written, several disk requests in flight | L | After J?-fs-group; with K10 (the disk driver's queue) |
-| J?-fs-cache | **A page cache shared with programs**, so `mmap` of a file maps the cache's pages rather than a copy written back (entry 103) | L | After J58 (sealed memory objects) for read-only sharing |
-
-E1 (`fsck`) belongs with these too, and is best written once version 7's format is settled. J36 (open files that follow their file, not its name) also belongs with these.
-
 ### C and C++ library, left over from Era 6
 
 | # | Item | Size | Notes |
@@ -338,20 +319,6 @@ E1 (`fsck`) belongs with these too, and is best written once version 7's format 
 | K23 | The faster boots: measure boot time on KVM and on the real PC, cut the slow parts | S | |
 | K24 | Timer: alarms and sleeps finer than a 10 ms tick (one-shot timer, `setitimer`, `timer_create`) | M | |
 
-### IPC: speed and the cycle leak (entry NNN)
-
-The design - channels, handles with rights, bounded inboxes, handles carried in messages, memory objects for bulk data, `PeerClosed` when a service dies - is sound, and secure by construction. What it costs is not yet looked at: a request and its reply are four system calls and two context switches, and each message is copied twice through a kernel allocation. Every file and network operation is such a request. Measure first, then change what the numbers show.
-
-| # | Item | Size | Notes |
-|---|---|---|---|
-| K?-ipc-bench | **An IPC benchmark**: round-trip time of a small request and reply, and bulk throughput through messages and through a shared memory object; on both CPUs, under KVM and emulated; the numbers kept in the journal | S | First: the items below are measured against it |
-| K?-ipc-call | **`channel_call`**: send a request and wait for its reply in one system call, switching straight to the server's waiting thread and back (as L4, seL4 and Zircon do) | M | After K?-ipc-bench |
-| K?-ipc-copy | One copy per message: straight from the sender into a receiver that is already waiting, and no kernel allocation for each message | M | After K?-ipc-bench |
-| K?-ipc-big | Bigger messages (today 1 KiB; 4 to 64 KiB) or shared rings for streams - fs and net cut streams into 1023-byte pieces | M | After K?-ipc-bench; changes the `abi` with the services and libc in step |
-| K?-ipc-send-wait | Waiting until a channel can be sent to (`object_wait` for "writable"), instead of each sender retrying on `QueueFull` | S | |
-| K?-ipc-priority | Priority inheritance across a call: a server works at the priority of the client it answers | M | After K20 and K?-ipc-call |
-| K?-ipc-cycles | **Channel cycles leak**: end A in B's inbox and B in A's keep both alive once their owners close every handle (`ipc.rs` says so; only the one-step cycle is refused) - a cycle collector, or a rule that stops cycles forming | M | A process can make kernel memory it can't give back |
-
 ### Security
 
 | # | Item | Size | Notes |
@@ -363,6 +330,8 @@ The design - channels, handles with rights, bounded inboxes, handles carried in 
 | K29 | A random TCP initial sequence number (after J2) | S | |
 
 ### Network (Era 12's ground)
+
+The protocols are careful and tested on the host (the `net` crate: ARP, IPv4, ICMP, UDP, a TCP with RFC 9293's states, timeouts from the round trip and congestion control); what is missing is reach (one fixed address, no DNS, TCP only from C) and scale (few sockets, many copies, never measured). K30 comes first: without it the real PC has no network.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
@@ -376,6 +345,13 @@ The design - channels, handles with rights, bounded inboxes, handles carried in 
 | K37 | TLS 1.3 with its cryptography | L | After J2 |
 | K38 | HTTP server: several connections, keep-alive | S | |
 | K49 | Socket readiness for `poll`: the network service tells a socket's channel when bytes arrive, so poll can wait for it (entry 100 treats a socket as always ready) | S | After K33 |
+| K?-net-bench | **A network benchmark**: TCP throughput both ways, connections per second, a ping's round trip; virtio and e1000, KVM and emulated; the numbers kept in the journal | S | First, for the speed items below |
+| K?-net-rings | **Frames through shared rings** between the card's driver and the network service, and between the service and a program's socket, instead of messages: a 1514-byte frame is two 1 KiB messages today, each copied twice | M | After K?-net-bench; with K?-ipc-big |
+| K?-net-tables | **More sockets**: 16 connections, 10 sockets, 4 listeners and a backlog of 4 are fixed because the service waits on all of them in one `object_wait` (`WAIT_HANDLES_MAX`); a wait over a set that grows, or one channel per program, lifts it | M | A web server or a parallel download needs more |
+| K?-net-filter | **Which programs may listen on which ports**, and a simple packet filter | S | Today ports are first come |
+| K?-net-routes | **A routing table**: more than one card and network | M | Later |
+| K?-net-offload | **Checksum and segmentation offload** on virtio and e1000 | M | After K?-net-bench |
+| K?-net-keep | **Sockets that survive a restart of the network service**, or at least a clear "the network went away" to every program | M | Today they are all gone, and programs learn it by their channels closing |
 
 ### Desktop
 
@@ -399,6 +375,65 @@ The design - channels, handles with rights, bounded inboxes, handles carried in 
 | K50 | **`bigmem64-test` once did not finish its steps** under KVM (race hunt round 6 of 20, entry 105); not seen in 5 runs under full CPU load; its log was lost | S | Likeliest: host memory and CPU both short with 12 test machines on 11 GiB. `tools/race-hunt.sh` now keeps a failed round's files, so run it again and read them |
 | K51 | **The BIOS loader is slow emulated**: 14 of an 18 s boot pass before the kernel's first byte (idle host, TCG; under KVM well under a second) - stage2 reads the kernel through `int 13h`, back to real mode and out again for each read | S | Measured in entry 105. Read more per `int 13h` call, or stay in real mode for the whole read. The bootloader is MaK-WSL's (rule 7) |
 | K52 | **`aarch64-tcp-test` expects no segment for a closed connection**: once, in a full emulated `test64` on a busy host, `netinfo` counted 1 answered "no such connection" (41 segments sent again; alone, 0 of 3 runs, with 1-4 sent again) | S | Likely a late retransmission from the host after TheTaaJ closed passively (correct TCP answers it). Check what segment it was, then either allow it or keep the connection longer (entry 105) |
+
+---
+
+## Era 13 · A fast core: IPC, threads and several CPUs
+
+The core is correct and secure by construction; this era makes it fast and lets it use a real PC's CPUs. **Done when**: the IPC and threads benchmarks run in `make test64`; a request's round trip and a context switch are at least twice as fast as the first measurement; and on KVM with 4 CPUs a parallel job (several compilers at once) runs at least 3 times as fast as on one. Whose it is, and when, is for the user to say.
+
+### IPC: speed and the cycle leak
+
+The design - channels, handles with rights, bounded inboxes, handles carried in messages, memory objects for bulk data, `PeerClosed` when a service dies - is sound, and secure by construction. What it costs is not yet looked at: a request and its reply are four system calls and two context switches, and each message is copied twice through a kernel allocation. Every file and network operation is such a request. Measure first, then change what the numbers show.
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| K?-ipc-bench | **An IPC benchmark**: round-trip time of a small request and reply, and bulk throughput through messages and through a shared memory object; on both CPUs, under KVM and emulated; the numbers kept in the journal | S | First: the items below are measured against it |
+| K?-ipc-call | **`channel_call`**: send a request and wait for its reply in one system call, switching straight to the server's waiting thread and back (as L4, seL4 and Zircon do) | M | After K?-ipc-bench |
+| K?-ipc-copy | One copy per message: straight from the sender into a receiver that is already waiting, and no kernel allocation for each message | M | After K?-ipc-bench |
+| K?-ipc-big | Bigger messages (today 1 KiB; 4 to 64 KiB) or shared rings for streams - fs and net cut streams into 1023-byte pieces | M | After K?-ipc-bench; changes the `abi` with the services and libc in step |
+| K?-ipc-send-wait | Waiting until a channel can be sent to (`object_wait` for "writable"), instead of each sender retrying on `QueueFull` | S | |
+| K?-ipc-priority | Priority inheritance across a call: a server works at the priority of the client it answers | M | After K20 and K?-ipc-call |
+| K?-ipc-cycles | **Channel cycles leak**: end A in B's inbox and B in A's keep both alive once their owners close every handle (`ipc.rs` says so; only the one-step cycle is refused) - a cycle collector, or a rule that stops cycles forming | M | A process can make kernel memory it can't give back |
+
+### Threads and several CPUs
+
+TheTaaJ runs on up to 16 CPUs (`smp.rs`), on both architectures, and a program's threads run on all of them at once. What is right: the scheduler's decisions are separate from the switching and tested on the host (`sched.rs`); `threads.rs` writes down the four rules several CPUs need and keeps them; futexes under libc's mutexes, condition variables, read-write locks and `pthread_once`, with an uncontended lock never entering the kernel; TLB shootdowns on x86 (`tlb.rs`) and broadcast invalidation on AArch64; thread-local storage the ELF way (entry 099); twenty rounds of `make test64` under KVM without a race (entries 104, 105). What does not scale: one lock (`THREADS`) around one run queue that every CPU takes from; one lock each around the kernel heap and the frame allocator; one list of futex waiters; on x86 a shootdown reloads the whole address space; and every service is one thread. Fine on 4 CPUs in QEMU; on a 16-thread real PC the CPUs will queue for the same locks.
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| K?-smp-bench | **A threads benchmark**: a context switch, a futex hand-off between two threads, thread creation, `posix_spawn` to exit, and the same work on 1, 2, 4 ... CPUs to see how it scales; KVM and emulated, the numbers kept in the journal | S | First: the items below are measured against it |
+| K?-smp-queues | **A run queue per CPU**, with an idle CPU taking work from a busy one, instead of one queue under one lock | M | After K?-smp-bench and K20 (priorities and affinity are in the same code) |
+| K?-smp-alloc | **Per-CPU caches** in the kernel heap and the frame allocator, so most allocations take no shared lock | M | After K?-smp-bench |
+| K?-smp-futex | **Futexes without one shared list**: a lock per bucket, a wake that touches only its own address's waiters, `FUTEX_REQUEUE` (so `pthread_cond_broadcast` doesn't wake everyone to fight for the mutex) | M | Today a wake wakes its whole queue and those whose flag is clear sleep again |
+| K?-smp-tlb | **Cheaper shootdowns**: PCID on x86 (ASIDs on AArch64) so a switch keeps the TLB, and only the pages taken away invalidated rather than the whole address space | M | |
+| K?-smp-idle | **Idle CPUs that sleep** until they are needed, not woken by every 10 ms tick | S | With K24 (the one-shot timer) |
+| K?-smp-services | **Services with several threads**: the file and network services serve more than one request at a time | M | With J?-fs-many; after K?-ipc-call |
+| K?-smp-max | **More than 16 CPUs** (`MAX_CPUS`) | S | With K7 (x2APIC) |
+| J?-threads-posix | The POSIX thread calls still missing: semaphores (`sem_*`, `semaphore.h`), barriers, spin locks, `pthread_kill`, `pthread_cancel`, `sched_setaffinity` (after K20), robust mutexes | M | Ports ask for them; Rust's std needs none of them |
+
+Processes: TheTaaJ starts programs with `posix_spawn`, not `fork` (on purpose: a microkernel copies nothing it isn't asked to), and `fork` says so with `ENOSYS`. What is missing for processes is on the list already: process groups and job control (K44, K45), CPU time per process (K21), priorities (K20).
+
+## Era 14 · TaajFS version 7
+
+**Done when**: a 16 GiB volume holding a rustc build tree mounts in under a second; a bit flipped on the disk is reported, not read back as data; a version 6 volume is upgraded in place; the power-loss tests pass on version 7; and E1 (`fsck`) checks it. Whose it is, and when, is for the user to say.
+
+TaajFS is safe against power loss by design: copy-on-write, two superblocks, one written last, and tested by a disk that pretends to lose power. What it is not yet is fast at many small writes, quick on big volumes, big enough for a real PC's disk, or able to notice a damaged block. rustc's builds (J21) and the real PC (K1, K12) are where that will show. It is Era 14 because its milestone is one someone can see: a real PC's disk, big builds on it, and a damaged block caught. The ones that change the format are meant to be done together as **TaajFS version 7**, so volumes are upgraded once.
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| J?-fs-bench | **A file-system benchmark**: many small files made, written and removed; one big file written and read; a directory of thousands of names looked up; mount time of a full volume; blocks written per request. Both CPUs, KVM and emulated, the numbers kept in the journal | S | First: the items below are measured against it |
+| J?-fs-group | **Group commits**: the requests that arrive while one commit is being written go into the next commit together, so many small writes don't each rewrite the path to the root and the superblock. A reply still goes out only once its commit is on the disk | M | After J?-fs-bench. Not a format change. Covers E4 |
+| J?-fs-dirs | **Directories that aren't scanned**: a name found by its hash (hashed blocks or a B-tree), not by reading the directory from the start | M | Version 7. Only directories over a few blocks need it |
+| J?-fs-freemap | **The free map kept on the disk**, written with each commit, so mount doesn't walk the whole tree (today it does, `volume.rs`) | M | Version 7. The walk stays as the check (E1, and the debug check that already compares the two) |
+| J?-fs-sums | **Checksums**: each block's checksum kept where it is pointed to from (as ZFS does), checked on every read; a bad block is an error, never silently wrong data | M | Version 7. Copy-on-write protects against a crash, not against a disk that returns wrong bytes |
+| J?-fs-64 | **64-bit sizes and block numbers**: volumes and files past 4 GiB (today 2^20 blocks of 4 KiB, and a 32-bit file size) | M | Version 7; the `abi`'s file sizes and offsets with it. Needed for the real PC's disk (K12) |
+| J?-fs-owners | **Owners, permission bits, and access and change times** stored per file, so `stat` stops making them up | M | Version 7. What enforces them waits for users on TheTaaJ; storing them comes first |
+| J?-fs-links | **Symbolic links and hard links** (`symlink`, `readlink`, `link`, a link count) | M | Version 7. Many build systems and `make install`s use them |
+| J?-fs-many | **More than one request at a time** in the file service: reads served while a commit is being written, several disk requests in flight | L | After J?-fs-group; with K10 (the disk driver's queue) |
+| J?-fs-cache | **A page cache shared with programs**, so `mmap` of a file maps the cache's pages rather than a copy written back (entry 103) | L | After J58 (sealed memory objects) for read-only sharing |
+
+E1 (`fsck`) belongs with these too, and is best written once version 7's format is settled. J36 (open files that follow their file, not its name) also belongs with these.
 
 ---
 
@@ -426,8 +461,12 @@ The design - channels, handles with rights, bounded inboxes, handles carried in 
 | U5 | Era 8, the AI engine: agree its plan (`docs/ai-assistant.md`) before any work | Then it splits: the engine (SIMD, tensors, GGUF) suits TheJat-VM's long runs; testing speed on the real CPU suits MaK-WSL |
 | U6 | Raspberry Pi and RISC-V: only if you want them | |
 
-## Later eras, as drafted in `docs/ai-assistant.md`
+## Later eras
+
+As drafted in `docs/ai-assistant.md`, and added since:
 
 - **Era 8 · AI engine**: XSAVE/AVX2, a tensor crate, stories15M then Qwen3 on TheTaaJ.
-- **Era 9 · Assistant** (it will need a new number, since Era 9 is now rustc): the `infer` service, tools published by services, confirmation, undo.
-- **Era 10 · Sound**, **Era 11 · Voice**, **Era 12 · Web** (DNS, TLS, HTML to text).
+- **Era 10 · Sound**, **Era 11 · Voice**, **Era 12 · Web** (DNS, TLS, HTML to text, and the network items above).
+- **Era 13 · A fast core**: IPC, threads and several CPUs (above).
+- **Era 14 · TaajFS version 7** (above).
+- **The assistant** (drafted as Era 9, which is now rustc) takes the next free number, 15: the `infer` service, tools published by services, confirmation, undo.
