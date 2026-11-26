@@ -1751,7 +1751,7 @@ endif
 HANDLES_LOG     = $(BUILD_DIR)/handles-64.log
 HANDLES_A64_LOG = $(BUILD_DIR)/aarch64/handles.log
 HANDLES_C       = $(KERNEL64_DIR)/scripts/handles.c
-# A namespace per process (J62, journal entry NNN): taaj_mount, and the
+# A namespace per process (J62, journal entry 117): taaj_mount, and the
 # mounts handed to a child. namespace.c runs in the same boot.
 NAMESPACE_C     = $(KERNEL64_DIR)/scripts/namespace.c
 handles64-test: iso64 user64 libc64 tfstool-rs

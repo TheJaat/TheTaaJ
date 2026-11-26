@@ -1,6 +1,6 @@
 # A namespace per process: a directory seen where a program chooses
 
-*Journal entry #NNN · J62 of Era 14: the second step of a VFS with the kernel left out. Written on TheJat-VM/files, on the branch `j62-namespaces` in TheTaaJ and TheKernel.*
+*Journal entry #117 · J62 of Era 14: the second step of a VFS with the kernel left out. Written on TheJat-VM/files, on the branch `j62-namespaces` in TheTaaJ and TheKernel.*
 
 ## Why
 
