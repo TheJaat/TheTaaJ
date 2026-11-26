@@ -4072,3 +4072,33 @@ grep -n '^## Goals\|^## Era\|kernel stays pure' docs/who-does-what.md
 | `## Era 22` ... `## Era 28` | Observability; Services, recovery and configuration; Protocols and the ABI; Build, toolchain and tests; Packages and updates; Time and power; Portability: every architecture (with its tiers table) |
 | `## Era 29 · Cryptography and encryption` | 10 items (K176-K185) |
 | `## Later eras` | Eras 13 to 29, and the assistant as 30 |
+
+---
+
+## 113 · Fourteen lanes: the eras worked in parallel, and a brief for every new session
+
+[The entry](journal/113-lanes.md)
+
+Nothing to boot: this changes `docs/` and adds two tools.
+
+```
+python3 tools/lanes-check.py
+sh tools/new-session.sh --help
+sh tools/new-session.sh nope
+sh tools/new-session.sh crypto
+git -C ../TheTaaJ-crypto status --short
+grep -n '^15\. \|^16\. ' docs/who-does-what.md
+```
+
+| Do | You should see |
+|---|---|
+| `python3 tools/lanes-check.py` | `270 open items; 258 rows in 14 lanes; 12 named as not in a lane`, then `lanes-check: every open item is in one lane` (the counts change as items are done or added) |
+| `sh tools/new-session.sh --help` | the script's comment: what it makes and why |
+| `sh tools/new-session.sh nope` | `no lane 'nope'`, then the fourteen lanes, `ipc` to `arch` |
+| `sh tools/new-session.sh crypto` | `Lane 'crypto' has its tree: .../TheTaaJ-crypto` and the next steps, or `already there` |
+| `git -C ../TheTaaJ-crypto status --short` | nothing |
+| the `grep` for rules 15 and 16 | "When `main` moved after `make test64` passed" and "Numbers in code are given at merge too" |
+| `docs/start-here.md` | eight parts, from "Who you are" to "When something is unclear" |
+| `docs/lanes.md` | "Starting a session", the machines and their lanes, "Across lanes", then fourteen lanes, each with a table of items and waves |
+
+Automated: none (`make test64` doesn't read these files).
