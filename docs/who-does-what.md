@@ -412,7 +412,7 @@ The design - channels, handles with rights, bounded inboxes, handles carried in 
 | K?-ipc-copy | One copy per message: straight from the sender into a receiver that is already waiting, and no kernel allocation for each message | M | After K?-ipc-bench |
 | K?-ipc-big | Bigger messages (today 1 KiB; 4 to 64 KiB) or shared rings for streams - fs and net cut streams into 1023-byte pieces | M | After K?-ipc-bench; changes the `abi` with the services and libc in step |
 | K?-ipc-send-wait | Waiting until a channel can be sent to (`object_wait` for "writable"), instead of each sender retrying on `QueueFull` | S | |
-| K?-ipc-priority | Priority inheritance across a call: a server works at the priority of the client it answers | M | After K20 and K?-ipc-call |
+| K?-ipc-priority | Priority inheritance across a call: a server works at the priority of the client it answers | M | After K20 and K?-ipc-call; done by Era 17's K?-sched-donate if that comes first |
 | K?-ipc-cycles | **Channel cycles leak**: end A in B's inbox and B in A's keep both alive once their owners close every handle (`ipc.rs` says so; only the one-step cycle is refused) - a cycle collector, or a rule that stops cycles forming | M | A process can make kernel memory it can't give back |
 
 ### Threads and several CPUs
@@ -542,6 +542,30 @@ All of it stays mechanism: the kernel shares, copies on write, and drops pages; 
 
 ---
 
+## Era 17 · Scheduling: contexts, classes and fairness
+
+**Done when**: with four programs busy on every CPU, a key press reaches the screen within a limit the benchmark sets (and typing no longer feels sluggish, K20's complaint); a sound or input thread in the real-time class is never late behind a compile; a program with 64 threads gets no more CPU than one with a single thread in the same group; a server answering a call runs on its client's priority and budget; and no program can raise its own priority without a capability that allows it. Whose it is, and when, is for the user to say. It builds on K20 (priorities and affinity, MaK-WSL's, in progress), K21 (CPU time per process), K24 (fine timers), and Era 13's K?-smp-queues, K?-smp-idle, K?-ipc-call and K?-ipc-priority.
+
+What is right: the decisions (`sched.rs`) are apart from the switch (`threads.rs`) and tested on the host; round-robin over one queue shared by every CPU, 20 ms slices (`SLICE` = 2 ticks at 100 Hz); the kernel is preemptible in system calls, and a selftest checks a spinning thread is preempted; an idle CPU is poked at once when work arrives, and two threads made ready one after the other go to two CPUs; a thread woken before it left its CPU keeps running there; the rules for several CPUs written down and kept, and twenty race-hunt rounds passed.
+
+What it lacks: any policy - every thread is equal, with no priorities or classes; fairness is per thread, so a program with 64 threads gets 64 shares; every tick walks every thread's state for due sleepers and allocates a `Vec`, under the global lock; time in 10 ms ticks; every CPU woken each tick; threads moved between CPUs with no regard for their cache; no priority inheritance; no CPU budgets, so nothing stops a program taking all the CPU it can; `pokes`, a `u64`, caps the CPUs at 64; no `nice` or `sched_setscheduler` in libc; and no latency ever measured.
+
+**The kernel keeps the mechanism, user space the policy** - seL4's MCS design. The scheduler has to be in the kernel, but it can be kept to mechanism: a **scheduling context** is a kernel object holding a priority, a budget and a period; a thread runs only on time its context gives; contexts are **capabilities**, made and handed out by init or a resource manager in user space, so a program cannot raise its own priority; and a server answering a call runs on the **caller's** context, so priority inheritance and "who pays for this request" are one mechanism.
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| K?-sched-bench | **A scheduling benchmark**: wake-to-run latency, the cost of a switch, fairness between busy programs, and key press to screen with four busy programs, on KVM and emulated; the numbers kept in the journal | S | First. With K?-smp-bench |
+| K?-sched-timers | **Sleepers in a timer queue** sorted by their time, so a tick looks only at the first; no scan of every thread and no allocation in the tick | S | Early; with K24's one-shot timer it becomes "set the timer for the first sleeper" |
+| K?-sched-contexts | **Scheduling contexts as capabilities**: a priority, a budget and a period per context; a thread runs on its context's time; made and handed out by init or a resource manager, never by a program for itself | L | After K20. The core of the era |
+| K?-sched-donate | **A server runs on its client's context** for the length of a call, and the client is charged | M | After K?-sched-contexts, K?-ipc-call; replaces K?-ipc-priority's separate mechanism |
+| K?-sched-classes | **Classes**: real-time (fixed priority: sound in Era 10, input, the display), normal (a fair share by virtual run time, as EEVDF does), background (only when nothing else wants the CPU) | M | After K?-sched-contexts |
+| K?-sched-groups | **Fairness between processes, or groups of them**, not between threads: a group's share split among its threads | M | After K?-sched-classes |
+| K?-sched-cache | **A thread prefers the CPU it last ran on** while its data is still in that CPU's cache; moved only when another CPU would otherwise idle | S | With K?-smp-queues |
+| K?-sched-cpus | **More than 64 CPUs** in the scheduler (`pokes` and the CPU sets as bitmaps of any size) | S | With K?-smp-max |
+| J?-sched-posix | `nice`, `getpriority`/`setpriority`, `sched_setscheduler`, `sched_getaffinity`/`sched_setaffinity`, `pthread_setschedparam`, mapped onto contexts: allowed only as far as the program's context lets | S | After K?-sched-contexts; with J?-threads-posix |
+
+---
+
 ## Either machine: whoever is free
 
 | # | Item | Size | Notes |
@@ -576,4 +600,5 @@ As drafted in `docs/ai-assistant.md`, and added since:
 - **Era 14 · Files: a VFS and TaajFS version 7** (above).
 - **Era 15 · Devices: a device manager and confined drivers** (above).
 - **Era 16 · Memory: sharing, reclaim and hardening** (above).
-- **The assistant** (drafted as Era 9, which is now rustc) takes the next free number, 17: the `infer` service, tools published by services, confirmation, undo.
+- **Era 17 · Scheduling: contexts, classes and fairness** (above).
+- **The assistant** (drafted as Era 9, which is now rustc) takes the next free number, 18: the `infer` service, tools published by services, confirmation, undo.
