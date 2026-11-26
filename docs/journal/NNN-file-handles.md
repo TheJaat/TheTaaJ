@@ -160,7 +160,7 @@ What the choices cost: an open is now one more channel per file, which holds ker
 - **Not tested**:
   - more than a few open files at once on TheTaaJ (the 200 limit only on the host);
   - a crash of the `fs` service while a removed file is open, on TheTaaJ (only on the host, by mounting again);
-  - the speed. J70, the file-system benchmark, is the next step of this lane and will measure what an open costs.
+  - the speed. J70, the file-system benchmark (the `taajfs` lane's first item), will measure what an open costs.
 
 ## What is still missing
 
