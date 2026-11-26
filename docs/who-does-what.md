@@ -236,6 +236,25 @@ The order matters here: each item is needed by the ones after it.
 | J29 | **Programs loaded page by page from their file** (not whole, not twice in memory) | M | A 182 MB rustc. Needs J58: sharing the program object's frames as code is only safe once nobody can write them (entry 103) |
 | J58 | **Sealed memory objects**: an object made read-only for good - no writable mapping or handle left - checked by the kernel before it shares the frames | M | For J29; maybe for real shared file mappings later |
 
+### TaajFS: speed, scale and checking (entry NNN)
+
+TaajFS is safe against power loss by design: copy-on-write, two superblocks, one written last, and tested by a disk that pretends to lose power. What it is not yet is fast at many small writes, quick on big volumes, big enough for a real PC's disk, or able to notice a damaged block. rustc's builds (J21) and the real PC (K1, K12) are where that will show. Not a new era: each item serves one that exists (Era 9's builds, Era 7's real PC). The ones that change the format are meant to be done together as **TaajFS version 7**, so volumes are upgraded once.
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| J?-fs-bench | **A file-system benchmark**: many small files made, written and removed; one big file written and read; a directory of thousands of names looked up; mount time of a full volume; blocks written per request. Both CPUs, KVM and emulated, the numbers kept in the journal | S | First: the items below are measured against it |
+| J?-fs-group | **Group commits**: the requests that arrive while one commit is being written go into the next commit together, so many small writes don't each rewrite the path to the root and the superblock. A reply still goes out only once its commit is on the disk | M | After J?-fs-bench. Not a format change. Covers E4 |
+| J?-fs-dirs | **Directories that aren't scanned**: a name found by its hash (hashed blocks or a B-tree), not by reading the directory from the start | M | Version 7. Only directories over a few blocks need it |
+| J?-fs-freemap | **The free map kept on the disk**, written with each commit, so mount doesn't walk the whole tree (today it does, `volume.rs`) | M | Version 7. The walk stays as the check (E1, and the debug check that already compares the two) |
+| J?-fs-sums | **Checksums**: each block's checksum kept where it is pointed to from (as ZFS does), checked on every read; a bad block is an error, never silently wrong data | M | Version 7. Copy-on-write protects against a crash, not against a disk that returns wrong bytes |
+| J?-fs-64 | **64-bit sizes and block numbers**: volumes and files past 4 GiB (today 2^20 blocks of 4 KiB, and a 32-bit file size) | M | Version 7; the `abi`'s file sizes and offsets with it. Needed for the real PC's disk (K12) |
+| J?-fs-owners | **Owners, permission bits, and access and change times** stored per file, so `stat` stops making them up | M | Version 7. What enforces them waits for users on TheTaaJ; storing them comes first |
+| J?-fs-links | **Symbolic links and hard links** (`symlink`, `readlink`, `link`, a link count) | M | Version 7. Many build systems and `make install`s use them |
+| J?-fs-many | **More than one request at a time** in the file service: reads served while a commit is being written, several disk requests in flight | L | After J?-fs-group; with K10 (the disk driver's queue) |
+| J?-fs-cache | **A page cache shared with programs**, so `mmap` of a file maps the cache's pages rather than a copy written back (entry 103) | L | After J58 (sealed memory objects) for read-only sharing |
+
+E1 (`fsck`) belongs with these too, and is best written once version 7's format is settled. J36 (open files that follow their file, not its name) also belongs with these.
+
 ### C and C++ library, left over from Era 6
 
 | # | Item | Size | Notes |
