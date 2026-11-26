@@ -3741,3 +3741,41 @@ make test64 TAAJ_ACCEL=tcg
 |---|---|
 | `kvm` on MaK, `tcg` on The-Jat | The accelerator the tests use |
 | `test64: all passed`, twice | Every part, at full speed and emulated |
+
+---
+
+## 101 · The race hunt: twenty rounds under KVM, a SIGCHLD that came late, and tests that timed the host
+
+[The entry](journal/101-the-race-hunt.md)
+
+On MaK (KVM):
+
+```
+make ground64-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `ground: 52 checks, all passed` | Every SIGCHLD of the hundred children was handled before its `waitid` returned |
+
+On either machine:
+
+```
+make test64
+make test64 TAAJ_ACCEL=tcg
+```
+
+| Look for | Meaning |
+|---|---|
+| `test64: all passed`, twice | Every part, at full speed and emulated |
+
+To hunt for races (run `make test64-shared` first; each round takes about seven minutes on MaK):
+
+```
+tools/race-hunt.sh 20
+```
+
+| Look for in `build/race-hunt/summary.txt` | Meaning |
+|---|---|
+| `round N: exit 0, ... failed: none` | A clean round |
+| `failed: <part>` | That part failed; `build/race-hunt/round-N/` holds every file the round wrote |

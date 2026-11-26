@@ -109,7 +109,7 @@ Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 | Machine | Step | Branch |
 |---|---|---|
 | The-Jat | C: std's ground, part 2 (the libc calls std uses) | `std-ground-2` |
-| MaK | A: the scheduler and timing step, one branch per item: now K19, the race hunt | `k19-race-hunt` |
+| MaK | A: the scheduler and timing step, one branch per item: now K19's second part, the race hunt | `k19-race-hunt-2` |
 
 ## The decided order
 
@@ -166,7 +166,7 @@ The order matters here: each item is needed by the ones after it.
 | J7 | **`statx` or a full `stat`**: sizes, types, times (once TaajFS has them, see J17) | S | `std::fs::metadata` |
 | J8 | **`realpath`, `getcwd`, `fchdir`, `opendir` on handles** | S | std paths |
 | J9 | **`posix_spawn` file actions for fd 3+** (E11 left over from Era 6) | M | `std::process::Command` with pipes |
-| J10 | **`waitid`, `WNOHANG` everywhere, SIGCHLD** | S | **Done (entry 099)**: PROCESS_NOTIFY; WNOHANG and WNOWAIT |
+| J10 | **`waitid`, `WNOHANG` everywhere, SIGCHLD** | S | **Done (entry 099)**: PROCESS_NOTIFY; WNOHANG and WNOWAIT MaK fixed an ordering bug in it (entry 101): the exit code is now published after the watchers' signals, so SIGCHLD's handler has run when `waitid` returns |
 | J11 | **Wide characters**: `wchar_t` functions, `mbrtowc`, `wcrtomb` in UTF-8 | M | Also helps libc++'s missing parts |
 | J12 | **`dlopen`/`dlsym` stubs answering "unsupported"** honestly | S | rustc probes for codegen backends |
 | J13 | **zlib** ported (for rustc's metadata compression) | S | |
@@ -273,7 +273,7 @@ The order matters here: each item is needed by the ones after it.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K19 | **Run `make test64` under KVM repeatedly** (say 20 times) and fix every race found | M | KVM already found two. **First part done (entry 100)**: the tests choose KVM themselves (`TAAJ_ACCEL`), and the typed boot test's two typing races are fixed. The repeated runs are next |
+| K19 | **Run `make test64` under KVM repeatedly** (say 20 times) and fix every race found | M | **Done (entries 100, 101)**: the tests choose KVM themselves, the typed boot test's typing races; twenty rounds under KVM (`tools/race-hunt.sh`): SIGCHLD before `waitid` returns fixed in the kernel, upper time limits retried; one failure left open as K49 |
 | K20 | Process priorities and choosing a thread's CPU (affinity) | M | Four busy programs make typing sluggish |
 | K21 | CPU time per process in `ps` | S | |
 | K22 | A transmit-interrupt serial writer (AArch64 output capped at ~3200 bytes/s) | S | |
@@ -323,6 +323,7 @@ The order matters here: each item is needed by the ones after it.
 |---|---|---|---|
 | K47 | Intel HD Audio driver and an audio service | L | Testable in QEMU (`-device intel-hda`) |
 | K48 | WAV playback, then a microphone recorded to a file | M | |
+| K49 | **`bigmem64-test` once did not finish its steps** under KVM (race hunt round 6 of 20, entry 101); not seen in 5 runs under full CPU load; its log was lost | S | Likeliest: host memory and CPU both short with 12 test machines on 11 GiB. `tools/race-hunt.sh` now keeps a failed round's files, so run it again and read them |
 
 ---
 

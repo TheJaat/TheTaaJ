@@ -160,13 +160,23 @@ fn main() -> i64 {
     match taaj::channel_create() {
         Ok((unread, silent)) => {
             let deaf = Files::with_patience(silent, 10);
-            let start = taaj::ticks();
-            let answer = deaf.list("", |_, _, _| {});
-            let waited = taaj::ticks() - start;
+            // Not before 10 ticks; by 13, tried up to three times (a host
+            // that stops this virtual machine makes one try late; journal
+            // entry 101).
+            let mut waited = 0;
+            for _ in 0..3 {
+                let start = taaj::ticks();
+                let answer = deaf.list("", |_, _, _| {});
+                waited = taaj::ticks() - start;
+                check!(answer == Err(FileError::Unreachable(Error::TimedOut)), "a silent service: timed out");
+                check!(waited >= 10, "a silent service: gave up before 10 ticks");
+                if waited <= 13 {
+                    break;
+                }
+            }
             let _ = taaj::close(silent);
             let _ = taaj::close(unread);
-            check!(answer == Err(FileError::Unreachable(Error::TimedOut)), "a silent service: timed out");
-            check!((10..=13).contains(&waited), "a silent service: after 10 ticks");
+            check!(waited <= 13, "a silent service: gave up after over 13 ticks, three times");
         }
         Err(_) => check!(false, "a channel for the silent service"),
     }

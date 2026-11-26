@@ -77,10 +77,21 @@ fn main() -> i64 {
     check!(taaj::receive(b, &mut buffer, &mut []) == Ok((4, 0)), "the message is still there");
     // Waiting with a limit: asking without waiting, and giving up on time.
     check!(taaj::poll(&[b]) == Ok(None), "poll found a message in an empty channel");
-    let before = taaj::ticks();
-    check!(taaj::object_wait_until(&[b], before + 3) == Ok(None), "a timed wait on an empty channel");
-    let waited = taaj::ticks() - before;
-    check!((3..=5).contains(&waited), "the timed wait did not last its 3 ticks");
+    // Never shorter than 3 ticks; at most 5, tried up to three times - a
+    // host that stops this virtual machine for a moment makes one wait
+    // late, a kernel that ends waits late does it every time (journal
+    // entry 101).
+    let mut waited = 0;
+    for _ in 0..3 {
+        let before = taaj::ticks();
+        check!(taaj::object_wait_until(&[b], before + 3) == Ok(None), "a timed wait on an empty channel");
+        waited = taaj::ticks() - before;
+        check!(waited >= 3, "the timed wait ended before its 3 ticks");
+        if waited <= 5 {
+            break;
+        }
+    }
+    check!(waited <= 5, "the timed wait of 3 ticks lasted over 5, three times");
     check!(taaj::send(a, b"pong", &[]) == Ok(()), "send for poll");
     check!(taaj::poll(&[boot, b]) == Ok(Some(1)), "poll missed the ready channel");
     check!(taaj::object_wait_until(&[b], taaj::ticks() + 500) == Ok(Some(0)), "a timed wait with a message waiting");
