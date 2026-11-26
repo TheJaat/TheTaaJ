@@ -133,7 +133,7 @@ Its files: the test rules of the `Makefile`, `kernel/kernel64/scripts/*-test.sh`
 | K52 | 2 | `aarch64-tcp-test`'s late segment |
 | J96 | 2 | Coverage of the host tests |
 | K104 | 2 | A system-call fuzzer |
-| K112 | 2 | Every `unsafe` with a reason, checked |
+| K?-miri | 2 | Miri over the host tests (K112's second half) |
 | K137 | 2 | A panic with a backtrace |
 | K136 | 3 | The log service |
 | K138 | 3 | A crash report per program |
