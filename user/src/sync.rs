@@ -70,6 +70,8 @@ pub struct Mutex<T> {
 // while the lock is held; sending the value between threads is what
 // the lock is for, so T must be Send.
 unsafe impl<T: Send> Sync for Mutex<T> {}
+// SAFETY: the mutex owns its value; moving it moves the value, which is
+// sound whenever T may move between threads.
 unsafe impl<T: Send> Send for Mutex<T> {}
 
 impl<T> Mutex<T> {

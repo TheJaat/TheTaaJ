@@ -202,6 +202,7 @@ impl Small {
     /// # Safety
     /// `piece` is a live piece of this Small's, on no list.
     unsafe fn push(&mut self, piece: *mut Piece) {
+        // SAFETY: the caller's promise, in the `# Safety` above.
         unsafe {
             let class = (*piece).class;
             (*piece).previous = ptr::null_mut();
@@ -218,6 +219,7 @@ impl Small {
     /// # Safety
     /// `piece` is a live piece of this Small's, on its list.
     unsafe fn unlink(&mut self, piece: *mut Piece) {
+        // SAFETY: the caller's promise, in the `# Safety` above.
         unsafe {
             let (previous, next) = ((*piece).previous, (*piece).next);
             if previous.is_null() {
@@ -239,6 +241,7 @@ impl Small {
 /// # Safety
 /// `piece` is a live piece.
 unsafe fn has_room(piece: *mut Piece) -> bool {
+    // SAFETY: the caller's promise, in the `# Safety` above.
     unsafe { !(*piece).free.is_null() || (*piece).uncut as usize + (*piece).class * ALIGNMENT <= piece as usize + PIECE }
 }
 

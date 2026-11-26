@@ -882,6 +882,11 @@ endif
 # locks), compiled for and run on this machine rather than in a VM.
 HOST_TRIPLE = $(shell PATH="$(PATH)" rustc -vV | sed -n 's/^host: //p')
 
+# Every unsafe block, impl and public unsafe fn says why it is sound
+# (K112): clippy's two lints for it, as errors, over every crate and CPU.
+unsafe-check:
+	@USER_A64_BINS="$(USER_A64_BINS)" sh tools/unsafe-check.sh
+
 kernel64-test:
 	cd $(KERNEL64_DIR) && cargo test --lib --target $(HOST_TRIPLE)
 	cd kernel/abi && cargo test
@@ -2096,6 +2101,7 @@ TEST64_PARTS = \
 	libmake64-test \
 	aarch64-libmake-test \
 	kernel64-test \
+	unsafe-check \
 	smp64-test \
 	big64-test \
 	fault64-test \
