@@ -149,7 +149,7 @@ impl Disk {
     fn start(info: &PciDeviceInfo, memory: *mut u8, interrupt: Option<Handle>) -> Result<Disk, &'static str> {
         let ports = info.io_base;
         let register = |offset: u16| ports + offset;
-        // SAFETY (each port access below): the device's own registers,
+        // SAFETY: (each port access below) the device's own registers,
         // enabled for this process, used as the virtio spec says.
         unsafe {
             out8(register(legacy::STATUS), 0); // reset: forget any old queue
@@ -218,7 +218,7 @@ impl Disk {
         memory: *mut u8,
         interrupt: Option<Handle>,
     ) -> Result<Disk, &'static str> {
-        // SAFETY (each register access below): the caller's promise.
+        // SAFETY: (each register access below) the caller's promise.
         unsafe {
             let read = |offset| Transport::read(registers, offset);
             let write = |offset, value| Transport::write(registers, offset, value);

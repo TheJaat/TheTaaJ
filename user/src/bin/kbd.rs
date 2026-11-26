@@ -95,8 +95,9 @@ fn init_controller(mouse: bool) -> bool {
     if !command(DISABLE_PORT_1) || !command(DISABLE_PORT_2) {
         return false;
     }
-    // SAFETY: draining the data port only discards bytes.
+    // SAFETY: the controller's status port; reading it has no side effects.
     while unsafe { in8(STATUS) } & OUTPUT_FULL != 0 {
+        // SAFETY: draining the data port only discards bytes.
         let _ = unsafe { in8(DATA) };
     }
     if !command(READ_CONFIG) || !wait_readable() {
@@ -216,10 +217,12 @@ fn main() -> i64 {
             let (status, byte) = match early.next() {
                 Some(byte) => (OUTPUT_FULL, byte),
                 None => {
+                    // SAFETY: the status port has no side effects.
                     let status = unsafe { in8(STATUS) };
                     if status & OUTPUT_FULL == 0 {
                         break;
                     }
+                    // SAFETY: the data port, read only when the status says it is full.
                     (status, unsafe { in8(DATA) })
                 }
             };

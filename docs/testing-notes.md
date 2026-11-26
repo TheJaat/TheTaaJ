@@ -4285,3 +4285,18 @@ make run64
 The same on AArch64 with `make run-aarch64`: `with programs at` gives the same line.
 
 Automated: `make handles64-test aarch64-handles-test`, and `make test64`.
+
+---
+
+## 121 · Every unsafe with a reason, checked
+
+[The entry](journal/121-unsafe-reasons.md)
+
+From the root of TheTaaJ:
+
+| Do | You should see |
+|---|---|
+| `make unsafe-check` | `unsafe-check: every unsafe block, impl and public unsafe fn says why` |
+| Add `pub fn f(p: *const u8) -> u8 { unsafe { *p } }` to `heap/src/lib.rs`, then `make unsafe-check` | `error: unsafe block missing a safety comment` and the place, and `make` fails. Take it out again |
+
+Automated: `make test64` (its `unsafe-check` part).
