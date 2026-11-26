@@ -79,6 +79,7 @@ pub mod descriptors;
 pub mod dynamic;
 pub mod errno;
 pub mod memory;
+pub mod namespace;
 pub mod number;
 pub mod sockets;
 pub mod pipes;

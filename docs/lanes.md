@@ -311,7 +311,6 @@ Its files: `libc/src/descriptors.rs`, `user/src/files.rs`, the `fileserver` crat
 
 | Item | Wave | Note |
 |---|---|---|
-| J62 | 1 | A namespace per process: J63-J67, `services`' K105 and `crypto`'s J99 wait for it |
 | J63 | 1 | The `openat` family |
 | J64 | 2 | `/tmp` in memory |
 | J65 | 2 | `/dev` |
