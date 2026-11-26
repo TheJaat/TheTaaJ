@@ -155,7 +155,7 @@ Each machine (or session) has its own table and changes only its own, so two mac
 
 | Step | Branch |
 |---|---|
-| Building and measuring TheJat-WSL (no lane yet: the user decides) | - |
+| Faster tests: typing less in the typed boots (boot64, boot64-uefi, aarch64-keys) | `typed-boots` |
 
 ## The decided order
 
