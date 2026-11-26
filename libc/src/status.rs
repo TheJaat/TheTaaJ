@@ -142,34 +142,38 @@ pub unsafe extern "C" fn lstat(path: *const c_char, out: *mut Stat) -> c_int {
 }
 
 /// `fstat(fd, out)`: what an open descriptor is. A file is asked about
-/// by its path; the three standard ones are character devices, and a
-/// pipe's end is a FIFO.
+/// on its own channel - so it is the file, wherever its name went; the
+/// three standard ones are character devices, and a pipe's end is a
+/// FIFO.
 ///
 /// # Safety
 /// `out` must be valid for writing.
 #[no_mangle]
 pub unsafe extern "C" fn fstat(fd: c_int, out: *mut Stat) -> c_int {
-    let found = with(|state| {
-        let path = match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
-            Some(Open::File(file)) => file.lock().path.clone(),
-            Some(Open::PipeRead(_) | Open::PipeWrite(_)) => {
-                return Ok(Stat { st_dev: 1, st_ino: 1 + fd as u64, st_nlink: 1, st_mode: S_IFIFO | 0o600, st_blksize: 4096, ..Stat::default() })
-            }
-            Some(Open::Input | Open::Output | Open::Error | Open::Socket(_)) => {
-                return Ok(Stat {
-                    st_dev: 1,
-                    st_ino: 1 + fd as u64,
-                    st_nlink: 1,
-                    st_mode: S_IFCHR | 0o620,
-                    st_blksize: 4096,
-                    ..Stat::default()
-                })
-            }
-            None => return Err(EBADF),
-        };
-        let files = state.files().ok_or(EBADF)?;
-        let (kind, size, stamp, time) = files.stat_timed(&path).map_err(reason)?;
-        Ok(describe(&path, kind, size, stamp, time))
+    // Either the answer at once, or the file to ask, once the table is
+    // let go: the service may take its time.
+    let found = with(|state| match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
+        Some(Open::File(file)) => Ok(Err(file.clone())),
+        Some(Open::PipeRead(_) | Open::PipeWrite(_)) => {
+            Ok(Ok(Stat { st_dev: 1, st_ino: 1 + fd as u64, st_nlink: 1, st_mode: S_IFIFO | 0o600, st_blksize: 4096, ..Stat::default() }))
+        }
+        Some(Open::Input | Open::Output | Open::Error | Open::Socket(_)) => Ok(Ok(Stat {
+            st_dev: 1,
+            st_ino: 1 + fd as u64,
+            st_nlink: 1,
+            st_mode: S_IFCHR | 0o620,
+            st_blksize: 4096,
+            ..Stat::default()
+        })),
+        None => Err(EBADF),
+    })
+    .and_then(|found| match found {
+        Ok(status) => Ok(status),
+        Err(file) => {
+            let file = file.lock();
+            let (kind, size, stamp, time) = file.file.stat_timed().map_err(reason)?;
+            Ok(describe(&file.path, kind, size, stamp, time))
+        }
     });
     match found {
         Ok(status) => {
@@ -541,13 +545,15 @@ pub unsafe extern "C" fn utimensat(dirfd: c_int, path: *const c_char, times: *co
 /// `times` null or valid for reading two.
 #[no_mangle]
 pub unsafe extern "C" fn futimens(fd: c_int, times: *const Time) -> c_int {
-    let path = with(|state| match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
-        Some(Open::File(file)) => Ok(file.lock().path.clone()),
+    let file = with(|state| match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
+        Some(Open::File(file)) => Ok(file.clone()),
         Some(_) => Err(EINVAL),
         None => Err(EBADF),
     });
+    // The file itself, on its own channel: wherever its name went.
+    let touch_it = |file: crate::descriptors::SharedFile| file.lock().file.touch().map_err(reason);
     // SAFETY: the caller's promise.
-    let done = path.and_then(|path| unsafe { what_to_do(times) }.and_then(|now| if now { touch(&path) } else { Ok(()) }));
+    let done = file.and_then(|file| unsafe { what_to_do(times) }.and_then(|now| if now { touch_it(file) } else { Ok(()) }));
     match done {
         Ok(()) => 0,
         Err(code) => fail(code),
@@ -703,18 +709,17 @@ pub unsafe extern "C" fn truncate(path: *const c_char, length: i64) -> c_int {
 #[no_mangle]
 pub extern "C" fn ftruncate(fd: c_int, length: i64) -> c_int {
     let Ok(length) = u64::try_from(length) else { return fail(EINVAL) };
-    with(|state| {
-        let path = match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
-            Some(Open::File(file)) if file.lock().writes() => file.lock().path.clone(),
-            Some(_) => return fail(EINVAL), // POSIX: not a file open for writing
-            None => return fail(EBADF),
-        };
-        let Some(files) = state.files() else { return fail(EBADF) };
-        match cut_to(files, &path, length) {
-            Ok(()) => 0,
-            Err(code) => fail(code),
-        }
-    })
+    let file = with(|state| match usize::try_from(fd).ok().and_then(|fd| state.table.get(fd)).and_then(Option::as_ref) {
+        Some(Open::File(file)) if file.lock().writes() => Ok(file.clone()),
+        Some(_) => Err(EINVAL), // POSIX: not a file open for writing
+        None => Err(EBADF),
+    });
+    // On the file's own channel, the table let go: the service sets the
+    // size (protocol::TRUNCATE), filling with zeros when it grows.
+    match file.and_then(|file| file.lock().file.truncate(length).map_err(reason)) {
+        Ok(()) => 0,
+        Err(code) => fail(code),
+    }
 }
 
 /// `link(from, to)`: a second name for a file. TheTaaJ's file system has

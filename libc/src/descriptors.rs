@@ -8,25 +8,29 @@
 //! start: standard input, output and error. `open` hands out the rest.
 //!
 //! On Unix the kernel keeps the table those numbers index, and for an
-//! open file it remembers where the program has got to. Here neither
-//! the kernel nor the file service knows any of that. The file service
-//! remembers nothing between requests: each one says the whole path
-//! and the offset - "512 bytes of /docs/notes from 1024". So the table
-//! is here, in the program's own memory, and an open file is no more
-//! than
+//! open file it remembers where the program has got to. Here the kernel
+//! knows nothing of files, so the table is here, in the program's own
+//! memory, and an open file is
 //!
-//!     the path    as text, from the root
+//!     a channel   to the file service, for that one file (J60): the
+//!                 service knows which file it is, so the requests on
+//!                 it name nothing
 //!     an offset   where the next read or write starts
 //!     the flags   it was opened with
+//!     the path    it was opened by, for the few calls that want a name
+//!                 (fchdir, fdopendir)
 //!
-//! `read` asks the service for bytes of that path from that offset,
-//! and moves the offset on. `lseek` only changes a number. `close`
-//! forgets the three; the service is not even told.
+//! `read` asks for bytes from that offset on the file's channel, and
+//! moves the offset on. `lseek` only changes a number. `close` closes
+//! the channel when no `dup` of the descriptor is left, and the service
+//! lets the file go.
 //!
-//! That has consequences a Unix program would not expect, because the
-//! descriptor is tied to the *name* and not to the file: rename a file
-//! while it is open and the descriptor reads whatever has that name
-//! now, or fails; remove it and the next write makes a new one.
+//! Because the channel is the file and not its name, a descriptor
+//! behaves as Unix's does: rename the file while it is open, and the
+//! descriptor still reads and writes it; remove it, and the descriptor
+//! keeps it - the name is gone, the file is not, until it is closed.
+//! And the channel can be handed to another program (spawn.rs), which
+//! then has that file, whatever happens to its name.
 
 use alloc::format;
 use alloc::string::String;
@@ -101,8 +105,12 @@ fn file(file: File) -> Open {
 }
 
 pub(crate) struct File {
-    /// From the root, with the '/' in front: what it meant when it was
-    /// opened, whatever directory that was said in.
+    /// The file's own channel to the file service: closed when the last
+    /// descriptor sharing this File is closed.
+    pub(crate) file: taaj::files::File,
+    /// From the root, with the '/' in front: the name it was opened by,
+    /// whatever directory that was said in. Only for the calls that need
+    /// a name - it is not kept up to date if the file is renamed.
     pub(crate) path: String,
     pub(crate) offset: u64,
     pub(crate) flags: c_int,
@@ -164,15 +172,10 @@ impl State {
         self.files.get_or_insert_with(|| taaj::file_service().map(Arc::new)).as_ref()
     }
 
-    /// What descriptor `fd` stands for, and the file service: a copy
-    /// to use once the table is let go.
-    fn entry(&mut self, fd: c_int) -> Option<(Open, Option<Arc<Files>>)> {
-        let open = usize::try_from(fd).ok().and_then(|fd| self.table.get(fd)).and_then(Option::as_ref)?.clone();
-        let files = match open {
-            Open::File(_) => self.files().cloned(),
-            _ => None,
-        };
-        Some((open, files))
+    /// What descriptor `fd` stands for: a copy to use once the table is
+    /// let go.
+    fn entry(&mut self, fd: c_int) -> Option<Open> {
+        usize::try_from(fd).ok().and_then(|fd| self.table.get(fd)).and_then(Option::as_ref).cloned()
     }
 
     fn new() -> State {
@@ -185,8 +188,8 @@ impl State {
 
     /// The descriptors beyond 0, 1 and 2 whoever started this program
     /// handed down (abi::startup::DESCRIPTORS, abi::descriptors): a
-    /// file as its name, place and flags; a pipe's end, or another
-    /// stream, as the channel itself. The parent filled the channel and
+    /// file as its channel, with its name, place and flags; a pipe's
+    /// end, or another stream, as the channel itself. The parent filled the channel and
     /// closed its end before this program started, so reading stops at
     /// the last message instead of waiting.
     fn inherit(&mut self) {
@@ -206,11 +209,12 @@ impl State {
                 continue;
             };
             let open = match (entry, handle) {
-                // read and write find the file service already asked
-                // for, as open leaves it: asked for here, then. A
-                // program given no file service cannot use the file.
-                (Entry::File { .. }, _) if self.files().is_none() => continue,
-                (Entry::File { flags, offset, path, .. }, _) => file(File { path: String::from(path), offset, flags }),
+                // The file itself: a program given no file service can
+                // still use one it was handed.
+                (Entry::File { flags, offset, path, .. }, Some(handle)) => match taaj::files::File::from_handle(handle) {
+                    Ok(handle) => file(File { file: handle, path: String::from(path), offset, flags }),
+                    Err(_) => continue, // from_handle's File closed it
+                },
                 (Entry::Read { .. }, Some(handle)) => Open::PipeRead(Arc::new(crate::pipes::Reader::new(handle))),
                 (_, Some(handle)) => Open::PipeWrite(Arc::new(crate::pipes::Channel(handle))),
                 (_, None) => continue, // ruled out above
@@ -345,48 +349,47 @@ pub unsafe extern "C" fn __taaj_open(path: *const c_char, flags: c_int) -> c_int
     if flags & O_ACCMODE == O_ACCMODE {
         return fail(EINVAL);
     }
+    // A directory is opened to read it, never to write (POSIX's EISDIR).
+    if flags & O_DIRECTORY != 0 && flags & O_ACCMODE != O_RDONLY {
+        return fail(EISDIR);
+    }
     with(|state| {
         let Some(slot) = state.free_slot() else { return fail(EMFILE) };
         let Some(files) = state.files() else {
             return fail(EACCES);
         };
-        let file = File { path: format!("/{}", files.resolve(name)), offset: 0, flags };
-        // To write, the channel must be one that can change files. Asked
-        // now, so that the program hears at `open` - where it expects to
-        // - and not at its first `write`.
-        if file.writes() {
-            match files.read_only() {
-                Ok(false) => {}
-                Ok(true) => return fail(EROFS),
-                Err(error) => return fail(reason(error)),
-            }
-        }
-        let made_ready = match files.stat(&file.path) {
-            // A directory opens only when asked for as one, to read:
-            // a descriptor for fchdir, fdopendir and the like (its read
-            // gives EISDIR). Without O_DIRECTORY, EISDIR at once, as
-            // TheTaaJ always said.
-            Ok((Kind::Directory, _)) if flags & O_DIRECTORY != 0 && !file.writes() => Ok(()),
-            Ok((Kind::Directory, _)) => return fail(EISDIR),
-            Ok((Kind::File, _)) if flags & O_DIRECTORY != 0 => return fail(ENOTDIR),
-            Ok((Kind::File, _)) if flags & (O_CREAT | O_EXCL) == O_CREAT | O_EXCL => return fail(EEXIST),
-            // Writing nothing over a file leaves it empty.
-            Ok((Kind::File, _)) if flags & O_TRUNC != 0 && file.writes() => files.write(&file.path, &[]).map(|_| ()),
-            Ok((Kind::File, _)) => Ok(()),
-            // Adding nothing to a file that is not there makes it.
-            Err(FileError::Refused(taaj::files::Status::NotFound)) if flags & O_CREAT != 0 => {
-                files.append(&file.path, &[]).map(|_| ())
-            }
-            Err(error) => Err(error),
+        // One request does all of it - the checks, making, emptying - in
+        // the service, so nothing can change in between.
+        let opened = files.open(name, open_flags(flags)).map(|handle| File {
+            file: handle,
+            path: format!("/{}", files.resolve(name)),
+            offset: 0,
+            flags: flags & !O_CLOEXEC,
+        });
+        let file = match opened {
+            Ok(file) => file,
+            Err(error) => return fail(reason(error)),
         };
-        if let Err(error) = made_ready {
-            return fail(reason(error));
-        }
-        let cloexec = file.flags & O_CLOEXEC != 0;
-        state.table[slot] = Some(self::file(File { flags: file.flags & !O_CLOEXEC, ..file }));
-        state.set_cloexec(slot, cloexec);
+        state.table[slot] = Some(self::file(file));
+        state.set_cloexec(slot, flags & O_CLOEXEC != 0);
         slot as c_int
     })
+}
+
+/// C's open flags, as the file service's (fileserver's protocol::open).
+pub(crate) fn open_flags(flags: c_int) -> u64 {
+    use taaj::files::open;
+    let mut wanted = match flags & O_ACCMODE {
+        O_RDONLY => open::READ,
+        O_WRONLY => open::WRITE,
+        _ => open::READ | open::WRITE,
+    };
+    for (c, service) in [(O_CREAT, open::CREATE), (O_EXCL, open::EXCLUSIVE), (O_TRUNC, open::TRUNCATE), (O_DIRECTORY, open::DIRECTORY)] {
+        if flags & c != 0 {
+            wanted |= service;
+        }
+    }
+    wanted
 }
 
 /// `close(fd)`: the number is free to be given out again. (A socket's
@@ -414,7 +417,7 @@ pub unsafe extern "C" fn read(fd: c_int, buffer: *mut c_void, count: usize) -> i
     if buffer.is_null() && count != 0 {
         return fail(EFAULT);
     }
-    let Some((open, files)) = with(|state| state.entry(fd)) else { return fail(EBADF) };
+    let Some(open) = with(|state| state.entry(fd)) else { return fail(EBADF) };
     if count == 0 {
         return 0;
     }
@@ -430,16 +433,8 @@ pub unsafe extern "C" fn read(fd: c_int, buffer: *mut c_void, count: usize) -> i
             if !file.reads() {
                 return fail(EBADF);
             }
-            // A file can only be in the table if the service was there
-            // to open it.
-            let Some(files) = files else { return fail(EIO) };
-            let mut taken = 0;
-            let read = files.read_from(&file.path, file.offset, |piece| {
-                taken = piece.len().min(out.len());
-                out[..taken].copy_from_slice(&piece[..taken]);
-            });
-            match read {
-                Ok(_) => {
+            match file.file.read_at(file.offset, out) {
+                Ok(taken) => {
                     file.offset += taken as u64;
                     taken as isize
                 }
@@ -461,7 +456,7 @@ pub unsafe extern "C" fn write(fd: c_int, buffer: *const c_void, count: usize) -
     if buffer.is_null() && count != 0 {
         return fail(EFAULT);
     }
-    let Some((open, files)) = with(|state| state.entry(fd)) else { return fail(EBADF) };
+    let Some(open) = with(|state| state.entry(fd)) else { return fail(EBADF) };
     if count == 0 {
         return 0;
     }
@@ -479,14 +474,14 @@ pub unsafe extern "C" fn write(fd: c_int, buffer: *const c_void, count: usize) -
             if !file.writes() {
                 return fail(EBADF);
             }
-            let Some(files) = files else { return fail(EIO) };
             let written = if file.flags & O_APPEND != 0 {
                 // The service finds the end itself, at the moment it
                 // writes: two programs appending to one file cannot
                 // write over each other.
-                files.append(&file.path, bytes).map(|size| file.offset = size)
+                file.file.append(bytes).map(|size| file.offset = size)
             } else {
-                files.write_from(&file.path, file.offset, bytes).map(|_| file.offset += count as u64)
+                let at = file.offset;
+                file.file.write_at(at, bytes).map(|_| file.offset += count as u64)
             };
             match written {
                 Ok(()) => count as isize,
@@ -508,7 +503,7 @@ pub unsafe extern "C" fn pread(fd: c_int, buffer: *mut c_void, count: usize, off
     if buffer.is_null() && count != 0 {
         return fail(EFAULT);
     }
-    let Some((open, files)) = with(|state| state.entry(fd)) else { return fail(EBADF) };
+    let Some(open) = with(|state| state.entry(fd)) else { return fail(EBADF) };
     let Open::File(file) = open else { return fail(ESPIPE) };
     let Ok(offset) = u64::try_from(offset) else { return fail(EINVAL) };
     if count == 0 {
@@ -520,14 +515,8 @@ pub unsafe extern "C" fn pread(fd: c_int, buffer: *mut c_void, count: usize, off
     if !file.reads() {
         return fail(EBADF);
     }
-    let Some(files) = files else { return fail(EIO) };
-    let mut taken = 0;
-    let read = files.read_from(&file.path, offset, |piece| {
-        taken = piece.len().min(out.len());
-        out[..taken].copy_from_slice(&piece[..taken]);
-    });
-    match read {
-        Ok(_) => taken as isize,
+    match file.file.read_at(offset, out) {
+        Ok(taken) => taken as isize,
         Err(error) => fail(reason(error)),
     }
 }
@@ -544,7 +533,7 @@ pub unsafe extern "C" fn pwrite(fd: c_int, buffer: *const c_void, count: usize, 
     if buffer.is_null() && count != 0 {
         return fail(EFAULT);
     }
-    let Some((open, files)) = with(|state| state.entry(fd)) else { return fail(EBADF) };
+    let Some(open) = with(|state| state.entry(fd)) else { return fail(EBADF) };
     let Open::File(file) = open else { return fail(ESPIPE) };
     let Ok(offset) = u64::try_from(offset) else { return fail(EINVAL) };
     if count == 0 {
@@ -556,8 +545,7 @@ pub unsafe extern "C" fn pwrite(fd: c_int, buffer: *const c_void, count: usize, 
     if !file.writes() {
         return fail(EBADF);
     }
-    let Some(files) = files else { return fail(EIO) };
-    match files.write_from(&file.path, offset, bytes) {
+    match file.file.write_at(offset, bytes) {
         Ok(_) => count as isize,
         Err(error) => fail(reason(error)),
     }
@@ -570,8 +558,8 @@ pub unsafe extern "C" fn pwrite(fd: c_int, buffer: *const c_void, count: usize, 
 /// zeros in between.
 #[no_mangle]
 pub extern "C" fn lseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
-    let (file, files) = match with(|state| state.entry(fd)) {
-        Some((Open::File(file), files)) => (file, files),
+    let file = match with(|state| state.entry(fd)) {
+        Some(Open::File(file)) => file,
         Some(_) => return fail(ESPIPE),
         None => return fail(EBADF),
     };
@@ -581,8 +569,7 @@ pub extern "C" fn lseek(fd: c_int, offset: i64, whence: c_int) -> i64 {
             SEEK_SET => 0,
             SEEK_CUR => file.offset,
             SEEK_END => {
-                let Some(files) = files else { return fail(EIO) };
-                match files.size(&file.path) {
+                match file.file.size() {
                     Ok(size) => size,
                     Err(error) => return fail(reason(error)),
                 }
