@@ -21,7 +21,7 @@ M=NN; M="${M}N"; export M
 
 setup() (
 set -eu
-TM=$(git -C "$CI" rev-parse origin/main)
+TM=$(git -C "$CI" rev-parse "${MT_BASE:-origin/main}")  # MT_BASE: a branch to try as main
 KM=$(git -C "$CI/kernel" rev-parse origin/main)
 KGIT=$(cd "$CI/kernel" && cd "$(git rev-parse --git-dir)" && pwd)
 rm -rf "$S/mt"; mkdir -p "$S/mt"; cd "$S/mt"
@@ -37,13 +37,15 @@ git -c protocol.file.allow=always submodule update -q --init kernel
 git -C kernel config user.name The-Jat; git -C kernel config user.email t@example.invalid
 git -C kernel checkout -q -B mt-test
 echo "# a test comment (journal entry $M)" >> kernel/kernel64/scripts/fuzz-test.sh
+echo "# a test comment (journal entry $M)" >> tools/lanes-check.py
 git -C kernel commit -qam "test change, entry $M"
 git -C kernel push -q origin mt-test
 git switch -q -c mt-test
 cp "$CI/tools/merge-item.py" tools/  # the version being tested
 printf '# A test entry\n\n*Journal entry #%s · a test. It keeps `%s-name.md` as it is.*\n\nSee K?-mt.\n\n## Testing note\n\nNothing.\n' "$M" "$M" > "docs/journal/$M-mt.md"
 python3 - <<'PY'
-p='docs/who-does-what.md'; s=open(p).read()
+import glob
+p=[f for f in ['docs/who-does-what.md']+glob.glob('docs/items/*.md') if '| K189 |' in open(f).read()][0]; s=open(p).read()
 i=s.index('| K189 |'); j=s.index('\n',i)
 s=s[:j+1]+"| K?-mt | **A test item** | S | for merge-item's test (entry "+__import__("os").environ["M"]+") |\n"+s[j+1:]
 open(p,'w').write(s)
@@ -76,8 +78,11 @@ echo "== A: clean"
 fresh || exit 1
 python3 tools/merge-item.py "$row"; echo "exit $?"
 T=$S/mt/taaj.git; K=$S/mt/kernel.git
-echo "items: $(git -C $T show main:docs/who-does-what.md | grep -cE '^\| K[0-9]+ \| \*\*A test item')  rules untouched: $(git -C $T show main:docs/who-does-what.md | grep -c 'K?-hubs')"
+work() { git -C "$1" show main:docs/who-does-what.md; for f in $(git -C "$1" ls-tree --name-only main docs/items/); do git -C "$1" show "main:$f"; done; }
+echo "items: $(work $T | grep -cE '^\| K[0-9]+ \| \*\*A test item')  rules untouched: $(git -C $T show main:docs/who-does-what.md | grep -c 'K?-hubs')"
 echo "pointer $(git -C $T ls-tree main kernel | awk '{print substr($3,1,7)}') = kernel main $(git -C $K rev-parse --short main)"
+echo "a script's comment numbered too: $(git -C $T show main:tools/lanes-check.py | grep -c "journal entry $M") left unnumbered; tree clean after: $(git status --porcelain | grep -vc bootloader)"
+echo "row: $(git -C $T show main:docs/journal/README.md | grep "^| [0-9]* |" | tail -1 | grep -o "| written | .*")  second commits: $(git -C $T log --format=%s "$(git -C "$CI" rev-parse "${MT_BASE:-origin/main}")..main" | grep -c '^journal: entry')  last on main: $(git -C $T log -1 --format=%s main | cut -c1-60)"
 
 echo "== B: TheKernel's push refused"
 fresh || exit 1
@@ -104,5 +109,8 @@ git fetch -q origin && git merge -q --no-edit origin/main && git push -q origin 
 kc=$(git -C kernel rev-parse HEAD)
 python3 tools/merge-item.py "$row"; echo "exit $?"
 echo "pointer $(git -C $S/mt/taaj.git ls-tree main kernel | awk '{print substr($3,1,7)}') = the item's TheKernel commit $(echo $kc | cut -c1-7)"
-git -C $S/mt/taaj.git show main:docs/journal/README.md | grep "^| 124 |" | grep -o "| written | .*"
-echo "items: $(git -C $S/mt/taaj.git show main:docs/who-does-what.md | grep -cE '^\| K[0-9]+ \| \*\*A test item')"
+git -C $S/mt/taaj.git show main:docs/journal/README.md | grep "^| [0-9]* |" | tail -1 | grep -o "| written | .*"
+c=$(git -C $S/mt/taaj.git show main:docs/journal/README.md | grep "^| [0-9]* |" | tail -1 | sed -n 's/.*| written | .\([0-9a-f]*\).*/\1/p')
+echo "the row's commit $c is in main: $(git -C $S/mt/taaj.git merge-base --is-ancestor "$c" main && echo yes || echo NO)"
+echo "second commits (journal: entry N's commits): $(git -C $S/mt/taaj.git log --format=%s "$(git -C "$CI" rev-parse "${MT_BASE:-origin/main}")..main" | grep -c '^journal: entry')"
+echo "items: $(work $S/mt/taaj.git | grep -cE '^\| K[0-9]+ \| \*\*A test item')"
