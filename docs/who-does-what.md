@@ -913,7 +913,7 @@ All of it stays out of the kernel but the random generator (there already) and s
 | E5 | Swap to a disk file | L | Later; with Era 16's K89 |
 | E6 | TheKernel standalone (not needing `heap`, `virtio`, `console`, `user/` from the parent) | M | |
 | E7 | The 32-bit kernel booted again, or retired officially | S | Decide with the user |
-| E8 | Users' documentation: a "how to use TheTaaJ" page for the website | S | |
+| E8 | Users' documentation: a "how to use TheTaaJ" page for the website | S | **Done (entry NNN)**: `docs/using-taaj.md`, linked from the README - what is on `main`; kept up to date by the steps that change what a user sees |
 
 ## Waiting for you (the user)
 
