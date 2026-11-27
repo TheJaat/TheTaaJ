@@ -26,8 +26,8 @@ A branch with more than one unnumbered entry, or one `merge-item.py` refuses, is
 
 ## How I checked it
 
-- **The rehearsal**, the night queue's eight branches: `8 of 8 merged` - entries 131 to 138, each row with its commit, k187's with TheKernel's; no second commit; no unnumbered entry; `lanes-check` clean. 13 seconds.
-- **The stand-in guard**: against a copy whose `origin` is GitHub, `--merge` with a stand-in merges nothing (the check is `origin` a path).
+- **The rehearsal**, the night queue's eight branches: `8 of 8 merged` - entries 131 to 138 - and with this branch ninth, `9 of 9`; each row with its commit, k187's with TheKernel's; no second commit; no unnumbered entry; `lanes-check` clean. 13 seconds.
+- **The stand-in guard**, called in the real night tree (`origin` is GitHub): `rehearsal()` is false, so `--merge` after a stand-in test merges nothing there - checked directly, not by running a stand-in night against the server. In the sandbox (`origin` a directory) it is true: the rehearsal's merges.
 - **restack, in the sandbox**: a fix pushed to the bottom branch (a new file) and one to k187's TheKernel side; `--check` named all seven branches above and k187's pointer; `restack.py` merged each into the next, in order; after it, `--check` - every branch stacked; every branch has the fix; k187 and the four above it point at k187's new TheKernel commit, the two below at `main`'s.
 - **restack and a real conflict**: a first try's fix changed lines `docs-split` also changes - it stopped there, `settle it by hand`, nothing pushed.
 - **On the server**: `restack.py --check` on the real queue - every branch stacked.
