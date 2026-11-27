@@ -106,7 +106,7 @@ The items most others wait for, most first. This is why the order below is what 
 | **J43 shell variables and `if`** | J45 rebuilding only what changed, J25 R6's build scripts | TheJat-VM, filler |
 | **K44 pseudo-terminals** | K45 job control | MaK-WSL, step H |
 | **K11 GPT** | K12 the installer | MaK-WSL, step B |
-| **J51 test programs out of the kernel image** | Every kernel feature, once the image nears its 3 MiB limit (about 680 KiB left) | TheJat-VM, filler; it moves to the front if less than 200 KiB is left |
+| ~~**J51 test programs out of the kernel image**~~ | Nothing now: K130 (entry 146) ended the 3 MiB limit - the BIOS loader takes a kernel up to 1 GiB | TheJat-VM; not needed (U7) |
 
 Sizes: **S** is a day or less, **M** a few days, **L** a week or more.
 
@@ -126,9 +126,8 @@ Each machine has its own table and changes only its own, so two machines never e
 | Step | Branch |
 |---|---|
 | MaK-WSL/sched: K190, a child takes its parent's nice; K193 waits for the user's decision (per-CPU locks cost exact fairness) | `k190-nice-inherit` |
-| MaK-WSL/desktop: K114, the desktop benchmark; waits for the user's yes to merge | `k114-desktop-bench` |
-| MaK-WSL/desktop: K42, key events to windows (on top of K114: merged after it); waits for the user's yes to merge | `k42-key-events` |
-| MaK-WSL/desktop: K46, the scroll wheel and two more buttons (on top of K42: merged after it); waits for the user's yes to merge | `k46-wheel` |
+| MaK-WSL/desktop: K42, key events to windows; the night run of 2026-11-27/28 failed only the coverage floor - fixed with a host test of `key_message`; in the next night's queue | `k42-key-events` |
+| MaK-WSL/desktop: K46, the scroll wheel and two more buttons (on top of K42: merged after it); in the next night's queue, after K42 | `k46-wheel` |
 
 ### Now: TheJat-WSL
 
@@ -174,5 +173,5 @@ The items are kept in a file per era (journal entry 132), so a session reads its
 | U4 | Be at the real PC for K1 (R7) | |
 | U5 | Era 8, the AI engine: agree its plan (`docs/ai-assistant.md`) before any work | Then it splits: the engine (SIMD, tensors, GGUF) suits TheJat-VM's long runs; testing speed on the real CPU suits MaK-WSL |
 | U6 | Raspberry Pi and RISC-V: only if you want them | |
-| U7 | **J51: the kernel's program self-tests, at every boot or only in tests?** The test programs (about 300 KiB of the image's ~580 KiB left under 3 MiB) are there for `selftest::user`, `ipc`, `files` and `kill`, which check at every boot, before anything else runs, that no frame and no channel leaks. On the test disk they would run as a user program in the tests only, in a live system (other services allocate too), and that program needs a new `with system` grant to read `SYSTEM_INFO`. Or leave it to K130 (the `boot` lane), which ends the 3 MiB wall | **Decided (2026-11-27): wait for K130**, which ends the 3 MiB wall; the every-boot checks stay. J51 only if K130 does not come |
+| U7 | **J51: the kernel's program self-tests, at every boot or only in tests?** The test programs (about 300 KiB of the image's ~580 KiB left under 3 MiB) are there for `selftest::user`, `ipc`, `files` and `kill`, which check at every boot, before anything else runs, that no frame and no channel leaks. On the test disk they would run as a user program in the tests only, in a live system (other services allocate too), and that program needs a new `with system` grant to read `SYSTEM_INFO`. Or leave it to K130 (the `boot` lane), which ends the 3 MiB wall | **Decided (2026-11-27): wait for K130**, which ends the 3 MiB wall; the every-boot checks stay. J51 only if K130 does not come. **K130 done (entry 146)**: the wall is gone |
 | U8 | **J92 needs a container on TheJat-WSL**: either `sudo apt install uidmap` (then `tools/clean-build.sh` can make a rootless Ubuntu 24.04 container with `unshare`, no Docker), or Docker Desktop's WSL integration switched on for this distro | **Done (2026-11-27)**: uidmap installed on TheJat-WSL; J92 uses it |

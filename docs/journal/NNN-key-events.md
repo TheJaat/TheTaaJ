@@ -33,14 +33,16 @@ Why key codes rather than characters: a code names a key, not what the layout ma
 
 ## Bugs
 
-None found by the tests. One behaviour worth writing down, seen in the first test log: a window can be told a key **came up** that it never saw go down. The test types Enter to start `counter`; Enter goes down while the terminal has the focus, `counter`'s window opens and takes it, and `counter` is told "key code 28 up". It is true - the key did come up - and harmless to a program that tracks keys it saw go down. Whether the display should hold such an up back is K116's to decide.
+**1. `key_message` had no test** - the night run (2026-11-27/28, TheJat-WSL) failed `k42-key-events` on one thing only: the coverage floor (J96, entry 137), `kernel/abi` at 86.6% of its lines against a floor of 87%. The new `display::key_message` was used by three drivers and read by the display, and checked in the boots, but no host test called it, so its lines counted as untested. Fixed with `a_key_message_is_its_code_and_whether_down`: the bytes spelled out (Shift down, Control up, a code past 255 with its high byte second), and for several codes the message read back the way `display.rs` reads it. `make coverage` after: `kernel/abi` 87.2%, every crate at or above its floor. The lesson: `make coverage` belongs among a branch's own checks before the night queue, beside the host tests.
+
+Otherwise none found by the tests. One behaviour worth writing down, seen in the first test log: a window can be told a key **came up** that it never saw go down. The test types Enter to start `counter`; Enter goes down while the terminal has the focus, `counter`'s window opens and takes it, and `counter` is told "key code 28 up". It is true - the key did come up - and harmless to a program that tracks keys it saw go down. Whether the display should hold such an up back is K116's to decide.
 
 ## How I checked it
 
-- **Host tests**: `input` 49 (two new: every key code comes back from its scancode, both tables; the decoder names the key it decoded, Shift and an 0xE0 key included), `gui` 38 (the new event there and back, with modifiers; cut short, and with a "down" neither 0 nor 1, refused), `abi` 36.
+- **Host tests**: `input` 49 (two new: every key code comes back from its scancode, both tables; the decoder names the key it decoded, Shift and an 0xE0 key included), `gui` 38 (the new event there and back, with modifiers; cut short, and with a "down" neither 0 nor 1, refused), `abi` 37 (one added after the night run: bug 1).
 - **Boots**: `gui64-test` and `aarch64-gui-test` - Shift alone and Control alone pressed at `counter`'s window, on the PC's PS/2 keyboard (kbd) and on AArch64's virtio keyboard (hid). Both logs show the same events: `+` as Shift down, = down, = up, Shift up, with the modifiers right at each; `a` down and up; Shift alone (42, modifiers 1, then 0); Control alone (29, modifiers 2, then 0). `usb64-test` (a line typed on a USB keyboard, through `usb`'s changed path) and `edit64-test` (the editor, which ignores the new event).
 - The boot tests ran while another tree's `make test64` held the test lock - small boots, each throttled by `boot-slots.sh` - and passed the first time.
-- `make test64`: RESULT.
+- `make test64`: the night run of 2026-11-27/28 passed everything but the coverage floor (bug 1); with its fix, `make coverage` passes, and the branch goes to the next night's queue.
 - **Not tested**: a USB keyboard at a program's window (the USB test has no window); a real keyboard (K1).
 
 ## What is still missing
