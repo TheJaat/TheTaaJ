@@ -21,10 +21,11 @@ It does, stopping at the first thing that fails:
   4. TheTaaJ: the entry renamed and numbered, `NNN` on its added lines, the
      new items numbered, the README row, the testing notes, the lanes
      check; `kernel` pointed at what was just pushed; committed, merged
-     into main, pushed - again undone and stopped if refused;
-  5. the row's commits, in a commit of their own (rebased if main moved
-     meanwhile: it is one line);
-  6. the branches deleted, here and on the server.
+     into main, pushed - again undone and stopped if refused. The README
+     row's commits are the item's own last commit (and TheKernel's main):
+     known before the merge, so the row is written in the merge's own
+     commit - one commit per merge, not two (entry NNN);
+  5. the branches deleted, here and on the server.
 
 Only lines this branch added are renumbered: the rules in
 who-does-what.md and start-here.md say "entry `NNN`" as instructions, and
@@ -144,14 +145,18 @@ def main():
     # ---- 2. numbers -------------------------------------------------------
     readme_main = git("show", "origin/main:docs/journal/README.md")
     number = max(int(n) for n in re.findall(r"^\| (\d+) \|", readme_main, re.M)) + 1
-    work_main = git("show", "origin/main:docs/who-does-what.md")
+    # The work list: who-does-what.md and the item files (entry NNN).
+    listed = ["docs/who-does-what.md"] + [f for f in git("ls-tree", "--name-only", "origin/main", "docs/items/").split()
+                                          if f.endswith(".md")]
+    work_main = "\n".join(git("show", f"origin/main:{f}") for f in listed)
     next_k = max([int(n) for n in re.findall(r"^\| K(\d+) \|", work_main, re.M)] or [0]) + 1
     next_j = max([int(n) for n in re.findall(r"^\| J(\d+) \|", work_main, re.M)] or [0]) + 1
-    # New items: rows this branch added to who-does-what.md's tables that
+    # New items: rows this branch added to the work list's tables that
     # begin `| K?-word |` or `| J?-word |`. Not every K?-word on an added
     # line - an entry or a script that explains the convention names some.
     items = []
-    for line in added_lines(ROOT, "origin/main").get("docs/who-does-what.md", []):
+    added = added_lines(ROOT, "origin/main")
+    for line in [l for f, ls in added.items() if f == "docs/who-does-what.md" or f.startswith("docs/items/") for l in ls]:
         found = re.match(r"^\| ([KJ])\?-([a-z0-9-]+) \|", line)
         if found and found.groups() not in items:
             items.append(found.groups())
@@ -200,7 +205,10 @@ def main():
     readme = os.path.join(ROOT, "docs/journal/README.md")
     lines = open(readme).read().split("\n")
     last = max(i for i, l in enumerate(lines) if re.match(r"^\| \d+ \|", l))
-    lines.insert(last + 1, f"| {number} | [{row_text}]({numbered}) | written | (at merge) |")
+    # The item's own last commit: in main's history once this is pushed,
+    # and known now - the numbering commit's own name is not.
+    said = f"`{git('rev-parse', 'HEAD')[:8]}`" + (f" (TheKernel `{kernel_commit[:7]}`)" if kernel_moved else "")
+    lines.insert(last + 1, f"| {number} | [{row_text}]({numbered}) | written | {said} |")
     open(readme, "w").write("\n".join(lines))
     subprocess.run(["python3", "tools/testing-notes.py"], cwd=ROOT, check=True)
     lanes = subprocess.run(["python3", "tools/lanes-check.py"], cwd=ROOT, capture_output=True, text=True)
@@ -235,25 +243,7 @@ def main():
              + ". Merge TheTaaJ's main into the branch, test again, and run this again")
     say(f"TheTaaJ's main is {head[:8]}")
 
-    # ---- 5. the row's commits ---------------------------------------------
-    said = f"`{head[:8]}`" + (f" (TheKernel `{kernel_commit[:7]}`)" if kernel_moved else "")
-    for attempt in range(3):
-        git("fetch", "-q", "origin")
-        git("checkout", "-q", "--detach", "origin/main")
-        text = open(readme).read()
-        old = f"]({numbered}) | written | (at merge) |"
-        if old not in text:
-            stop("the README row is not where it was left")
-        open(readme, "w").write(text.replace(old, f"]({numbered}) | written | {said} |"))
-        git("commit", "-q", "-am", f"journal: entry {number}'s commits")
-        if subprocess.run(["git", "push", "-q", "origin", "HEAD:refs/heads/main"], cwd=ROOT,
-                          capture_output=True).returncode == 0:
-            break
-        git("reset", "-q", "--hard", "origin/main")
-    else:
-        stop("the row's commits could not be pushed; add them by hand")
-
-    # ---- 6. the branches --------------------------------------------------
+    # ---- 5. the branches --------------------------------------------------
     for cwd in (ROOT, KERNEL) if kernel_moved else (ROOT,):
         subprocess.run(["git", "push", "-q", "origin", "--delete", branch], cwd=cwd, capture_output=True)
         subprocess.run(["git", "branch", "-q", "-D", branch], cwd=cwd, capture_output=True)
