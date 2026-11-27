@@ -175,6 +175,7 @@ Each machine has its own table and changes only its own, so two machines never e
 | MaK-WSL/sched: K190, a child takes its parent's nice; K193 waits for the user's decision (per-CPU locks cost exact fairness) | `k190-nice-inherit` |
 | MaK-WSL/desktop: K114, the desktop benchmark; waits for the user's yes to merge | `k114-desktop-bench` |
 | MaK-WSL/desktop: K42, key events to windows (on top of K114: merged after it); waits for the user's yes to merge | `k42-key-events` |
+| MaK-WSL/desktop: K46, the scroll wheel and two more buttons (on top of K42: merged after it); waits for the user's yes to merge | `k46-wheel` |
 
 ### Now: TheJat-WSL
 
@@ -393,12 +394,12 @@ Era 19 (Desktop: applications people can use daily) builds on these, and points 
 |---|---|---|---|
 | K39 | The screen at the real PC's native resolution (UEFI GOP and VESA modes chosen well) | S | |
 | K40 | Windows: resize, minimise, a task bar | M | |
-| K41 | Copy and paste between windows | S | |
+| K41 | Copy and paste between windows | S | Waits for something to select text in - the editor's selection (J49) or the terminal's - to copy from |
 | K42 | Key up/down and lone Shift/Control reach windows | S | **Done (entry NNN)**: every key, down and up, to the window with the focus as `Event::KeyCode` (Linux's key codes, modifiers held), from all three keyboard drivers through the one decoder; the bytes unchanged. Left: the rest of K116 (repeat, a layout in user space, the terminal translating) |
 | K43 | A font with more than ASCII (UTF-8 drawn, not '?') | M | |
 | K44 | The terminal as its own program; pseudo-terminals | M | |
 | K45 | Job control: process groups, Ctrl+Z, `fg`, `bg`, SIGTSTP/SIGCONT | M | |
-| K46 | Scroll wheel, more mouse buttons, pointer acceleration | S | |
+| K46 | Scroll wheel, more mouse buttons, pointer acceleration | S | **Wheel and buttons done (entry NNN)**: the PS/2 mouse asked for its wheel (ID 4: wheel and five buttons), virtio and USB wheels and side buttons read; `Event::Wheel` to the window under the pointer. Left: acceleration - first the PC's GUI test on an absolute tablet (it checks exact pixels after relative moves) |
 
 ### Sound (Era 10's ground)
 
@@ -635,7 +636,7 @@ All of it stays out of the kernel: the compositor, window manager, toolkit, font
 | K117 | **Text for every language**: UTF-8 drawn with a TrueType rasteriser (our own, or a port), several sizes, fallback fonts; left-to-right first | L | With K43 |
 | K118 | **A toolkit to build applications with**: layout, text fields, lists, menus, scroll bars, dialogs, keyboard focus between widgets; its logic tested on the host as `gui` is | L | After K116 and K117 |
 | K119 | **A panel**: a launcher, the open windows, a clock; windows resized, minimised and maximised | M | With K40 |
-| K120 | **Copy and paste**: a clipboard service that hands a memory object from the copying program to the pasting one, only on the user's keys | S | With K41 |
+| K120 | **Copy and paste**: a clipboard service that hands a memory object from the copying program to the pasting one, only on the user's keys | S | With K41 Waits for something to select text in - the editor's selection (J49) or the terminal's - to copy from |
 | K121 | **The first applications**: a terminal window, a file manager, settings, an image viewer, a calculator; `edit` on the new toolkit | L | After K118; the file manager after Era 14's handles |
 | K122 | **PNG and JPEG** decoders as libraries in user space, fuzzed (K104) | M | For K121' image viewer and icons |
 | K123 | **virtio-gpu**: 2D first, scanout and vsync; the compositor using it where it is there | M | After K81. Real GPUs much later |

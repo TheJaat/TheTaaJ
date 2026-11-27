@@ -263,8 +263,8 @@ impl Driver {
                     in_use.repeat.held(in_use.keyboard.held(), taaj::ticks());
                 }
                 Kind::Mouse => {
-                    if let Some(Report::Relative { dx, dy, buttons }) = boot_mouse(data) {
-                        let message = Pointer { absolute: false, x: dx, y: dy, buttons };
+                    if let Some(Report::Relative { dx, dy, buttons, wheel }) = boot_mouse(data) {
+                        let message = Pointer { absolute: false, x: dx, y: dy, buttons, wheel: wheel.clamp(-128, 127) as i8 };
                         let _ = taaj::send(self.pointer_out, &message.to_message(), &[]);
                     }
                 }

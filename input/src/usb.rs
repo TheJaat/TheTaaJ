@@ -163,7 +163,11 @@ impl Repeat {
 /// buttons - is ignored).
 pub fn boot_mouse(report: &[u8]) -> Option<Report> {
     let &[buttons, dx, dy, ..] = report else { return None };
-    Some(Report::Relative { dx: i32::from(dx as i8), dy: i32::from(dy as i8), buttons: buttons & 0x07 })
+    // A fourth byte, when the mouse sends one, is its wheel (positive
+    // away from the user, as Linux counts); bits 3 and 4 of the first,
+    // its side buttons (K46).
+    let wheel = report.get(3).map_or(0, |&w| i32::from(w as i8));
+    Some(Report::Relative { dx: i32::from(dx as i8), dy: i32::from(dy as i8), buttons: buttons & 0x1F, wheel })
 }
 
 #[cfg(test)]
@@ -278,8 +282,8 @@ mod tests {
 
     #[test]
     fn a_mouse_report_is_a_relative_move() {
-        assert_eq!(boot_mouse(&[0x01, 5, 0xFB]), Some(Report::Relative { dx: 5, dy: -5, buttons: 1 }));
-        assert_eq!(boot_mouse(&[0xFF, 0x80, 0x7F, 3]), Some(Report::Relative { dx: -128, dy: 127, buttons: 7 }));
+        assert_eq!(boot_mouse(&[0x01, 5, 0xFB]), Some(Report::Relative { dx: 5, dy: -5, buttons: 1, wheel: 0 }));
+        assert_eq!(boot_mouse(&[0xFF, 0x80, 0x7F, 3]), Some(Report::Relative { dx: -128, dy: 127, buttons: 0x1F, wheel: 3 }));
         assert_eq!(boot_mouse(&[0x01, 5]), None);
     }
 }

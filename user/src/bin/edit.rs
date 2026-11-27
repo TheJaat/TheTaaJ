@@ -290,7 +290,7 @@ fn main() -> i64 {
             }
             // The editor works with the bytes (Key); the keys themselves
             // (K42) say nothing it needs.
-            Event::Opened { .. } | Event::Refused(_) | Event::KeyCode { .. } => {}
+            Event::Opened { .. } | Event::Refused(_) | Event::KeyCode { .. } | Event::Wheel { .. } => {}
         }
         if edit.editor.top() != top {
             top = edit.editor.top();

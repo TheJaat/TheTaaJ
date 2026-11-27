@@ -287,8 +287,10 @@ impl Device {
         }
         if matches!(self.kind, Kind::Mouse | Kind::Tablet) {
             let message = match self.pointer.feed(kind, code, value) {
-                Some(Report::Relative { dx, dy, buttons }) => Pointer { absolute: false, x: dx, y: dy, buttons },
-                Some(Report::Absolute { x, y, buttons }) => Pointer { absolute: true, x, y, buttons },
+                Some(Report::Relative { dx, dy, buttons, wheel }) => {
+                    Pointer { absolute: false, x: dx, y: dy, buttons, wheel: wheel.clamp(-128, 127) as i8 }
+                }
+                Some(Report::Absolute { x, y, buttons, wheel }) => Pointer { absolute: true, x, y, buttons, wheel: wheel.clamp(-128, 127) as i8 },
                 None => return,
             };
             let _ = taaj::send(pointer_out, &message.to_message(), &[]);

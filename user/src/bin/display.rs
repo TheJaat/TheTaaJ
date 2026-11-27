@@ -55,7 +55,7 @@ use abi::display::{Pointer as Report, ABSOLUTE_MAX};
 use abi::FramebufferInfo;
 use console::{font, Grid, MAX_COLUMNS, MAX_ROWS};
 use gfx::{Format, Image, Pointer, Rect, Surface};
-use gui::desktop::{Damage, Desktop, Id, Response, BORDER, LEFT, TITLE_HEIGHT, WINDOWS_MAX};
+use gui::desktop::{Damage, Desktop, Id, Part, Response, BORDER, LEFT, TITLE_HEIGHT, WINDOWS_MAX};
 use gui::protocol::{Event, Open, Request};
 use gui::toolkit::{draw_frame, Theme};
 use taaj::{println, Buffer, Error, Handle};
@@ -389,7 +389,7 @@ impl Mouse {
         }
         let pressed = report.buttons & !self.buttons;
         self.buttons = report.buttons;
-        for (bit, name) in [(1, "left"), (2, "right"), (4, "middle")] {
+        for (bit, name) in [(1, "left"), (2, "right"), (4, "middle"), (8, "side"), (16, "extra")] {
             if pressed & bit != 0 {
                 println!("[display] {name} button at ({}, {})", self.x, self.y);
             }
@@ -469,6 +469,19 @@ impl Server {
             None => {
                 self.key_times.key(bytes);
                 let _ = taaj::send(self.shell_keys, bytes, &[]);
+            }
+        }
+    }
+
+    /// The wheel turned (K46): told to the program whose window's content
+    /// is under the pointer - not the one with the focus, as desktops do,
+    /// so that a window behind can be scrolled without clicking it. The
+    /// terminal, under it, has nothing to scroll yet.
+    fn wheel(&mut self, x: i32, y: i32, clicks: i8) {
+        if let Some((id, Part::Content)) = self.desktop.at(x, y) {
+            let content = self.desktop.window(id).map(|window| window.content);
+            if let (Some(client), Some(content)) = (self.client(id), content) {
+                client.send(Event::Wheel { x: x - content.x, y: y - content.y, clicks });
             }
         }
     }
@@ -895,6 +908,9 @@ fn main() -> i64 {
                     moved = true;
                     let response = server.desktop.pointer(mouse.x, mouse.y, mouse.buttons);
                     server.apply(response);
+                    if report.wheel != 0 {
+                        server.wheel(mouse.x, mouse.y, report.wheel);
+                    }
                 }
                 if n == 9 && message[0] == abi::display::STALL {
                     let mut ticks = [0u8; 8];

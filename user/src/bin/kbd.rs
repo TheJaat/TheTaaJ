@@ -28,7 +28,7 @@
 #![no_main]
 
 use abi::display::Pointer;
-use input::pointer::{Ps2Mouse, Report};
+use input::pointer::{Ps2Format, Ps2Mouse, Report};
 use input::{terminal_bytes, Decoder, Key};
 use taaj::port::{in8, out8};
 use taaj::{println, Error};
@@ -63,6 +63,8 @@ const TO_MOUSE: u8 = 0xD4;
 /// Mouse commands, and its answer to each.
 const MOUSE_DEFAULTS: u8 = 0xF6;
 const MOUSE_REPORT: u8 = 0xF4;
+const MOUSE_SAMPLE_RATE: u8 = 0xF3;
+const MOUSE_GET_ID: u8 = 0xF2;
 const MOUSE_ACK: u8 = 0xFA;
 
 /// A missing controller never sets its status bits; give up after this
@@ -164,9 +166,51 @@ fn tell_mouse(byte: u8, early: &mut Early) -> bool {
     false
 }
 
-/// Sets the mouse to its defaults and asks it to report movement.
-fn start_mouse(early: &mut Early) -> bool {
-    tell_mouse(MOUSE_DEFAULTS, early) && tell_mouse(MOUSE_REPORT, early)
+/// The next byte from the mouse (keys that come meanwhile are kept).
+fn mouse_byte(early: &mut Early) -> Option<u8> {
+    for _ in 0..32 {
+        if !wait_readable() {
+            return None;
+        }
+        // SAFETY: the status says a byte is there; reading it takes it.
+        let (status, data) = unsafe { (in8(STATUS), in8(DATA)) };
+        if status & FROM_MOUSE == 0 {
+            early.keep(data);
+        } else {
+            return Some(data);
+        }
+    }
+    None
+}
+
+/// A "knock": three sample rates in a row, which a mouse with a wheel
+/// takes as a request to switch to its longer packets (K46).
+fn knock(rates: [u8; 3], early: &mut Early) -> bool {
+    rates.iter().all(|&rate| tell_mouse(MOUSE_SAMPLE_RATE, early) && tell_mouse(rate, early))
+}
+
+/// What the mouse says it is (its ID): 0 a plain one, 3 with a wheel, 4
+/// with a wheel and two more buttons.
+fn mouse_id(early: &mut Early) -> Option<u8> {
+    if tell_mouse(MOUSE_GET_ID, early) { mouse_byte(early) } else { None }
+}
+
+/// Sets the mouse to its defaults, asks for its wheel and side buttons
+/// (K46), and asks it to report movement. The packets it will send, or
+/// None if it did not answer.
+///
+/// The knocks are the IntelliMouse ones: 200, 100, 80 asks for the
+/// wheel (ID 3); then 200, 200, 80 for two more buttons too (ID 4). A
+/// mouse that knows neither ignores the rates, and still says 0.
+fn start_mouse(early: &mut Early) -> Option<Ps2Format> {
+    if !tell_mouse(MOUSE_DEFAULTS, early) {
+        return None;
+    }
+    let mut id = if knock([200, 100, 80], early) { mouse_id(early).unwrap_or(0) } else { 0 };
+    if id == 3 && knock([200, 200, 80], early) {
+        id = mouse_id(early).unwrap_or(id);
+    }
+    tell_mouse(MOUSE_REPORT, early).then(|| Ps2Format::from_id(id))
 }
 
 fn main() -> i64 {
@@ -191,22 +235,33 @@ fn main() -> i64 {
         return 3;
     }
     let mut early = Early { bytes: [0; 16], count: 0 };
-    if mouse && !start_mouse(&mut early) {
-        mouse = false;
-        if !init_controller(false) {
-            println!("[kbd] no PS/2 controller answered");
-            return 3;
+    let mut format = Ps2Format::Plain;
+    if mouse {
+        match start_mouse(&mut early) {
+            Some(answered) => format = answered,
+            None => {
+                mouse = false;
+                if !init_controller(false) {
+                    println!("[kbd] no PS/2 controller answered");
+                    return 3;
+                }
+            }
         }
     }
     // (The test scripts wait for this line's start before typing.)
     println!(
         "[kbd] PS/2 keyboard ready (driver in ring 3, process {}){}",
         taaj::process_id(),
-        if mouse { "; the mouse too" } else { "" }
+        match (mouse, format) {
+            (false, _) => "",
+            (true, Ps2Format::Plain) => "; the mouse too",
+            (true, Ps2Format::Wheel) => "; the mouse too, with a wheel",
+            (true, Ps2Format::Explorer) => "; the mouse too, with a wheel and five buttons",
+        }
     );
 
     let mut decoder = Decoder::new();
-    let mut packets = Ps2Mouse::new();
+    let mut packets = Ps2Mouse::with_format(format);
     let mut early = early.bytes.into_iter().take(early.count);
     loop {
         // Everything waiting first: the interrupt may have fired before
@@ -227,8 +282,9 @@ fn main() -> i64 {
                 }
             };
             if status & FROM_MOUSE != 0 {
-                if let (Some(Report::Relative { dx, dy, buttons }), Some(out)) = (packets.feed(byte), pointer_out) {
-                    let message = Pointer { absolute: false, x: dx, y: dy, buttons }.to_message();
+                if let (Some(Report::Relative { dx, dy, buttons, wheel }), Some(out)) = (packets.feed(byte), pointer_out) {
+                    let wheel = wheel.clamp(-128, 127) as i8;
+                    let message = Pointer { absolute: false, x: dx, y: dy, buttons, wheel }.to_message();
                     // A display that lags loses movements, not the driver.
                     let _ = taaj::send(out, &message, &[]);
                 }
