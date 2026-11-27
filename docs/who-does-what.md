@@ -131,7 +131,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| TheJat-WSL/ci: J92, a clean build from a fresh clone, in a container; K187, Miri | `j92-clean-build`, `k187-miri` |
+| TheJat-WSL/ci: J92, K187 and the night runner, waiting for the night test; next J93 | `j92-clean-build`, `k187-miri`, `night-test` |
 
 ## Where the items are
 
