@@ -12,7 +12,7 @@ use std::vec::Vec;
 fn start(sim: &Sim) -> Result<Controller<Sim>, &'static str> {
     let (base, size) = {
         let mut s = sim.0.borrow_mut();
-        (s.memory.as_mut_ptr(), s.memory.len())
+        (s.memory.base(), s.memory.len())
     };
     // SAFETY: the simulator's memory, which lives as long as `sim`.
     let dma = unsafe { Dma::new(base, PHYSICAL, size) };
