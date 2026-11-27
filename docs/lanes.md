@@ -130,7 +130,6 @@ Its files: the test rules of the `Makefile`, `kernel/kernel64/scripts/*-test.sh`
 | J95 | 2 | No flaky tests (every part 50 times) |
 | K50 | 2 | `bigmem64-test` once did not finish under KVM |
 | K52 | 2 | `aarch64-tcp-test`'s late segment |
-| J96 | 2 | Coverage of the host tests |
 | K189 | 2 | `cargo fuzz` on the host for every parser (K104's second half) |
 | K187 | 2 | Miri over the host tests (K112's second half) |
 | K136 | 3 | The log service |

@@ -1,0 +1,20 @@
+# Each crate's host tests cover at least this many percent of its lines
+# (tools/coverage.py; J96, journal entry NNN). Raised by
+# `make coverage-raise`; lowered only by hand, saying why.
+kernel/kernel64 91
+kernel/abi 87
+input 92
+console 78
+heap 99
+fileserver 88
+registry 100
+taajfs 95
+virtio 92
+ahci 97
+nvme 95
+acpi 100
+e1000 99
+usb 92
+net 97
+gfx 100
+gui 95
