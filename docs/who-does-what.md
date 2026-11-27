@@ -2,6 +2,8 @@
 
 TheTaaJ is built on three machines. All push to the same three repositories (TheTaaJ, TheKernel, TheBootloader), so this file says which machine does which work. Each machine reads it after every `git pull`.
 
+**Merging `main` stopped with a conflict in this file?** Since journal entry NNN the items are in `docs/items/`, a file per era. Run `python3 tools/work-list-move.py`: it moves your branch's changes to the files they are in now, and says what, if anything, is left for you.
+
 **A new session starts with `docs/start-here.md`** (everything it needs, so the user doesn't explain it again), then its lane in **`docs/lanes.md`**: from 2026-11-27 the eras are worked in fourteen lanes at once, a session per lane, spread over the three machines.
 
 **Names.** Every commit's author is `The-Jat` (rule 3); the machine is told apart by its name: **TheJat-VM**, **MaK-WSL**, **TheJat-WSL**. A machine that runs several sessions at once names each one after the machine and its lane, for example `MaK-WSL/kernel` or `TheJat-WSL/docs`. A journal entry says which machine or session wrote it ("Written on TheJat-WSL"), and "Now" lists each one's branch.
