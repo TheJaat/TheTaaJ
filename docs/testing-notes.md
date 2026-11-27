@@ -4496,3 +4496,49 @@ make schedbench64-test
 | `schedbench: inherit:` | `a child of a program at nice 7 runs at nice 7` |
 
 Automated: `make test64`
+
+---
+
+## 131 · One commit per merge: the README row's commits written in the merge itself
+
+[The entry](journal/131-one-merge-commit.md)
+
+From a session's tree:
+
+| Do | You should see |
+|---|---|
+| `sh tools/merge-item-test.sh /tmp/mit` | A and D `exit 0`; `second commits: 0`; `the row's commit ... is in main: yes`; B and C stopped as before |
+
+Automated: not part of `make test64` - it is the merge script's own test.
+
+---
+
+## 132 · The work list split: the rules in one file, the items a file per era, rows merged one at a time
+
+[The entry](journal/132-work-list-split.md)
+
+In a session's tree:
+
+| Do | You should see |
+|---|---|
+| `wc -l docs/who-does-what.md docs/items/*.md` | The hub about 173 lines; an era file 15 to 51 |
+| `python3 tools/lanes-check.py` | `every open item is in one lane` |
+| Two branches marking two neighbouring items done, merged | No conflict (with the driver set up: `git config --get merge.rows.driver`) |
+| A branch from before the split: `git merge origin/main`, then `python3 tools/work-list-move.py` | `changed docs/items/...`, `every change made`; `git diff --cached` shows the rows in their era files |
+
+Automated: not part of `make test64`; `merge-item-test.sh` covers the merge script on it.
+
+---
+
+## 133 · A clean build from a fresh clone, in a container, with one command
+
+[The entry](journal/133-clean-build.md)
+
+From any directory (it needs `uidmap`, `curl`, `gpgv`, and a range in `/etc/subuid`; about 35 minutes):
+
+| Do | You should see |
+|---|---|
+| `sh tools/clean-build.sh` | `ubuntu-base-24.04.5-base-amd64.tar.gz: signature and checksum good`, then after about 35 minutes `test64: all passed` and `a fresh clone of main builds and passes on a clean Ubuntu 24.04` |
+| `ls ~/.cache/taaj-clean-build/logs` | The run's log; `grep "LLVM:\|QEMU:" it` shows `18.1.3` and `-accel kvm` |
+
+Automated: not part of `make test64` - it runs `make test64` itself, in the clean machine.

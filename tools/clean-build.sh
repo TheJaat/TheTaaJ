@@ -1,6 +1,6 @@
 #!/bin/sh
 # clean-build.sh - TheTaaJ built and tested from a fresh clone, on a clean
-# Ubuntu 24.04, by its own setup script: one command (J92, journal entry NNN).
+# Ubuntu 24.04, by its own setup script: one command (J92, journal entry 133).
 #
 #   sh tools/clean-build.sh [DIR [REF]]
 #

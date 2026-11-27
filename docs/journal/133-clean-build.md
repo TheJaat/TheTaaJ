@@ -1,6 +1,6 @@
 # A clean build from a fresh clone, in a container, with one command
 
-*Journal entry #NNN · a tool (J92, and with it J54). Written on TheJat-WSL/ci. Our three machines have drifted from a new one: packages installed by hand over months, Rust toolchains, LLVM 18.1.3 unpacked in a home directory. Whether TheTaaJ builds and passes on a machine that has none of that, nobody knew (J54: "never tried"). Now `sh tools/clean-build.sh` makes a fresh Ubuntu 24.04, runs the setup script in it, clones TheTaaJ, and runs `make test64` - and the first run passed.*
+*Journal entry #133 · a tool (J92, and with it J54). Written on TheJat-WSL/ci. Our three machines have drifted from a new one: packages installed by hand over months, Rust toolchains, LLVM 18.1.3 unpacked in a home directory. Whether TheTaaJ builds and passes on a machine that has none of that, nobody knew (J54: "never tried"). Now `sh tools/clean-build.sh` makes a fresh Ubuntu 24.04, runs the setup script in it, clones TheTaaJ, and runs `make test64` - and the first run passed.*
 
 ## Why
 

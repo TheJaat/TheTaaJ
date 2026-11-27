@@ -2,7 +2,7 @@
 
 TheTaaJ is built on three machines. All push to the same three repositories (TheTaaJ, TheKernel, TheBootloader), so this file says which machine does which work. Each machine reads it after every `git pull`.
 
-**Merging `main` stopped with a conflict in this file?** Since journal entry NNN the items are in `docs/items/`, a file per era. Run `python3 tools/work-list-move.py`: it moves your branch's changes to the files they are in now, and says what, if anything, is left for you.
+**Merging `main` stopped with a conflict in this file?** Since journal entry 132 the items are in `docs/items/`, a file per era. Run `python3 tools/work-list-move.py`: it moves your branch's changes to the files they are in now, and says what, if anything, is left for you.
 
 **A new session starts with `docs/start-here.md`** (everything it needs, so the user doesn't explain it again), then its lane in **`docs/lanes.md`**: from 2026-11-27 the eras are worked in fourteen lanes at once, a session per lane, spread over the three machines.
 
@@ -33,7 +33,7 @@ Every design, review and item is judged against these. When a choice helps one a
 
 ## How we work
 
-**This file and `docs/items/` are the one place for the work items** (the work list). Every item, its owner, its order, what it depends on and whether it is done is written there and nowhere else: the rules and who is doing what now here, the items in a file per era ("Where the items are", below; journal entry NNN). Read this file and your own era's; two branches that change different rows of one table merge without a conflict (`tools/merge-rows.py`). Each machine reads it after every `git pull` and changes it in the same branch as the work. How an item was built goes in its journal entry; this file only points to it.
+**This file and `docs/items/` are the one place for the work items** (the work list). Every item, its owner, its order, what it depends on and whether it is done is written there and nowhere else: the rules and who is doing what now here, the items in a file per era ("Where the items are", below; journal entry 132). Read this file and your own era's; two branches that change different rows of one table merge without a conflict (`tools/merge-rows.py`). Each machine reads it after every `git pull` and changes it in the same branch as the work. How an item was built goes in its journal entry; this file only points to it.
 
 ### Rules for every machine
 
@@ -135,7 +135,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 ## Where the items are
 
-The items are kept in a file per era (journal entry NNN), so a session reads its own and two lanes rarely change the same file. **Every row is still one item**: its number, owner, size and notes, and "**Done (entry N)**" when it is. The machines - hardware, measured times, the order decided for each - are in [`docs/machines.md`](machines.md).
+The items are kept in a file per era (journal entry 132), so a session reads its own and two lanes rarely change the same file. **Every row is still one item**: its number, owner, size and notes, and "**Done (entry N)**" when it is. The machines - hardware, measured times, the order decided for each - are in [`docs/machines.md`](machines.md).
 
 | File | What | Items |
 |---|---|---|
