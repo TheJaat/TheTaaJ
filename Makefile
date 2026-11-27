@@ -888,8 +888,15 @@ HOST_TRIPLE = $(shell PATH="$(PATH)" rustc -vV | sed -n 's/^host: //p')
 
 # Every unsafe block, impl and public unsafe fn says why it is sound
 # (K112): clippy's two lints for it, as errors, over every crate and CPU.
-unsafe-check:
+# The kernel embeds the user programs (programs.rs), so linting it needs
+# them built - in a fresh tree too, not only inside test64 (entry 135).
+unsafe-check: user64 user-aarch64
 	@USER_A64_BINS="$(USER_A64_BINS)" sh tools/unsafe-check.sh
+
+# The host tests under Miri, every crate with unsafe in it (K187): a
+# nightly job - minutes to an hour - not part of test64.
+miri:
+	@sh tools/miri-check.sh
 
 kernel64-test:
 	cd $(KERNEL64_DIR) && cargo test --lib --target $(HOST_TRIPLE)
