@@ -1,6 +1,6 @@
 # A child takes its parent's nice
 
-*Journal entry #NNN · a step, MaK-WSL/sched's K190. Written on MaK-WSL/sched. Since entry 124 a program could make itself less important (`nice 10`), but whatever it started began at 0 again. Now a child starts at its parent's priority, the way it already takes its parent's memory limit (entry 096), and never above its own ceiling.*
+*Journal entry #130 · a step, MaK-WSL/sched's K190. Written on MaK-WSL/sched. Since entry 124 a program could make itself less important (`nice 10`), but whatever it started began at 0 again. Now a child starts at its parent's priority, the way it already takes its parent's memory limit (entry 096), and never above its own ceiling.*
 
 ## Why
 

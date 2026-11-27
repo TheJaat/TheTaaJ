@@ -4480,3 +4480,19 @@ make schedbench64-test
 | `schedbench64-test passed` | |
 
 Automated: `make test64`
+
+---
+
+## 130 · A child takes its parent's nice
+
+[The entry](journal/130-nice-inherit.md)
+
+```
+make schedbench64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `schedbench: inherit:` | `a child of a program at nice 7 runs at nice 7` |
+
+Automated: `make test64`
