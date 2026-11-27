@@ -17,6 +17,20 @@ struct timeval {
  * NULL). Returns 0. */
 int gettimeofday(struct timeval *tv, void *tz);
 
+/* Interval timers (libc's timers.rs): ITIMER_REAL only, SIGALRM after
+ * it_value and then every it_interval, exact to the kernel's one-shot
+ * timer. The same alarm as alarm() and timer_create's: setting one
+ * replaces the others. ITIMER_VIRTUAL and ITIMER_PROF are EINVAL. */
+#define ITIMER_REAL    0
+#define ITIMER_VIRTUAL 1
+#define ITIMER_PROF    2
+struct itimerval {
+    struct timeval it_interval;
+    struct timeval it_value;
+};
+int setitimer(int which, const struct itimerval *new_value, struct itimerval *old_value);
+int getitimer(int which, struct itimerval *now);
+
 /* Marks the file changed now, with times null; with times, fails with
  * EPERM (sys/stat.h says why). */
 int utimes(const char *path, const struct timeval times[2]);

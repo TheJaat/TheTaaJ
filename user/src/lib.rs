@@ -405,6 +405,13 @@ pub fn sleep_unless_signalled(ticks: u64) -> bool {
     abi::decode(syscall(call::SLEEP, ticks, 0, 0)).is_ok()
 }
 
+/// Sleeps until the monotonic clock (`monotonic_ns`) reads at least
+/// `nanoseconds`, to the nanosecond the timer gives (journal entry NNN).
+/// False if a signal cut it short (its handler has run by now).
+pub fn sleep_until_ns(nanoseconds: u64) -> bool {
+    abi::decode(syscall(call::SLEEP_UNTIL, nanoseconds, 0, 0)).is_ok()
+}
+
 /// A call that waits, made again for as long as a signal cuts it short.
 ///
 /// A signal a program catches ends whatever wait one of its threads is
@@ -761,6 +768,17 @@ pub fn process_notify(process: Handle, signal: u64) -> Result<(), Error> {
 /// set before (0: none); the nanoseconds the one before had left.
 pub fn alarm(nanoseconds: u64) -> Result<u64, Error> {
     abi::decode(syscall(call::ALARM, nanoseconds, 0, 0))
+}
+
+/// `alarm`, and then again every `interval` nanoseconds if that is not 0
+/// (journal entry NNN); the nanoseconds the one before had left.
+pub fn alarm_every(nanoseconds: u64, interval: u64) -> Result<u64, Error> {
+    abi::decode(syscall(call::ALARM, nanoseconds, interval, 0))
+}
+
+/// The nanoseconds this process's alarm has left, or 0: nothing changes.
+pub fn alarm_left() -> u64 {
+    abi::decode(syscall(call::ALARM, 0, 0, 1)).unwrap_or(0)
 }
 
 /// Sends `signal` to `process` (a handle with the KILL right, or
