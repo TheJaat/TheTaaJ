@@ -4761,3 +4761,19 @@ make run64
 | Watch the screen while it boots | Stage 2's few lines - the mount, the kernel loading - not a scroll of file names |
 
 Automated: `make test64`
+
+---
+
+## 145 · Using TheTaaJ: a page for the people who run it
+
+[The entry](journal/145-using-taaj.md)
+
+```
+make run64
+```
+
+| Do | You should see |
+|---|---|
+| Follow `docs/using-taaj.md` from the top | Each command doing what the page says |
+
+Automated: none - a document. `make test64` checks the commands it shows, among much else.

@@ -1,6 +1,6 @@
 # Using TheTaaJ: a page for the people who run it
 
-*Journal entry #NNN · a small step, E8 (either machine's list), done by MaK-WSL. Written on MaK-WSL. Everything written about TheTaaJ until now was for the people building it: the journal, the testing notes, the work plan. `docs/using-taaj.md` is for someone who has just typed `make run64`: what to type next, and what each part does.*
+*Journal entry #145 · a small step, E8 (either machine's list), done by MaK-WSL. Written on MaK-WSL. Everything written about TheTaaJ until now was for the people building it: the journal, the testing notes, the work plan. `docs/using-taaj.md` is for someone who has just typed `make run64`: what to type next, and what each part does.*
 
 ## Why
 
