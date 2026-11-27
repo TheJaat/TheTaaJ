@@ -24,7 +24,7 @@ It does, stopping at the first thing that fails:
      into main, pushed - again undone and stopped if refused. The README
      row's commits are the item's own last commit (and TheKernel's main):
      known before the merge, so the row is written in the merge's own
-     commit - one commit per merge, not two (entry NNN);
+     commit - one commit per merge, not two (entry 131);
   5. the branches deleted, here and on the server.
 
 Only lines this branch added are renumbered: the rules in
@@ -145,7 +145,7 @@ def main():
     # ---- 2. numbers -------------------------------------------------------
     readme_main = git("show", "origin/main:docs/journal/README.md")
     number = max(int(n) for n in re.findall(r"^\| (\d+) \|", readme_main, re.M)) + 1
-    # The work list: who-does-what.md and the item files (entry NNN).
+    # The work list: who-does-what.md and the item files (entry 132).
     listed = ["docs/who-does-what.md"] + [f for f in git("ls-tree", "--name-only", "origin/main", "docs/items/").split()
                                           if f.endswith(".md")]
     work_main = "\n".join(git("show", f"origin/main:{f}") for f in listed)
@@ -159,7 +159,7 @@ def main():
     for line in [l for f, ls in added.items() if f == "docs/who-does-what.md" or f.startswith("docs/items/") for l in ls]:
         found = re.match(r"^\| ([KJ])\?-([a-z0-9-]+) \|", line)
         # Only items main does not list yet: a row moved from one file of
-        # the list to another (entry NNN's split) is not new, and keeps
+        # the list to another (entry 132's split) is not new, and keeps
         # its name until its own branch numbers it.
         if found and re.search(rf"^\| {found.group(1)}\?-{re.escape(found.group(2))} \|", work_main, re.M):
             continue
@@ -207,7 +207,7 @@ def main():
         text = text.replace(old, new)
     open(path, "w").write(text)
     # Every file whose added lines it numbered - a script's comment saying
-    # "journal entry NNN" too, not only docs/ (until entry NNN, those were
+    # "journal entry 131" too, not only docs/ (until entry 131, those were
     # numbered but left out of the commit).
     numbered_files = renumber(ROOT, "origin/main", number, renames)
     readme = os.path.join(ROOT, "docs/journal/README.md")
