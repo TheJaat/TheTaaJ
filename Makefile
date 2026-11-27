@@ -596,6 +596,17 @@ user64:
 	@echo "Building the user programs..."
 	cd user && cargo build --release
 
+# libc.a is built again only when something it is made of is newer than
+# its last build (FILE.stamp): the Rust half (cargo decides that), the C
+# files and headers, this Makefile (the flags), thin-archive.py. And
+# FILE.new replaces FILE only if it differs, so that a library that comes
+# out byte for byte the same keeps its old time, and nothing linked with
+# it - LLVM's tools, tcc, every C program - is linked again. Before,
+# every make test64 built both libraries again, 8 and 16 seconds, and
+# relinked all that (journal entry NNN).
+libc-stale = [ ! -f $(1).stamp ] || [ -n "$$(find $(LIBC_DIR)/c $(LIBC_DIR)/include $(2) Makefile tools/thin-archive.py -newer $(1).stamp -print -quit)" ]
+replace-if-changed = if cmp -s $(1).new $(1); then rm -f $(1).new; else mv -f $(1).new $(1); fi; touch $(1).stamp
+
 # The C library, and the C programs in libc/programs: each one file,
 # compiled and linked with libc.a. To build one of your own:
 #   make cprogs64 C_PROGRAMS=name      (with libc/programs/name.c)
@@ -604,15 +615,18 @@ libc64:
 	@echo "Building the C library..."
 	cd $(LIBC_DIR) && cargo build --release
 ifeq ($(HAVE_CC),yes)
-	@mkdir -p $(C_BIN)/lib/libm
-	@for part in $(LIBC_C); do \
-	    echo "  CC      libc/c/$$part.c"; \
-	    clang $(TAAJ_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -c $(LIBC_DIR)/c/$$part.c -o $(C_BIN)/lib/$$part.o || exit 1; \
-	done
-	@cp $(LIBC_RUST_A) $(LIBC_A)
-	@$(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(LIBC_A)
-	@ar rs $(LIBC_A) $(addprefix $(C_BIN)/lib/,$(addsuffix .o,$(LIBC_C)))
-	@python3 -I tools/thin-archive.py $(LLVM_NM) $(LLVM_AR) $(LIBC_A)
+	@if $(call libc-stale,$(LIBC_A),$(LIBC_RUST_A)); then \
+	    mkdir -p $(C_BIN)/lib/libm && \
+	    for part in $(LIBC_C); do \
+	        echo "  CC      libc/c/$$part.c"; \
+	        clang $(TAAJ_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -c $(LIBC_DIR)/c/$$part.c -o $(C_BIN)/lib/$$part.o || exit 1; \
+	    done && \
+	    cp $(LIBC_RUST_A) $(LIBC_A).new && \
+	    $(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(LIBC_A).new && \
+	    ar rs $(LIBC_A).new $(addprefix $(C_BIN)/lib/,$(addsuffix .o,$(LIBC_C))) && \
+	    python3 -I tools/thin-archive.py $(LLVM_NM) $(LLVM_AR) $(LIBC_A).new && \
+	    { $(call replace-if-changed,$(LIBC_A)); }; \
+	else echo "  libc.a is up to date"; fi
 endif
 
 cprogs64: libc64
@@ -1077,14 +1091,17 @@ TAAJ_A64_LDFLAGS = $(TAAJ_LDFLAGS) -z max-page-size=4096
 cprogs-aarch64:
 ifeq ($(HAVE_CC),yes)
 	cd $(LIBC_DIR) && cargo build --release --target $(KERNEL_A64_TARGET)
-	@mkdir -p $(C_A64_BIN)/lib/libm
-	@for part in $(LIBC_C); do \
-	    clang $(TAAJ_A64_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -c $(LIBC_DIR)/c/$$part.c -o $(C_A64_BIN)/lib/$$part.o || exit 1; \
-	done
-	@cp $(LIBC_A64_RUST) $(C_A64_BIN)/libc.a
-	@$(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(C_A64_BIN)/libc.a
-	@ar rs $(C_A64_BIN)/libc.a $(addprefix $(C_A64_BIN)/lib/,$(addsuffix .o,$(LIBC_C)))
-	@python3 -I tools/thin-archive.py $(LLVM_NM) $(LLVM_AR) $(C_A64_BIN)/libc.a
+	@if $(call libc-stale,$(C_A64_BIN)/libc.a,$(LIBC_A64_RUST)); then \
+	    mkdir -p $(C_A64_BIN)/lib/libm && \
+	    for part in $(LIBC_C); do \
+	        clang $(TAAJ_A64_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -c $(LIBC_DIR)/c/$$part.c -o $(C_A64_BIN)/lib/$$part.o || exit 1; \
+	    done && \
+	    cp $(LIBC_A64_RUST) $(C_A64_BIN)/libc.a.new && \
+	    $(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(C_A64_BIN)/libc.a.new && \
+	    ar rs $(C_A64_BIN)/libc.a.new $(addprefix $(C_A64_BIN)/lib/,$(addsuffix .o,$(LIBC_C))) && \
+	    python3 -I tools/thin-archive.py $(LLVM_NM) $(LLVM_AR) $(C_A64_BIN)/libc.a.new && \
+	    { $(call replace-if-changed,$(C_A64_BIN)/libc.a); }; \
+	else echo "  libc.a (AArch64) is up to date"; fi
 	@for program in $(C_A64_PROGRAMS); do \
 	    echo "  CC      $$program.c (AArch64)"; \
 	    clang $(TAAJ_A64_CFLAGS) -c $(LIBC_DIR)/programs/$$program.c -o $(C_A64_BIN)/$$program.o || exit 1; \
