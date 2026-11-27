@@ -34,7 +34,9 @@ The user's second rule: document everything, so that in the morning we can look 
 - **`test64-shared` relinks LLVM's tools every run** (entry 117): each branch pays it again. A stamp file per tool, rebuilt only when its inputs change.
 - **A stacked branch builds everything again** although it differs from the one before by a few files: incremental builds in the night tree help already; a measure of how long each branch's build part takes (the stamps) will say how much is left.
 
+## How I checked it
 
+- The report and the stamped log with a stand-in test that prints, sleeps 2 s and fails `k187-miri`: stamps `[00:00]`, `[00:02]`, the CPU line, and the **For the morning** summary; and, with the server stubbed, the row `fixed in ... by: COMMIT MESSAGE` before the passing try.
 - A queue of three stacked branches, a stand-in test failing `k187-miri`, `--wait 1`: `j92-clean-build` passed; `k187-miri` FAILED; `waiting for a fix (up to 1 min)`; `no fix pushed for 1 min`; `night-test` not run.
 - The runner with the server stubbed, `k187-miri`'s fix arriving during the wait: the tests ran in exactly the user's order - `j92-clean-build` pass, `k187-miri` FAIL, `k187-miri` (try 2) pass, `night-test` pass. Nothing was tested on a failed base.
 - A first try said `passed` for the branch that should fail: the stand-in command got the make flags as arguments, git refused them, and `!` turned the error into a pass. A stand-in must take its own arguments (`sh -c '...' -`).
