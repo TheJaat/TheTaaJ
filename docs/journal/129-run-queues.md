@@ -1,6 +1,6 @@
 # A run queue per CPU (part 1): where a thread waits, and who takes it
 
-*Journal entry #NNN · a step, MaK-WSL/sched's K68, part 1, with the placing half of K101. Written on MaK-WSL/sched. Until now every runnable thread waited in one queue. Now each CPU has its own: a woken thread waits at the CPU that is to take it, or at the one it last ran on; an idle CPU takes work from a busy one's queue; and busy threads still share the CPUs exactly fairly. Still under the one lock: splitting it is part 2 (K193).*
+*Journal entry #129 · a step, MaK-WSL/sched's K68, part 1, with the placing half of K101. Written on MaK-WSL/sched. Until now every runnable thread waited in one queue. Now each CPU has its own: a woken thread waits at the CPU that is to take it, or at the one it last ran on; an idle CPU takes work from a busy one's queue; and busy threads still share the CPUs exactly fairly. Still under the one lock: splitting it is part 2 (K193).*
 
 ## Why
 

@@ -256,7 +256,7 @@ The real-PC items need the user at the PC (U4): done whenever the user is there,
 | K78 | 2 | USB as a bus |
 | K5 | 2 | Intel I219 |
 | K6 | 2 | Realtek |
-| K79 | 2 | MSI-X queues (K68 done, entry NNN) |
+| K79 | 2 | MSI-X queues (K68 done, entry 129) |
 | K22 | 2 | A transmit-interrupt serial writer |
 | K13 | 2 | The AML interpreter |
 | K14 | 2 | `_PRT` |

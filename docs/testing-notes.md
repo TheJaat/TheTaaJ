@@ -4463,3 +4463,20 @@ make smp64-test
 | `[selftest] late interrupts` in `build/smp64-*.out` | `35 ms without any, then 1 came; the tick count moved on by 3` (or 4): the time kept, however late the interrupt |
 
 Automated: `make test64`
+
+---
+
+## 129 · A run queue per CPU (part 1): where a thread waits, and who takes it
+
+[The entry](journal/129-run-queues.md)
+
+```
+make schedbench64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `4 busy programs, 2 s: CPU each` | On 2 CPUs about 1000 ms each, all four - not three at about 830 and one at 1500 |
+| `schedbench64-test passed` | |
+
+Automated: `make test64`
