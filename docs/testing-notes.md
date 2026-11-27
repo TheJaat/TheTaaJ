@@ -4496,3 +4496,17 @@ make schedbench64-test
 | `schedbench: inherit:` | `a child of a program at nice 7 runs at nice 7` |
 
 Automated: `make test64`
+
+---
+
+## 131 · One commit per merge: the README row's commits written in the merge itself
+
+[The entry](journal/131-one-merge-commit.md)
+
+From a session's tree:
+
+| Do | You should see |
+|---|---|
+| `sh tools/merge-item-test.sh /tmp/mit` | A and D `exit 0`; `second commits: 0`; `the row's commit ... is in main: yes`; B and C stopped as before |
+
+Automated: not part of `make test64` - it is the merge script's own test.

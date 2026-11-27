@@ -24,7 +24,7 @@ It does, stopping at the first thing that fails:
      into main, pushed - again undone and stopped if refused. The README
      row's commits are the item's own last commit (and TheKernel's main):
      known before the merge, so the row is written in the merge's own
-     commit - one commit per merge, not two (entry NNN);
+     commit - one commit per merge, not two (entry 131);
   5. the branches deleted, here and on the server.
 
 Only lines this branch added are renumbered: the rules in
@@ -207,7 +207,7 @@ def main():
         text = text.replace(old, new)
     open(path, "w").write(text)
     # Every file whose added lines it numbered - a script's comment saying
-    # "journal entry NNN" too, not only docs/ (until entry NNN, those were
+    # "journal entry 131" too, not only docs/ (until entry 131, those were
     # numbered but left out of the commit).
     numbered_files = renumber(ROOT, "origin/main", number, renames)
     readme = os.path.join(ROOT, "docs/journal/README.md")
