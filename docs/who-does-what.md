@@ -178,7 +178,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| TheJat-WSL/ci: next in the lane (J51 waits for U7, J92 for U8) | - |
+| TheJat-WSL/ci: J92, a clean build from a fresh clone, in a container; K187, Miri | `j92-clean-build`, `k187-miri` |
 
 ## The decided order
 
@@ -293,10 +293,10 @@ The order matters here: each item is needed by the ones after it.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J51 | Test programs out of the kernel image (onto the test disk) | M | The kernel image has ~680 KiB left under 3 MiB |
+| J51 | Test programs out of the kernel image (onto the test disk) | M | The kernel image has ~500 KiB left under 3 MiB (entry 122). **Not needed if K130 comes** (U7, the user's decision, 2026-11-27): the every-boot self-tests stay in the kernel |
 | J52 | A test that fails when rule 1 or rule 3 of `threads.rs` is broken | S | **Done (entry 119)**: rule 1 checked at every switch (the lock still held where it is released), rule 3 by the threads self-test (a waiter woken before it waits is still in its queue); each broken on purpose panics. Found and fixed with it: a panic on a machine with more CPUs than the kernel uses was a triple fault (the stopping NMI reached the CPUs left asleep); `fault-test.sh`'s new `page@20` checks it |
 | J53 | A test for the ticks mutation from entry 097 (late timer interrupts) | S | **Done (entry 128)**: the late-interrupts self-test (35 ms with interrupts off); entry 097's mutation now caught on x86 (on AArch64 it changes nothing) |
-| J54 | A fresh `git clone --recurse-submodules` builds and passes (in a clean container) | S | Never tried |
+| J54 | A fresh `git clone --recurse-submodules` builds and passes (in a clean container) | S | **Done (entry NNN)**, by J92 |
 | J55 | Programs moved into `/bin` on the run disks (libc's exec and the shell both look there, entries 100 and 101) | S | The disk recipes and every test put programs in the root and look for them there |
 | J56 | zlib (and later other libraries) installed on TheTaaJ's disk with its header, for programs compiled there | S | With step E, when there is a place for libraries on the disk |
 | J57 | exec without the go-between: signals sent to it passed on to the program it started, and a keyboard handed on | M | Entry 100's exec is spawn-and-wait |
@@ -779,7 +779,7 @@ What is missing: **no CI** - tests run only when someone runs them, on their own
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J92 | **A clean build from a fresh clone**, in a container, with one documented command; the setup script (`tools/setup-wsl.sh`) checked by it | S | Is J54. First |
+| J92 | **A clean build from a fresh clone**, in a container, with one documented command; the setup script (`tools/setup-wsl.sh`) checked by it | S | **Done (entry NNN)**: `sh tools/clean-build.sh` - a fresh Ubuntu 24.04 in a rootless container, setup-wsl.sh from GitHub, a fresh clone over HTTPS, `make test64`; passed the first time |
 | J93 | **Our own CI**: a machine of ours (TheJat-WSL suits it) that builds every pushed branch, runs the host tests and `make test64`, and posts the result where the branches are; no outside service gets the code to run | M | After J92. Never builds anyone else's pull request (rule) |
 | J94 | **A faster `make test64`**: parts run in parallel up to the machine's CPUs, one disk image built once and shared, the boot shortened; measured before and after | M | **Done (entry 117)**: the shared builds not run again in the test phase (`make -o`), so LLVM's tools are linked once per run, not twice - 22% less CPU; `smp64-test` alone first; test disks `cache=unsafe`, Ctrl+C after a started program - two failures under load gone. Left: LLVM's tools still linked on every run in `test64-shared`; the suite is now bound by the machine's CPUs, not by waits - see the entry |
 | J95 | **No flaky tests**: every part run 50 times in CI; each that ever fails is fixed or its limits measured again (K50, K52) | M | After J93 |
@@ -925,8 +925,8 @@ All of it stays out of the kernel but the random generator (there already) and s
 | U4 | Be at the real PC for K1 (R7) | |
 | U5 | Era 8, the AI engine: agree its plan (`docs/ai-assistant.md`) before any work | Then it splits: the engine (SIMD, tensors, GGUF) suits TheJat-VM's long runs; testing speed on the real CPU suits MaK-WSL |
 | U6 | Raspberry Pi and RISC-V: only if you want them | |
-| U7 | **J51: the kernel's program self-tests, at every boot or only in tests?** The test programs (about 300 KiB of the image's ~580 KiB left under 3 MiB) are there for `selftest::user`, `ipc`, `files` and `kill`, which check at every boot, before anything else runs, that no frame and no channel leaks. On the test disk they would run as a user program in the tests only, in a live system (other services allocate too), and that program needs a new `with system` grant to read `SYSTEM_INFO`. Or leave it to K130 (the `boot` lane), which ends the 3 MiB wall | Asked by TheJat-WSL/ci (entry 117's lane); `ci` goes on with its second wave meanwhile |
-| U8 | **J92 needs a container on TheJat-WSL**: either `sudo apt install uidmap` (then `tools/clean-build.sh` can make a rootless Ubuntu 24.04 container with `unshare`, no Docker), or Docker Desktop's WSL integration switched on for this distro | Asked by TheJat-WSL/ci; J93 (our CI) waits for J92 |
+| U7 | **J51: the kernel's program self-tests, at every boot or only in tests?** The test programs (about 300 KiB of the image's ~580 KiB left under 3 MiB) are there for `selftest::user`, `ipc`, `files` and `kill`, which check at every boot, before anything else runs, that no frame and no channel leaks. On the test disk they would run as a user program in the tests only, in a live system (other services allocate too), and that program needs a new `with system` grant to read `SYSTEM_INFO`. Or leave it to K130 (the `boot` lane), which ends the 3 MiB wall | **Decided (2026-11-27): wait for K130**, which ends the 3 MiB wall; the every-boot checks stay. J51 only if K130 does not come |
+| U8 | **J92 needs a container on TheJat-WSL**: either `sudo apt install uidmap` (then `tools/clean-build.sh` can make a rootless Ubuntu 24.04 container with `unshare`, no Docker), or Docker Desktop's WSL integration switched on for this distro | **Done (2026-11-27)**: uidmap installed on TheJat-WSL; J92 uses it |
 
 ## Later eras
 
