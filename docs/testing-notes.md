@@ -4626,3 +4626,18 @@ In a session's tree, after a `make test64`:
 | `make test64-again` again | `test64-again: nothing failed in the last make test64` |
 
 Automated: a part of `make test64` (`coverage`); part two is `make test64` itself.
+
+---
+
+## 138 · make test64 no longer rebuilds what has not changed: 51 s to 17 s
+
+[The entry](journal/138-no-rebuild.md)
+
+In a session's tree:
+
+| Do | You should see |
+|---|---|
+| `make test64-shared` twice | The second: `libc.a is up to date`, `libc.a (AArch64) is up to date`, `tcc (x86_64) is up to date`, `tcc (aarch64) is up to date`, no `LD` lines, about 17 s on TheJat-WSL |
+| `touch libc/c/stdio.c`, `make libc64` | `CC libc/c/...` and thin-archive again; `stat build/c/libc.a` shows its old time |
+
+Automated: `make test64` runs it first.

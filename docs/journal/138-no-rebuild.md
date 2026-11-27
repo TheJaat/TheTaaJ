@@ -1,6 +1,6 @@
 # make test64 no longer rebuilds what has not changed: 51 s to 17 s
 
-*Journal entry #NNN · a build fix (J94's last open point). Written on TheJat-WSL/ci. Entry 117 found LLVM's tools linked again on every `make test64`, and left it. The cause was not LLVM: the C library was built again, from scratch, on every run - so everything linked with it was older than it, and was linked again too. Now a `test64-shared` with nothing to do takes 17 seconds instead of 51, on every run of `make test64` and `make test64-again`, on every machine.*
+*Journal entry #138 · a build fix (J94's last open point). Written on TheJat-WSL/ci. Entry 117 found LLVM's tools linked again on every `make test64`, and left it. The cause was not LLVM: the C library was built again, from scratch, on every run - so everything linked with it was older than it, and was linked again too. Now a `test64-shared` with nothing to do takes 17 seconds instead of 51, on every run of `make test64` and `make test64-again`, on every machine.*
 
 ## Why
 

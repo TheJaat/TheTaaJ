@@ -603,7 +603,7 @@ user64:
 # out byte for byte the same keeps its old time, and nothing linked with
 # it - LLVM's tools, tcc, every C program - is linked again. Before,
 # every make test64 built both libraries again, 8 and 16 seconds, and
-# relinked all that (journal entry NNN).
+# relinked all that (journal entry 138).
 libc-stale = [ ! -f $(1).stamp ] || [ -n "$$(find $(LIBC_DIR)/c $(LIBC_DIR)/include $(2) Makefile tools/thin-archive.py -newer $(1).stamp -print -quit)" ]
 replace-if-changed = if cmp -s $(1).new $(1); then rm -f $(1).new; else mv -f $(1).new $(1); fi; touch $(1).stamp
 
