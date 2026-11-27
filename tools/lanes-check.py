@@ -4,7 +4,7 @@
     python3 tools/lanes-check.py
 
 Reads the item tables of the work list - docs/who-does-what.md and
-docs/items/*.md (journal entry NNN) - (rows whose first cell is
+docs/items/*.md (journal entry 132) - (rows whose first cell is
 an item such as K60, J59 or E1; an item is done when its Notes say
 "**Done") and the lane tables of docs/lanes.md (the first cell of each
 row under a "### `lane`" heading), and says:

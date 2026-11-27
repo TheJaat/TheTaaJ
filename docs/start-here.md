@@ -41,7 +41,7 @@ A hobby operating system, built to learn every concept deeply. Each step becomes
 | `ports/` | Ported software: LLVM 18 (with Clang and lld), libc++, zlib, tcc, make |
 | `tools/` | Build and test helpers: `tfstool-rs` (TaajFS images on the host), `testing-notes.py`, `lanes-check.py`, `new-session.sh`, `setup-wsl.sh`, `race-hunt.sh` |
 | `docs/who-does-what.md` | **The work list's rules**, who does what now, what waits for the user, and an index of the items |
-| `docs/items/*.md` | **The items**, a file per era: every item, its owner, order, dependencies and status (journal entry NNN) |
+| `docs/items/*.md` | **The items**, a file per era: every item, its owner, order, dependencies and status (journal entry 132) |
 | `docs/machines.md` | The machines: hardware, measured times, the order decided for each |
 | `docs/lanes.md` | Which session does which items, in which order |
 | `docs/journal/` | One entry per change, `NNN-name.md`; `README.md` lists them |
@@ -137,7 +137,7 @@ Each session has its own tree (rule 13), with its own `build/` and submodules, a
 6. **At merge, run `python3 tools/merge-item.py "README ROW"`** from your tree, on the item's branch: it does steps 6 to 8 below - the numbers, the README row (your text), the testing notes, TheKernel merged and pushed first, TheTaaJ pointed at it, merged and pushed with the row's commits in the same commit, the branches deleted - and stops, undoing its own commit, if a push is refused (journal entry 125). It does not give `abi` numbers (rule 16) or touch TheBootloader. What it does, by hand:
    - `git pull` main;
    - the journal entry takes the next free number: rename the file and fix the title, Notes and every `NNN`;
-   - add its row to `docs/journal/README.md`, with the item's last commit (and TheKernel's, once merged) as its commits - known before the merge, so no second commit is needed (entry NNN);
+   - add its row to `docs/journal/README.md`, with the item's last commit (and TheKernel's, once merged) as its commits - known before the merge, so no second commit is needed (entry 131);
    - give new `K?`/`J?` items the next free numbers;
    - new `abi` numbers (rule 16);
    - run `python3 tools/testing-notes.py`.
@@ -149,7 +149,7 @@ Each session has its own tree (rule 13), with its own `build/` and submodules, a
    If a push is refused, someone merged first: pull, take the next number, push again.
 8. Tell the user it is merged, with the testing note, then go back to step 1 of section 5 for the next item.
 
-**Merge `main` in with `python3 tools/merge-main.py`** (journal entry NNN). It merges `origin/main` - TheKernel's first, when your item has a TheKernel branch - and settles the conflicts that are only bookkeeping: lines with `NNN` that main has since numbered (a branch stacked on another, once that one is merged), and, for a branch made before the work list was split, its changes to `docs/who-does-what.md` moved to the files they are in now (`tools/work-list-move.py`). A real conflict it leaves, and says which. It does not commit: test (rule 15), then `git commit`.
+**Merge `main` in with `python3 tools/merge-main.py`** (journal entry 132). It merges `origin/main` - TheKernel's first, when your item has a TheKernel branch - and settles the conflicts that are only bookkeeping: lines with `NNN` that main has since numbered (a branch stacked on another, once that one is merged), and, for a branch made before the work list was split, its changes to `docs/who-does-what.md` moved to the files they are in now (`tools/work-list-move.py`). A real conflict it leaves, and says which. It does not commit: test (rule 15), then `git commit`.
 
 `main` moves often with fourteen sessions. Rule 15 in `who-does-what.md` says when a merge of `main` into your branch needs a new `make test64`, and when it doesn't.
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """night-test.py [QUEUE] - tests the queued branches, one after another,
-and writes a report for the morning (journal entry NNN).
+and writes a report for the morning (journal entry 135).
 night-test.py --all - our own CI (J93): main, and every branch of ours
-not merged yet whose newest commit has not been tested (entry NNN).
+not merged yet whose newest commit has not been tested (entry 136).
 
 By day, items are developed with quick checks only (their own boot test,
 the host tests, `make unsafe-check`) and pushed to their branches. This
@@ -39,7 +39,7 @@ TAAJ_MACHINE, say TheJat-WSL), where the session whose branch it is
 sees it on GitHub.
 
 A branch that fails stops the queue there. With --wait MINUTES, it waits
-for the fix (entry NNN): the session fixes the failure in its own tree
+for the fix (entry 136): the session fixes the failure in its own tree
 (its quick checks and make test64-again take the test64 lock while the
 runner waits) and pushes; within a minute the runner tests the branch
 again, and goes on to the next only once it passed - the branches after
@@ -222,7 +222,7 @@ def test(log):
     the start - a part's output comes as a block when it ends
     (--output-sync), so its stamp is when it finished - and the end
     has the CPU time and memory /usr/bin/time measured; all for the
-    morning's look at what to make faster (entry NNN). Returns (status,
+    morning's look at what to make faster (entry 136). Returns (status,
     seconds, the parts that failed, CPU seconds)."""
     command = os.environ.get("NIGHT_TEST", "make --no-print-directory -k test64")
     setup = f". {LLVM} && make_flags=\"LLVM_TBLGEN=$LLVM_TBLGEN\" || make_flags=" if os.path.isfile(LLVM) else "make_flags="
