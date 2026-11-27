@@ -4416,3 +4416,26 @@ make run64
 The same on AArch64 with `make run-aarch64`: `with programs tmptest` gives the same line.
 
 Automated: `make handles64-test aarch64-handles-test`, and `make test64`.
+
+---
+
+## 127 · /dev
+
+[The entry](journal/127-dev.md)
+
+Start TheTaaJ:
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `with programs devtest` | `dev: 24 checks, all passed` |
+| `echo hi > /dev/null` | nothing printed |
+| `ls /dev` | `full`, `null`, `random`, `urandom`, `zero` |
+| `ls /` | `dev/` among the directories |
+
+The same on AArch64 with `make run-aarch64`: `with programs devtest` gives the same line.
+
+Automated: `cargo test` in `fileserver`, `make handles64-test aarch64-handles-test`, and `make test64`.
