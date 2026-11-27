@@ -65,7 +65,7 @@ What one lane waits for from another. When an item's dependency isn't merged yet
 | `files` K108 users | J62 (its own), J76 owners | `taajfs` |
 | `ci` K141 `top` | K21 CPU time per process | `sched` |
 | `desktop` K45 job control, `libc` J84/J85 | K44 pseudo-terminals | `desktop` |
-| **Every lane that adds kernel tests** | J51 test programs out of the kernel image, or K130 a kernel of any size: the image has about 680 KiB left under its 3 MiB limit | `ci`, `boot` - both first wave |
+| **Every lane that adds kernel tests** | ~~J51 test programs out of the kernel image, or K130 a kernel of any size~~ - K130 (entry NNN) ended the 3 MiB wall: the BIOS loader takes a kernel up to 1 GiB | `boot` - done; J51 is `ci`'s to order |
 
 ## Lanes
 

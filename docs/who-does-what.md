@@ -176,6 +176,7 @@ Each machine has its own table and changes only its own, so two machines never e
 | MaK-WSL/boot: K129, host tests for stage 2 (the ISO reader, the ELF loader, the page tables); waits for the user's yes to merge | `k129-stage2-tests` |
 | MaK-WSL/boot: K131, a fast BIOS read (on top of K129: merged after it); waits for the user's yes to merge | `k131-fast-bios-read` |
 | MaK-WSL/boot: K23, boot time measured and cut, with K128 (on top of K131: merged after it); waits for the user's yes to merge | `k23-boot-time` |
+| MaK-WSL/boot: K130, a kernel of any size (on top of K23: merged after it); waits for the user's yes to merge | `k130-any-size` |
 
 ### Now: TheJat-WSL
 
@@ -296,7 +297,7 @@ The order matters here: each item is needed by the ones after it.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J51 | Test programs out of the kernel image (onto the test disk) | M | The kernel image has ~680 KiB left under 3 MiB |
+| J51 | Test programs out of the kernel image (onto the test disk) | M | No longer forced: K130 (entry NNN) ended the 3 MiB wall - the BIOS loader takes a kernel up to 1 GiB. Still worth it for a smaller image; `ci`'s to order |
 | J52 | A test that fails when rule 1 or rule 3 of `threads.rs` is broken | S | **Done (entry 119)**: rule 1 checked at every switch (the lock still held where it is released), rule 3 by the threads self-test (a waiter woken before it waits is still in its queue); each broken on purpose panics. Found and fixed with it: a panic on a machine with more CPUs than the kernel uses was a triple fault (the stopping NMI reached the CPUs left asleep); `fault-test.sh`'s new `page@20` checks it |
 | J53 | A test for the ticks mutation from entry 097 (late timer interrupts) | S | **Done (entry 128)**: the late-interrupts self-test (35 ms with interrupts off); entry 097's mutation now caught on x86 (on AArch64 it changes nothing) |
 | J54 | A fresh `git clone --recurse-submodules` builds and passes (in a clean container) | S | Never tried |
@@ -699,7 +700,7 @@ What is missing:
 |---|---|---|---|
 | K128 | **`abc.txt` and `random.txt` removed** from TheBootloader | S | MaK-WSL's. First: trivial **Done with K23 (entry NNN)** |
 | K129 | **Host tests** for the ISO 9660 reader, the ELF loader and the page-table builder, as the kernel's crates have | S | **Done (entry NNN)**: `bootloader/tests/`, stage 2's own files run unchanged as 32-bit programs at its own addresses; 152 checks with the build's ISO and kernel (`make stage2-test`); eight bugs found and fixed (four wrap-arounds in the ELF loader's bounds, four in the ISO reader). Left: the UEFI loaders' C code |
-| K130 | **A kernel of any size from BIOS**: read in pieces to anywhere above 1 MiB (unreal mode, or a copy out of a buffer below 1 MiB after each read) | M | Ends the 3 MiB wall; J51 then is no longer urgent |
+| K130 | **A kernel of any size from BIOS**: read in pieces to anywhere above 1 MiB (unreal mode, or a copy out of a buffer below 1 MiB after each read) | M | **Done (entry NNN)**: a 64-bit kernel is no longer staged - each segment is read from the file to its place, in usable memory (the E820 map) from 1 MiB to 1 GiB; the ramdisk after the kernel; the linker guard at 1 GiB. A 6.6 MiB kernel boots by BIOS and UEFI (`big64-test`). Left: a real PC's map (K1) |
 | K131 | **A fast BIOS read**: as many sectors per `int 13h` as the BIOS takes, or staying in real mode for the whole read; measured before and after | S | **Done (entry NNN)**: 16 ISO sectors per call (inside every BIOS limit: 127 sectors, one 64 KiB block), whole sectors straight into place; an emulated boot reaches the kernel in about half the time (`tools/boot-time.sh`). Left: a real BIOS (K1) |
 | K132 | **Two kernels, A and B**: a new one is tried once, TheTaaJ marks it good after it has booted, and the loader goes back to the other one if it was not marked | M | The era's milestone. With K134 |
 | K133 | **A boot menu** with a timeout: which kernel, the command line edited, a recovery entry (a shell with nothing started but what is needed) | M | The protocol's `CommandLine` already exists |
