@@ -178,7 +178,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| TheJat-WSL/ci: next in the lane (J51 waits for U7, J92 for U8) | - |
+| TheJat-WSL/ci: K104, a system-call fuzzer | `k104-fuzz` |
 
 ## The decided order
 
@@ -596,7 +596,8 @@ All of it keeps the kernel pure: the kernel counts, checks rights and enforces; 
 | # | Item | Size | Notes |
 |---|---|---|---|
 | K103 | **Kernel objects counted against their creator**: each channel, queued message, handle, process and thread charged to an account (the creator's, or the sender's for a message in someone's inbox), refused at the limit | M | First: the era's milestone. With K85; makes K66 a bounded leak until it is fixed |
-| K104 | **Fuzzing**: a system-call fuzzer run on TheTaaJ (random calls, arguments and handles from a program with no grants), and `cargo fuzz` on the host for every parser of untrusted input - `elf`, `taajfs`, `net`, `usb` descriptors, `acpi` tables, the file and network protocols | M | Early. Run for a set time before an era's merge |
+| K104 | **Fuzzing**: a system-call fuzzer run on TheTaaJ (random calls, arguments and handles from a program with no grants), and `cargo fuzz` on the host for every parser of untrusted input - `elf`, `taajfs`, `net`, `usb` descriptors, `acpi` tables, the file and network protocols | M | **Done (entry NNN)** on TheTaaJ: `fuzz` (user/src/bin/fuzz.rs) - programs with no handles make random system calls from a seed; `fuzz64-test` and `aarch64-fuzz-test` in `make test64` (100 programs of 3000 calls, seed 1); `with programs fuzz N CALLS random` for longer runs. `cargo fuzz` on the host is `K?-host-fuzz` |
+| K?-host-fuzz | **`cargo fuzz` on the host for every parser of untrusted input** - `elf`, `taajfs`, `net`, `usb` descriptors, `acpi` tables, the file and network protocols | M | K104's second half; needs a nightly Rust on each machine, as K187 |
 | K105 | **A manifest per program**: the services it needs (`files.look`, `net`, `windows`...), read by the shell and init, which grant from it rather than from lists of names in the shell; a program without one gets nothing, as now | M | After J62, so a manifest can name directories too |
 | K106 | **Signed programs and manifests**: a key the machine trusts, checked before a program gets its manifest's grants; unsigned programs run with none | M | After K105 |
 | K107 | **Verified boot**: UEFI Secure Boot (the bootloader and kernel signed), and measured boot into a TPM where there is one | L | With MaK-WSL, who owns TheBootloader |
