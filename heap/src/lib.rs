@@ -243,13 +243,26 @@ mod tests {
     use super::*;
 
     /// A heap over `size` bytes of leaked, 4096-aligned host memory.
-    fn heap(size: usize) -> (Heap, usize) {
+    /// The memory a test's heap manages, given back when the test ends.
+    /// (It was leaked, which Miri reports as an error - K187.) Bound to a
+    /// name in each test, not `_`, so that it lives as long as the test.
+    struct Backing(*mut u8, Layout);
+
+    impl Drop for Backing {
+        fn drop(&mut self) {
+            // SAFETY: allocated with this layout by `heap`, given back once.
+            unsafe { std::alloc::dealloc(self.0, self.1) };
+        }
+    }
+
+    fn heap(size: usize) -> (Heap, usize, Backing) {
         let layout = Layout::from_size_align(size, 4096).unwrap();
-        // SAFETY: a non-zero size; leaked for the test's lifetime.
-        let memory = unsafe { std::alloc::alloc(layout) } as usize;
+        // SAFETY: a non-zero size.
+        let memory = unsafe { std::alloc::alloc(layout) };
         let mut heap = Heap::empty();
-        unsafe { heap.add_region(memory, size) };
-        (heap, memory)
+        // SAFETY: `size` bytes, just allocated, used by nothing else.
+        unsafe { heap.add_region(memory as usize, size) };
+        (heap, memory as usize, Backing(memory, layout))
     }
 
     fn layout(size: usize, align: usize) -> Layout {
@@ -258,7 +271,7 @@ mod tests {
 
     #[test]
     fn allocates_from_the_start_and_frees_back_to_one_block() {
-        let (mut h, base) = heap(4096);
+        let (mut h, base, _memory) = heap(4096);
         let a = h.allocate(layout(100, 8)).unwrap();
         assert_eq!(a as usize, base);
         assert_eq!(h.used(), 112, "100 rounds up to 7 units");
@@ -276,7 +289,7 @@ mod tests {
 
     #[test]
     fn honours_large_alignment_and_keeps_the_padding() {
-        let (mut h, base) = heap(8192);
+        let (mut h, base, _memory) = heap(8192);
         let small = h.allocate(layout(16, 16)).unwrap();
         let page = h.allocate(layout(64, 4096)).unwrap();
         assert_eq!(page as usize % 4096, 0);
@@ -294,7 +307,7 @@ mod tests {
 
     #[test]
     fn reports_exhaustion() {
-        let (mut h, _) = heap(4096);
+        let (mut h, _, _memory) = heap(4096);
         assert!(h.allocate(layout(4096, 16)).is_some());
         assert!(h.allocate(layout(16, 16)).is_none());
     }
@@ -319,7 +332,7 @@ mod tests {
 
     #[test]
     fn deallocate_says_which_free_block_the_memory_joined() {
-        let (mut heap, base) = heap(4096);
+        let (mut heap, base, _memory) = heap(4096);
         let layout = Layout::from_size_align(256, 16).unwrap();
         let a = heap.allocate(layout).unwrap() as usize;
         let b = heap.allocate(layout).unwrap() as usize;
@@ -335,7 +348,7 @@ mod tests {
 
     #[test]
     fn merges_with_both_neighbours() {
-        let (mut h, _) = heap(4096);
+        let (mut h, _, _memory) = heap(4096);
         let l = layout(64, 16);
         let blocks: Vec<_> = (0..4).map(|_| h.allocate(l).unwrap()).collect();
         unsafe {
@@ -351,8 +364,8 @@ mod tests {
 
     #[test]
     fn separate_regions_stay_separate_until_they_touch() {
-        let (mut h, base) = heap(4096);
-        let (_, other) = heap(4096);
+        let (mut h, base, _memory) = heap(4096);
+        let (_, other, _other_memory) = heap(4096);
         unsafe { h.add_region(other, 4096) };
         assert_eq!(h.total(), 8192);
         // A request bigger than either region cannot be satisfied,
@@ -364,7 +377,7 @@ mod tests {
     #[test]
     #[should_panic(expected = "double free")]
     fn double_free_is_caught() {
-        let (mut h, _) = heap(4096);
+        let (mut h, _, _memory) = heap(4096);
         let l = layout(32, 16);
         let a = h.allocate(l).unwrap();
         let _b = h.allocate(l).unwrap();
@@ -380,7 +393,7 @@ mod tests {
     #[test]
     fn randomized_stress() {
         const SIZE: usize = 256 * 1024;
-        let (mut h, base) = heap(SIZE);
+        let (mut h, base, _memory) = heap(SIZE);
         let mut live: Vec<(*mut u8, Layout, u8)> = Vec::new();
         // xorshift: deterministic, so any failure reproduces.
         let mut seed: u64 = 0x2545_F491_4F6C_DD1D;
@@ -391,7 +404,11 @@ mod tests {
             seed
         };
 
-        for round in 0..20_000 {
+        // Under Miri, which checks every memory access as it interprets
+        // them, 400 rounds already go through every path; 20000 would take
+        // an hour (K187).
+        let rounds = if cfg!(miri) { 400 } else { 20_000 };
+        for round in 0..rounds {
             if live.is_empty() || random() % 3 != 0 {
                 let size = 1 + (random() % 2048) as usize;
                 let align = 1 << (random() % 13); // 1 .. 4096
