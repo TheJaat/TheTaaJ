@@ -172,7 +172,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| MaK-WSL/sched: K24 with K96 and J53, timers finer than a tick; then K68 | `k24-timers` |
+| MaK-WSL/sched: K68 part 1, a run queue per CPU; then K193 | `k68-run-queues` |
 
 ### Now: TheJat-WSL
 
@@ -343,6 +343,7 @@ The order matters here: each item is needed by the ones after it.
 | K190 | A child takes its parent's `nice` - through `posix_spawn` and the shell, as the memory limit travels with the program file (entry 096) - instead of always starting at 0 | S | After K20 (entry 124) |
 | K191 | More POSIX timers: several per process (`timer_create` makes one now), SIGEV_THREAD and SIGEV_NONE, `timer_getoverrun` counting; fine timeouts for futexes and OBJECT_WAIT_UNTIL (`pthread_cond_timedwait`, `poll`), which still wait to the tick | M | After K24 (entry 128) |
 | K192 | **Waking a thread on another CPU is slower under KVM** since the one-shot timers: two CPUs' wake-to-run median 46-109 us against 4 on `main`; not under TCG. Find why (the host waking a halted vCPU; halt polling; the APIC timer's mode) | S | Found in entry 128, bug 5 |
+| K193 | **A lock per CPU's run queue** instead of one for all (K68's other half): a switch takes only its CPU's lock, a thread moving between CPUs takes two, in order; rule 1 of threads.rs (the lock held across a switch) rewritten for it | M | After K68 part 1 (entry NNN) |
 | K22 | A transmit-interrupt serial writer (AArch64 output capped at ~3200 bytes/s) | S | |
 | K23 | The faster boots: measure boot time on KVM and on the real PC, cut the slow parts | S | |
 | K24 | Timer: alarms and sleeps finer than a 10 ms tick (one-shot timer, `setitimer`, `timer_create`) | M | **Done (entry 128)**, with K96 and J53: one-shot timers (each CPU's set for its next tick or its first sleeper), deadlines in nanoseconds, SLEEP_UNTIL, ALARM's interval; `nanosleep` to the nanosecond, `clock_nanosleep`, `setitimer`/`getitimer`, `timer_*` (one timer). Left: K191, K192 |
@@ -435,7 +436,7 @@ TheTaaJ runs on up to 16 CPUs (`smp.rs`), on both architectures, and a program's
 | # | Item | Size | Notes |
 |---|---|---|---|
 | K67 | **A threads benchmark**: a context switch, a futex hand-off between two threads, thread creation, `posix_spawn` to exit, and the same work on 1, 2, 4 ... CPUs to see how it scales; KVM and emulated, the numbers kept in the journal | S | **Done (entry 116)**: `schedbench` (`make schedbench64-test`, in `make test64`) on 1, 2 and 4 CPUs, KVM and emulated; still missing: AArch64, and more than 4 CPUs |
-| K68 | **A run queue per CPU**, with an idle CPU taking work from a busy one, instead of one queue under one lock | M | After K67 and K20 (priorities and affinity are in the same code) |
+| K68 | **A run queue per CPU**, with an idle CPU taking work from a busy one, instead of one queue under one lock | M | **Done (entry NNN)**, part 1: a queue per CPU in the policy; placing by the idle deciding CPU, the last CPU, the home with the fewest waiting; choosing strict and FIFO across queues (an idle CPU takes work from a busy one). The lock per queue is K193 |
 | K69 | **Per-CPU caches** in the kernel heap and the frame allocator, so most allocations take no shared lock | M | After K67 |
 | K70 | **Futexes without one shared list**: a lock per bucket, a wake that touches only its own address's waiters, `FUTEX_REQUEUE` (so `pthread_cond_broadcast` doesn't wake everyone to fight for the mutex) | M | Today a wake wakes its whole queue and those whose flag is clear sleep again |
 | K71 | **Cheaper shootdowns**: PCID on x86 (ASIDs on AArch64) so a switch keeps the TLB, and only the pages taken away invalidated rather than the whole address space | M | |
@@ -573,7 +574,7 @@ What it lacks: any policy - every thread is equal, with no priorities or classes
 | K98 | **A server runs on its client's context** for the length of a call, and the client is charged | M | After K97, K61; replaces K65's separate mechanism |
 | K99 | **Classes**: real-time (fixed priority: sound in Era 10, input, the display), normal (a fair share by virtual run time, as EEVDF does), background (only when nothing else wants the CPU) | M | After K97 |
 | K100 | **Fairness between processes, or groups of them**, not between threads: a group's share split among its threads | M | After K99 |
-| K101 | **A thread prefers the CPU it last ran on** while its data is still in that CPU's cache; moved only when another CPU would otherwise idle | S | With K68 |
+| K101 | **A thread prefers the CPU it last ran on** while its data is still in that CPU's cache; moved only when another CPU would otherwise idle | S | With K68 - **half done (entry NNN)**: a woken thread goes back to its idle last CPU. Left: keeping a thread on its CPU while equals wait elsewhere (entry NNN's bug 1), with K193 |
 | K102 | **More than 64 CPUs** in the scheduler (`pokes` and the CPU sets as bitmaps of any size) | S | With K74 |
 | J80 | `nice`, `getpriority`/`setpriority`, `sched_setscheduler`, `sched_getaffinity`/`sched_setaffinity`, `pthread_setschedparam`, mapped onto contexts: allowed only as far as the program's context lets | S | **Done (entry 124)**, with K20 (the user's decision): `nice`, `get/setpriority`, `sched_get/setaffinity`, `sched_*scheduler` and `*param` (SCHED_OTHER only), `pthread_*affinity_np`, `pthread_*schedparam`; mapped onto contexts when K97 comes |
 
