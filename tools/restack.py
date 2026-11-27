@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """restack.py [--check] [QUEUE] - keeps a stack of branches stacked
-(journal entry NNN).
+(journal entry 139).
 
 The night queue stacks branches in merge order: `b after a` means b is
 tested, and merged, on a's result, so b must have a in it. After a fix to
@@ -9,7 +9,7 @@ must take it in again, in order, and each one's `kernel` pointer must
 stay right: its own TheKernel branch's commit if it has one, else the one
 below it's. Done by hand, that is a loop of merges and pushes, and one
 careless commit puts a submodule checked out for another branch into a
-pointer (it happened, entry NNN).
+pointer (it happened, entry 139).
 
 For each `b after a` of QUEUE (default ~/.cache/taaj-night/queue), in
 order, in a tree of its own (../TheTaaJ-restack, made the first time):

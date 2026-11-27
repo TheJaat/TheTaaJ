@@ -56,7 +56,7 @@ tools/merge-main.py merges it in. Then tools/merge-item.py, with the
 entry's title and TAAJ_SESSION (say TheJat-WSL/ci) as the README row. A
 branch with more than one unnumbered entry, or one merge-item refuses,
 is left for its session, and the branches stacked on it are not run.
-(entry NNN)
+(entry 139)
 
 NIGHT_TEST="make unsafe-check" (say) runs that instead of make test64, to
 try this script itself in minutes - and then nothing is pushed or
@@ -185,7 +185,7 @@ def tree():
     # toolchain's .gitignore says `i686/`, which matches a directory, not
     # the link to one: kept out of `git status` (as new-session.sh does),
     # or merge-item.py finds the tree not clean and merges nothing - the
-    # first real night's first merge (entry NNN).
+    # first real night's first merge (entry 139).
     if os.path.islink(os.path.join(TREE, "toolchain/i686")):
         exclude = git("rev-parse", "--path-format=absolute", "--git-path", "info/exclude", cwd=os.path.join(TREE, "toolchain"))
         os.makedirs(os.path.dirname(exclude), exist_ok=True)

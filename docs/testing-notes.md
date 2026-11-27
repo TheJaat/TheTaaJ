@@ -4641,3 +4641,19 @@ In a session's tree:
 | `touch libc/c/stdio.c`, `make libc64` | `CC libc/c/...` and thin-archive again; `stat build/c/libc.a` shows its old time |
 
 Automated: `make test64` runs it first.
+
+---
+
+## 139 · Stacks kept stacked, merges rehearsed by day, and the night runner merges what passed
+
+[The entry](journal/139-merge-tools.md)
+
+From a session's tree:
+
+| Do | You should see |
+|---|---|
+| `sh tools/merge-rehearsal.sh` | A row per queued branch, `passed`, then `merged: merge-item: entry N merged`; at the end `N of N merged; second commits 0; unnumbered entries on main 0` |
+| `python3 tools/restack.py --check` | `stacked` for every branch, or what each would take in |
+| `TAAJ_SESSION=TheJat-WSL/ci python3 tools/night-test.py --wait 60 --merge` | The night: each branch tested, `merged`, the next on `main` |
+
+Automated: not part of `make test64`.

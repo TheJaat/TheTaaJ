@@ -1,10 +1,10 @@
 # Stacks kept stacked, merges rehearsed by day, and the night runner merges what passed
 
-*Journal entry #NNN · tools and a change to how we work. Written on TheJat-WSL/ci. Three things that were done by hand today, and went wrong by hand, are tools now: carrying a fix up a stack of branches (`tools/restack.py`), trying the night's merges before the night (`tools/merge-rehearsal.sh`), and the merges themselves (`tools/night-test.py --merge`, under the user's standing yes).*
+*Journal entry #139 · tools and a change to how we work. Written on TheJat-WSL/ci. Three things that were done by hand today, and went wrong by hand, are tools now: carrying a fix up a stack of branches (`tools/restack.py`), trying the night's merges before the night (`tools/merge-rehearsal.sh`), and the merges themselves (`tools/night-test.py --merge`, under the user's standing yes).*
 
 ## Why
 
-The user agreed to two of the next bottlenecks: the stack work done by hand, and the merges. Today, eight branches were stacked in the night queue, and every fix to one meant merging it into each branch above, in order - by hand three times, and once a careless commit put a submodule checked out for another branch into a pointer. And a replay of the morning's merges, done by hand in a sandbox, found four faults that would have broken real merges (entries NNN of the split and the one-commit merge say which). Then the merges themselves: after a night pass, `merge-item.py` runs mechanically; the user said the runner may do it.
+The user agreed to two of the next bottlenecks: the stack work done by hand, and the merges. Today, eight branches were stacked in the night queue, and every fix to one meant merging it into each branch above, in order - by hand three times, and once a careless commit put a submodule checked out for another branch into a pointer. And a replay of the morning's merges, done by hand in a sandbox, found four faults that would have broken real merges (entries 139 of the split and the one-commit merge say which). Then the merges themselves: after a night pass, `merge-item.py` runs mechanically; the user said the runner may do it.
 
 ## What it is
 

@@ -1,7 +1,7 @@
 #!/bin/sh
 # merge-rehearsal.sh [QUEUE] [SCRATCH] - the night's merges, rehearsed by
 # day in a sandbox, so that a merge problem is fixed before the night
-# (journal entry NNN).
+# (journal entry 139).
 #
 # Copies TheTaaJ's and TheKernel's main and every branch of QUEUE (default
 # ~/.cache/taaj-night/queue) into bare repositories in SCRATCH (default

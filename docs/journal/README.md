@@ -146,6 +146,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 136 | [Our own CI: every branch of ours tested, the result beside it on GitHub; night tests that wait for the fix (TheJat-WSL/ci, merged after its night test)](136-ci.md) | written | `86a7e98e` |
 | 137 | [Coverage of the host tests, and a floor that only rises; make test64 reports every failure, make test64-again runs only those (TheJat-WSL/ci, merged after its night test)](137-coverage.md) | written | `0d4468d3` |
 | 138 | [make test64 no longer rebuilds what has not changed: 51 s to 17 s (TheJat-WSL/ci, merged after its night test)](138-no-rebuild.md) | written | `fc1fe91f` |
+| 139 | [Stacks kept stacked, merges rehearsed by day, and the night runner merges what passed (TheJat-WSL/ci, merged after its night test)](139-merge-tools.md) | written | `4f46b182` |
 
 ## How to run what the entries describe
 
