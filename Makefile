@@ -3,7 +3,7 @@ BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
-        kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
+        kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test coverage coverage-raise fault64-test test64 test64-again \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
         pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test handles64-test aarch64-handles-test times64-test aarch64-times-test pages64-test aarch64-pages-test zlib64 zlib-aarch64 \
@@ -899,6 +899,15 @@ endif
 # Unit tests of the kernel's pure logic (frames, page tables, heap,
 # locks), compiled for and run on this machine rather than in a VM.
 HOST_TRIPLE = $(shell PATH="$(PATH)" rustc -vV | sed -n 's/^host: //p')
+
+# How much of each crate's code its host tests run, and a floor per crate
+# that may only rise (J96, journal entry NNN): tools/coverage-floor. In
+# make test64: about 20 s, its own build in build/coverage.
+coverage:
+	@python3 tools/coverage.py
+
+coverage-raise:
+	@python3 tools/coverage.py --raise
 
 # Every unsafe block, impl and public unsafe fn says why it is sound
 # (K112): clippy's two lints for it, as errors, over every crate and CPU.
@@ -2149,6 +2158,7 @@ TEST64_PARTS = \
 	libmake64-test \
 	aarch64-libmake-test \
 	kernel64-test \
+	coverage \
 	unsafe-check \
 	fuzz64-test \
 	aarch64-fuzz-test \
@@ -2196,11 +2206,14 @@ TEST64_PARTS = \
 	pages64-test \
 	aarch64-pages-test
 
+# The steps are in tools/test64.sh: a failing part does not stop the
+# others (smp64-test included), and what failed is written down for
+# make test64-again, which runs only that (journal entry NNN).
 test64:
-	@$(MAKE) --no-print-directory test64-shared
-	@$(MAKE) --no-print-directory smp64-test
-	@$(MAKE) --no-print-directory -j$(TEST_JOBS) --output-sync=target $(addprefix -o ,$(TEST64_SHARED) smp64-test) test64-parts
-	@echo "test64: all passed"
+	@MAKE="$(MAKE)" TEST_JOBS="$(TEST_JOBS)" TEST64_SHARED="$(TEST64_SHARED)" TEST64_PARTS="$(TEST64_PARTS)" sh tools/test64.sh
+
+test64-again:
+	@MAKE="$(MAKE)" TEST_JOBS="$(TEST_JOBS)" TEST64_SHARED="$(TEST64_SHARED)" TEST64_PARTS="$(TEST64_PARTS)" sh tools/test64.sh again
 
 # What test64-shared builds is then not built again: the second step is
 # told it is up to date (make -o). Most of it is .PHONY, so make would
