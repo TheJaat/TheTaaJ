@@ -132,7 +132,7 @@ Each session has its own tree (rule 13), with its own `build/` and submodules, a
    - the testing note.
 
    Merge only after a yes.
-6. At merge (rule 5):
+6. **At merge, run `python3 tools/merge-item.py "README ROW"`** from your tree, on the item's branch: it does steps 6 to 8 below - the numbers, the README row (your text), the testing notes, TheKernel merged and pushed first, TheTaaJ pointed at it, merged and pushed, the row's commits, the branches deleted - and stops, undoing its own commit, if a push is refused (journal entry NNN). It does not give `abi` numbers (rule 16) or touch TheBootloader. What it does, by hand:
    - `git pull` main;
    - the journal entry takes the next free number: rename the file and fix the title, Notes and every `NNN`;
    - add its row to `docs/journal/README.md`;
