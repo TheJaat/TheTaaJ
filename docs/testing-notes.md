@@ -4316,3 +4316,28 @@ Automated: `make test64` (its `unsafe-check` part).
 | `python3 kernel/kernel64/scripts/fill-symbols.py kernel/kernel64/target/x86_64-unknown-none/release/kernel64` | `SYMBOLS 642 functions` (about that many) |
 
 Automated: `make test64` (`fault64-test` and `aarch64-test` require the backtraces).
+
+---
+
+## 123 · A system-call fuzzer: random calls from programs with nothing
+
+[The entry](journal/123-fuzz.md)
+
+From the root of TheTaaJ, put `fuzz` on the disk `make run64` boots (it is not one of the disk's usual programs), then boot:
+
+```
+make run-disk
+tools/tfstool-rs/target/release/tfstool put build/taaj-disk.img fuzz user/target/x86_64-unknown-none/release/fuzz
+make run64
+```
+
+Then:
+
+| Type | You should see |
+|---|---|
+| `with programs fuzz 20 2000` | `fuzz: 20 children, 2000 calls each, seeds 1 to 20`, then after some seconds `fuzz: 18 made all their calls, 2 were killed for breaking a rule, ...` (about the same numbers each time with the same seed) and `fuzz: done - 20 programs with no handles, ... the kernel still here` |
+| `echo still here` | `still here` |
+| `with programs fuzz 5 2000 random` | Different seeds, and the same `done` line |
+| `fuzz` | `fuzz: it starts programs: run it as `with programs fuzz`` |
+
+Automated: `make test64` (`fuzz64-test`, `aarch64-fuzz-test`).

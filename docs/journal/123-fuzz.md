@@ -1,6 +1,6 @@
 # A system-call fuzzer: random calls from programs with nothing
 
-*Journal entry #NNN · a test (K104, first part). Written on TheJat-WSL/ci. The kernel must survive anything a program asks of it: the worst a program may do is end itself. Now `fuzz` makes sure of it - programs with no handles at all make system calls with random numbers and random arguments, a quarter of a million of them in each `make test64`, on both CPUs. The kernel took all of them. Every bug this found was in the fuzzer.*
+*Journal entry #123 · a test (K104, first part). Written on TheJat-WSL/ci. The kernel must survive anything a program asks of it: the worst a program may do is end itself. Now `fuzz` makes sure of it - programs with no handles at all make system calls with random numbers and random arguments, a quarter of a million of them in each `make test64`, on both CPUs. The kernel took all of them. Every bug this found was in the fuzzer.*
 
 ## Why
 
@@ -65,7 +65,7 @@ In the fuzzer, all of the table above - each found by asking how the children en
 
 ## What is still missing
 
-- **`cargo fuzz` on the host** for the parsers of untrusted input - ELF, TaajFS, the network, USB descriptors, ACPI tables, the protocols - K104's second half, now `K?-host-fuzz`; it needs a nightly Rust.
+- **`cargo fuzz` on the host** for the parsers of untrusted input - ELF, TaajFS, the network, USB descriptors, ACPI tables, the protocols - K104's second half, now K189; it needs a nightly Rust.
 - Calls in meaningful orders: create a channel, then send on it, then close it twice. Random numbers rarely make a sequence.
 - Coverage: which of the kernel's checks the fuzzer reached (J96).
 - A long run before an era's merge: `with programs fuzz 10000 3000 random`, by hand for now.
