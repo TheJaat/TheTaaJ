@@ -89,7 +89,7 @@ int clock_gettime(clockid_t clock, struct timespec *t);
 int timespec_get(struct timespec *t, int base);
 
 /* Sleeps for at least *wanted, to the nanosecond the kernel's one-shot
- * timer gives (journal entry NNN; it was whole 10 ms ticks before). A
+ * timer gives (journal entry 128; it was whole 10 ms ticks before). A
  * signal handler cuts it short: -1 with EINTR, the time not slept in
  * *left if given. */
 int nanosleep(const struct timespec *wanted, struct timespec *left);

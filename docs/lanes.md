@@ -196,7 +196,7 @@ Its files: `kernel/kernel64/src/sched.rs`, `smp.rs`, `futex.rs`, `alarms.rs`, `c
 |---|---|---|
 | K190 | 2 | A child takes its parent's `nice` (after K20) |
 | K191 | 2 | More POSIX timers, fine timeouts (after K24) |
-| K192 | 1 | Cross-CPU wake-ups under KVM (entry NNN's bug 5) |
+| K192 | 1 | Cross-CPU wake-ups under KVM (entry 128's bug 5) |
 | K68 | 1 | A run queue per CPU; `devices`' K79 waits for it |
 | K101 | 2 | A thread prefers its last CPU |
 | K70 | 2 | Futexes without one shared list |

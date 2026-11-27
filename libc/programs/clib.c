@@ -220,7 +220,7 @@ static void cpu_time(void)
  * less important, not more - its ceiling is the default - and may choose
  * the CPUs it runs on. Run last of the checks that care, and put back:
  * the rest of clib runs at the default on every CPU. */
-/* Timers (journal entry NNN): sleeps and alarms to the nanosecond the
+/* Timers (journal entry 128): sleeps and alarms to the nanosecond the
  * kernel's one-shot timer gives, not to the 10 ms tick. */
 static volatile sig_atomic_t rang;
 

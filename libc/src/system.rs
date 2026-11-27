@@ -233,7 +233,7 @@ pub extern "C" fn clock() -> c_long {
 ///
 /// The end is now plus `wanted`, on the monotonic clock, and the kernel
 /// sleeps until then (SLEEP_UNTIL): to the nanosecond its one-shot timer
-/// gives, not to the next 10 ms tick, as before journal entry NNN.
+/// gives, not to the next 10 ms tick, as before journal entry 128.
 ///
 /// # Safety
 /// `wanted` must be valid for reading, `left` null or valid for writing.
@@ -259,7 +259,7 @@ pub unsafe extern "C" fn nanosleep(wanted: *const Timespec, left: *mut Timespec)
 /// Sleeps until the time since boot is at least `end` nanoseconds.
 /// False if a signal's handler ran first, and the sleep was cut short.
 /// The kernel sleeps to that nanosecond (SLEEP_UNTIL, journal entry
-/// NNN), as far as its timer can; it used to be to the tick after.
+/// 128), as far as its timer can; it used to be to the tick after.
 pub(crate) fn sleep_until(end: u64) -> bool {
     taaj::sleep_until_ns(end)
 }

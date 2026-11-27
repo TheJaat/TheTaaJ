@@ -1,6 +1,6 @@
 # Timers finer than a tick: one-shot timers, sorted sleepers, and late interrupts
 
-*Journal entry #NNN · a step, MaK-WSL/sched's K24 with K96 and J53. Written on MaK-WSL/sched. Until now the kernel's only sense of time for sleepers was the 10 ms tick: a program asking for 1 ms slept 10 to 20, an alarm rang at the next tick after its time, and every tick looked at every thread to find the sleepers. Now each CPU's timer is one-shot, set for its next tick or for the first sleeper due before it; sleepers wait in sorted sets; and a self-test makes the timer interrupts late on purpose, which catches a mistake no test caught before.*
+*Journal entry #128 · a step, MaK-WSL/sched's K24 with K96 and J53. Written on MaK-WSL/sched. Until now the kernel's only sense of time for sleepers was the 10 ms tick: a program asking for 1 ms slept 10 to 20, an alarm rang at the next tick after its time, and every tick looked at every thread to find the sleepers. Now each CPU's timer is one-shot, set for its next tick or for the first sleeper due before it; sleepers wait in sorted sets; and a self-test makes the timer interrupts late on purpose, which catches a mistake no test caught before.*
 
 ## Why
 

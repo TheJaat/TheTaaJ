@@ -1,5 +1,5 @@
 //! Timers: `clock_nanosleep`, `setitimer`/`getitimer` and the POSIX
-//! `timer_*` calls (MaK-WSL/sched's K24, journal entry NNN), over the
+//! `timer_*` calls (MaK-WSL/sched's K24, journal entry 128), over the
 //! kernel's SLEEP_UNTIL and ALARM - both exact to the nanosecond the
 //! one-shot timer gives, not to the 10 ms tick.
 //!

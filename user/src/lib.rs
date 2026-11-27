@@ -406,7 +406,7 @@ pub fn sleep_unless_signalled(ticks: u64) -> bool {
 }
 
 /// Sleeps until the monotonic clock (`monotonic_ns`) reads at least
-/// `nanoseconds`, to the nanosecond the timer gives (journal entry NNN).
+/// `nanoseconds`, to the nanosecond the timer gives (journal entry 128).
 /// False if a signal cut it short (its handler has run by now).
 pub fn sleep_until_ns(nanoseconds: u64) -> bool {
     abi::decode(syscall(call::SLEEP_UNTIL, nanoseconds, 0, 0)).is_ok()
@@ -771,7 +771,7 @@ pub fn alarm(nanoseconds: u64) -> Result<u64, Error> {
 }
 
 /// `alarm`, and then again every `interval` nanoseconds if that is not 0
-/// (journal entry NNN); the nanoseconds the one before had left.
+/// (journal entry 128); the nanoseconds the one before had left.
 pub fn alarm_every(nanoseconds: u64, interval: u64) -> Result<u64, Error> {
     abi::decode(syscall(call::ALARM, nanoseconds, interval, 0))
 }
