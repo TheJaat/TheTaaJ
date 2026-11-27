@@ -1059,6 +1059,19 @@ endif
 
 # One boot per deliberate fault: unmapped read, double fault, write to
 # rodata, executing data, stack overflow. Each must be caught and named.
+# Stage 2's C code on the host (K129): the ISO reader, the ELF loader and
+# the long-mode page tables, run as 32-bit programs at stage 2's own
+# addresses (bootloader/tests/harness.h) - on images made by the tests,
+# and on this build's ISO and the kernel stage 2 loads from it. The
+# compiler's warnings about stage 2's own files go to the log only.
+STAGE2_TEST_LOG = $(BUILD_DIR)/stage2-test.log
+stage2-test: iso64
+	@$(MAKE) --no-print-directory -C $(BOOTLOADER_DIR) test ISO=$(abspath $(ISO64_IMG)) \
+	    KERNEL=$(abspath $(ISO64_DIR)/kernel/kernel.elf) > $(STAGE2_TEST_LOG) 2>&1 \
+	    || { grep -E "FAILED|error|checks," $(STAGE2_TEST_LOG); echo "FAIL: stage 2's host tests (log: $(STAGE2_TEST_LOG))"; exit 1; }
+	@grep -E "^stage2 host tests:" $(STAGE2_TEST_LOG)
+	@echo "stage2-test passed"
+
 fault64-test: build-bootloader user64
 	$(KERNEL64_DIR)/scripts/fault-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR)
 
@@ -2169,6 +2182,7 @@ TEST64_PARTS = \
 	aarch64-fuzz-test \
 	smp64-test \
 	big64-test \
+	stage2-test \
 	fault64-test \
 	aarch64-test \
 	aarch64-uefi-test \

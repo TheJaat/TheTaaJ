@@ -106,15 +106,34 @@ def git(*args, cwd=TREE, check=True):
     return run("git", *args, cwd=cwd, check=check).stdout.strip()
 
 
+SESSIONS = {}  # branch -> the session whose item it is (`session=` on its line)
+OWN = os.environ.get("TAAJ_SESSION", "")
+
+
 def queue():
+    """[(branch, the branch it is stacked on, or None)]. A line is
+    `BRANCH [after BELOW] [session=MACHINE/LANE]`: the session whose item
+    it is, when not this one's (entry 141) - the README row names it, and
+    a test that fails is that session's to fix: the runner does not wait
+    for it, and goes on."""
     entries = []
     for line in open(QUEUE):
-        line = line.split("#", 1)[0].split()
-        if not line:
+        words = line.split("#", 1)[0].split()
+        if not words:
             continue
-        after = line[2] if len(line) == 3 and line[1] == "after" else None
-        entries.append((line[0], after))
+        for word in words[1:]:
+            if word.startswith("session="):
+                SESSIONS[words[0]] = word[len("session="):]
+        words = [w for w in words if not w.startswith("session=")]
+        after = words[2] if len(words) == 3 and words[1] == "after" else None
+        entries.append((words[0], after))
     return entries
+
+
+def theirs(branch):
+    """An item of another session's, handed to this queue (user's choice B,
+    2026-11-27): tested and merged here, but fixed by its own session."""
+    return bool(SESSIONS.get(branch)) and SESSIONS[branch] != OWN
 
 
 def heads(cwd):
@@ -182,6 +201,16 @@ def tree():
             link = os.path.join(TREE, "toolchain/i686")
             if not os.path.exists(link):
                 os.symlink(i686, link)
+    # TheKernel and TheBootloader in this tree are clones of their own:
+    # without the author, a merge commit there fails ("empty ident name"),
+    # on a machine with no global git user (found rehearsing MaK-WSL's
+    # branches, entry 141). The author of the repository's own config.
+    for sub in (KERNEL, os.path.join(TREE, "bootloader")):
+        if os.path.isdir(sub):
+            for key in ("user.name", "user.email"):
+                value = git("config", key, cwd=SOURCE, check=False)
+                if value and not git("config", key, cwd=sub, check=False):
+                    git("config", key, value, cwd=sub)
     # toolchain's .gitignore says `i686/`, which matches a directory, not
     # the link to one: kept out of `git status` (as new-session.sh does),
     # or merge-item.py finds the tree not clean and merges nothing - the
@@ -200,6 +229,12 @@ def prepare(branch, base_taaj, base_kernel):
     git("fetch", "-q", "origin")
     git("fetch", "-q", "origin", cwd=KERNEL)
     git("reset", "-q", "--hard")
+    # A merge that failed before may have left TheKernel or TheBootloader
+    # half merged: the next checkout would refuse (entry 141).
+    for sub in (KERNEL, os.path.join(TREE, "bootloader")):
+        if os.path.isdir(sub):
+            run("git", "merge", "--abort", cwd=sub, check=False)
+            run("git", "reset", "-q", "--hard", cwd=sub, check=False)
     git("checkout", "-q", "--detach", f"origin/{branch}")
     git("submodule", "update", "-q", "--init", "kernel", "bootloader")
     if branch == "main":
@@ -398,6 +433,10 @@ def night_queue(logs, report, lines):
             lines.append(f"| {branch} | {said}{again} | {result} | {took} | {why} | {f'`{log}`' if log else ''} |")
             write(report, lines)
             waited = time.time()
+            if theirs(branch):
+                lines.append(f"| {branch} | | failed - **for {SESSIONS[branch]} to fix**; not waited for: the branches stacked on it are not run | | | |")
+                write(report, lines)
+                break
             if not wait_for_fix(branch, now):
                 TOTALS["waiting"] += int(time.time() - waited)
                 stop = f"no fix pushed for {WAIT} min" if WAIT else "failed, no --wait"
@@ -448,7 +487,7 @@ def merge_now(branch, main_tested):
     if len(entries) != 1:
         return False, f"want one unnumbered entry, found {len(entries)}: merge it by hand"
     title = open(os.path.join(TREE, "docs/journal", entries[0])).readline().lstrip("# ").strip()
-    session = os.environ.get("TAAJ_SESSION", f"{MACHINE}/ci")
+    session = SESSIONS.get(branch) or os.environ.get("TAAJ_SESSION", f"{MACHINE}/ci")
     row = f"{title} ({session}, merged after its night test)"
     kernel_branch = bool(git("ls-remote", "origin", f"refs/heads/{branch}", cwd=KERNEL))
     head = git("rev-parse", "HEAD")
@@ -471,13 +510,17 @@ def merge_now(branch, main_tested):
         done = run("python3", "tools/merge-item.py", row, check=False)
         said = (done.stdout + done.stderr).strip().splitlines()
         if done.returncode != 0:
-            return False, (said[-1] if said else "merge-item failed")[:200]
+            # What it said before its last line is the why (lanes-check's
+            # findings, say): kept, on one line.
+            return False, " / ".join(l.strip() for l in said[-6:] if l.strip())[:400] or "merge-item failed"
         return True, (said[-1] if said else "merged")[:200]
     except RuntimeError as why:
         return False, str(why)[:200]
     finally:
         run("git", "reset", "-q", "--hard", check=False)
         run("git", "switch", "-q", "--detach", check=False)
+        run("git", "merge", "--abort", cwd=KERNEL, check=False)
+        run("git", "reset", "-q", "--hard", cwd=KERNEL, check=False)
         run("git", "switch", "-q", "--detach", cwd=KERNEL, check=False)
 
 
