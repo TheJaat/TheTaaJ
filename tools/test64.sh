@@ -1,6 +1,6 @@
 #!/bin/sh
 # test64.sh [again] - make test64's steps, and make test64-again (journal
-# entry NNN). Run by the Makefile, which gives it MAKE, TEST_JOBS,
+# entry 137). Run by the Makefile, which gives it MAKE, TEST_JOBS,
 # TEST64_SHARED and TEST64_PARTS.
 #
 #   make test64         1. the shared builds (test64-shared);

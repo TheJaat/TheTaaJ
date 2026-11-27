@@ -4601,3 +4601,28 @@ From a session's tree, with a queue of stacked branches:
 | `python3 tools/night-test.py --wait 60`, a branch failing; push a fix to it | Within a minute `BRANCH on ... (try 2)`; when it passes, the next branch starts |
 
 Automated: not part of `make test64` - it runs `make test64` itself.
+
+---
+
+## 137 · Coverage of the host tests, and a floor that only rises; make test64 reports every failure, make test64-again runs only those
+
+[The entry](journal/137-coverage.md)
+
+From a session's tree, with rustup (the first run installs `llvm-tools` for Rust 1.100.0):
+
+| Do | You should see |
+|---|---|
+| `make coverage` | A table of 17 crates - lines, functions, lines counted, floor - and `coverage: every crate at or above its floor`, in about 20 seconds |
+| Set a crate's floor in `tools/coverage-floor` above its number, `python3 tools/coverage.py CRATE` | `BELOW ITS FLOOR` and `coverage: FAILED`, exit 1; put the floor back |
+
+And for part two, `make test64-again`:
+
+In a session's tree, after a `make test64`:
+
+| Do | You should see |
+|---|---|
+| `make test64` with a part failing | Every other part still run, then `test64: FAILED: PART - after fixing, make test64-again runs only these`; `cat build/test64-failed` lists it |
+| `make test64-again` | `test64-again: PART`, the shared builds, only that part, and `test64: all passed` once it does |
+| `make test64-again` again | `test64-again: nothing failed in the last make test64` |
+
+Automated: a part of `make test64` (`coverage`); part two is `make test64` itself.

@@ -1,5 +1,5 @@
 # Each crate's host tests cover at least this many percent of its lines
-# (tools/coverage.py; J96, journal entry NNN). Raised by
+# (tools/coverage.py; J96, journal entry 137). Raised by
 # `make coverage-raise`; lowered only by hand, saying why.
 kernel/kernel64 91
 kernel/abi 87
