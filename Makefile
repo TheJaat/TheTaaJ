@@ -3,7 +3,7 @@ BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
-        kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
+        kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test coverage coverage-raise fault64-test test64 test64-again \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
         pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test handles64-test aarch64-handles-test times64-test aarch64-times-test pages64-test aarch64-pages-test zlib64 zlib-aarch64 \
@@ -596,6 +596,17 @@ user64:
 	@echo "Building the user programs..."
 	cd user && cargo build --release
 
+# libc.a is built again only when something it is made of is newer than
+# its last build (FILE.stamp): the Rust half (cargo decides that), the C
+# files and headers, this Makefile (the flags), thin-archive.py. And
+# FILE.new replaces FILE only if it differs, so that a library that comes
+# out byte for byte the same keeps its old time, and nothing linked with
+# it - LLVM's tools, tcc, every C program - is linked again. Before,
+# every make test64 built both libraries again, 8 and 16 seconds, and
+# relinked all that (journal entry 138).
+libc-stale = [ ! -f $(1).stamp ] || [ -n "$$(find $(LIBC_DIR)/c $(LIBC_DIR)/include $(2) Makefile tools/thin-archive.py -newer $(1).stamp -print -quit)" ]
+replace-if-changed = if cmp -s $(1).new $(1); then rm -f $(1).new; else mv -f $(1).new $(1); fi; touch $(1).stamp
+
 # The C library, and the C programs in libc/programs: each one file,
 # compiled and linked with libc.a. To build one of your own:
 #   make cprogs64 C_PROGRAMS=name      (with libc/programs/name.c)
@@ -604,15 +615,18 @@ libc64:
 	@echo "Building the C library..."
 	cd $(LIBC_DIR) && cargo build --release
 ifeq ($(HAVE_CC),yes)
-	@mkdir -p $(C_BIN)/lib/libm
-	@for part in $(LIBC_C); do \
-	    echo "  CC      libc/c/$$part.c"; \
-	    clang $(TAAJ_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -c $(LIBC_DIR)/c/$$part.c -o $(C_BIN)/lib/$$part.o || exit 1; \
-	done
-	@cp $(LIBC_RUST_A) $(LIBC_A)
-	@$(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(LIBC_A)
-	@ar rs $(LIBC_A) $(addprefix $(C_BIN)/lib/,$(addsuffix .o,$(LIBC_C)))
-	@python3 -I tools/thin-archive.py $(LLVM_NM) $(LLVM_AR) $(LIBC_A)
+	@if $(call libc-stale,$(LIBC_A),$(LIBC_RUST_A)); then \
+	    mkdir -p $(C_BIN)/lib/libm && \
+	    for part in $(LIBC_C); do \
+	        echo "  CC      libc/c/$$part.c"; \
+	        clang $(TAAJ_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -c $(LIBC_DIR)/c/$$part.c -o $(C_BIN)/lib/$$part.o || exit 1; \
+	    done && \
+	    cp $(LIBC_RUST_A) $(LIBC_A).new && \
+	    $(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(LIBC_A).new && \
+	    ar rs $(LIBC_A).new $(addprefix $(C_BIN)/lib/,$(addsuffix .o,$(LIBC_C))) && \
+	    python3 -I tools/thin-archive.py $(LLVM_NM) $(LLVM_AR) $(LIBC_A).new && \
+	    { $(call replace-if-changed,$(LIBC_A)); }; \
+	else echo "  libc.a is up to date"; fi
 endif
 
 cprogs64: libc64
@@ -886,6 +900,15 @@ endif
 # locks), compiled for and run on this machine rather than in a VM.
 HOST_TRIPLE = $(shell PATH="$(PATH)" rustc -vV | sed -n 's/^host: //p')
 
+# How much of each crate's code its host tests run, and a floor per crate
+# that may only rise (J96, journal entry 137): tools/coverage-floor. In
+# make test64: about 20 s, its own build in build/coverage.
+coverage:
+	@python3 tools/coverage.py
+
+coverage-raise:
+	@python3 tools/coverage.py --raise
+
 # Every unsafe block, impl and public unsafe fn says why it is sound
 # (K112): clippy's two lints for it, as errors, over every crate and CPU.
 # The kernel embeds the user programs (programs.rs), so linting it needs
@@ -1097,14 +1120,17 @@ TAAJ_A64_LDFLAGS = $(TAAJ_LDFLAGS) -z max-page-size=4096
 cprogs-aarch64:
 ifeq ($(HAVE_CC),yes)
 	cd $(LIBC_DIR) && cargo build --release --target $(KERNEL_A64_TARGET)
-	@mkdir -p $(C_A64_BIN)/lib/libm
-	@for part in $(LIBC_C); do \
-	    clang $(TAAJ_A64_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -c $(LIBC_DIR)/c/$$part.c -o $(C_A64_BIN)/lib/$$part.o || exit 1; \
-	done
-	@cp $(LIBC_A64_RUST) $(C_A64_BIN)/libc.a
-	@$(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(C_A64_BIN)/libc.a
-	@ar rs $(C_A64_BIN)/libc.a $(addprefix $(C_A64_BIN)/lib/,$(addsuffix .o,$(LIBC_C)))
-	@python3 -I tools/thin-archive.py $(LLVM_NM) $(LLVM_AR) $(C_A64_BIN)/libc.a
+	@if $(call libc-stale,$(C_A64_BIN)/libc.a,$(LIBC_A64_RUST)); then \
+	    mkdir -p $(C_A64_BIN)/lib/libm && \
+	    for part in $(LIBC_C); do \
+	        clang $(TAAJ_A64_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -c $(LIBC_DIR)/c/$$part.c -o $(C_A64_BIN)/lib/$$part.o || exit 1; \
+	    done && \
+	    cp $(LIBC_A64_RUST) $(C_A64_BIN)/libc.a.new && \
+	    $(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(C_A64_BIN)/libc.a.new && \
+	    ar rs $(C_A64_BIN)/libc.a.new $(addprefix $(C_A64_BIN)/lib/,$(addsuffix .o,$(LIBC_C))) && \
+	    python3 -I tools/thin-archive.py $(LLVM_NM) $(LLVM_AR) $(C_A64_BIN)/libc.a.new && \
+	    { $(call replace-if-changed,$(C_A64_BIN)/libc.a); }; \
+	else echo "  libc.a (AArch64) is up to date"; fi
 	@for program in $(C_A64_PROGRAMS); do \
 	    echo "  CC      $$program.c (AArch64)"; \
 	    clang $(TAAJ_A64_CFLAGS) -c $(LIBC_DIR)/programs/$$program.c -o $(C_A64_BIN)/$$program.o || exit 1; \
@@ -2150,6 +2176,7 @@ TEST64_PARTS = \
 	libmake64-test \
 	aarch64-libmake-test \
 	kernel64-test \
+	coverage \
 	unsafe-check \
 	fuzz64-test \
 	aarch64-fuzz-test \
@@ -2198,11 +2225,14 @@ TEST64_PARTS = \
 	pages64-test \
 	aarch64-pages-test
 
+# The steps are in tools/test64.sh: a failing part does not stop the
+# others (smp64-test included), and what failed is written down for
+# make test64-again, which runs only that (journal entry 137).
 test64:
-	@$(MAKE) --no-print-directory test64-shared
-	@$(MAKE) --no-print-directory smp64-test
-	@$(MAKE) --no-print-directory -j$(TEST_JOBS) --output-sync=target $(addprefix -o ,$(TEST64_SHARED) smp64-test) test64-parts
-	@echo "test64: all passed"
+	@MAKE="$(MAKE)" TEST_JOBS="$(TEST_JOBS)" TEST64_SHARED="$(TEST64_SHARED)" TEST64_PARTS="$(TEST64_PARTS)" sh tools/test64.sh
+
+test64-again:
+	@MAKE="$(MAKE)" TEST_JOBS="$(TEST_JOBS)" TEST64_SHARED="$(TEST64_SHARED)" TEST64_PARTS="$(TEST64_PARTS)" sh tools/test64.sh again
 
 # What test64-shared builds is then not built again: the second step is
 # told it is up to date (make -o). Most of it is .PHONY, so make would
