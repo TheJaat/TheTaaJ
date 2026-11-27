@@ -182,6 +182,16 @@ def tree():
             link = os.path.join(TREE, "toolchain/i686")
             if not os.path.exists(link):
                 os.symlink(i686, link)
+    # toolchain's .gitignore says `i686/`, which matches a directory, not
+    # the link to one: kept out of `git status` (as new-session.sh does),
+    # or merge-item.py finds the tree not clean and merges nothing - the
+    # first real night's first merge (entry NNN).
+    if os.path.islink(os.path.join(TREE, "toolchain/i686")):
+        exclude = git("rev-parse", "--path-format=absolute", "--git-path", "info/exclude", cwd=os.path.join(TREE, "toolchain"))
+        os.makedirs(os.path.dirname(exclude), exist_ok=True)
+        if "/i686" not in open(exclude).read().split() if os.path.exists(exclude) else True:
+            with open(exclude, "a") as out:
+                out.write("/i686\n")
 
 
 def prepare(branch, base_taaj, base_kernel):

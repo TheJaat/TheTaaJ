@@ -32,6 +32,10 @@ A branch with more than one unnumbered entry, or one `merge-item.py` refuses, is
 - **restack and a real conflict**: a first try's fix changed lines `docs-split` also changes - it stopped there, `settle it by hand`, nothing pushed.
 - **On the server**: `restack.py --check` on the real queue - every branch stacked.
 
+## Its first night
+
+The first real `--merge` stopped at the first merge: `one-merge-commit` passed its whole `make test64` (10 min), and `merge-item.py` refused - ` M toolchain`, the tree not clean. The night tree's `toolchain/i686` is a link to the machine's cross compiler, and `toolchain`'s `.gitignore` names a directory, not a link: `new-session.sh` keeps it out of `git status` with the submodule's `info/exclude`; the runner's own tree never had that. The rehearsal's sandbox has no cross compiler, so no link, and did not see it. `tree()` now adds the exclude every run, as `new-session.sh` does.
+
 ## What is still missing
 
 - `--merge` has run in the sandbox only. Its first real use is the night the user starts.
