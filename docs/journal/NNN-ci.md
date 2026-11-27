@@ -41,6 +41,33 @@ Two old branches no longer merge - the kind of thing nobody was told before.
 
 When the user says so (no cron, by the user's choice): after the queued night tests, or alone. It takes `make test64`'s time - about 7 minutes on TheJat-WSL - for each branch that moved. J95 (every part 50 times) is built on it next.
 
+## How I checked it
+
+- `NIGHT_TEST=true python3 tools/night-test.py --all`: the six branches above, the merged ones left out, nothing posted or recorded.
+- One status posted by hand with the same call, on this branch's commit: `pending | TheJat-WSL test64` read back from GitHub.
+- Its first real run is the night's: `j93-ci` is queued after `night-test`.
+
+## What is still missing
+
+- **Statuses on old commits**: a branch tested before its new commit only shows the old one's result until the next run.
+- **J95**: every part 50 times - on this runner, when the user says.
+- Only TheJat-WSL runs it; another machine would post under its own name.
+
+## What I learned
+
+- **Branches nobody watches drift.** The first run found two that no longer merge with `main`.
+
+## Testing note
+
+From a session's tree (`~/Projects/TheTaaJ-ci`, say), logged in with `gh`:
+
+| Do | You should see |
+|---|---|
+| `NIGHT_TEST=true python3 tools/night-test.py --all` | A report headed `CI`: `main`, then each branch `main` does not contain - passed, or `does not merge`; nothing posted |
+| `TAAJ_MACHINE=TheJat-WSL python3 tools/night-test.py --all` | `make test64` on each; on GitHub, each branch's newest commit shows `TheJat-WSL test64` - success or failure; a second run right after tests nothing |
+
+Automated: not part of `make test64` - it runs `make test64` itself.
+
 ## Files
 
 - `tools/night-test.py`: `--all` (`everything`, `heads`), the record of what was tested, `post` (commit statuses), `main` tested as it is.
