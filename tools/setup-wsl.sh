@@ -67,7 +67,7 @@ esac
 
 # --- 2. Packages -----------------------------------------------------------
 
-# As root - in a container (tools/clean-build.sh, journal entry NNN) - there is no
+# As root - in a container (tools/clean-build.sh, journal entry 133) - there is no
 # one to ask, and often no sudo: run the commands as they are.
 SUDO=sudo
 [ "$(id -u)" = 0 ] && SUDO=

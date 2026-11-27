@@ -1,5 +1,5 @@
 #!/bin/sh
-# miri-check.sh - the host tests under Miri (K187, journal entry NNN).
+# miri-check.sh - the host tests under Miri (K187, journal entry 134).
 #
 #   make miri        (or: sh tools/miri-check.sh [CRATE...])
 #

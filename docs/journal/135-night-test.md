@@ -1,6 +1,6 @@
 # Night tests: develop by day, run the full test at night
 
-*Journal entry #NNN · a tool. Written on TheJat-WSL/ci. A session's day went mostly to waiting for `make test64` (about 7 minutes on TheJat-WSL, more on the others), once per item and again whenever `main` moved. The user's plan, tried for a few days: by day, items are developed with quick checks only and pushed to their branches; at night, when the user says so, `python3 tools/night-test.py` runs the full test on each, one after another, and leaves a report for the morning's merges.*
+*Journal entry #135 · a tool. Written on TheJat-WSL/ci. A session's day went mostly to waiting for `make test64` (about 7 minutes on TheJat-WSL, more on the others), once per item and again whenever `main` moved. The user's plan, tried for a few days: by day, items are developed with quick checks only and pushed to their branches; at night, when the user says so, `python3 tools/night-test.py` runs the full test on each, one after another, and leaves a report for the morning's merges.*
 
 ## Why
 

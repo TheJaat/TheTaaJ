@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """night-test.py [QUEUE] - tests the queued branches, one after another,
-and writes a report for the morning (journal entry NNN).
+and writes a report for the morning (journal entry 135).
 night-test.py --all - our own CI (J93): main, and every branch of ours
 not merged yet whose newest commit has not been tested (entry NNN).
 
