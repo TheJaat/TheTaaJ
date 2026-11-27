@@ -190,7 +190,6 @@ Its files: `kernel/kernel64/src/sched.rs`, `smp.rs`, `futex.rs`, `alarms.rs`, `c
 |---|---|---|
 | K191 | 2 | More POSIX timers, fine timeouts (after K24) |
 | K192 | 1 | Cross-CPU wake-ups under KVM (entry 128's bug 5) |
-| K193 | 1 | A lock per CPU's run queue (K68's other half) |
 | K101 | 2 | A thread prefers its last CPU |
 | K70 | 2 | Futexes without one shared list |
 | K72 | 2 | Idle CPUs that sleep |
