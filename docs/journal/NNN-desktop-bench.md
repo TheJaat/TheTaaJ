@@ -52,7 +52,7 @@ Keys are matched to their echoes by count. While keys wait, each printable byte 
 
 - `deskbench64-test`: passed on its first run, both boots; every measurement printed, the dragged terminal back at (19, 80), the four busy programs killed.
 - The key-to-screen number checked against the log, as above: the busy programs ran across the whole measurement.
-- `display` and `shell` build without warnings; `make test64`: RESULT.
+- `display` and `shell` build without warnings; `make test64` (with `deskbench64-test` in it): all passed, 967 s.
 - **Not tested**: AArch64 (see below); typing faster than the shell echoes, where keys and echoes are matched by count, not one by one.
 
 ## What is still missing
