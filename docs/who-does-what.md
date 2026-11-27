@@ -172,7 +172,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| MaK-WSL/sched: K20 with J80, priorities, affinity, `nice` and the `sched_*` calls; then K24 with K96 and J53 | `k20-priorities` |
+| MaK-WSL/sched: K24 with K96 and J53, timers finer than a tick; then K68 | `k24-timers` |
 
 ### Now: TheJat-WSL
 
@@ -295,7 +295,7 @@ The order matters here: each item is needed by the ones after it.
 |---|---|---|---|
 | J51 | Test programs out of the kernel image (onto the test disk) | M | The kernel image has ~680 KiB left under 3 MiB |
 | J52 | A test that fails when rule 1 or rule 3 of `threads.rs` is broken | S | **Done (entry 119)**: rule 1 checked at every switch (the lock still held where it is released), rule 3 by the threads self-test (a waiter woken before it waits is still in its queue); each broken on purpose panics. Found and fixed with it: a panic on a machine with more CPUs than the kernel uses was a triple fault (the stopping NMI reached the CPUs left asleep); `fault-test.sh`'s new `page@20` checks it |
-| J53 | A test for the ticks mutation from entry 097 (late timer interrupts) | S | Perhaps by stopping a CPU for a while |
+| J53 | A test for the ticks mutation from entry 097 (late timer interrupts) | S | **Done (entry NNN)**: the late-interrupts self-test (35 ms with interrupts off); entry 097's mutation now caught on x86 (on AArch64 it changes nothing) |
 | J54 | A fresh `git clone --recurse-submodules` builds and passes (in a clean container) | S | Never tried |
 | J55 | Programs moved into `/bin` on the run disks (libc's exec and the shell both look there, entries 100 and 101) | S | The disk recipes and every test put programs in the root and look for them there |
 | J56 | zlib (and later other libraries) installed on TheTaaJ's disk with its header, for programs compiled there | S | With step E, when there is a place for libraries on the disk |
@@ -341,9 +341,11 @@ The order matters here: each item is needed by the ones after it.
 | K20 | Process priorities and choosing a thread's CPU (affinity) | M | **Done (entry 124)**, with J80: a priority (-20 to 19) and an affinity per thread, strict priorities and taking a CPU at once, a ceiling per process (init's the highest), SCHED_SET/SCHED_GET; init raises the keyboard-to-screen services to -5. Left: shares (K100), real-time classes (K99), K190 |
 | K21 | CPU time per process in `ps` | S | **Done (entry 114)**: the kernel counts each process's CPU time at every switch and tick (`clock::PROCESS_CPU`, one more word in `ProcessEntry`); `ps` has a CPU column; libc's `clock()` and `CLOCK_PROCESS_CPUTIME_ID` give it |
 | K190 | A child takes its parent's `nice` - through `posix_spawn` and the shell, as the memory limit travels with the program file (entry 096) - instead of always starting at 0 | S | After K20 (entry 124) |
+| K191 | More POSIX timers: several per process (`timer_create` makes one now), SIGEV_THREAD and SIGEV_NONE, `timer_getoverrun` counting; fine timeouts for futexes and OBJECT_WAIT_UNTIL (`pthread_cond_timedwait`, `poll`), which still wait to the tick | M | After K24 (entry NNN) |
+| K192 | **Waking a thread on another CPU is slower under KVM** since the one-shot timers: two CPUs' wake-to-run median 46-109 us against 4 on `main`; not under TCG. Find why (the host waking a halted vCPU; halt polling; the APIC timer's mode) | S | Found in entry NNN, bug 5 |
 | K22 | A transmit-interrupt serial writer (AArch64 output capped at ~3200 bytes/s) | S | |
 | K23 | The faster boots: measure boot time on KVM and on the real PC, cut the slow parts | S | |
-| K24 | Timer: alarms and sleeps finer than a 10 ms tick (one-shot timer, `setitimer`, `timer_create`) | M | |
+| K24 | Timer: alarms and sleeps finer than a 10 ms tick (one-shot timer, `setitimer`, `timer_create`) | M | **Done (entry NNN)**, with K96 and J53: one-shot timers (each CPU's set for its next tick or its first sleeper), deadlines in nanoseconds, SLEEP_UNTIL, ALARM's interval; `nanosleep` to the nanosecond, `clock_nanosleep`, `setitimer`/`getitimer`, `timer_*` (one timer). Left: K191, K192 |
 
 ### Security
 
@@ -566,7 +568,7 @@ What it lacks: any policy - every thread is equal, with no priorities or classes
 | # | Item | Size | Notes |
 |---|---|---|---|
 | K95 | **A scheduling benchmark**: wake-to-run latency, the cost of a switch, fairness between busy programs, and key press to screen with four busy programs, on KVM and emulated; the numbers kept in the journal | S | **Done (entry 116)**, with K67: wake-to-run, a switch, a hand-off and fairness in `schedbench`. Key press to screen with four busy programs is measured by `desktop`'s K114, which is that benchmark |
-| K96 | **Sleepers in a timer queue** sorted by their time, so a tick looks only at the first; no scan of every thread and no allocation in the tick | S | Early; with K24's one-shot timer it becomes "set the timer for the first sleeper" |
+| K96 | **Sleepers in a timer queue** sorted by their time, so a tick looks only at the first; no scan of every thread and no allocation in the tick | S | **Done (entry NNN)**: a sorted sleeper set per CPU; a tick looks only at those due, allocates nothing |
 | K97 | **Scheduling contexts as capabilities**: a priority, a budget and a period per context; a thread runs on its context's time; made and handed out by init or a resource manager, never by a program for itself | L | After K20. The core of the era |
 | K98 | **A server runs on its client's context** for the length of a call, and the client is charged | M | After K97, K61; replaces K65's separate mechanism |
 | K99 | **Classes**: real-time (fixed priority: sound in Era 10, input, the display), normal (a fair share by virtual run time, as EEVDF does), background (only when nothing else wants the CPU) | M | After K97 |
