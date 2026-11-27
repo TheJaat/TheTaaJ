@@ -1653,6 +1653,24 @@ endif
 # clock, a clock finer than a tick, signals from the kernel (handlers,
 # alarms, Ctrl+C, faults, children ended by them) and disk flushes.
 # basics.c (next to the test script) checks them.
+
+# The system-call fuzzer (K104): programs with no handles make random
+# system calls; the kernel must take them all and still answer.
+FUZZ64_LOG    = $(BUILD_DIR)/fuzz64.log
+FUZZ_A64_LOG  = $(BUILD_DIR)/aarch64/fuzz.log
+fuzz64-test: iso64 user64 tfstool-rs
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/fuzz-test.sh x86_64 $(ISO64_IMG) $(FUZZ64_LOG).disk $(FUZZ64_LOG) user/target/x86_64-unknown-none/release/fuzz
+	@echo "fuzz64-test passed"
+
+aarch64-fuzz-test: kernel-aarch64 user-aarch64 tfstool-rs
+ifeq ($(HAVE_A64),yes)
+	@mkdir -p $(BUILD_DIR)/aarch64
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/fuzz-test.sh aarch64 $(KERNEL_A64_IMAGE) $(FUZZ_A64_LOG).disk $(FUZZ_A64_LOG) user/target/$(KERNEL_A64_TARGET)/release/fuzz
+	@echo "aarch64-fuzz-test passed"
+else
+	@echo "NOTE: aarch64-fuzz-test skipped - it needs qemu-system-aarch64"
+endif
+
 BASICS64_LOG   = $(BUILD_DIR)/basics64.log
 BASICS_A64_LOG = $(BUILD_DIR)/aarch64/basics.log
 BASICS_C       = $(KERNEL64_DIR)/scripts/basics.c
@@ -1773,7 +1791,7 @@ NAMESPACE_C     = $(KERNEL64_DIR)/scripts/namespace.c
 # Names from a directory descriptor (J63, journal entry 120): the *at
 # calls, and a child in a tree of its own. at.c runs in the same boot.
 AT_C            = $(KERNEL64_DIR)/scripts/at.c
-# /tmp in memory (J64, journal entry 123): tmp.c, as the program
+# /tmp in memory (J64, journal entry 125): tmp.c, as the program
 # tmptest (a program called tmp would be under the /tmp mount).
 TMP_C           = $(KERNEL64_DIR)/scripts/tmp.c
 handles64-test: iso64 user64 libc64 tfstool-rs
@@ -2105,6 +2123,8 @@ TEST64_PARTS = \
 	aarch64-libmake-test \
 	kernel64-test \
 	unsafe-check \
+	fuzz64-test \
+	aarch64-fuzz-test \
 	smp64-test \
 	big64-test \
 	fault64-test \

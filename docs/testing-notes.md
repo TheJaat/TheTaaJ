@@ -4319,9 +4319,34 @@ Automated: `make test64` (`fault64-test` and `aarch64-test` require the backtrac
 
 ---
 
-## 123 · /tmp in memory
+## 123 · A system-call fuzzer: random calls from programs with nothing
 
-[The entry](journal/123-tmp.md)
+[The entry](journal/123-fuzz.md)
+
+From the root of TheTaaJ, put `fuzz` on the disk `make run64` boots (it is not one of the disk's usual programs), then boot:
+
+```
+make run-disk
+tools/tfstool-rs/target/release/tfstool put build/taaj-disk.img fuzz user/target/x86_64-unknown-none/release/fuzz
+make run64
+```
+
+Then:
+
+| Type | You should see |
+|---|---|
+| `with programs fuzz 20 2000` | `fuzz: 20 children, 2000 calls each, seeds 1 to 20`, then after some seconds `fuzz: 18 made all their calls, 2 were killed for breaking a rule, ...` (about the same numbers each time with the same seed) and `fuzz: done - 20 programs with no handles, ... the kernel still here` |
+| `echo still here` | `still here` |
+| `with programs fuzz 5 2000 random` | Different seeds, and the same `done` line |
+| `fuzz` | `fuzz: it starts programs: run it as `with programs fuzz`` |
+
+Automated: `make test64` (`fuzz64-test`, `aarch64-fuzz-test`).
+
+---
+
+## 125 · /tmp in memory
+
+[The entry](journal/125-tmp.md)
 
 Start TheTaaJ:
 
