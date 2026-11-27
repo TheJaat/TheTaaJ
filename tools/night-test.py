@@ -452,10 +452,13 @@ def merge_now(branch, main_tested):
     row = f"{title} ({session}, merged after its night test)"
     kernel_branch = bool(git("ls-remote", "origin", f"refs/heads/{branch}", cwd=KERNEL))
     head = git("rev-parse", "HEAD")
-    git("switch", "-q", "-C", branch, head)
-    if kernel_branch:
-        git("switch", "-q", "-C", branch, git("rev-parse", "HEAD", cwd=KERNEL), cwd=KERNEL)
     try:
+        # A git error here - the branch checked out in another tree, say -
+        # leaves this branch for its session; it does not end the night
+        # (the first real night's last merge, entry NNN).
+        git("switch", "-q", "-C", branch, head)
+        if kernel_branch:
+            git("switch", "-q", "-C", branch, git("rev-parse", "HEAD", cwd=KERNEL), cwd=KERNEL)
         if main_now != main_tested:
             done = run("python3", "tools/merge-main.py", check=False)
             if done.returncode != 0:
@@ -470,6 +473,8 @@ def merge_now(branch, main_tested):
         if done.returncode != 0:
             return False, (said[-1] if said else "merge-item failed")[:200]
         return True, (said[-1] if said else "merged")[:200]
+    except RuntimeError as why:
+        return False, str(why)[:200]
     finally:
         run("git", "reset", "-q", "--hard", check=False)
         run("git", "switch", "-q", "--detach", check=False)
@@ -515,7 +520,28 @@ def write(report, lines):
 STARTED = time.time()
 
 
+def checked_out_elsewhere(branches):
+    """{branch: tree} for queued branches checked out in a tree other than
+    the night's: git will not check one branch out twice, so the night
+    could test it but not merge it."""
+    found, tree_path = {}, None
+    for line in git("worktree", "list", "--porcelain", cwd=SOURCE).splitlines():
+        if line.startswith("worktree "):
+            tree_path = line[9:]
+        elif line.startswith("branch refs/heads/"):
+            name = line[18:]
+            if name in branches and os.path.realpath(tree_path) != os.path.realpath(TREE):
+                found[name] = tree_path
+    return found
+
+
 def main():
+    if MERGE and not ALL:
+        busy = checked_out_elsewhere({b for b, _ in queue()})
+        if busy:
+            sys.exit("night-test: --merge, but these queued branches are checked out in other trees "
+                     "(switch those trees to another branch, or `git switch --detach`, first):\n"
+                     + "\n".join(f"  {b}: {t}" for b, t in sorted(busy.items())))
     tree()
     night = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     logs = os.path.join(OUT, "logs", night)
