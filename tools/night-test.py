@@ -201,6 +201,16 @@ def tree():
             link = os.path.join(TREE, "toolchain/i686")
             if not os.path.exists(link):
                 os.symlink(i686, link)
+    # TheKernel and TheBootloader in this tree are clones of their own:
+    # without the author, a merge commit there fails ("empty ident name"),
+    # on a machine with no global git user (found rehearsing MaK-WSL's
+    # branches, entry NNN). The author of the repository's own config.
+    for sub in (KERNEL, os.path.join(TREE, "bootloader")):
+        if os.path.isdir(sub):
+            for key in ("user.name", "user.email"):
+                value = git("config", key, cwd=SOURCE, check=False)
+                if value and not git("config", key, cwd=sub, check=False):
+                    git("config", key, value, cwd=sub)
     # toolchain's .gitignore says `i686/`, which matches a directory, not
     # the link to one: kept out of `git status` (as new-session.sh does),
     # or merge-item.py finds the tree not clean and merges nothing - the
@@ -219,6 +229,12 @@ def prepare(branch, base_taaj, base_kernel):
     git("fetch", "-q", "origin")
     git("fetch", "-q", "origin", cwd=KERNEL)
     git("reset", "-q", "--hard")
+    # A merge that failed before may have left TheKernel or TheBootloader
+    # half merged: the next checkout would refuse (entry NNN).
+    for sub in (KERNEL, os.path.join(TREE, "bootloader")):
+        if os.path.isdir(sub):
+            run("git", "merge", "--abort", cwd=sub, check=False)
+            run("git", "reset", "-q", "--hard", cwd=sub, check=False)
     git("checkout", "-q", "--detach", f"origin/{branch}")
     git("submodule", "update", "-q", "--init", "kernel", "bootloader")
     if branch == "main":
@@ -494,13 +510,17 @@ def merge_now(branch, main_tested):
         done = run("python3", "tools/merge-item.py", row, check=False)
         said = (done.stdout + done.stderr).strip().splitlines()
         if done.returncode != 0:
-            return False, (said[-1] if said else "merge-item failed")[:200]
+            # What it said before its last line is the why (lanes-check's
+            # findings, say): kept, on one line.
+            return False, " / ".join(l.strip() for l in said[-6:] if l.strip())[:400] or "merge-item failed"
         return True, (said[-1] if said else "merged")[:200]
     except RuntimeError as why:
         return False, str(why)[:200]
     finally:
         run("git", "reset", "-q", "--hard", check=False)
         run("git", "switch", "-q", "--detach", check=False)
+        run("git", "merge", "--abort", cwd=KERNEL, check=False)
+        run("git", "reset", "-q", "--hard", cwd=KERNEL, check=False)
         run("git", "switch", "-q", "--detach", cwd=KERNEL, check=False)
 
 
