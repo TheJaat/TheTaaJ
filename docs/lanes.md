@@ -273,7 +273,6 @@ Its files: `gui/`, `gfx/`, `input/`, `console/`, `user/src/window.rs`, `user/src
 
 | Item | Wave | Note |
 |---|---|---|
-| K114 | 1 | The desktop benchmark: first |
 | K115 | 1 | `display` split: compositor, window manager, terminal |
 | K44 | 1 | The terminal as its own program; pseudo-terminals; `libc`'s J85 waits for it |
 | K116 | 1 | Real key events (with K42) |
