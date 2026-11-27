@@ -4803,3 +4803,21 @@ make stage2-test
 | `stage2 host tests:` | `181 checks, 0 failed` |
 
 Automated: `make test64`
+
+---
+
+## 147 · The desktop benchmark: what a frame costs, and how long a key takes to show
+
+[The entry](journal/147-desktop-bench.md)
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `display bench` | `[display] one composition of the 1024x768 screen: median ... us` and `[display] dragging a window a pixel at a time: 200 frames in ... ms, ... frames/s` in the log; on the screen, the terminal slides right and back |
+| `display keys 5`, then `abcde` | `[display] key to screen: timing the next 5 keys`, then `[display] key to screen: 5 keys, median ... us, worst ... us` |
+| `display keys 0` | `usage: display keys COUNT (1 to 200)` |
+
+Automated: `make deskbench64-test` (part of `make test64`)

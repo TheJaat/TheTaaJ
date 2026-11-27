@@ -1,6 +1,6 @@
 # The desktop benchmark: what a frame costs, and how long a key takes to show
 
-*Journal entry #NNN · a step, MaK-WSL/desktop's K114. Written on MaK-WSL/desktop. The desktop lane's first item: the numbers every item after it is measured against - one composition of the whole screen, a window dragged a pixel at a time, and the time from a key reaching the window server to its echo on the screen, while four busy programs take every CPU. Measured inside the window server, where the screen is drawn; printed by `display bench` and `display keys N`; run on 1 CPU and 4 by `deskbench64-test`.*
+*Journal entry #147 · a step, MaK-WSL/desktop's K114. Written on MaK-WSL/desktop. The desktop lane's first item: the numbers every item after it is measured against - one composition of the whole screen, a window dragged a pixel at a time, and the time from a key reaching the window server to its echo on the screen, while four busy programs take every CPU. Measured inside the window server, where the screen is drawn; printed by `display bench` and `display keys N`; run on 1 CPU and 4 by `deskbench64-test`.*
 
 ## Why
 
