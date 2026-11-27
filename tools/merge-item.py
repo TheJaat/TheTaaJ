@@ -158,6 +158,11 @@ def main():
     added = added_lines(ROOT, "origin/main")
     for line in [l for f, ls in added.items() if f == "docs/who-does-what.md" or f.startswith("docs/items/") for l in ls]:
         found = re.match(r"^\| ([KJ])\?-([a-z0-9-]+) \|", line)
+        # Only items main does not list yet: a row moved from one file of
+        # the list to another (entry NNN's split) is not new, and keeps
+        # its name until its own branch numbers it.
+        if found and re.search(rf"^\| {found.group(1)}\?-{re.escape(found.group(2))} \|", work_main, re.M):
+            continue
         if found and found.groups() not in items:
             items.append(found.groups())
     renames = []
