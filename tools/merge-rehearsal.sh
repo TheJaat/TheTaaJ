@@ -33,6 +33,12 @@ KGIT=$(cd "$CI/kernel" && cd "$(git rev-parse --git-dir)" && pwd)
 git clone -q --bare "$KGIT" kernel.git
 BGIT=$(cd "$CI/bootloader" && cd "$(git rev-parse --git-dir)" && pwd)
 git clone -q --bare "$BGIT" bootloader.git  # read only: no item here changes it
+# ...but an item may point at a TheBootloader commit that is only on its
+# branch (MaK-WSL's, entry 141): its branches come too.
+git -C "$CI/bootloader" fetch -q origin
+for b in $BRANCHES; do
+    c=$(git -C "$CI/bootloader" rev-parse -q --verify "origin/$b") && git -C bootloader.git fetch -q "$BGIT" "$c" && git -C bootloader.git update-ref "refs/heads/$b" "$c"
+done
 for repo in taaj.git kernel.git; do
     git -C $repo for-each-ref --format='%(refname)' refs/heads refs/remotes refs/tags | while read -r r; do git -C $repo update-ref -d "$r"; done
 done
