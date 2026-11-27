@@ -4577,3 +4577,27 @@ Automated: not part of `make test64` - it runs `make test64` itself.
 
 - `tools/night-test.py`: the runner.
 - `Makefile`: `unsafe-check: user64 user-aarch64`.
+
+---
+
+## 136 · Our own CI: every branch of ours tested, the result beside it on GitHub; night tests that wait for the fix
+
+[The entry](journal/136-ci.md)
+
+From a session's tree (`~/Projects/TheTaaJ-ci`, say), logged in with `gh`:
+
+| Do | You should see |
+|---|---|
+| `NIGHT_TEST=true python3 tools/night-test.py --all` | A report headed `CI`: `main`, then each branch `main` does not contain - passed, or `does not merge`; nothing posted |
+| `TAAJ_MACHINE=TheJat-WSL python3 tools/night-test.py --all` | `make test64` on each; on GitHub, each branch's newest commit shows `TheJat-WSL test64` - success or failure; a second run right after tests nothing |
+
+And for part two, the wait for a fix:
+
+From a session's tree, with a queue of stacked branches:
+
+| Do | You should see |
+|---|---|
+| `NIGHT_TEST="sh -c 'exit 1' -" python3 tools/night-test.py --wait 1` | The first branch FAILED, `waiting for a fix (up to 1 min)`, then `no fix pushed for 1 min`, and the branches after it `not run` |
+| `python3 tools/night-test.py --wait 60`, a branch failing; push a fix to it | Within a minute `BRANCH on ... (try 2)`; when it passes, the next branch starts |
+
+Automated: not part of `make test64` - it runs `make test64` itself.
