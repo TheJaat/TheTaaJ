@@ -149,7 +149,7 @@ Each session has its own tree (rule 13), with its own `build/` and submodules, a
    If a push is refused, someone merged first: pull, take the next number, push again.
 8. Tell the user it is merged, with the testing note, then go back to step 1 of section 5 for the next item.
 
-**A branch made before the work list was split** (journal entry NNN): merging `main` into it stops with a conflict in `docs/who-does-what.md`. Run `python3 tools/work-list-move.py` then: it moves the branch's own changes to the files they are in now, and says which, if any, are left for you.
+**Merge `main` in with `python3 tools/merge-main.py`** (journal entry NNN). It merges `origin/main` - TheKernel's first, when your item has a TheKernel branch - and settles the conflicts that are only bookkeeping: lines with `NNN` that main has since numbered (a branch stacked on another, once that one is merged), and, for a branch made before the work list was split, its changes to `docs/who-does-what.md` moved to the files they are in now (`tools/work-list-move.py`). A real conflict it leaves, and says which. It does not commit: test (rule 15), then `git commit`.
 
 `main` moves often with fourteen sessions. Rule 15 in `who-does-what.md` says when a merge of `main` into your branch needs a new `make test64`, and when it doesn't.
 
