@@ -971,11 +971,13 @@ pub fn file_service() -> Option<files::Files> {
     // /tmp (J64), if this program was given it: another file service,
     // its files in memory, mounted at /tmp in this program's namespace
     // (J62). Without it, /tmp is whatever the disk has there.
-    let tmp = services.lookup("tmp").ok().and_then(|tmp| files::File::from_handle(tmp).ok());
-    Some(match tmp {
-        Some(tmp) => files.mounted("/tmp", tmp).unwrap_or(files),
+    // And /dev (J65), the same way: the devices' service, at /dev.
+    let mount = |files: files::Files, at: &str, name: &str| match services.lookup(name).ok().and_then(|service| files::File::from_handle(service).ok()) {
+        Some(service) => files.mounted(at, service).unwrap_or(files),
         None => files,
-    })
+    };
+    let files = mount(files, "/tmp", "tmp");
+    Some(mount(files, "/dev", "dev"))
 }
 
 /// Startup handle `n` (counting from 0), if the parent gave that many.

@@ -400,6 +400,16 @@ pub unsafe extern "C" fn __taaj_openat(dirfd: c_int, path: *const c_char, flags:
             Ok(place) => place,
             Err(code) => return fail(code),
         };
+        if let Some(standard) = standard_device(state, &place.shown, flags) {
+            return match standard {
+                Ok(open) => {
+                    state.table[slot] = Some(open);
+                    state.set_cloexec(slot, flags & O_CLOEXEC != 0);
+                    slot as c_int
+                }
+                Err(code) => fail(code),
+            };
+        }
         // One request does all of it - the checks, making, emptying - in
         // the service, so nothing can change in between.
         // A directory is opened to read it, but what it gives is the
@@ -428,6 +438,29 @@ pub unsafe extern "C" fn __taaj_openat(dirfd: c_int, path: *const c_char, flags:
         state.set_cloexec(slot, flags & O_CLOEXEC != 0);
         slot as c_int
     })
+}
+
+/// /dev/stdin, /dev/stdout, /dev/stderr and /dev/tty (J65): not the
+/// devices' service's, but this program's own. Each is what the program
+/// already holds, so only libc can open it - as on Linux, where the first
+/// three are links into /proc/self/fd, and opening one is close to a dup.
+///   - stdin, stdout, stderr: a second descriptor for 0, 1 or 2 (EBADF if
+///     that one is closed);
+///   - tty, the terminal: the keyboard to read (ENXIO if this program
+///     has none: its input is a file or another program), the screen to
+///     write - standard error's, which is always the screen.
+/// None for any other name.
+fn standard_device(state: &State, shown: &str, flags: c_int) -> Option<Result<Open, c_int>> {
+    let fd = match shown {
+        "/dev/stdin" => 0,
+        "/dev/stdout" => 1,
+        "/dev/stderr" => 2,
+        "/dev/tty" if flags & O_ACCMODE != O_RDONLY => return Some(Ok(Open::Error)),
+        "/dev/tty" if taaj::input_is_keyboard() => return Some(Ok(Open::Input)),
+        "/dev/tty" => return Some(Err(ENXIO)),
+        _ => return None,
+    };
+    Some(copy_of(state, fd))
 }
 
 /// C's open flags, as the file service's (fileserver's protocol::open).

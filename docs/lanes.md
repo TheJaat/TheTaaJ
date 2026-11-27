@@ -308,7 +308,6 @@ Its files: `libc/src/descriptors.rs`, `user/src/files.rs`, the `fileserver` crat
 
 | Item | Wave | Note |
 |---|---|---|
-| J65 | 2 | `/dev` |
 | J55 | 2 | Programs moved into `/bin` |
 | J66 | 2 | `/proc` |
 | J67 | 2 | A second disk (with `devices`' K11) |
