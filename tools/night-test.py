@@ -278,6 +278,19 @@ def prepare(branch, base_taaj, base_kernel):
     if not kernel_branch:
         git("submodule", "update", "-q", "kernel")
     git("submodule", "update", "-q", "bootloader")
+    # TheBootloader's Makefile does not know which .inc files an assembly
+    # file includes: built before at another commit, its objects can be
+    # stale - k130-any-size's `global BootHeader`, added to an .inc, was
+    # missing from the stage2.o the branch before had built, and the link
+    # failed (entry NNN). It builds in seconds: from nothing, whenever its
+    # commit is not the one built last.
+    boot = os.path.join(TREE, "bootloader")
+    built = os.path.join(TREE, "build", ".bootloader-commit")
+    commit = git("rev-parse", "HEAD", cwd=boot)
+    if not os.path.exists(built) or open(built).read().strip() != commit:
+        subprocess.run(["rm", "-rf", os.path.join(boot, "build")])
+        os.makedirs(os.path.dirname(built), exist_ok=True)
+        open(built, "w").write(commit + "\n")
     return kernel or git("ls-tree", "HEAD", "kernel").split()[2]
 
 
