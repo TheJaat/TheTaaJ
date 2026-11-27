@@ -4577,3 +4577,98 @@ Automated: not part of `make test64` - it runs `make test64` itself.
 
 - `tools/night-test.py`: the runner.
 - `Makefile`: `unsafe-check: user64 user-aarch64`.
+
+---
+
+## 136 · Our own CI: every branch of ours tested, the result beside it on GitHub; night tests that wait for the fix
+
+[The entry](journal/136-ci.md)
+
+From a session's tree (`~/Projects/TheTaaJ-ci`, say), logged in with `gh`:
+
+| Do | You should see |
+|---|---|
+| `NIGHT_TEST=true python3 tools/night-test.py --all` | A report headed `CI`: `main`, then each branch `main` does not contain - passed, or `does not merge`; nothing posted |
+| `TAAJ_MACHINE=TheJat-WSL python3 tools/night-test.py --all` | `make test64` on each; on GitHub, each branch's newest commit shows `TheJat-WSL test64` - success or failure; a second run right after tests nothing |
+
+And for part two, the wait for a fix:
+
+From a session's tree, with a queue of stacked branches:
+
+| Do | You should see |
+|---|---|
+| `NIGHT_TEST="sh -c 'exit 1' -" python3 tools/night-test.py --wait 1` | The first branch FAILED, `waiting for a fix (up to 1 min)`, then `no fix pushed for 1 min`, and the branches after it `not run` |
+| `python3 tools/night-test.py --wait 60`, a branch failing; push a fix to it | Within a minute `BRANCH on ... (try 2)`; when it passes, the next branch starts |
+
+Automated: not part of `make test64` - it runs `make test64` itself.
+
+---
+
+## 137 · Coverage of the host tests, and a floor that only rises; make test64 reports every failure, make test64-again runs only those
+
+[The entry](journal/137-coverage.md)
+
+From a session's tree, with rustup (the first run installs `llvm-tools` for Rust 1.100.0):
+
+| Do | You should see |
+|---|---|
+| `make coverage` | A table of 17 crates - lines, functions, lines counted, floor - and `coverage: every crate at or above its floor`, in about 20 seconds |
+| Set a crate's floor in `tools/coverage-floor` above its number, `python3 tools/coverage.py CRATE` | `BELOW ITS FLOOR` and `coverage: FAILED`, exit 1; put the floor back |
+
+And for part two, `make test64-again`:
+
+In a session's tree, after a `make test64`:
+
+| Do | You should see |
+|---|---|
+| `make test64` with a part failing | Every other part still run, then `test64: FAILED: PART - after fixing, make test64-again runs only these`; `cat build/test64-failed` lists it |
+| `make test64-again` | `test64-again: PART`, the shared builds, only that part, and `test64: all passed` once it does |
+| `make test64-again` again | `test64-again: nothing failed in the last make test64` |
+
+Automated: a part of `make test64` (`coverage`); part two is `make test64` itself.
+
+---
+
+## 138 · make test64 no longer rebuilds what has not changed: 51 s to 17 s
+
+[The entry](journal/138-no-rebuild.md)
+
+In a session's tree:
+
+| Do | You should see |
+|---|---|
+| `make test64-shared` twice | The second: `libc.a is up to date`, `libc.a (AArch64) is up to date`, `tcc (x86_64) is up to date`, `tcc (aarch64) is up to date`, no `LD` lines, about 17 s on TheJat-WSL |
+| `touch libc/c/stdio.c`, `make libc64` | `CC libc/c/...` and thin-archive again; `stat build/c/libc.a` shows its old time |
+
+Automated: `make test64` runs it first.
+
+---
+
+## 139 · Stacks kept stacked, merges rehearsed by day, and the night runner merges what passed
+
+[The entry](journal/139-merge-tools.md)
+
+From a session's tree:
+
+| Do | You should see |
+|---|---|
+| `sh tools/merge-rehearsal.sh` | A row per queued branch, `passed`, then `merged: merge-item: entry N merged`; at the end `N of N merged; second commits 0; unnumbered entries on main 0` |
+| `python3 tools/restack.py --check` | `stacked` for every branch, or what each would take in |
+| `TAAJ_SESSION=TheJat-WSL/ci python3 tools/night-test.py --wait 60 --merge` | The night: each branch tested, `merged`, the next on `main` |
+
+Automated: not part of `make test64`.
+
+---
+
+## 140 · The first night: nine items tested and merged, and what it found
+
+[The entry](journal/140-night-2026-11-27.md)
+
+From a session's tree, on a branch not in the queue:
+
+| Do | You should see |
+|---|---|
+| `python3 tools/night-test.py --merge QUEUE` with a queued branch checked out in another tree | `night-test: --merge, but these queued branches are checked out in other trees:` and the branch and tree; exit 1; nothing tested |
+| `sh tools/merge-rehearsal.sh` | Each queued branch `passed`, then `merged`; `N of N merged` |
+
+Automated: not part of `make test64`.
