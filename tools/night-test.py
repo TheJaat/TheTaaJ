@@ -38,6 +38,17 @@ and TheKernel's (`gh`; context "MACHINE test64", MACHINE from
 TAAJ_MACHINE, say TheJat-WSL), where the session whose branch it is
 sees it on GitHub.
 
+A branch that fails does not stop the ones stacked on it: they are
+tested on its result all the same - their own failures show the same
+night - and marked "on a failed base"; nothing on a failed base is
+pushed. With --wait MINUTES, it does not end there: it waits for a fix
+(entry NNN). Every two minutes it looks at the server, and a failed
+branch with a new commit is tested again, and every branch stacked on
+it after it - until all passed, or no new commit came for MINUTES.
+Meanwhile the session fixes the failure in its own tree (its quick
+checks and make test64-again wait for the test64 lock between two
+branches) and pushes.
+
 NIGHT_TEST="make unsafe-check" (say) runs that instead of make test64, to
 try this script itself in minutes - and then nothing is pushed or
 posted: only a real make test64 makes a branch's merge fit to push.
@@ -52,7 +63,14 @@ import time
 
 HOME = os.path.expanduser("~")
 ALL = "--all" in sys.argv[1:]
-ARGS = [a for a in sys.argv[1:] if a != "--all"]
+WAIT = 0  # --wait MINUTES
+ARGS = []
+_args = iter(sys.argv[1:])
+for _a in _args:
+    if _a == "--wait":
+        WAIT = int(next(_args))
+    elif _a != "--all":
+        ARGS.append(_a)
 QUEUE = ARGS[0] if ARGS else os.path.join(HOME, ".cache/taaj-night/queue")
 OUT = os.path.join(HOME, ".cache/taaj-night")
 TESTED = os.path.join(OUT, "tested")
@@ -208,6 +226,122 @@ def test(log):
     return status, int(time.time() - start), failed
 
 
+def every_branch(logs, report, lines, taaj, kernel_heads, taaj_repository, kernel_repository, record):
+    """--all: each branch once, on main; results posted, nothing pushed."""
+    def remember(branch):
+        if not STAND_IN:  # tested again only when the branch moves
+            record[branch] = [taaj.get(branch), kernel_heads.get(branch)]
+            with open(TESTED, "w") as out:
+                json.dump(record, out, indent=1, sort_keys=True)
+
+    for branch, _ in everything(taaj, kernel_heads):
+        log = os.path.join(logs, f"{branch}.log")
+        print(f"night-test: {branch} on main", flush=True)
+        try:
+            kernel = prepare(branch, "origin/main", "origin/main")
+        except RuntimeError as why:
+            post(taaj_repository, taaj.get(branch), "failure", f"does not merge with main: {why}")
+            remember(branch)
+            lines.append(f"| {branch} | main | **does not merge** | | {why} | |")
+            continue
+        # main's own pointer for main (TheKernel's main may be newer).
+        kernel_head = kernel if branch == "main" else kernel_heads.get(branch)
+        how = "main as it is" if branch == "main" else "with main merged in"
+        for where, commit in ((taaj_repository, taaj.get(branch)), (kernel_repository, kernel_head)):
+            post(where, commit, "pending", f"make test64 running, {how}")
+        status, seconds, failed = test(log)
+        if status == 0:
+            said_result = f"passed in {seconds // 60} min, {how}"
+        else:
+            said_result = f"failed: {'; '.join(failed[:3]) or 'see the night report'}"
+        for where, commit in ((taaj_repository, taaj.get(branch)), (kernel_repository, kernel_head)):
+            post(where, commit, "success" if status == 0 else "failure", said_result)
+        remember(branch)
+        lines.append(f"| {branch} | main | **{'passed' if status == 0 else f'FAILED ({status})'}** | {seconds // 60} min | {'; '.join(failed[:5])} | `{log}` |")
+        open(report, "w").write("\n".join(lines) + "\n")
+
+
+def night_queue(logs, report, lines):
+    """The queue, in rounds: the first tests every branch; each later one
+    the failed branches that have a new commit, and what is stacked on
+    them. With --wait, it waits for such commits."""
+    results = {}  # branch -> {"fine", "heads", "result"}
+    entries = queue()
+    idle_since = time.time()
+    round_number = 0
+    while True:
+        git("fetch", "-q", "origin")
+        git("fetch", "-q", "origin", cwd=KERNEL)
+        taaj, kernel_heads = heads(TREE), heads(KERNEL)
+        changed = set()
+        for branch, after in entries:
+            now = (taaj.get(branch), kernel_heads.get(branch))
+            done = results.get(branch)
+            moved = done is not None and not done["fine"] and done["heads"] != now
+            if done is not None and not moved and after not in changed:
+                continue
+            log = os.path.join(logs, f"{branch}-{round_number}.log")
+            if after:
+                base = results.get(after)
+                if not base or not base["result"]:
+                    lines.append(f"| {branch} | after {after} | **not run**: {after} has no result to stack on | | | |")
+                    results[branch] = {"fine": False, "heads": now, "result": None}
+                    continue
+                base_taaj, base_kernel = base["result"]
+                base_fine = base["fine"]
+                said = f"{after}'s result" + ("" if base_fine else " - **a failed base**")
+            else:
+                base_taaj, base_kernel, said, base_fine = "origin/main", "origin/main", "main", True
+            if not now[0]:
+                lines.append(f"| {branch} | {said} | **not pushed**: no such branch on the server | | | |")
+                results[branch] = {"fine": False, "heads": now, "result": None}
+                continue
+            if round_number:
+                said += f" (round {round_number + 1})"
+            print(f"night-test: {branch} on {said}", flush=True)
+            changed.add(branch)
+            try:
+                kernel = prepare(branch, base_taaj, base_kernel)
+            except RuntimeError as why:
+                lines.append(f"| {branch} | {said} | **does not merge** | | {why} | |")
+                results[branch] = {"fine": False, "heads": now, "result": None}
+                open(report, "w").write("\n".join(lines) + "\n")
+                continue
+            status, seconds, failed = test(log)
+            fine = status == 0 and base_fine
+            # The result, for the branches stacked on this one - passed or not.
+            results[branch] = {"fine": fine, "heads": now, "result": (git("rev-parse", "HEAD"), kernel)}
+            if fine:
+                # Pushed, so the morning merge finds the base already merged in.
+                pushed = []
+                if STAND_IN:
+                    pass  # a stand-in test: nothing is pushed
+                else:
+                    if kernel_heads.get(branch):
+                        pushed.append(run("git", "push", "-q", "origin", f"HEAD:refs/heads/{branch}", cwd=KERNEL, check=False).returncode)
+                    pushed.append(run("git", "push", "-q", "origin", f"HEAD:refs/heads/{branch}", check=False).returncode)
+                note = "" if not any(pushed) else " (the merge could not be pushed: the branch moved)"
+                lines.append(f"| {branch} | {said} | **passed**{note} | {seconds // 60} min | | `{log}` |")
+            elif status == 0:
+                lines.append(f"| {branch} | {said} | passed, **on a failed base**: not pushed | {seconds // 60} min | | `{log}` |")
+            else:
+                lines.append(f"| {branch} | {said} | **FAILED** ({status}) | {seconds // 60} min | {'; '.join(failed[:5]) or 'see the log'} | `{log}` |")
+            open(report, "w").write("\n".join(lines) + "\n")
+        round_number += 1
+        if changed:
+            idle_since = time.time()
+        if all(r["fine"] for r in results.values()):
+            return
+        if time.time() - idle_since >= WAIT * 60:
+            if WAIT:
+                lines.append(f"| | | no fix pushed for {WAIT} min: stopped | | | |")
+            return
+        if changed:
+            waiting = [b for b, r in results.items() if not r["fine"]]
+            print(f"night-test: waiting for a fix to {', '.join(waiting)} (up to {WAIT} min)", flush=True)
+        time.sleep(120)
+
+
 def main():
     tree()
     night = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -216,72 +350,15 @@ def main():
     report = os.path.join(OUT, "reports", f"{night}.md")
     os.makedirs(os.path.dirname(report), exist_ok=True)
     lines = [f"# {'CI' if ALL else 'Night test'} {night}", "", "| Branch | Base | Result | Time | What failed | Log |", "|---|---|---|---|---|---|"]
-    tested = {}  # branch -> (TheTaaJ commit, TheKernel commit), if it passed
     git("fetch", "-q", "origin")
     git("fetch", "-q", "origin", cwd=KERNEL)
     taaj, kernel_heads = heads(TREE), heads(KERNEL)
     taaj_repository, kernel_repository = repository(TREE), repository(KERNEL)
     record = tested_before()
-    for branch, after in (everything(taaj, kernel_heads) if ALL else queue()):
-        log = os.path.join(logs, f"{branch}.log")
-        if after:
-            base = tested.get(after)
-            if not base:
-                lines.append(f"| {branch} | after {after} | **not run**: {after} did not pass | | | |")
-                continue
-            base_taaj, base_kernel, said = base[0], base[1], f"{after}'s result"
-        else:
-            base_taaj, base_kernel, said = "origin/main", "origin/main", "main"
-        if not git("ls-remote", "origin", f"refs/heads/{branch}"):
-            lines.append(f"| {branch} | {said} | **not pushed**: no such branch on the server | | | |")
-            continue
-        print(f"night-test: {branch} on {said}", flush=True)
-        try:
-            kernel = prepare(branch, base_taaj, base_kernel)
-        except RuntimeError as why:
-            if ALL:
-                post(taaj_repository, taaj.get(branch), "failure", f"does not merge with main: {why}")
-                if not STAND_IN:  # tried again only when the branch moves
-                    record[branch] = [taaj.get(branch), kernel_heads.get(branch)]
-                    with open(TESTED, "w") as out:
-                        json.dump(record, out, indent=1, sort_keys=True)
-            lines.append(f"| {branch} | {said} | **does not merge** | | {why} | |")
-            continue
-        # main's own pointer for main (TheKernel's main may be newer).
-        kernel_head = (kernel if branch == "main" else kernel_heads.get(branch)) if ALL else None
-        how = "main as it is" if branch == "main" else "with main merged in"
-        if ALL:
-            post(taaj_repository, taaj.get(branch), "pending", f"make test64 running, {how}")
-            post(kernel_repository, kernel_head, "pending", f"make test64 running, {how}")
-        status, seconds, failed = test(log)
-        if ALL:
-            if status == 0:
-                said_result = f"passed in {seconds // 60} min, {how}"
-            else:
-                said_result = f"failed: {'; '.join(failed[:3]) or 'see the night report'}"
-            for where, commit in ((taaj_repository, taaj.get(branch)), (kernel_repository, kernel_head)):
-                post(where, commit, "success" if status == 0 else "failure", said_result)
-            if not STAND_IN:
-                record[branch] = [taaj.get(branch), kernel_heads.get(branch)]
-                with open(TESTED, "w") as out:
-                    json.dump(record, out, indent=1, sort_keys=True)
-            lines.append(f"| {branch} | {said} | **{'passed' if status == 0 else f'FAILED ({status})'}** | {seconds // 60} min | {'; '.join(failed[:5])} | `{log}` |")
-        elif status == 0:
-            # Kept for the branches stacked on this one, and pushed, so the
-            # morning merge finds the base already merged in.
-            tested[branch] = (git("rev-parse", "HEAD"), kernel)
-            pushed = []
-            if os.environ.get("NIGHT_TEST"):
-                pass  # a stand-in test: nothing is pushed
-            elif git("ls-remote", "origin", f"refs/heads/{branch}", cwd=KERNEL):
-                pushed.append(run("git", "push", "-q", "origin", f"HEAD:refs/heads/{branch}", cwd=KERNEL, check=False).returncode)
-            if not os.environ.get("NIGHT_TEST"):
-                pushed.append(run("git", "push", "-q", "origin", f"HEAD:refs/heads/{branch}", check=False).returncode)
-            note = "" if not any(pushed) else " (the merge could not be pushed: the branch moved)"
-            lines.append(f"| {branch} | {said} | **passed**{note} | {seconds // 60} min | | `{log}` |")
-        else:
-            lines.append(f"| {branch} | {said} | **FAILED** ({status}) | {seconds // 60} min | {'; '.join(failed[:5]) or 'see the log'} | `{log}` |")
-        open(report, "w").write("\n".join(lines) + "\n")
+    if not ALL:
+        night_queue(logs, report, lines)
+    else:
+        every_branch(logs, report, lines, taaj, kernel_heads, taaj_repository, kernel_repository, record)
     open(report, "w").write("\n".join(lines) + "\n")
     print("\n".join(lines))
     print(f"\nnight-test: the report is {report}")
