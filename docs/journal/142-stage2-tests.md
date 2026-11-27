@@ -1,6 +1,6 @@
 # Stage 2 on the host: tests for the ISO reader, the ELF loader and the page tables
 
-*Journal entry #NNN · a step, MaK-WSL/boot's K129. Written on MaK-WSL/boot. The kernel's crates have had host tests for a long time; the bootloader's C code had none - only whole boots. Now the three parts the boot lane is about to change - the ISO 9660 reader, the kernel's ELF loader, and the page tables and boot info for a 64-bit kernel - are run on the host, unchanged, as 32-bit programs at stage 2's own fixed addresses. 152 checks; they found eight bugs, fixed here.*
+*Journal entry #142 · a step, MaK-WSL/boot's K129. Written on MaK-WSL/boot. The kernel's crates have had host tests for a long time; the bootloader's C code had none - only whole boots. Now the three parts the boot lane is about to change - the ISO 9660 reader, the kernel's ELF loader, and the page tables and boot info for a 64-bit kernel - are run on the host, unchanged, as 32-bit programs at stage 2's own fixed addresses. 152 checks; they found eight bugs, fixed here.*
 
 ## Why
 
