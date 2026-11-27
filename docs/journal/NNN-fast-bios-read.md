@@ -31,9 +31,9 @@ Two changes, one in each layer that asked for one sector at a time:
 | emulated (TCG), 3 runs | 47.2, 35.8, 38.3 s - median **38.3** | 21.3, 22.7, 20.0 s - median **21.3** |
 | KVM, 3 runs | 4.0, 4.8, 3.9 s - median **4.0** | 3.5, 3.0, 4.2 s - median **3.5** |
 
-IDLE
+Again with the laptop idle (5 runs emulated, 3 under KVM, medians): emulated **13.73 s before, 8.33 s after**; KVM 1.29 s and 1.21 s - 14 s idle is what entry 105 measured too.
 
-What is left of the emulated boot is mostly SeaBIOS starting the machine, and stage 1 and stage 2's own start; 16 instead of 32 per call costs little more - 52 calls instead of 26.
+What was left of the emulated boot I took for SeaBIOS and stage 2's own start. It was not: K23 (the next entry) measured each step and found it - copying memory a byte at a time, and printing on the screen.
 
 ## Design decisions
 
@@ -57,7 +57,7 @@ None in the new code that the tests or the boots found. Run against the old code
 ## What is still missing
 
 - **A real PC** (K1): the limits above, met by a real BIOS and a real USB stick.
-- **The rest of the emulated boot**: SeaBIOS's own start is not ours to cut; stage 1's read of stage 2 is small.
+- **The rest of the emulated boot**: K23's.
 
 ## What I learned
 

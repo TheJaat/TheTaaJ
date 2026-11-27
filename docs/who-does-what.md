@@ -175,6 +175,7 @@ Each machine has its own table and changes only its own, so two machines never e
 | MaK-WSL/sched: K190, a child takes its parent's nice; K193 waits for the user's decision (per-CPU locks cost exact fairness) | `k190-nice-inherit` |
 | MaK-WSL/boot: K129, host tests for stage 2 (the ISO reader, the ELF loader, the page tables); waits for the user's yes to merge | `k129-stage2-tests` |
 | MaK-WSL/boot: K131, a fast BIOS read (on top of K129: merged after it); waits for the user's yes to merge | `k131-fast-bios-read` |
+| MaK-WSL/boot: K23, boot time measured and cut, with K128 (on top of K131: merged after it); waits for the user's yes to merge | `k23-boot-time` |
 
 ### Now: TheJat-WSL
 
@@ -347,7 +348,7 @@ The order matters here: each item is needed by the ones after it.
 | K192 | **Waking a thread on another CPU is slower under KVM** since the one-shot timers: two CPUs' wake-to-run median 46-109 us against 4 on `main`; not under TCG. Find why (the host waking a halted vCPU; halt polling; the APIC timer's mode) | S | Found in entry 128, bug 5 |
 | K193 | **A lock per CPU's run queue** instead of one for all (K68's other half): a switch takes only its CPU's lock, a thread moving between CPUs takes two, in order; rule 1 of threads.rs (the lock held across a switch) rewritten for it | M | After K68 part 1 (entry 129) |
 | K22 | A transmit-interrupt serial writer (AArch64 output capped at ~3200 bytes/s) | S | |
-| K23 | The faster boots: measure boot time on KVM and on the real PC, cut the slow parts | S | |
+| K23 | The faster boots: measure boot time on KVM and on the real PC, cut the slow parts | S | **Done (entry NNN)**, with K131: measured step by step (`tools/boot-timeline.py`, stage 2's steps on the serial port); the loader's byte-at-a-time copying and its screen chatter cut. To the kernel 13.73 s -> 0.34 s emulated, 1.29 -> 0.50 s KVM; to the shell 17.8 -> 3.9 s emulated. Left: the real PC (K1); the kernel's boot self-tests are most of a boot now - running them only in tests is the user's to decide |
 | K24 | Timer: alarms and sleeps finer than a 10 ms tick (one-shot timer, `setitimer`, `timer_create`) | M | **Done (entry 128)**, with K96 and J53: one-shot timers (each CPU's set for its next tick or its first sleeper), deadlines in nanoseconds, SLEEP_UNTIL, ALARM's interval; `nanosleep` to the nanosecond, `clock_nanosleep`, `setitimer`/`getitimer`, `timer_*` (one timer). Left: K191, K192 |
 
 ### Security
@@ -696,7 +697,7 @@ What is missing:
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K128 | **`abc.txt` and `random.txt` removed** from TheBootloader | S | MaK-WSL's. First: trivial |
+| K128 | **`abc.txt` and `random.txt` removed** from TheBootloader | S | MaK-WSL's. First: trivial **Done with K23 (entry NNN)** |
 | K129 | **Host tests** for the ISO 9660 reader, the ELF loader and the page-table builder, as the kernel's crates have | S | **Done (entry NNN)**: `bootloader/tests/`, stage 2's own files run unchanged as 32-bit programs at its own addresses; 152 checks with the build's ISO and kernel (`make stage2-test`); eight bugs found and fixed (four wrap-arounds in the ELF loader's bounds, four in the ISO reader). Left: the UEFI loaders' C code |
 | K130 | **A kernel of any size from BIOS**: read in pieces to anywhere above 1 MiB (unreal mode, or a copy out of a buffer below 1 MiB after each read) | M | Ends the 3 MiB wall; J51 then is no longer urgent |
 | K131 | **A fast BIOS read**: as many sectors per `int 13h` as the BIOS takes, or staying in real mode for the whole read; measured before and after | S | **Done (entry NNN)**: 16 ISO sectors per call (inside every BIOS limit: 127 sectors, one 64 KiB block), whole sectors straight into place; an emulated boot reaches the kernel in about half the time (`tools/boot-time.sh`). Left: a real BIOS (K1) |
