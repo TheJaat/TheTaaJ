@@ -1,6 +1,6 @@
 # A merge script, after a merge that went half wrong
 
-*Journal entry #NNN · a tool and a fix to how we work. Written on TheJat-WSL/ci. Merging an item is a dozen steps across two repositories, and with fourteen sessions merging, two can reach the same step in the same minute. One of mine (entry 123) went on after TheKernel's push was refused, and left TheTaaJ's `main` pointing at a TheKernel commit that was only on a branch. Now `tools/merge-item.py` does the merge, and stops - undoing what it did - when a push is refused.*
+*Journal entry #125 · a tool and a fix to how we work. Written on TheJat-WSL/ci. Merging an item is a dozen steps across two repositories, and with fourteen sessions merging, two can reach the same step in the same minute. One of mine (entry 123) went on after TheKernel's push was refused, and left TheTaaJ's `main` pointing at a TheKernel commit that was only on a branch. Now `tools/merge-item.py` does the merge, and stops - undoing what it did - when a push is refused.*
 
 ## What happened
 

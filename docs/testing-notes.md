@@ -4377,3 +4377,19 @@ make boot64-test
 | `library: 135 checks, all passed` | J80's calls, with the rest |
 
 Automated: `make test64`
+
+---
+
+## 125 · A merge script, after a merge that went half wrong
+
+[The entry](journal/125-merge-script.md)
+
+From a session's tree, on an item's branch that is ready (tested, the user's yes):
+
+| Do | You should see |
+|---|---|
+| `python3 tools/merge-item.py` | `merge-item: usage: merge-item.py "README ROW" (the row's text)` |
+| `python3 tools/merge-item.py "What the item did"` | `merge-item: entry N`, `TheKernel's main is ...` (if it changed TheKernel), `TheTaaJ's main is ...`, `entry N merged: ...` |
+| The same, after another session merged first | `merge-item: TheKernel's push was refused ...` or `TheTaaJ's push was refused ...`, and the trees as they were |
+
+Automated: `make test64` does not run it; `sh tools/merge-item-test.sh SCRATCH` tests it, without touching the server.
