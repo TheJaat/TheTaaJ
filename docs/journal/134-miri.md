@@ -1,6 +1,6 @@
 # Miri over the host tests: undefined behaviour in three simulators
 
-*Journal entry #NNN · a check, and what it found (K187, K112's second half). Written on TheJat-WSL/ci. Entry 121 made every `unsafe` say why it is sound; nothing checked that the reason is true. Miri does: it runs the host tests in an interpreter that checks every memory access against Rust's rules. Now `make miri` runs it over every crate with `unsafe` in it. It found undefined behaviour in the tests of three drivers - `usb`, `nvme`, `ahci` - and memory two test helpers never gave back.*
+*Journal entry #134 · a check, and what it found (K187, K112's second half). Written on TheJat-WSL/ci. Entry 121 made every `unsafe` say why it is sound; nothing checked that the reason is true. Miri does: it runs the host tests in an interpreter that checks every memory access against Rust's rules. Now `make miri` runs it over every crate with `unsafe` in it. It found undefined behaviour in the tests of three drivers - `usb`, `nvme`, `ahci` - and memory two test helpers never gave back.*
 
 ## Why
 

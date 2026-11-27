@@ -59,7 +59,7 @@ LIBC_DIR=$(cd "$(dirname "$LIBC_A")" && pwd)
 # sources, the C library and its headers, this script. libc.a keeps its
 # time when it comes out the same (the Makefile's replace-if-changed),
 # so make test64 no longer builds TCC twice, 11 seconds, every run
-# (journal entry NNN).
+# (journal entry 138).
 STAMP="$OUT/.built"
 SAID="$ARCH $LIBC_A $CFLAGS $LDFLAGS ${HOST_CC:-cc}"
 if [ -f "$OUT/tcc" ] && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$SAID" ] \

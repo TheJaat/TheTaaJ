@@ -138,6 +138,14 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 128 | [Timers finer than a tick (MaK-WSL/sched, K24 with K96 and J53): each CPU's timer one-shot, set for its next tick or its first sleeper; sleepers in sorted sets per CPU, a tick looking only at those due; SLEEP_UNTIL, ALARM's interval; nanosleep to the nanosecond (1 ms takes 1.0 ms, not a 10 ms tick), clock_nanosleep, setitimer, timer_create; a self-test that makes interrupts late, catching entry 097's mutation; cross-CPU wake-ups slower under KVM, K192](128-timers.md) | written | `1322cdeb` (TheKernel `e261e00`) |
 | 129 | [A run queue per CPU, part 1 (MaK-WSL/sched, K68, with half of K101): a woken thread waits at the CPU that takes it, or the idle one it last ran on, or the home with fewest waiting; choosing strict and FIFO across all queues, so an idle CPU takes work from a busy one and four busy programs on two CPUs get 998-999 ms each; own-queue-first was unfair (one got 1497 ms) and was taken out; the lock per queue is K193](129-run-queues.md) | written | `f42de356` (TheKernel `b5fc3b3`) |
 | 130 | [A child takes its parent's nice (MaK-WSL/sched, K190): a memory object records its maker's priority, and a program started from it takes that priority, as it takes its memory limit (entry 096); clamped to the child's ceiling, so the shell's -5 is not passed on](130-nice-inherit.md) | written | `4198dbab` (TheKernel `63a5492`) |
+| 131 | [One commit per merge: the README row's commits written in the merge itself (TheJat-WSL/ci, merged after its night test)](131-one-merge-commit.md) | written | `ced87562` |
+| 132 | [The work list split: the rules in one file, the items a file per era, rows merged one at a time (TheJat-WSL/ci, merged after its night test)](132-work-list-split.md) | written | `d9e48d03` |
+| 133 | [A clean build from a fresh clone, in a container, with one command (TheJat-WSL/ci, merged after its night test)](133-clean-build.md) | written | `7333563d` |
+| 134 | [Miri over the host tests: undefined behaviour in three simulators (TheJat-WSL/ci, merged after its night test)](134-miri.md) | written | `2011ffe8` (TheKernel `36083d5`) |
+| 135 | [Night tests: develop by day, run the full test at night (TheJat-WSL/ci, merged after its night test)](135-night-test.md) | written | `74f7f93f` |
+| 136 | [Our own CI: every branch of ours tested, the result beside it on GitHub; night tests that wait for the fix (TheJat-WSL/ci, merged after its night test)](136-ci.md) | written | `86a7e98e` |
+| 137 | [Coverage of the host tests, and a floor that only rises; make test64 reports every failure, make test64-again runs only those (TheJat-WSL/ci, merged after its night test)](137-coverage.md) | written | `0d4468d3` |
+| 138 | [make test64 no longer rebuilds what has not changed: 51 s to 17 s (TheJat-WSL/ci, merged after its night test)](138-no-rebuild.md) | written | `fc1fe91f` |
 
 ## How to run what the entries describe
 
