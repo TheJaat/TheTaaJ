@@ -277,7 +277,6 @@ Its files: `gui/`, `gfx/`, `input/`, `console/`, `user/src/window.rs`, `user/src
 | K115 | 1 | `display` split: compositor, window manager, terminal |
 | K44 | 1 | The terminal as its own program; pseudo-terminals; `libc`'s J85 waits for it |
 | K116 | 1 | Real key events (with K42) |
-| K42 | 1 | Key up and down, lone Shift and Control |
 | K120 | 1 | Copy and paste (with K41) |
 | K41 | 1 | Copy and paste between windows |
 | K119 | 2 | A panel (with K40) |
