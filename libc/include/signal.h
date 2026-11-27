@@ -148,6 +148,24 @@ int sigpending(sigset_t *set);
 int sigsuspend(const sigset_t *mask);
 int pthread_sigmask(int how, const sigset_t *set, sigset_t *old);
 
+/* What a timer does when it runs out (timer_create, time.h): only
+ * SIGEV_SIGNAL with SIGALRM is taken. Linux's layout. */
+#define SIGEV_SIGNAL 0
+#define SIGEV_NONE   1
+#define SIGEV_THREAD 2
+union sigval {
+    int sival_int;
+    void *sival_ptr;
+};
+struct sigevent {
+    union sigval sigev_value;
+    int sigev_signo;
+    int sigev_notify;
+    void (*sigev_notify_function)(union sigval);
+    void *sigev_notify_attributes;
+    char _rest[32];
+};
+
 #ifdef __cplusplus
 }
 #endif

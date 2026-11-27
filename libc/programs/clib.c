@@ -220,6 +220,106 @@ static void cpu_time(void)
  * less important, not more - its ceiling is the default - and may choose
  * the CPUs it runs on. Run last of the checks that care, and put back:
  * the rest of clib runs at the default on every CPU. */
+/* Timers (journal entry 128): sleeps and alarms to the nanosecond the
+ * kernel's one-shot timer gives, not to the 10 ms tick. */
+static volatile sig_atomic_t rang;
+
+static void ring(int signal)
+{
+    (void)signal;
+    rang++;
+}
+
+static long long now_ns(clockid_t clock)
+{
+    struct timespec t;
+    clock_gettime(clock, &t);
+    return (long long)t.tv_sec * 1000000000LL + t.tv_nsec;
+}
+
+/* Waits `ms` milliseconds whatever signals come: to an absolute end. */
+static void wait_ms(long ms)
+{
+    long long end = now_ns(CLOCK_MONOTONIC) + ms * 1000000LL;
+    struct timespec until = { (time_t)(end / 1000000000LL), (long)(end % 1000000000LL) };
+    while (clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &until, NULL) == EINTR) {
+    }
+}
+
+static void timers(void)
+{
+    /* A 1 ms sleep takes at least 1 ms, and - the least of twenty - far
+     * less than the 10 ms tick it was rounded up to before. */
+    long long least = -1;
+    int short_sleep = 0;
+    for (int i = 0; i < 20; i++) {
+        struct timespec ms = { 0, 1000000 };
+        long long start = now_ns(CLOCK_MONOTONIC);
+        nanosleep(&ms, NULL);
+        long long took = now_ns(CLOCK_MONOTONIC) - start;
+        short_sleep |= took < 1000000;
+        if (least < 0 || took < least)
+            least = took;
+    }
+    check(!short_sleep, "nanosleep(1 ms) never shorter");
+    check(least < 5000000, "nanosleep(1 ms): under 5 ms, not a whole tick");
+    printf("clib: nanosleep(1 ms) took %lld us at least, of twenty\n", least / 1000);
+
+    struct timespec two = { 0, 2000000 }, left;
+    long long start = now_ns(CLOCK_MONOTONIC);
+    check(clock_nanosleep(CLOCK_MONOTONIC, 0, &two, &left) == 0 && now_ns(CLOCK_MONOTONIC) - start >= 2000000,
+          "clock_nanosleep: 2 ms relative");
+    long long end = now_ns(CLOCK_MONOTONIC) + 3000000;
+    struct timespec until = { (time_t)(end / 1000000000LL), (long)(end % 1000000000LL) };
+    check(clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &until, NULL) == 0 && now_ns(CLOCK_MONOTONIC) >= end,
+          "clock_nanosleep: until a time on CLOCK_MONOTONIC");
+    end = now_ns(CLOCK_REALTIME) + 3000000;
+    struct timespec until_day = { (time_t)(end / 1000000000LL), (long)(end % 1000000000LL) };
+    check(clock_nanosleep(CLOCK_REALTIME, TIMER_ABSTIME, &until_day, NULL) == 0 && now_ns(CLOCK_REALTIME) >= end,
+          "clock_nanosleep: until a time of day");
+    check(clock_nanosleep(CLOCK_PROCESS_CPUTIME_ID, 0, &two, NULL) == EINVAL, "clock_nanosleep on CPU time: EINVAL");
+    struct timespec bad = { 0, 1000000000 };
+    check(clock_nanosleep(CLOCK_MONOTONIC, 0, &bad, NULL) == EINVAL, "clock_nanosleep: a second of nanoseconds is EINVAL");
+
+    /* setitimer: every 5 ms, for 60 ms - about twelve - then stopped. */
+    signal(SIGALRM, ring);
+    rang = 0;
+    struct itimerval every = { { 0, 5000 }, { 0, 5000 } }, was, now;
+    check(setitimer(ITIMER_REAL, &every, &was) == 0 && was.it_value.tv_sec == 0 && was.it_value.tv_usec == 0,
+          "setitimer every 5 ms; none before");
+    check(getitimer(ITIMER_REAL, &now) == 0 && now.it_interval.tv_usec == 5000 && now.it_value.tv_usec > 0
+              && now.it_value.tv_usec <= 5000,
+          "getitimer: the interval, and up to 5 ms left");
+    wait_ms(60);
+    struct itimerval stop = { { 0, 0 }, { 0, 0 } };
+    check(setitimer(ITIMER_REAL, &stop, &was) == 0 && was.it_interval.tv_usec == 5000, "setitimer stopped; it said its interval");
+    int counted = rang;
+    printf("clib: setitimer every 5 ms rang %d times in 60 ms\n", counted);
+    check(counted >= 6 && counted <= 13, "setitimer every 5 ms: about twelve in 60 ms");
+    wait_ms(20);
+    check(rang == counted, "stopped: no more");
+    check(setitimer(ITIMER_VIRTUAL, &every, NULL) == -1 && errno == EINVAL, "ITIMER_VIRTUAL: EINVAL");
+
+    /* timer_create: the one timer; once in 3 ms; at once for a time past. */
+    timer_t timer, second;
+    check(timer_create(CLOCK_MONOTONIC, NULL, &timer) == 0, "timer_create");
+    errno = 0;
+    check(timer_create(CLOCK_MONOTONIC, NULL, &second) == -1 && errno == EAGAIN, "a second timer: EAGAIN");
+    rang = 0;
+    struct itimerspec once = { { 0, 0 }, { 0, 3000000 } }, state;
+    check(timer_settime(timer, 0, &once, NULL) == 0, "timer_settime: once, in 3 ms");
+    wait_ms(30);
+    check(rang == 1 && timer_gettime(timer, &state) == 0 && state.it_value.tv_nsec == 0 && state.it_value.tv_sec == 0,
+          "it rang once, and is stopped");
+    struct itimerspec past = { { 0, 0 }, { 1, 0 } };
+    check(timer_settime(timer, TIMER_ABSTIME, &past, NULL) == 0, "timer_settime: a time long past");
+    wait_ms(10);
+    check(rang == 2, "a time past rings at once");
+    check(timer_getoverrun(timer) == 0 && timer_delete(timer) == 0, "timer_delete");
+    check(timer_create(CLOCK_REALTIME, NULL, &timer) == 0 && timer_delete(timer) == 0, "and made again, on CLOCK_REALTIME");
+    signal(SIGALRM, SIG_DFL);
+}
+
 static void scheduling(void)
 {
     errno = 0;
@@ -561,6 +661,7 @@ int main(int argc, char **argv)
     times();
     cpu_time();
     scheduling();
+    timers();
     files();
     for_cxx();
     for_llvm();

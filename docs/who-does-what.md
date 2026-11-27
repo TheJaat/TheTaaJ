@@ -166,19 +166,19 @@ Each machine has its own table and changes only its own, so two machines never e
 | Step | Branch |
 |---|---|
 | E: LLVM 23 - **paused**: a work-in-progress commit on `llvm-23` in TheTaaJ and TheKernel, to be finished later (what is left is in its commit message) | `llvm-23` |
-| TheJat-VM/files: J65, `/dev` (J64 merged, entry 126) | `j65-dev` |
+| TheJat-VM/files: J55, programs moved into `/bin` (J65 merged, entry 127) | `j55-bin` |
 
 ### Now: MaK-WSL
 
 | Step | Branch |
 |---|---|
-| MaK-WSL/sched: K20 with J80, priorities, affinity, `nice` and the `sched_*` calls; then K24 with K96 and J53 | `k20-priorities` |
+| MaK-WSL/sched: K190, a child takes its parent's nice; K193 waits for the user's decision (per-CPU locks cost exact fairness) | `k190-nice-inherit` |
 
 ### Now: TheJat-WSL
 
 | Step | Branch |
 |---|---|
-| TheJat-WSL/ci: next in the lane (J51 waits for U7, J92 for U8) | - |
+| TheJat-WSL/ci: J92, a clean build from a fresh clone, in a container; K187, Miri | `j92-clean-build`, `k187-miri` |
 
 ## The decided order
 
@@ -293,10 +293,10 @@ The order matters here: each item is needed by the ones after it.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J51 | Test programs out of the kernel image (onto the test disk) | M | The kernel image has ~680 KiB left under 3 MiB |
+| J51 | Test programs out of the kernel image (onto the test disk) | M | The kernel image has ~500 KiB left under 3 MiB (entry 122). **Not needed if K130 comes** (U7, the user's decision, 2026-11-27): the every-boot self-tests stay in the kernel |
 | J52 | A test that fails when rule 1 or rule 3 of `threads.rs` is broken | S | **Done (entry 119)**: rule 1 checked at every switch (the lock still held where it is released), rule 3 by the threads self-test (a waiter woken before it waits is still in its queue); each broken on purpose panics. Found and fixed with it: a panic on a machine with more CPUs than the kernel uses was a triple fault (the stopping NMI reached the CPUs left asleep); `fault-test.sh`'s new `page@20` checks it |
-| J53 | A test for the ticks mutation from entry 097 (late timer interrupts) | S | Perhaps by stopping a CPU for a while |
-| J54 | A fresh `git clone --recurse-submodules` builds and passes (in a clean container) | S | Never tried |
+| J53 | A test for the ticks mutation from entry 097 (late timer interrupts) | S | **Done (entry 128)**: the late-interrupts self-test (35 ms with interrupts off); entry 097's mutation now caught on x86 (on AArch64 it changes nothing) |
+| J54 | A fresh `git clone --recurse-submodules` builds and passes (in a clean container) | S | **Done (entry NNN)**, by J92 |
 | J55 | Programs moved into `/bin` on the run disks (libc's exec and the shell both look there, entries 100 and 101) | S | The disk recipes and every test put programs in the root and look for them there |
 | J56 | zlib (and later other libraries) installed on TheTaaJ's disk with its header, for programs compiled there | S | With step E, when there is a place for libraries on the disk |
 | J57 | exec without the go-between: signals sent to it passed on to the program it started, and a keyboard handed on | M | Entry 100's exec is spawn-and-wait |
@@ -340,10 +340,13 @@ The order matters here: each item is needed by the ones after it.
 | K19 | **Run `make test64` under KVM repeatedly** (say 20 times) and fix every race found | M | **Done (entries 104, 105)**: the tests choose KVM themselves, the typed boot test's typing races; twenty rounds under KVM (`tools/race-hunt.sh`): SIGCHLD before `waitid` returns fixed in the kernel, upper time limits retried; one failure left open as K50 |
 | K20 | Process priorities and choosing a thread's CPU (affinity) | M | **Done (entry 124)**, with J80: a priority (-20 to 19) and an affinity per thread, strict priorities and taking a CPU at once, a ceiling per process (init's the highest), SCHED_SET/SCHED_GET; init raises the keyboard-to-screen services to -5. Left: shares (K100), real-time classes (K99), K190 |
 | K21 | CPU time per process in `ps` | S | **Done (entry 114)**: the kernel counts each process's CPU time at every switch and tick (`clock::PROCESS_CPU`, one more word in `ProcessEntry`); `ps` has a CPU column; libc's `clock()` and `CLOCK_PROCESS_CPUTIME_ID` give it |
-| K190 | A child takes its parent's `nice` - through `posix_spawn` and the shell, as the memory limit travels with the program file (entry 096) - instead of always starting at 0 | S | After K20 (entry 124) |
+| K190 | A child takes its parent's `nice` - through `posix_spawn` and the shell, as the memory limit travels with the program file (entry 096) - instead of always starting at 0 | S | **Done (entry 130)**: MEMORY_CREATE records its maker's priority, SPAWN_IMAGE gives it to the child, clamped to the child's ceiling (so the shell's -5 is not passed on) |
+| K191 | More POSIX timers: several per process (`timer_create` makes one now), SIGEV_THREAD and SIGEV_NONE, `timer_getoverrun` counting; fine timeouts for futexes and OBJECT_WAIT_UNTIL (`pthread_cond_timedwait`, `poll`), which still wait to the tick | M | After K24 (entry 128) |
+| K192 | **Waking a thread on another CPU is slower under KVM** since the one-shot timers: two CPUs' wake-to-run median 46-109 us against 4 on `main`; not under TCG. Find why (the host waking a halted vCPU; halt polling; the APIC timer's mode) | S | Found in entry 128, bug 5 |
+| K193 | **A lock per CPU's run queue** instead of one for all (K68's other half): a switch takes only its CPU's lock, a thread moving between CPUs takes two, in order; rule 1 of threads.rs (the lock held across a switch) rewritten for it | M | After K68 part 1 (entry 129) |
 | K22 | A transmit-interrupt serial writer (AArch64 output capped at ~3200 bytes/s) | S | |
 | K23 | The faster boots: measure boot time on KVM and on the real PC, cut the slow parts | S | |
-| K24 | Timer: alarms and sleeps finer than a 10 ms tick (one-shot timer, `setitimer`, `timer_create`) | M | |
+| K24 | Timer: alarms and sleeps finer than a 10 ms tick (one-shot timer, `setitimer`, `timer_create`) | M | **Done (entry 128)**, with K96 and J53: one-shot timers (each CPU's set for its next tick or its first sleeper), deadlines in nanoseconds, SLEEP_UNTIL, ALARM's interval; `nanosleep` to the nanosecond, `clock_nanosleep`, `setitimer`/`getitimer`, `timer_*` (one timer). Left: K191, K192 |
 
 ### Security
 
@@ -433,7 +436,7 @@ TheTaaJ runs on up to 16 CPUs (`smp.rs`), on both architectures, and a program's
 | # | Item | Size | Notes |
 |---|---|---|---|
 | K67 | **A threads benchmark**: a context switch, a futex hand-off between two threads, thread creation, `posix_spawn` to exit, and the same work on 1, 2, 4 ... CPUs to see how it scales; KVM and emulated, the numbers kept in the journal | S | **Done (entry 116)**: `schedbench` (`make schedbench64-test`, in `make test64`) on 1, 2 and 4 CPUs, KVM and emulated; still missing: AArch64, and more than 4 CPUs |
-| K68 | **A run queue per CPU**, with an idle CPU taking work from a busy one, instead of one queue under one lock | M | After K67 and K20 (priorities and affinity are in the same code) |
+| K68 | **A run queue per CPU**, with an idle CPU taking work from a busy one, instead of one queue under one lock | M | **Done (entry 129)**, part 1: a queue per CPU in the policy; placing by the idle deciding CPU, the last CPU, the home with the fewest waiting; choosing strict and FIFO across queues (an idle CPU takes work from a busy one). The lock per queue is K193 |
 | K69 | **Per-CPU caches** in the kernel heap and the frame allocator, so most allocations take no shared lock | M | After K67 |
 | K70 | **Futexes without one shared list**: a lock per bucket, a wake that touches only its own address's waiters, `FUTEX_REQUEUE` (so `pthread_cond_broadcast` doesn't wake everyone to fight for the mutex) | M | Today a wake wakes its whole queue and those whose flag is clear sleep again |
 | K71 | **Cheaper shootdowns**: PCID on x86 (ASIDs on AArch64) so a switch keeps the TLB, and only the pages taken away invalidated rather than the whole address space | M | |
@@ -466,7 +469,7 @@ The design is Fuchsia's and Plan 9's, not Linux's:
 | J62 | **A namespace per process** in libc: path prefixes to directory handles, given by the parent at `posix_spawn`; `..` and symbolic links across a mount resolved by the client; `rename` across mounts is `EXDEV`, as on Unix | M | **Done (entry 118)**: `taaj_mount(at, directory, flags)` and `taaj_unmount` (taaj.h); the table is `taaj::files::Files`'s, so libc and Rust share it; the deepest mount wins; `..` worked out by name in the namespace; `EXDEV` between mounts, `EBUSY` on a mount point; a read-only mount; mounts handed down by `posix_spawn` (abi::descriptors' MOUNT). No kernel change. Left: Rust programs started by the shell get no mounts (only libc reads them); symbolic links wait for J77 |
 | J63 | The `openat` family (`openat`, `mkdirat`, `unlinkat`, `fstatat`, `renameat`), and a program given **only one directory** - a sandbox from capabilities, with no permission checks | M | **Done (entry 120)**: `openat`, `fstatat` (`AT_EMPTY_PATH`), `mkdirat`, `unlinkat` (`AT_REMOVEDIR`), `renameat`, `faccessat`, `utimensat`, `fchmodat`, `fchownat`, `readlinkat`; a plain name goes on the directory's own channel (it follows the directory), `..` by name; the old path calls are the `*at` calls with `AT_FDCWD`; a directory descriptor may change what is in it if its program may; `posix_spawn_file_actions_addroot_np`: the child's whole tree is one directory, and its registry has no `files` |
 | J64 | **`/tmp` in memory**: the `fileserver` crate's `RamStore` as a service of its own | S | **Done (entry 126)**: `init` starts `fs` a second time as the service `tmp`, with no registry and so no disk (`RamStore`); `tmp` and `tmp.look` in the registry; every program given `tmp` has it mounted at `/tmp` (`taaj::file_service`); the shell grants it with `files` (`tmp=tmp.look` with `files=files.look`); a program in a box (`addroot_np`) gets none; a rename out of `/tmp` is `EXDEV` |
-| J65 | **`/dev`**: `null`, `zero`, `urandom` (from J2's `getrandom`) and the terminal, served by a small device service | S | After J62; `isatty` then asks the terminal rather than being a special case |
+| J65 | **`/dev`**: `null`, `zero`, `urandom` (from J2's `getrandom`) and the terminal, served by a small device service | S | **Done (entry 127)**: the `dev` service (`DevStore`, host-tested; the request loop shared with `fs`): `null`, `zero`, `full`, `random`, `urandom`, mounted at `/dev` in every program given files, the shell's own included; `/dev/stdin`, `/dev/stdout`, `/dev/stderr`, `/dev/tty` are libc's (the program's own descriptors); a box gets no `/dev`. `isatty` asking a terminal waits for a terminal service |
 | J66 | **`/proc`**: `/proc/self/exe` (and the LLVM patch removed), `/proc/self/fd`, a directory per process with what `ps` shows | M | A service that asks init or a generic "describe this process" call: numbers out of the kernel, never files |
 | J67 | **A second disk, partition or USB stick**: a second `fs` service for it, under `/mnt` | S | After J62; with K11 (GPT) |
 | J68 | **FAT32**, read and write, as its own service: USB sticks made elsewhere, and the EFI partition | M | After J61 |
@@ -566,12 +569,12 @@ What it lacks: any policy - every thread is equal, with no priorities or classes
 | # | Item | Size | Notes |
 |---|---|---|---|
 | K95 | **A scheduling benchmark**: wake-to-run latency, the cost of a switch, fairness between busy programs, and key press to screen with four busy programs, on KVM and emulated; the numbers kept in the journal | S | **Done (entry 116)**, with K67: wake-to-run, a switch, a hand-off and fairness in `schedbench`. Key press to screen with four busy programs is measured by `desktop`'s K114, which is that benchmark |
-| K96 | **Sleepers in a timer queue** sorted by their time, so a tick looks only at the first; no scan of every thread and no allocation in the tick | S | Early; with K24's one-shot timer it becomes "set the timer for the first sleeper" |
+| K96 | **Sleepers in a timer queue** sorted by their time, so a tick looks only at the first; no scan of every thread and no allocation in the tick | S | **Done (entry 128)**: a sorted sleeper set per CPU; a tick looks only at those due, allocates nothing |
 | K97 | **Scheduling contexts as capabilities**: a priority, a budget and a period per context; a thread runs on its context's time; made and handed out by init or a resource manager, never by a program for itself | L | After K20. The core of the era |
 | K98 | **A server runs on its client's context** for the length of a call, and the client is charged | M | After K97, K61; replaces K65's separate mechanism |
 | K99 | **Classes**: real-time (fixed priority: sound in Era 10, input, the display), normal (a fair share by virtual run time, as EEVDF does), background (only when nothing else wants the CPU) | M | After K97 |
 | K100 | **Fairness between processes, or groups of them**, not between threads: a group's share split among its threads | M | After K99 |
-| K101 | **A thread prefers the CPU it last ran on** while its data is still in that CPU's cache; moved only when another CPU would otherwise idle | S | With K68 |
+| K101 | **A thread prefers the CPU it last ran on** while its data is still in that CPU's cache; moved only when another CPU would otherwise idle | S | With K68 - **half done (entry 129)**: a woken thread goes back to its idle last CPU. Left: keeping a thread on its CPU while equals wait elsewhere (entry 129's bug 1), with K193 |
 | K102 | **More than 64 CPUs** in the scheduler (`pokes` and the CPU sets as bitmaps of any size) | S | With K74 |
 | J80 | `nice`, `getpriority`/`setpriority`, `sched_setscheduler`, `sched_getaffinity`/`sched_setaffinity`, `pthread_setschedparam`, mapped onto contexts: allowed only as far as the program's context lets | S | **Done (entry 124)**, with K20 (the user's decision): `nice`, `get/setpriority`, `sched_get/setaffinity`, `sched_*scheduler` and `*param` (SCHED_OTHER only), `pthread_*affinity_np`, `pthread_*schedparam`; mapped onto contexts when K97 comes |
 
@@ -776,7 +779,7 @@ What is missing: **no CI** - tests run only when someone runs them, on their own
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J92 | **A clean build from a fresh clone**, in a container, with one documented command; the setup script (`tools/setup-wsl.sh`) checked by it | S | Is J54. First |
+| J92 | **A clean build from a fresh clone**, in a container, with one documented command; the setup script (`tools/setup-wsl.sh`) checked by it | S | **Done (entry NNN)**: `sh tools/clean-build.sh` - a fresh Ubuntu 24.04 in a rootless container, setup-wsl.sh from GitHub, a fresh clone over HTTPS, `make test64`; passed the first time |
 | J93 | **Our own CI**: a machine of ours (TheJat-WSL suits it) that builds every pushed branch, runs the host tests and `make test64`, and posts the result where the branches are; no outside service gets the code to run | M | After J92. Never builds anyone else's pull request (rule) |
 | J94 | **A faster `make test64`**: parts run in parallel up to the machine's CPUs, one disk image built once and shared, the boot shortened; measured before and after | M | **Done (entry 117)**: the shared builds not run again in the test phase (`make -o`), so LLVM's tools are linked once per run, not twice - 22% less CPU; `smp64-test` alone first; test disks `cache=unsafe`, Ctrl+C after a started program - two failures under load gone. Left: LLVM's tools still linked on every run in `test64-shared`; the suite is now bound by the machine's CPUs, not by waits - see the entry |
 | J95 | **No flaky tests**: every part run 50 times in CI; each that ever fails is fixed or its limits measured again (K50, K52) | M | After J93 |
@@ -922,8 +925,8 @@ All of it stays out of the kernel but the random generator (there already) and s
 | U4 | Be at the real PC for K1 (R7) | |
 | U5 | Era 8, the AI engine: agree its plan (`docs/ai-assistant.md`) before any work | Then it splits: the engine (SIMD, tensors, GGUF) suits TheJat-VM's long runs; testing speed on the real CPU suits MaK-WSL |
 | U6 | Raspberry Pi and RISC-V: only if you want them | |
-| U7 | **J51: the kernel's program self-tests, at every boot or only in tests?** The test programs (about 300 KiB of the image's ~580 KiB left under 3 MiB) are there for `selftest::user`, `ipc`, `files` and `kill`, which check at every boot, before anything else runs, that no frame and no channel leaks. On the test disk they would run as a user program in the tests only, in a live system (other services allocate too), and that program needs a new `with system` grant to read `SYSTEM_INFO`. Or leave it to K130 (the `boot` lane), which ends the 3 MiB wall | Asked by TheJat-WSL/ci (entry 117's lane); `ci` goes on with its second wave meanwhile |
-| U8 | **J92 needs a container on TheJat-WSL**: either `sudo apt install uidmap` (then `tools/clean-build.sh` can make a rootless Ubuntu 24.04 container with `unshare`, no Docker), or Docker Desktop's WSL integration switched on for this distro | Asked by TheJat-WSL/ci; J93 (our CI) waits for J92 |
+| U7 | **J51: the kernel's program self-tests, at every boot or only in tests?** The test programs (about 300 KiB of the image's ~580 KiB left under 3 MiB) are there for `selftest::user`, `ipc`, `files` and `kill`, which check at every boot, before anything else runs, that no frame and no channel leaks. On the test disk they would run as a user program in the tests only, in a live system (other services allocate too), and that program needs a new `with system` grant to read `SYSTEM_INFO`. Or leave it to K130 (the `boot` lane), which ends the 3 MiB wall | **Decided (2026-11-27): wait for K130**, which ends the 3 MiB wall; the every-boot checks stay. J51 only if K130 does not come |
+| U8 | **J92 needs a container on TheJat-WSL**: either `sudo apt install uidmap` (then `tools/clean-build.sh` can make a rootless Ubuntu 24.04 container with `unshare`, no Docker), or Docker Desktop's WSL integration switched on for this distro | **Done (2026-11-27)**: uidmap installed on TheJat-WSL; J92 uses it |
 
 ## Later eras
 
