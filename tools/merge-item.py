@@ -197,7 +197,10 @@ def main():
     for old, new in renames:
         text = text.replace(old, new)
     open(path, "w").write(text)
-    renumber(ROOT, "origin/main", number, renames)
+    # Every file whose added lines it numbered - a script's comment saying
+    # "journal entry NNN" too, not only docs/ (until entry NNN, those were
+    # numbered but left out of the commit).
+    numbered_files = renumber(ROOT, "origin/main", number, renames)
     readme = os.path.join(ROOT, "docs/journal/README.md")
     lines = open(readme).read().split("\n")
     last = max(i for i, l in enumerate(lines) if re.match(r"^\| \d+ \|", l))
@@ -215,6 +218,8 @@ def main():
         git("checkout", "-q", kernel_commit, cwd=KERNEL)
         git("add", "kernel")
     git("add", "-A", "docs")
+    if numbered_files:
+        git("add", *numbered_files)
     git("commit", "-q", "-m", f"{branch}, entry {number}: the journal number given at merge; README row; testing notes rebuilt"
         + (f"; the kernel at TheKernel's main ({kernel_commit[:7]})" if kernel_moved else ""))
     git("switch", "-q", "--detach", "HEAD")

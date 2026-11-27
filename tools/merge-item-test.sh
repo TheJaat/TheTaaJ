@@ -37,6 +37,7 @@ git -c protocol.file.allow=always submodule update -q --init kernel
 git -C kernel config user.name The-Jat; git -C kernel config user.email t@example.invalid
 git -C kernel checkout -q -B mt-test
 echo "# a test comment (journal entry $M)" >> kernel/kernel64/scripts/fuzz-test.sh
+echo "# a test comment (journal entry $M)" >> tools/lanes-check.py
 git -C kernel commit -qam "test change, entry $M"
 git -C kernel push -q origin mt-test
 git switch -q -c mt-test
@@ -78,6 +79,7 @@ python3 tools/merge-item.py "$row"; echo "exit $?"
 T=$S/mt/taaj.git; K=$S/mt/kernel.git
 echo "items: $(git -C $T show main:docs/who-does-what.md | grep -cE '^\| K[0-9]+ \| \*\*A test item')  rules untouched: $(git -C $T show main:docs/who-does-what.md | grep -c 'K?-hubs')"
 echo "pointer $(git -C $T ls-tree main kernel | awk '{print substr($3,1,7)}') = kernel main $(git -C $K rev-parse --short main)"
+echo "a script's comment numbered too: $(git -C $T show main:tools/lanes-check.py | grep -c "journal entry $M") left unnumbered; tree clean after: $(git status --porcelain | grep -vc bootloader)"
 echo "row: $(git -C $T show main:docs/journal/README.md | grep "^| [0-9]* |" | tail -1 | grep -o "| written | .*")  second commits: $(git -C $T log --format=%s "$(git -C "$CI" rev-parse origin/main)..main" | grep -c '^journal: entry')  last on main: $(git -C $T log -1 --format=%s main | cut -c1-60)"
 
 echo "== B: TheKernel's push refused"
