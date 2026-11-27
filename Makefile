@@ -385,7 +385,7 @@ TEST_TYPED   = Hi there
 # (Joined on one line: a continued line would start each pattern with a
 # space.)
 EXPECT_SHELL = unknown command: Hi;  PID  NAME;init +running +[0-9]+\.[0-9]{3} s;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
-EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^ +dir  bin/;^ +dir  dev/;^ +dir  docs/;^ +dir  tmp/;^5 directories, $(ROOT_FILES) files, [0-9]+ bytes;^cat: notes: no such file;^cat exited with code 1;^kept\s*$$;^Hello from the host;^saved: 5 bytes
+EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^ +dir  bin/;^ +dir  dev/;^ +dir  docs/;^ +dir  proc/;^ +dir  tmp/;^6 directories, $(ROOT_FILES) files, [0-9]+ bytes;^cat: notes: no such file;^cat exited with code 1;^kept\s*$$;^Hello from the host;^saved: 5 bytes
 EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(4096 KiB\);^0000  4a 41 46 53 .*JAFS;^disk: sector 5: the disk is read-only;^disk: sector 99999: no such sector;^disk check: all 9 checks passed;^took [0-9]+\.[0-9][0-9] s;^line 300 of 300
 EXPECT_RUN   = \[init\] started primes for the shell, from a file;^primes below 50: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47;^primes exited with code 0;^error: welcome is not a program;^error: broken is not a program;^error: no such program;\[init\] started ls for the shell, from a file;^cat exited with code 0;^rm: notes: no such file;^rm: saved2: no such file;^rm exited with code 1;^usage: write FILE TEXT;^write exited with code 2;$(EXPECT_GIVEN);$(EXPECT_WATCH);$(EXPECT_KILL)
 EXPECT_DIRS  = ^ +23  readme;^1 file, 23 bytes;^Read me, from the host;^docs/deep/note: 7 bytes;^docs:;^ +dir  deep/;^1 directory, 1 file, 23 bytes;^docs/deep:;^ +7  note;^rm: docs: the directory is not empty;^mkdir: docs: there is already something with that name;^cat: docs: is a directory;^write: welcome/x: not a directory;^ls: work: no such file or directory;\[init\] started tools/given for the shell, from a file;^mkdir: x: the files are read-only here
@@ -398,8 +398,8 @@ EXPECT_WATCH = \[blk\] asked to stall;\[init\] blk has not answered for 2 s - st
 EXPECT_KILL  = ^forever: spin until stopped;^forever: wait until stopped;^forever: sleep until stopped;\[process\] [0-9]+ .forever. ended by signal 2 \(SIGINT\);^\^C;^forever was stopped
 EXPECT_PIPE  = ^1 line, 3 words, 14 bytes;^301 lines, 1212 words;^given: arguments .xpipe.;^p . q\s*$$;^there is a . with no command on one side of it;^cd is one of the shell.s own commands;^unknown command: nosuch2;^only the last command of a pipeline
 EXPECT_JOBS  = ^\[1\] cat bin/ls bin/ls . cat > big4;^\[2\] forever sleep > flog;^\[3\] forever yield;^forever: yield until stopped;^\[2\] running  forever sleep > flog;^\[3\] running  forever yield;^\[3\] stopped  forever yield;^\[2\] stopped  forever sleep > flog;^kill: no job 9;^\[1\] done  cat bin/ls bin/ls . cat > big4;^no jobs;^echo is one of the shell.s own commands: it cannot run in the background;^a & can only end the line;^x & y\s*$$
-EXPECT_NAMES = \[registry\] ready;\[registry\] fs may ask for: disk\s*$$;\[registry\] shell may ask for: keys display init system files files.look tmp tmp.look dev disk.look;^keys display init system files files.look tmp tmp.look dev disk.look nic net windows\s*$$;^files: there for the shell;^disk: no such service - for the shell;\[registry\] shell asked for .disk.: it is not in its namespace;^nosuch: no such service - for the shell;\[registry\] asked to crash;\[init\] registry ended with code 1 - restarting it;^files.look: there for the shell
-EXPECT_GIVE  = \[registry\] shell gave ls: files=files.look tmp=tmp.look dev;\[registry\] shell gave write: files tmp dev\s*$$;\[registry\] shell gave given: files tmp dev\s*$$;\[registry\] shell gave given: files=files.look tmp=tmp.look dev;^given: it may ask for: files tmp dev\s*$$
+EXPECT_NAMES = \[registry\] ready;\[registry\] fs may ask for: disk\s*$$;\[registry\] shell may ask for: keys display init system files files.look tmp tmp.look dev proc disk.look;^keys display init system files files.look tmp tmp.look dev proc disk.look nic net windows\s*$$;^files: there for the shell;^disk: no such service - for the shell;\[registry\] shell asked for .disk.: it is not in its namespace;^nosuch: no such service - for the shell;\[registry\] asked to crash;\[init\] registry ended with code 1 - restarting it;^files.look: there for the shell
+EXPECT_GIVE  = \[registry\] shell gave ls: files=files.look tmp=tmp.look dev proc;\[registry\] shell gave write: files tmp dev proc\s*$$;\[registry\] shell gave given: files tmp dev proc\s*$$;\[registry\] shell gave given: files=files.look tmp=tmp.look dev proc;^given: it may ask for: files tmp dev proc\s*$$
 # The keyboard as a program's standard input: lines typed to wc and to
 # cat (into a file) and ended with Ctrl+D; and a program stopped with
 # Ctrl+C while it waits for a line - what was typed to it is nobody's,
@@ -568,8 +568,10 @@ ifeq ($(HAVE_CC),yes)
 	@$(call put-program,$(RUN_DISK),at,$(C_BIN)/at)
 	@clang $(TAAJ_CFLAGS) -c $(TMP_C) -o $(C_BIN)/tmptest.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/tmptest.o $(LIBC_A) -o $(C_BIN)/tmptest
 	@clang $(TAAJ_CFLAGS) -c $(DEV_C) -o $(C_BIN)/devtest.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/devtest.o $(LIBC_A) -o $(C_BIN)/devtest
+	@clang $(TAAJ_CFLAGS) -c $(PROC_C) -o $(C_BIN)/proctest.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/proctest.o $(LIBC_A) -o $(C_BIN)/proctest
 	@$(call put-program,$(RUN_DISK),tmptest,$(C_BIN)/tmptest)
 	@$(call put-program,$(RUN_DISK),devtest,$(C_BIN)/devtest)
+	@$(call put-program,$(RUN_DISK),proctest,$(C_BIN)/proctest)
 	@clang $(TAAJ_CFLAGS) -c $(PAGES_C) -o $(C_BIN)/pages.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/pages.o $(LIBC_A) -o $(C_BIN)/pages
 	@$(call put-program,$(RUN_DISK),pages,$(C_BIN)/pages)
 endif
@@ -1165,8 +1167,10 @@ ifeq ($(HAVE_CC),yes)
 	@$(call put-program,$(RUN_A64_DISK),at,$(C_A64_BIN)/at)
 	@clang $(TAAJ_A64_CFLAGS) -c $(TMP_C) -o $(C_A64_BIN)/tmptest.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/tmptest.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/tmptest
 	@clang $(TAAJ_A64_CFLAGS) -c $(DEV_C) -o $(C_A64_BIN)/devtest.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/devtest.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/devtest
+	@clang $(TAAJ_A64_CFLAGS) -c $(PROC_C) -o $(C_A64_BIN)/proctest.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/proctest.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/proctest
 	@$(call put-program,$(RUN_A64_DISK),tmptest,$(C_A64_BIN)/tmptest)
 	@$(call put-program,$(RUN_A64_DISK),devtest,$(C_A64_BIN)/devtest)
+	@$(call put-program,$(RUN_A64_DISK),proctest,$(C_A64_BIN)/proctest)
 	@clang $(TAAJ_A64_CFLAGS) -c $(PAGES_C) -o $(C_A64_BIN)/pages.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/pages.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/pages
 	@$(call put-program,$(RUN_A64_DISK),pages,$(C_A64_BIN)/pages)
 endif
@@ -1803,6 +1807,8 @@ AT_C            = $(KERNEL64_DIR)/scripts/at.c
 TMP_C           = $(KERNEL64_DIR)/scripts/tmp.c
 # /dev (J65, journal entry 127): dev.c, as the program devtest.
 DEV_C           = $(KERNEL64_DIR)/scripts/dev.c
+# /proc (J66, journal entry NNN): proc.c, as the program proctest.
+PROC_C          = $(KERNEL64_DIR)/scripts/proc.c
 handles64-test: iso64 user64 libc64 tfstool-rs
 ifeq ($(HAVE_CC),yes)
 	@clang $(TAAJ_CFLAGS) -c $(HANDLES_C) -o $(C_BIN)/handles.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/handles.o $(LIBC_A) -o $(C_BIN)/handles
@@ -1810,7 +1816,8 @@ ifeq ($(HAVE_CC),yes)
 	@clang $(TAAJ_CFLAGS) -c $(AT_C) -o $(C_BIN)/at.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/at.o $(LIBC_A) -o $(C_BIN)/at
 	@clang $(TAAJ_CFLAGS) -c $(TMP_C) -o $(C_BIN)/tmptest.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/tmptest.o $(LIBC_A) -o $(C_BIN)/tmptest
 	@clang $(TAAJ_CFLAGS) -c $(DEV_C) -o $(C_BIN)/devtest.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/devtest.o $(LIBC_A) -o $(C_BIN)/devtest
-	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/handles-test.sh x86_64 $(ISO64_IMG) $(HANDLES_LOG).disk $(HANDLES_LOG) $(C_BIN)/handles $(C_BIN)/namespace $(C_BIN)/at $(C_BIN)/tmptest $(C_BIN)/devtest
+	@clang $(TAAJ_CFLAGS) -c $(PROC_C) -o $(C_BIN)/proctest.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/proctest.o $(LIBC_A) -o $(C_BIN)/proctest
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/handles-test.sh x86_64 $(ISO64_IMG) $(HANDLES_LOG).disk $(HANDLES_LOG) $(C_BIN)/handles $(C_BIN)/namespace $(C_BIN)/at $(C_BIN)/tmptest $(C_BIN)/devtest $(C_BIN)/proctest
 	@echo "handles64-test passed"
 else
 	@echo "FAIL: the handles test needs clang and lld (sudo apt install clang lld)"; exit 1
@@ -1824,7 +1831,8 @@ ifeq ($(HAVE_A64)$(HAVE_CC),yesyes)
 	@clang $(TAAJ_A64_CFLAGS) -c $(AT_C) -o $(C_A64_BIN)/at.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/at.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/at
 	@clang $(TAAJ_A64_CFLAGS) -c $(TMP_C) -o $(C_A64_BIN)/tmptest.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/tmptest.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/tmptest
 	@clang $(TAAJ_A64_CFLAGS) -c $(DEV_C) -o $(C_A64_BIN)/devtest.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/devtest.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/devtest
-	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/handles-test.sh aarch64 $(KERNEL_A64_IMAGE) $(HANDLES_A64_LOG).disk $(HANDLES_A64_LOG) $(C_A64_BIN)/handles $(C_A64_BIN)/namespace $(C_A64_BIN)/at $(C_A64_BIN)/tmptest $(C_A64_BIN)/devtest
+	@clang $(TAAJ_A64_CFLAGS) -c $(PROC_C) -o $(C_A64_BIN)/proctest.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/proctest.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/proctest
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/handles-test.sh aarch64 $(KERNEL_A64_IMAGE) $(HANDLES_A64_LOG).disk $(HANDLES_A64_LOG) $(C_A64_BIN)/handles $(C_A64_BIN)/namespace $(C_A64_BIN)/at $(C_A64_BIN)/tmptest $(C_A64_BIN)/devtest $(C_A64_BIN)/proctest
 	@echo "aarch64-handles-test passed"
 else
 	@echo "qemu-system-aarch64, llvm-objcopy, clang or lld not found: the AArch64 handles boot is not run"

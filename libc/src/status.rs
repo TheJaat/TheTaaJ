@@ -782,12 +782,28 @@ pub unsafe extern "C" fn readlink(path: *const c_char, buffer: *mut c_char, size
     unsafe { readlinkat(AT_FDCWD, path, buffer, size) }
 }
 
-/// `readlinkat(dirfd, path, buffer, size)`: readlink, from `dirfd`.
+/// `readlinkat(dirfd, path, buffer, size)`: readlink, from `dirfd`. One
+/// link exists (J66): /proc/self/exe, to the program's own file, as on
+/// Linux - where LLVM's getMainExecutable reads it. Its path goes into
+/// `buffer`, as much as fits, with no zero byte after it (POSIX);
+/// returns how many bytes. ENOENT for a program with no file.
 ///
 /// # Safety
-/// `path` must be null or a string ending in a zero byte.
+/// `path` must be null or a string ending in a zero byte, and `buffer`
+/// must have room for `size` bytes.
 #[no_mangle]
-pub unsafe extern "C" fn readlinkat(dirfd: c_int, path: *const c_char, _buffer: *mut c_char, _size: usize) -> isize {
+pub unsafe extern "C" fn readlinkat(dirfd: c_int, path: *const c_char, buffer: *mut c_char, size: usize) -> isize {
+    // SAFETY: the caller's promise.
+    if let Ok("/proc/self/exe") = unsafe { text(path) } {
+        let Some(file) = crate::executable() else { return fail(ENOENT) };
+        let n = file.len().min(size);
+        if n > 0 && buffer.is_null() {
+            return fail(EFAULT);
+        }
+        // SAFETY: the caller's promise: `size` bytes at `buffer`.
+        unsafe { ptr::copy_nonoverlapping(file.as_ptr(), buffer.cast::<u8>(), n) };
+        return n as isize;
+    }
     // SAFETY: the caller's promise.
     match unsafe { faccessat(dirfd, path, 0, 0) } {
         0 => fail(EINVAL),

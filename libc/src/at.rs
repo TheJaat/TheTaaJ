@@ -19,6 +19,11 @@
 //!     directory was opened, in the namespace. A directory's channel
 //!     takes no "..": going up is the namespace's business, and the
 //!     namespace knows the directory only by the name it was opened by.
+//!
+//! And one name only this program can answer (J66): /proc/self is this
+//! program's own directory in /proc, /proc/PID, which the service can't
+//! know - it doesn't know who asks. /proc/self/exe is the program's own
+//! file, by the name it was started from (lib.rs's EXECUTABLE).
 
 use alloc::format;
 use alloc::string::String;
@@ -61,6 +66,21 @@ pub(crate) struct Place {
     _directory: Option<SharedFile>,
 }
 
+/// A name under /proc/self, as this program's own (J66): /proc/self/exe
+/// is its file, anything else is under /proc/PID. None for any other
+/// name; ENOENT for the file of a program that has none (built into the
+/// kernel image).
+fn own(shown: &str) -> Option<Result<String, c_int>> {
+    let rest = shown.strip_prefix("/proc/self")?;
+    if !rest.is_empty() && !rest.starts_with('/') {
+        return None; // /proc/selfish
+    }
+    Some(match rest {
+        "/exe" => crate::executable().map(String::from).ok_or(ENOENT),
+        _ => Ok(format!("/proc/{}{rest}", taaj::process_id())),
+    })
+}
+
 /// Where `name`, given with `dirfd`, goes. ENOENT for an empty name (as
 /// POSIX: AT_EMPTY_PATH is each caller's); EBADF if `dirfd` is no
 /// descriptor; ENOTDIR if it is not a directory; EACCES if this program
@@ -72,6 +92,11 @@ pub(crate) fn place(state: &mut State, dirfd: c_int, name: &str) -> Result<Place
     let in_namespace = |state: &mut State, name: String, directory| {
         let files = state.files().cloned().ok_or(EACCES)?;
         let shown = format!("/{}", files.resolve(&name));
+        let (name, shown) = match own(&shown) {
+            Some(Ok(shown)) => (shown.clone(), shown),
+            Some(Err(code)) => return Err(code),
+            None => (name, shown),
+        };
         Ok(Place { files, name, shown, on: None, _directory: directory })
     };
     if dirfd == AT_FDCWD || name.starts_with('/') {

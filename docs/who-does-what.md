@@ -166,7 +166,7 @@ Each machine has its own table and changes only its own, so two machines never e
 | Step | Branch |
 |---|---|
 | E: LLVM 23 - **paused**: a work-in-progress commit on `llvm-23` in TheTaaJ and TheKernel, to be finished later (what is left is in its commit message) | `llvm-23` |
-| TheJat-VM/files: a stack of items built by day and tested at night (merged in this order, each only after its test64): J55 `/bin` on `j55-bin` (from main, **untested**); then J66 `/proc` on `j66-proc` (from `j55-bin`) | `j55-bin`, `j66-proc` |
+| TheJat-VM/files: **a stack of items built by day, tested and merged at night** (the user's rule from 2026-11-27: build and push by day, boot-test when tokens are free). Each branch is in TheTaaJ and TheKernel under the same name. In order, each merged (`tools/merge-item.py`) only after its own `make test64`: 1. J55 `/bin` on `j55-bin` (from main; written, `boot64-test`'s checks passed on one boot, **test64 not run**); 2. J66 `/proc` on `j66-proc` (from `j55-bin`; **work in progress: written, not yet compiled** - `make iso64 libc64 cprogs64` next, then `handles64-test`, then the journal entry `NNN-proc.md`, still to write). To test the stack: test64 on `j66-proc` covers both; a fix for J55 goes on `j55-bin` and is merged upward into `j66-proc`. Nothing of this is on main | `j55-bin`, `j66-proc` |
 
 ### Now: MaK-WSL
 

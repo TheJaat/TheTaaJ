@@ -33,10 +33,12 @@ pub mod dev;
 pub mod disk;
 pub mod nodes;
 pub mod path;
+pub mod proc;
 pub mod ram;
 
 pub use dev::DevStore;
 pub use disk::DiskStore;
+pub use proc::ProcStore;
 pub use nodes::{NodeId, Nodes};
 pub use ram::RamStore;
 

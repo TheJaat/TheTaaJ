@@ -141,6 +141,18 @@ pub extern "C" fn __taaj_executable() -> *const c_char {
     EXECUTABLE.load(core::sync::atomic::Ordering::Relaxed)
 }
 
+/// The same, as text: what /proc/self/exe names (at.rs), or None for
+/// a program built into the kernel image.
+pub(crate) fn executable() -> Option<&'static str> {
+    let file = EXECUTABLE.load(core::sync::atomic::Ordering::Relaxed);
+    if file.is_null() {
+        return None;
+    }
+    // SAFETY: `file` is the zero-ended string `_start` leaked, never
+    // freed or changed.
+    unsafe { core::ffi::CStr::from_ptr(file) }.to_str().ok()
+}
+
 /// Where the kernel starts the program - what C calls crt0, "C runtime,
 /// part zero": the code that runs before `main` and makes the world
 /// `main` expects.

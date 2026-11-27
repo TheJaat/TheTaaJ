@@ -448,6 +448,8 @@ fn main() -> i64 {
     // One channel: nothing there can be changed, so there is no
     // read-only one to give instead.
     let Ok((dev_in, dev_out)) = taaj::channel_create() else { return 2 };
+    // /proc's (J66): what the kernel says, as files. One channel too.
+    let Ok((proc_in, proc_out)) = taaj::channel_create() else { return 2 };
     // The disk's: its description for each new driver, and requests.
     let Ok((disk_info_tx, disk_info_rx)) = taaj::channel_create() else { return 2 };
     // Two request channels: reads and writes for fs, which owns what is
@@ -573,10 +575,12 @@ fn main() -> i64 {
         Grant { handle: tmp_look_out, rights: SEND | DELEGABLE }, // 54: read-only requests, to tmp
         Grant { handle: dev_in, rights: RECEIVE },            // 55: requests, for dev
         Grant { handle: dev_out, rights: SEND | DELEGABLE },  // 56: requests, to dev
+        Grant { handle: proc_in, rights: RECEIVE },           // 57: requests, for proc
+        Grant { handle: proc_out, rights: SEND | DELEGABLE }, // 58: requests, to proc
     ];
-    // Only the shell's screen and the files (the disk's, /tmp's and
-    // /dev's) can be copied and passed on.
-    debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21 | 52 | 54 | 56)));
+    // Only the shell's screen and the files (the disk's, /tmp's, /dev's
+    // and /proc's) can be copied and passed on.
+    debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21 | 52 | 54 | 56 | 58)));
 
     // The watchdog's pings: for fs, "what does this channel allow?" on
     // the read-only channel; for blk, "what disk is this?". fs gets the
@@ -618,7 +622,7 @@ fn main() -> i64 {
     // services: a name, and which grant it means - the handle, and the
     // rights a client's copy gets. (The shell's old startup handles,
     // now asked for by name; and the disk, for fs.)
-    let registered: [(&str, usize); 14] = [
+    let registered: [(&str, usize); 15] = [
         // The keys come from the drivers straight to the shell where the
         // terminal is a serial port; from the window server where it is
         // a window.
@@ -631,6 +635,7 @@ fn main() -> i64 {
         ("tmp", 52),
         ("tmp.look", 54),
         ("dev", 56),
+        ("proc", 58),
         ("disk", 16),
         ("disk.look", 19),
         ("nic", 32),
@@ -643,7 +648,7 @@ fn main() -> i64 {
     let namespaces: [(&str, Handle, &[&str]); 3] = [
         // (The shell has the network card itself only for the program
         // that tests its driver. Everything else uses "net".)
-        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "tmp", "tmp.look", "dev", "disk.look", "nic", "net", "windows"]),
+        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "tmp", "tmp.look", "dev", "proc", "disk.look", "nic", "net", "windows"]),
         ("fs", fs_names_rx, &["disk"]),
         ("net", net_names_rx, &["nic"]),
     ];
@@ -692,6 +697,9 @@ fn main() -> i64 {
         Service { name: "tmp", grants: &[51, 53], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
         // /dev: its devices (dev.rs).
         Service { name: "dev", grants: &[55], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
+        // /proc: the kernel's numbers as files (proc.rs), asked for with
+        // the system handle.
+        Service { name: "proc", grants: &[57, 9], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
         Service {
             name: disk_driver,
             grants: match disk {
@@ -1258,7 +1266,7 @@ fn shut_down(services: &mut [Service], action: u8, power: Handle, files_look: Ha
     // usb stops with the keyboards - unless it is the disk's driver,
     // which waits for fs.
     let usb = if disk_driver == "usb" { "" } else { "usb" };
-    let order = ["shell", "hid", usb, "kbd", "serial", "net", card_driver, "dev", "tmp", "fs", disk_driver, "display", "registry"];
+    let order = ["shell", "hid", usb, "kbd", "serial", "net", card_driver, "proc", "dev", "tmp", "fs", disk_driver, "display", "registry"];
     for name in order {
         let Some(service) = services.iter_mut().find(|s| s.name == name && !s.given_up) else { continue };
         let between = name != "fs" || between_requests(files_look);

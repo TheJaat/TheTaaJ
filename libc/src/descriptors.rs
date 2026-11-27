@@ -440,21 +440,24 @@ pub unsafe extern "C" fn __taaj_openat(dirfd: c_int, path: *const c_char, flags:
     })
 }
 
-/// /dev/stdin, /dev/stdout, /dev/stderr and /dev/tty (J65): not the
-/// devices' service's, but this program's own. Each is what the program
+/// /dev/stdin, /dev/stdout, /dev/stderr and /dev/tty (J65), and
+/// /proc/self/fd/N (J66; `shown` already says /proc/PID/fd/N, at.rs):
+/// not a service's, but this program's own. Each is what the program
 /// already holds, so only libc can open it - as on Linux, where the first
 /// three are links into /proc/self/fd, and opening one is close to a dup.
-///   - stdin, stdout, stderr: a second descriptor for 0, 1 or 2 (EBADF if
-///     that one is closed);
+///   - stdin, stdout, stderr, /proc/self/fd/N: a second descriptor for
+///     0, 1, 2 or N (EBADF if that one is closed);
 ///   - tty, the terminal: the keyboard to read (ENXIO if this program
 ///     has none: its input is a file or another program), the screen to
 ///     write - standard error's, which is always the screen.
 /// None for any other name.
 fn standard_device(state: &State, shown: &str, flags: c_int) -> Option<Result<Open, c_int>> {
+    let own_fd = format!("/proc/{}/fd/", taaj::process_id());
     let fd = match shown {
         "/dev/stdin" => 0,
         "/dev/stdout" => 1,
         "/dev/stderr" => 2,
+        _ if shown.starts_with(&own_fd) => shown[own_fd.len()..].parse::<c_int>().ok()?,
         "/dev/tty" if flags & O_ACCMODE != O_RDONLY => return Some(Ok(Open::Error)),
         "/dev/tty" if taaj::input_is_keyboard() => return Some(Ok(Open::Input)),
         "/dev/tty" => return Some(Err(ENXIO)),

@@ -1473,18 +1473,19 @@ impl Shell {
         let on_disk = |list: &[&str]| image.is_some() && list.contains(&name);
         let names: &[(&str, &str)] = match grant {
             // With the files, /tmp (J64): to change if the files may be
-            // changed, to read if not; and /dev (J65), whose devices are
-            // the same for both - writing to /dev/null changes nothing.
-            Grant::Files => &[("files", "files"), ("tmp", "tmp"), ("dev", "dev")],
-            Grant::Programs => &[("files", "files"), ("tmp", "tmp"), ("dev", "dev"), ("init", "init")],
-            Grant::ReadOnly => &[("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev")],
-            Grant::Usual if on_disk(CHANGE_PROGRAMS) => &[("files", "files"), ("tmp", "tmp"), ("dev", "dev")],
-            Grant::Usual if on_disk(LOOK_PROGRAMS) => &[("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev")],
+            // changed, to read if not; and /dev (J65) and /proc (J66),
+            // which are the same for both - writing to /dev/null changes
+            // nothing, and nothing in /proc can be written.
+            Grant::Files => &[("files", "files"), ("tmp", "tmp"), ("dev", "dev"), ("proc", "proc")],
+            Grant::Programs => &[("files", "files"), ("tmp", "tmp"), ("dev", "dev"), ("proc", "proc"), ("init", "init")],
+            Grant::ReadOnly => &[("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev"), ("proc", "proc")],
+            Grant::Usual if on_disk(CHANGE_PROGRAMS) => &[("files", "files"), ("tmp", "tmp"), ("dev", "dev"), ("proc", "proc")],
+            Grant::Usual if on_disk(LOOK_PROGRAMS) => &[("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev"), ("proc", "proc")],
             Grant::Usual if on_disk(CARD_PROGRAMS) => &[("nic", "nic")],
             Grant::Usual if on_disk(NET_PROGRAMS) => &[("net", "net")],
-            Grant::Usual if on_disk(WEB_PROGRAMS) => &[("net", "net"), ("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev")],
+            Grant::Usual if on_disk(WEB_PROGRAMS) => &[("net", "net"), ("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev"), ("proc", "proc")],
             Grant::Usual if on_disk(WINDOW_PROGRAMS) => &[("windows", "windows")],
-            Grant::Usual if on_disk(EDIT_PROGRAMS) => &[("windows", "windows"), ("files", "files"), ("tmp", "tmp"), ("dev", "dev")],
+            Grant::Usual if on_disk(EDIT_PROGRAMS) => &[("windows", "windows"), ("files", "files"), ("tmp", "tmp"), ("dev", "dev"), ("proc", "proc")],
             Grant::Usual => &[],
         };
         // The registry makes a channel on which only those names exist,
@@ -2056,8 +2057,8 @@ fn close_all(handles: impl IntoIterator<Item = Handle>) {
 }
 
 /// `files` with each service given mounted where it goes - /tmp's
-/// (J64), /dev's (J65) - if there is one.
-fn with_mounts(files: Files, mounts: [(&str, Option<Handle>); 2]) -> Files {
+/// (J64), /dev's (J65), /proc's (J66) - if there is one.
+fn with_mounts(files: Files, mounts: [(&str, Option<Handle>); 3]) -> Files {
     mounts.into_iter().fold(files, |files, (at, service)| match service.and_then(|service| taaj::files::File::from_handle(service).ok()) {
         Some(service) => files.mounted(at, service).unwrap_or(files),
         None => files,
@@ -2084,12 +2085,13 @@ fn main() -> i64 {
         screen: service("display"),
         init: service("init"),
         system: service("system"),
-        // Each with /tmp mounted (J64), to change or to read, and /dev
-        // (J65), as the programs it starts have them: `cd /tmp`, `ls
-        // /tmp`, `> /dev/null` here mean what they mean there.
-        files: service("files").map(|files| with_mounts(Files::new(files), [("/tmp", service("tmp")), ("/dev", service("dev"))])),
+        // Each with /tmp mounted (J64), to change or to read, /dev (J65)
+        // and /proc (J66), as the programs it starts have them: `cd /tmp`,
+        // `> /dev/null`, `cat /proc/uptime` here mean what they mean
+        // there.
+        files: service("files").map(|files| with_mounts(Files::new(files), [("/tmp", service("tmp")), ("/dev", service("dev")), ("/proc", service("proc"))])),
         disk: service("disk.look").map(Disk::new),
-        look: service("files.look").map(|look| with_mounts(Files::new(look), [("/tmp", service("tmp.look")), ("/dev", service("dev"))])),
+        look: service("files.look").map(|look| with_mounts(Files::new(look), [("/tmp", service("tmp.look")), ("/dev", service("dev")), ("/proc", service("proc"))])),
         directory: RefCell::new(String::new()),
         redirection: RefCell::new(Redirection::default()),
         jobs: RefCell::new(Vec::new()),
