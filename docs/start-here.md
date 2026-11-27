@@ -132,10 +132,10 @@ Each session has its own tree (rule 13), with its own `build/` and submodules, a
    - the testing note.
 
    Merge only after a yes.
-6. **At merge, run `python3 tools/merge-item.py "README ROW"`** from your tree, on the item's branch: it does steps 6 to 8 below - the numbers, the README row (your text), the testing notes, TheKernel merged and pushed first, TheTaaJ pointed at it, merged and pushed, the row's commits, the branches deleted - and stops, undoing its own commit, if a push is refused (journal entry 125). It does not give `abi` numbers (rule 16) or touch TheBootloader. What it does, by hand:
+6. **At merge, run `python3 tools/merge-item.py "README ROW"`** from your tree, on the item's branch: it does steps 6 to 8 below - the numbers, the README row (your text), the testing notes, TheKernel merged and pushed first, TheTaaJ pointed at it, merged and pushed with the row's commits in the same commit, the branches deleted - and stops, undoing its own commit, if a push is refused (journal entry 125). It does not give `abi` numbers (rule 16) or touch TheBootloader. What it does, by hand:
    - `git pull` main;
    - the journal entry takes the next free number: rename the file and fix the title, Notes and every `NNN`;
-   - add its row to `docs/journal/README.md`;
+   - add its row to `docs/journal/README.md`, with the item's last commit (and TheKernel's, once merged) as its commits - known before the merge, so no second commit is needed (entry NNN);
    - give new `K?`/`J?` items the next free numbers;
    - new `abi` numbers (rule 16);
    - run `python3 tools/testing-notes.py`.
@@ -145,8 +145,7 @@ Each session has its own tree (rule 13), with its own `build/` and submodules, a
    3. merge TheTaaJ, and push.
 
    If a push is refused, someone merged first: pull, take the next number, push again.
-8. Fill in the README row's commit in a follow-up commit: `journal: entry N's commits`.
-9. Tell the user it is merged, with the testing note, then go back to step 1 of section 5 for the next item.
+8. Tell the user it is merged, with the testing note, then go back to step 1 of section 5 for the next item.
 
 `main` moves often with fourteen sessions. Rule 15 in `who-does-what.md` says when a merge of `main` into your branch needs a new `make test64`, and when it doesn't.
 
