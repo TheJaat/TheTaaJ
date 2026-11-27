@@ -153,6 +153,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 143 | [A fast BIOS read: sixteen sectors per trip to real mode (MaK-WSL/boot, merged after its night test)](143-fast-bios-read.md) | written | `1911f6b8` |
 | 144 | [Boot time, measured and cut: the loader was copying a byte at a time and talking to the screen (MaK-WSL/boot, merged after its night test)](144-boot-time.md) | written | `06bfc620` |
 | 145 | [Using TheTaaJ: a page for the people who run it (MaK-WSL/docs, merged after its night test)](145-using-taaj.md) | written | `a71af1cc` |
+| 146 | [A kernel of any size: the 3 MiB wall is gone (MaK-WSL/boot, merged after its night test)](146-any-size-kernel.md) | written | `7dc49b94` (TheKernel `6b19986`) |
 
 ## How to run what the entries describe
 

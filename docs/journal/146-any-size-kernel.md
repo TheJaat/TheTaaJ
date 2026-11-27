@@ -1,6 +1,6 @@
 # A kernel of any size: the 3 MiB wall is gone
 
-*Journal entry #NNN · a step, MaK-WSL/boot's K130. Written on MaK-WSL/boot. The BIOS loader read the whole kernel file to physical 3 MiB and copied its segments down from there, so a kernel had to end below 3 MiB - and with about 680 KiB left, every lane adding kernel tests was nearing it. Now a 64-bit kernel is not staged at all: each segment is read from the file straight to where it goes, anywhere in usable memory from 1 MiB to 1 GiB. A test kernel ending at 6.6 MiB boots by BIOS and by UEFI.*
+*Journal entry #146 · a step, MaK-WSL/boot's K130. Written on MaK-WSL/boot. The BIOS loader read the whole kernel file to physical 3 MiB and copied its segments down from there, so a kernel had to end below 3 MiB - and with about 680 KiB left, every lane adding kernel tests was nearing it. Now a 64-bit kernel is not staged at all: each segment is read from the file straight to where it goes, anywhere in usable memory from 1 MiB to 1 GiB. A test kernel ending at 6.6 MiB boots by BIOS and by UEFI.*
 
 ## Why
 
