@@ -41,7 +41,7 @@ Merging `main` into a branch that changed `who-does-what.md` stops with a confli
 - **The real conflict**, J92/J93 against J94 (the files from both branches and their merge base): git alone, 1 conflict; `merge-rows.py`, none - each row from the side that changed it.
 - **What it must not merge**: one row changed differently on both sides - left as a conflict, that row only, exit 1; a conflict in prose - left as git's; rows added on both sides - both kept, each after its neighbour.
 - **The split**: 302 item rows before and after, the same; `lanes-check.py` - 256 open items, every one in one lane, as on `main`.
-- **The merge script** on the split (`MT_BASE`, entry 125's harness): a clean merge numbers the test item K194 in its era's file; TheKernel's push refused and TheTaaJ's push refused leave everything as before; the run after - all as on `main`. With entry NNN's one-commit merge too: no second commit.
+- **The merge script** on the split (`MT_BASE`, entry 125's harness): a clean merge numbers the test item K194 in its era's file; TheKernel's push refused and TheTaaJ's push refused leave everything as before; the run after - all as on `main`. With the one-commit merge (the one-merge-commit branch's entry) too: no second commit.
 - **Every open branch of mine, `main`'s split merged in**: `j92-clean-build`, `k187-miri`, `j93-ci`, `j96-coverage`, `test64-no-rebuild` stopped with the conflict; `work-list-move.py` made every change (in `items/era-25.md` and `items/thejat-vm.md`, and `j96`'s line in rule 2 in the hub), nothing left by hand, no markers, `lanes-check` clean. `night-test` merged without one.
 
 ## What is still missing
