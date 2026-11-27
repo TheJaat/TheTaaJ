@@ -4672,3 +4672,67 @@ From a session's tree, on a branch not in the queue:
 | `sh tools/merge-rehearsal.sh` | Each queued branch `passed`, then `merged`; `N of N merged` |
 
 Automated: not part of `make test64`.
+
+---
+
+## 141 · Other sessions' finished branches in the night queue
+
+[The entry](journal/141-queue-sessions.md)
+
+| Do | You should see |
+|---|---|
+| A queue line `BRANCH session=MaK-WSL/LANE`, `sh tools/merge-rehearsal.sh` | `BRANCH ... merged`; in the sandbox's main, the README row ends `(MaK-WSL/LANE, merged after its night test)` |
+
+Automated: not part of `make test64`.
+
+---
+
+## 142 · Stage 2 on the host: tests for the ISO reader, the ELF loader and the page tables
+
+[The entry](journal/142-stage2-tests.md)
+
+```
+make stage2-test
+```
+
+| Look for | You should see |
+|---|---|
+| `stage2 host tests:` | `152 checks, 0 failed` |
+| `stage2-test passed` | |
+
+On their own, without TheTaaJ's build (no real ISO or kernel: their checks are skipped and say so):
+
+```
+make -C bootloader test
+```
+
+| Look for | You should see |
+|---|---|
+| `iso: no real ISO given, its checks skipped` | |
+| `stage2 host tests:` | `142 checks, 0 failed` |
+
+Automated: `make test64`
+
+---
+
+## 143 · A fast BIOS read: sixteen sectors per trip to real mode
+
+[The entry](journal/143-fast-bios-read.md)
+
+```
+tools/boot-time.sh build/image64.iso tcg
+```
+
+| Look for | You should see |
+|---|---|
+| `boot-time (tcg): median` | About half of what the same command gives on the ISO of `main` before this change |
+
+```
+make stage2-test
+```
+
+| Look for | You should see |
+|---|---|
+| `stage2 host tests:` | `167 checks, 0 failed` (with the build's ISO and kernel) |
+
+Automated: `make test64`
