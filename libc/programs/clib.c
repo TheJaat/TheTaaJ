@@ -216,7 +216,7 @@ static void cpu_time(void)
           "asleep for 200 ms: almost no CPU time");
 }
 
-/* Priorities and CPUs (journal entry NNN): this program may make itself
+/* Priorities and CPUs (journal entry 124): this program may make itself
  * less important, not more - its ceiling is the default - and may choose
  * the CPUs it runs on. Run last of the checks that care, and put back:
  * the rest of clib runs at the default on every CPU. */

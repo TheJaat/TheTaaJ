@@ -104,7 +104,7 @@ pub struct Thread {
     /// SCHED_GET's THREAD_ID), for pthread_setaffinity_np and the like on
     /// another thread; 0 until known. The thread writes it itself as it
     /// starts, and pthread_create when the kernel says it: whichever is
-    /// first, the same number (journal entry NNN).
+    /// first, the same number (journal entry 124).
     kernel: AtomicU64,
     /// What its start function returned, or pthread_exit was given.
     result: *mut c_void,

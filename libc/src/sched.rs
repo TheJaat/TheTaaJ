@@ -1,6 +1,6 @@
 //! Scheduling: `nice`, `getpriority`/`setpriority`, the `sched_*` calls
 //! and their `pthread_*` forms (MaK-WSL/sched's J80, with K20; journal
-//! entry NNN), over the kernel's SCHED_SET and SCHED_GET.
+//! entry 124), over the kernel's SCHED_SET and SCHED_GET.
 //!
 //! A priority is `nice`'s number: -20 the most important, 19 the least,
 //! 0 the default. The kernel keeps one per thread, and a process's for

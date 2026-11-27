@@ -1,5 +1,5 @@
 /* sched.h - giving the processor up, and choosing the CPUs and the
- * policy a program runs with (libc's sched.rs; journal entry NNN).
+ * policy a program runs with (libc's sched.rs; journal entry 124).
  *
  * The policy is always SCHED_OTHER, its priority 0: how important a
  * program is, is its nice value (setpriority, nice). SCHED_FIFO and

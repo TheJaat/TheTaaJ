@@ -250,7 +250,7 @@ struct Service {
 /// drivers (PS/2, the serial line, USB and its HID devices), the display
 /// and the shell. They run before busy programs, so that typing stays
 /// quick however many are running (MaK-WSL/sched's K20, journal entry
-/// NNN). It is init's decision, not the kernel's: the kernel only keeps
+/// 124). It is init's decision, not the kernel's: the kernel only keeps
 /// the priorities it is given. Everything else, and everything the shell
 /// and posix_spawn start, runs at the default.
 const INTERACTIVE: &[&str] = &["kbd", "serial", "usb", "hid", "display", "shell"];

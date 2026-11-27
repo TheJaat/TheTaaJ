@@ -444,7 +444,7 @@ pub fn realtime_ns() -> u64 {
 }
 
 /// SCHED_SET: a thread's or a process's priority (as a level, see
-/// abi::sched), CPUs, or a process's ceiling (journal entry NNN).
+/// abi::sched), CPUs, or a process's ceiling (journal entry 124).
 pub fn sched_set(target: u64, id: u64, what: u64, value: u64) -> Result<(), Error> {
     abi::decode(syscall5(call::SCHED_SET, target, id, what, value, 0)).map(|_| ())
 }

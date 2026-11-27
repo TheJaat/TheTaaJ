@@ -1,6 +1,6 @@
 # Priorities and affinity: who runs first, and where
 
-*Journal entry #NNN · a step, MaK-WSL/sched's K20 with J80. Written on MaK-WSL/sched. Until now every thread was equal: one queue, first come first served, each running a slice of 20 ms before the next. So a key press waited behind every busy program. Now each thread has a priority and a set of CPUs it may run on; a thread made ready that is more important than a running one takes its CPU at once; init decides that the services between the keyboard and the screen come first; and C programs get `nice`, `setpriority`, `sched_setaffinity` and the rest.*
+*Journal entry #124 · a step, MaK-WSL/sched's K20 with J80. Written on MaK-WSL/sched. Until now every thread was equal: one queue, first come first served, each running a slice of 20 ms before the next. So a key press waited behind every busy program. Now each thread has a priority and a set of CPUs it may run on; a thread made ready that is more important than a running one takes its CPU at once; init decides that the services between the keyboard and the screen come first; and C programs get `nice`, `setpriority`, `sched_setaffinity` and the rest.*
 
 ## Why
 
@@ -83,7 +83,7 @@ For a call on *another* thread, libc needs that thread's number in the kernel, w
 | `KILL` for changing another process | A new right | Who can end a process can already deny it the CPU completely; no new power, and no new ABI number |
 | The policy (who is important) in init | A table in the kernel | The kernel keeps mechanism, user space decides (*pure microkernel*) |
 | Priorities as levels 0-39 in the calls | Signed values | A negative value would look like an error code in the kernel's return convention |
-| New processes start at 0, whatever their parent's priority | Inheriting the parent's priority | Programs the shell starts are loaded by init on its behalf; "inherit from whoever loads you" would give every one init's settings. Inheriting `nice` the way entry 096 passes the memory limit (through who made the program file) is K?-nice-inherit |
+| New processes start at 0, whatever their parent's priority | Inheriting the parent's priority | Programs the shell starts are loaded by init on its behalf; "inherit from whoever loads you" would give every one init's settings. Inheriting `nice` the way entry 096 passes the memory limit (through who made the program file) is K190 |
 | SCHED_FIFO and SCHED_RR refused (EPERM) | Mapping them onto priorities | They promise real-time semantics the kernel does not give yet (K99); refusing is honest |
 | J80 with K20 | J80 after K97, as its row said | The user's decision: one branch for the kernel side and the C calls. When K97 makes scheduling contexts capabilities, these calls map onto them |
 
@@ -107,7 +107,7 @@ For a call on *another* thread, libc needs that thread's number in the kernel, w
 
 ## What is still missing
 
-- **K?-nice-inherit**: a child taking its parent's `nice`, through `posix_spawn` and the shell (as the memory limit travels with the program file, entry 096).
+- **K190**: a child taking its parent's `nice`, through `posix_spawn` and the shell (as the memory limit travels with the program file, entry 096).
 - **Shares in proportion** (K100) and **real-time classes** with SCHED_FIFO/RR (K99); **scheduling contexts** as capabilities (K97), which these calls will map onto.
 - **Priority inheritance** across a call to a service (K65/K98): a client at -5 waiting for a server at 0 still waits behind the server's other work.
 - **`sched_getcpu`**: TheTaaJ does not tell a thread which CPU it is on.
