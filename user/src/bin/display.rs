@@ -409,6 +409,8 @@ struct Server {
     shell_keys: Handle,
     damage: Damage,
     key_times: KeyTimes,
+    /// The modifier keys held now, from the drivers' KEY messages (K42).
+    modifiers: u8,
 }
 
 impl Server {
@@ -468,6 +470,26 @@ impl Server {
                 self.key_times.key(bytes);
                 let _ = taaj::send(self.shell_keys, bytes, &[]);
             }
+        }
+    }
+
+    /// A key went down or up (K42): the modifiers kept up to date, and the
+    /// key told to a program's window with the focus. The terminal is not
+    /// told: what it needs, the bytes, comes from `keys`.
+    fn key_code(&mut self, code: u16, down: bool) {
+        let bit = match code {
+            42 | 54 => gui::protocol::SHIFT,   // left and right Shift
+            29 | 97 => gui::protocol::CONTROL, // left and right Control
+            56 | 100 => gui::protocol::ALT,    // left and right Alt
+            _ => 0,
+        };
+        if down {
+            self.modifiers |= bit;
+        } else {
+            self.modifiers &= !bit;
+        }
+        if let Some(client) = self.desktop.focus().and_then(|id| self.client(id)) {
+            client.send(Event::KeyCode { code, down, modifiers: self.modifiers });
         }
     }
 
@@ -773,6 +795,7 @@ fn main() -> i64 {
         shell_keys,
         damage: Damage::default(),
         key_times: KeyTimes::new(),
+        modifiers: 0,
     };
 
     // Where the text lives. If init gave memory for it, there: that
@@ -877,6 +900,9 @@ fn main() -> i64 {
                     let mut ticks = [0u8; 8];
                     ticks.copy_from_slice(&message[1..9]);
                     stall = u64::from_le_bytes(ticks).min(abi::STALL_MAX);
+                }
+                if n == abi::display::KEY_SIZE && message[0] == abi::display::KEY && message[3] <= 1 {
+                    server.key_code(u16::from_le_bytes([message[1], message[2]]), message[3] == 1);
                 }
                 if n == 1 && message[0] == abi::display::BENCH {
                     bench = true;

@@ -235,6 +235,11 @@ fn main() -> i64 {
                 continue;
             }
             let Some(event) = decoder.feed(byte) else { continue };
+            // The key itself, to the display, for a window that wants keys
+            // and not bytes (K42) - Shift alone, a key going up.
+            if let (Some(out), code @ 1..) = (pointer_out, decoder.code()) {
+                let _ = taaj::send(out, &abi::display::key_message(code, event.pressed), &[]);
+            }
             if event.pressed && event.key == Key::Function(12) {
                 println!("[kbd] F12: simulating a driver bug - reading address 0");
                 // SAFETY: none - this is the bug.

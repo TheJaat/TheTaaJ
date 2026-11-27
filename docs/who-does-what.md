@@ -174,6 +174,7 @@ Each machine has its own table and changes only its own, so two machines never e
 |---|---|
 | MaK-WSL/sched: K190, a child takes its parent's nice; K193 waits for the user's decision (per-CPU locks cost exact fairness) | `k190-nice-inherit` |
 | MaK-WSL/desktop: K114, the desktop benchmark; waits for the user's yes to merge | `k114-desktop-bench` |
+| MaK-WSL/desktop: K42, key events to windows (on top of K114: merged after it); waits for the user's yes to merge | `k42-key-events` |
 
 ### Now: TheJat-WSL
 
@@ -393,7 +394,7 @@ Era 19 (Desktop: applications people can use daily) builds on these, and points 
 | K39 | The screen at the real PC's native resolution (UEFI GOP and VESA modes chosen well) | S | |
 | K40 | Windows: resize, minimise, a task bar | M | |
 | K41 | Copy and paste between windows | S | |
-| K42 | Key up/down and lone Shift/Control reach windows | S | |
+| K42 | Key up/down and lone Shift/Control reach windows | S | **Done (entry NNN)**: every key, down and up, to the window with the focus as `Event::KeyCode` (Linux's key codes, modifiers held), from all three keyboard drivers through the one decoder; the bytes unchanged. Left: the rest of K116 (repeat, a layout in user space, the terminal translating) |
 | K43 | A font with more than ASCII (UTF-8 drawn, not '?') | M | |
 | K44 | The terminal as its own program; pseudo-terminals | M | |
 | K45 | Job control: process groups, Ctrl+Z, `fg`, `bg`, SIGTSTP/SIGCONT | M | |
@@ -630,7 +631,7 @@ All of it stays out of the kernel: the compositor, window manager, toolkit, font
 |---|---|---|---|
 | K114 | **A desktop benchmark**: key to screen with four busy programs, frames per second dragging a window, the cost of one composition at the screen's size | S | **Done (entry NNN)**: measured inside `display` (`display bench`, `display keys N`), on 1 CPU and 4 by `deskbench64-test`. Left: AArch64; the keyboard driver's part of key to screen (with K116) |
 | K115 | **`display` split**: the compositor, the window manager, the terminal (K44) and the boot console as programs of their own; a crash in the terminal leaves the screen | M | Early: everything else builds on it |
-| K116 | **Real key events** through the window protocol: key codes, down and up, modifiers, repeat, a keyboard layout chosen in user space; the terminal turns them into bytes for programs that want bytes | M | With K42; Era 11's push-to-talk key needs it |
+| K116 | **Real key events** through the window protocol: key codes, down and up, modifiers, repeat, a keyboard layout chosen in user space; the terminal turns them into bytes for programs that want bytes | M | With K42; Era 11's push-to-talk key needs it K42 (entry NNN) did the events, down and up, with codes and modifiers; left: repeat, the layout in user space, the terminal turning events into bytes, and whether an up never seen down is held back |
 | K117 | **Text for every language**: UTF-8 drawn with a TrueType rasteriser (our own, or a port), several sizes, fallback fonts; left-to-right first | L | With K43 |
 | K118 | **A toolkit to build applications with**: layout, text fields, lists, menus, scroll bars, dialogs, keyboard focus between widgets; its logic tested on the host as `gui` is | L | After K116 and K117 |
 | K119 | **A panel**: a launcher, the open windows, a clock; windows resized, minimised and maximised | M | With K40 |

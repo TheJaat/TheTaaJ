@@ -39,6 +39,32 @@ pub fn scancode(code: u16, pressed: bool) -> Option<([u8; 2], usize)> {
     Some(([0xE0, extended | release], 2))
 }
 
+/// The other way (K42): the key code for set-1 scancode `code` (bit 7,
+/// the release bit, already taken off), after a 0xE0 prefix if
+/// `extended`. None for what is no key of the table above.
+pub fn from_scancode(extended: bool, code: u8) -> Option<u16> {
+    if !extended {
+        return (1..=88).contains(&code).then_some(u16::from(code));
+    }
+    Some(match code {
+        0x1C => 96,
+        0x1D => 97,
+        0x35 => 98,
+        0x38 => 100,
+        0x47 => 102,
+        0x48 => 103,
+        0x49 => 104,
+        0x4B => 105,
+        0x4D => 106,
+        0x4F => 107,
+        0x50 => 108,
+        0x51 => 109,
+        0x52 => 110,
+        0x53 => 111,
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -63,6 +89,30 @@ mod tests {
         assert_eq!(scancode(0, true), None);
         assert_eq!(scancode(89, true), None);
         assert_eq!(scancode(0x110, true), None); // a mouse button, not a key
+    }
+
+    /// Every key there is a scancode for comes back as itself (K42).
+    #[test]
+    fn every_key_code_comes_back_from_its_scancode() {
+        for code in 0..0x200u16 {
+            if let Some((bytes, length)) = scancode(code, true) {
+                let back = if length == 1 { from_scancode(false, bytes[0]) } else { from_scancode(true, bytes[1]) };
+                assert_eq!(back, Some(code), "key {code}");
+            }
+        }
+        assert_eq!(from_scancode(false, 0), None);
+        assert_eq!(from_scancode(true, 0x2A), None); // half of Print Screen's sequence
+    }
+
+    #[test]
+    fn the_decoder_names_the_key_it_decoded() {
+        let mut decoder = Decoder::new();
+        decode(&mut decoder, 42, true); // left Shift: an event, and no character
+        assert_eq!(decoder.code(), 42);
+        decode(&mut decoder, 103, false); // Up, released: 0xE0 0xC8
+        assert_eq!(decoder.code(), 103);
+        decode(&mut decoder, 30, true);
+        assert_eq!(decoder.code(), 30);
     }
 
     #[test]

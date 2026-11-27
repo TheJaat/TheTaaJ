@@ -273,6 +273,11 @@ impl Device {
             let Some((bytes, length)) = evdev::scancode(code, value != 0) else { return };
             for &byte in &bytes[..length] {
                 let Some(event) = self.keys.feed(byte) else { continue };
+                // The key itself, for windows (K42); a repeat (value 2) is
+                // not a new press - repeat is K116's.
+                if value != 2 {
+                    let _ = taaj::send(pointer_out, &abi::display::key_message(code, event.pressed), &[]);
+                }
                 if let Some(text) = terminal_bytes(event, self.keys.control_held()) {
                     // A reader that lags loses keys, not the driver.
                     let _ = taaj::send(keys_out, text.as_bytes(), &[]);
