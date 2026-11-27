@@ -12,7 +12,7 @@ A microkernel's system calls are its whole surface: everything a program can do 
 with programs fuzz [CHILDREN [CALLS [SEED|random [trace]]]]
 ```
 
-`fuzz` starts CHILDREN copies of itself (100) and waits for each. A child gets **no handles at all** - no screen, no files, no services, the least a program can have: it asks init for an `IMAGE` run with flags 0, so init hands it nothing but its arguments. Each child makes CALLS calls (3000) from an xorshift generator seeded with SEED plus its number, so the same seed makes the same calls, and a crash found is a crash repeated. Then `fuzz` says how they ended:
+`fuzz` starts CHILDREN copies of itself (100) and waits for each. A child gets **no handles at all** - no screen, no files, no services, the least a program can have: it asks init for an `IMAGE` run with flags 0, so init hands it nothing but its arguments. Each child makes CALLS calls (3000) from an xorshift generator seeded with SEED plus its number, so the same seed makes the same calls, and a crash found is a crash repeated. (Not always the same endings: a call's result can depend on the time, on process numbers and on where memory was given, and what a child does with it next - two runs of `make test64` had 12 and 13 children killed.) Then `fuzz` says how they ended:
 
 ```text
 fuzz: 100 children, 3000 calls each, seeds 1 to 100
@@ -90,7 +90,7 @@ Then:
 
 | Type | You should see |
 |---|---|
-| `with programs fuzz 20 2000` | `fuzz: 20 children, 2000 calls each, seeds 1 to 20`, then after some seconds `fuzz: 18 made all their calls, 2 were killed for breaking a rule, ...` (the same numbers every time with the same seed) and `fuzz: done - 20 programs with no handles, ... the kernel still here` |
+| `with programs fuzz 20 2000` | `fuzz: 20 children, 2000 calls each, seeds 1 to 20`, then after some seconds `fuzz: 18 made all their calls, 2 were killed for breaking a rule, ...` (about the same numbers each time with the same seed) and `fuzz: done - 20 programs with no handles, ... the kernel still here` |
 | `echo still here` | `still here` |
 | `with programs fuzz 5 2000 random` | Different seeds, and the same `done` line |
 | `fuzz` | `fuzz: it starts programs: run it as `with programs fuzz`` |
