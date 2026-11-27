@@ -1798,7 +1798,7 @@ AT_C            = $(KERNEL64_DIR)/scripts/at.c
 # /tmp in memory (J64, journal entry 126): tmp.c, as the program
 # tmptest (a program called tmp would be under the /tmp mount).
 TMP_C           = $(KERNEL64_DIR)/scripts/tmp.c
-# /dev (J65, journal entry NNN): dev.c, as the program devtest.
+# /dev (J65, journal entry 127): dev.c, as the program devtest.
 DEV_C           = $(KERNEL64_DIR)/scripts/dev.c
 handles64-test: iso64 user64 libc64 tfstool-rs
 ifeq ($(HAVE_CC),yes)
