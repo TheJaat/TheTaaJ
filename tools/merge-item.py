@@ -180,7 +180,7 @@ def main():
     # The lanes checked before anything is pushed: found only after
     # TheKernel's push, a refusal left TheKernel's main with an item whose
     # TheTaaJ half was not merged (found rehearsing MaK-WSL's branches,
-    # entry NNN). Checked again after the numbering, below.
+    # entry 141). Checked again after the numbering, below.
     lanes = subprocess.run(["python3", "tools/lanes-check.py"], cwd=ROOT, capture_output=True, text=True)
     if lanes.returncode != 0:
         say(lanes.stdout + lanes.stderr)

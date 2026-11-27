@@ -1,6 +1,6 @@
 # Other sessions' finished branches in the night queue
 
-*Journal entry #NNN · a tool change and a change to how we work. Written on TheJat-WSL/ci. The user's choice for MaK-WSL's work (2026-11-27): branches its sessions are still working on stay with them; finished ones may be handed to TheJat-WSL's night queue, tested with the whole `make test64` and merged there under the standing yes (rule 2). For that, the night runner learned whose item each queued branch is.*
+*Journal entry #141 · a tool change and a change to how we work. Written on TheJat-WSL/ci. The user's choice for MaK-WSL's work (2026-11-27): branches its sessions are still working on stay with them; finished ones may be handed to TheJat-WSL's night queue, tested with the whole `make test64` and merged there under the standing yes (rule 2). For that, the night runner learned whose item each queued branch is.*
 
 ## What it is
 

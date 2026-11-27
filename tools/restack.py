@@ -59,7 +59,7 @@ def main():
     git("fetch", "-q", "origin", cwd=KERNEL)
     pairs = []
     for line in open(QUEUE):
-        words = [w for w in line.split("#", 1)[0].split() if not w.startswith("session=")]  # entry NNN
+        words = [w for w in line.split("#", 1)[0].split() if not w.startswith("session=")]  # entry 141
         if len(words) == 3 and words[1] == "after":
             pairs.append((words[0], words[2]))
     if not pairs:

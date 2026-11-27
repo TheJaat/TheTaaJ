@@ -4672,3 +4672,15 @@ From a session's tree, on a branch not in the queue:
 | `sh tools/merge-rehearsal.sh` | Each queued branch `passed`, then `merged`; `N of N merged` |
 
 Automated: not part of `make test64`.
+
+---
+
+## 141 · Other sessions' finished branches in the night queue
+
+[The entry](journal/141-queue-sessions.md)
+
+| Do | You should see |
+|---|---|
+| A queue line `BRANCH session=MaK-WSL/LANE`, `sh tools/merge-rehearsal.sh` | `BRANCH ... merged`; in the sandbox's main, the README row ends `(MaK-WSL/LANE, merged after its night test)` |
+
+Automated: not part of `make test64`.

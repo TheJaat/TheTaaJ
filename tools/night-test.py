@@ -113,7 +113,7 @@ OWN = os.environ.get("TAAJ_SESSION", "")
 def queue():
     """[(branch, the branch it is stacked on, or None)]. A line is
     `BRANCH [after BELOW] [session=MACHINE/LANE]`: the session whose item
-    it is, when not this one's (entry NNN) - the README row names it, and
+    it is, when not this one's (entry 141) - the README row names it, and
     a test that fails is that session's to fix: the runner does not wait
     for it, and goes on."""
     entries = []
@@ -204,7 +204,7 @@ def tree():
     # TheKernel and TheBootloader in this tree are clones of their own:
     # without the author, a merge commit there fails ("empty ident name"),
     # on a machine with no global git user (found rehearsing MaK-WSL's
-    # branches, entry NNN). The author of the repository's own config.
+    # branches, entry 141). The author of the repository's own config.
     for sub in (KERNEL, os.path.join(TREE, "bootloader")):
         if os.path.isdir(sub):
             for key in ("user.name", "user.email"):
@@ -230,7 +230,7 @@ def prepare(branch, base_taaj, base_kernel):
     git("fetch", "-q", "origin", cwd=KERNEL)
     git("reset", "-q", "--hard")
     # A merge that failed before may have left TheKernel or TheBootloader
-    # half merged: the next checkout would refuse (entry NNN).
+    # half merged: the next checkout would refuse (entry 141).
     for sub in (KERNEL, os.path.join(TREE, "bootloader")):
         if os.path.isdir(sub):
             run("git", "merge", "--abort", cwd=sub, check=False)
