@@ -1,10 +1,10 @@
-# Night tests wait for the fix: a failure is fixed the same night
+# Night tests wait for the fix: fix, test again, then the next branch
 
-*Journal entry #NNN · a tool change. Written on TheJat-WSL/ci. The user's rule for the night: the session is not only the tester - when a branch fails, it fixes it, commits, pushes, and goes on with the rest. The runner used to stop a failed branch's whole stack and end with the queue; a failure cost the night. Now it keeps testing, and with `--wait` it waits for the fix and tests again.*
+*Journal entry #NNN · a tool change. Written on TheJat-WSL/ci. The user's rule for the night: the session is not only the tester. When a branch fails, it fixes it, tests it again, and goes on to the next branch only after that; and so on for every branch, unless the user says otherwise. "Make use of time": don't spend the machine on tests that will have to be run again. The runner used to end a failed branch's stack and go on with the queue; a failure cost the night. Now, with `--wait`, it waits for the fix.*
 
 ## Why
 
-The night queue is stacked in merge order (entry NNN), so one failed branch held back every branch after it: they were "not run", and a fix waited for the next night. Most failures are small - an expected text, a test's limit, a merge with `main` - and fixed in minutes.
+The night queue is stacked in merge order (entry NNN): each branch is tested on the one before's result. When one fails, the ones after it can only be tested on a failed base, and every such test has to be run again after the fix: wasted. Waiting for the fix wastes nothing. Most failures are small - an expected text, a test's limit, a merge with `main` - and fixed in minutes. And while the runner waits, the test64 lock is free for the fix's own checks.
 
 ## What it is
 
@@ -12,22 +12,25 @@ The night queue is stacked in merge order (entry NNN), so one failed branch held
 python3 tools/night-test.py --wait 60
 ```
 
-1. **A failed branch does not stop its stack.** The branches after it are tested on its result all the same, marked `a failed base`: their own failures show the same night. Nothing on a failed base is pushed - its merge is not fit to be merged.
-2. **Rounds.** After the queue, it looks at the server every two minutes. A failed branch with a new commit (TheTaaJ's or TheKernel's) is tested again, and every branch stacked after it, on the new result. It ends when every branch passed on a passed base, or when no new commit came for `--wait` minutes (none: it ends after the queue, as before).
-3. **The session, meanwhile**, reads the failure in the log (`~/.cache/taaj-night/logs/NIGHT/BRANCH-ROUND.log`), fixes it in its own tree - not the night tree - and runs its quick checks and `make test64-again`, which wait for the test64 lock between two of the runner's branches. Then it commits and pushes the fix to the branch, and the runner takes it from there. The fix is documented like any other (rule 10): in the item's entry, or its own.
+1. The queue, one branch after another, as before.
+2. **A branch fails**: the runner waits. Every minute it looks at the server for a new commit on the branch (TheTaaJ's or TheKernel's).
+3. **The session, meanwhile**, reads the failure in the log (`~/.cache/taaj-night/logs/NIGHT/BRANCH-TRY.log`) and fixes it in its own tree, not the night tree. It checks the fix with `make test64-again` (only the failed parts, with the lock the runner left free), documents it (rule 10: in the item's entry, or its own), commits and pushes.
+4. **The fix arrives**: the runner tests the branch again, the whole `make test64`, on the same base. Passed: its merge is pushed, and the next branch starts on its result. Failed again: back to 2.
+5. **No fix for `--wait` minutes**: it stops there - the branches after it are `not run` - and the report says so. Without `--wait`, the first failure ends the stack, as before.
 
-Every round is a row of the report, so the morning sees what failed, what fixed it, and the test that passed after.
+Every try is a row of the report: what failed, and the try that passed after the fix.
 
 ## How I checked it
 
-- A queue of three stacked branches with a stand-in test failing `k187-miri` and everything containing it: `k187-miri` FAILED, `night-test` tested on it and FAILED, marked `a failed base`; `--wait 1`: `no fix pushed for 1 min: stopped`.
-- The runner with the server stubbed - `k187-miri` broken in the first two looks, fixed in the third: it waited (two sleeps), then tested `k187-miri` again (passed) and `night-test` on its new result (passed), in round 3; `j92-clean-build`, which had passed, was not tested again.
-- A first try said `passed` for the branch that should fail: the stand-in command got the make flags as arguments, git refused them, and `!` turned the error into a pass. A stand-in must take its own arguments (`sh -c '...' -`); `make test64` itself ignores none of them.
+- A queue of three stacked branches, a stand-in test failing `k187-miri`, `--wait 1`: `j92-clean-build` passed; `k187-miri` FAILED; `waiting for a fix (up to 1 min)`; `no fix pushed for 1 min`; `night-test` not run.
+- The runner with the server stubbed, `k187-miri`'s fix arriving during the wait: the tests ran in exactly the user's order - `j92-clean-build` pass, `k187-miri` FAIL, `k187-miri` (try 2) pass, `night-test` pass. Nothing was tested on a failed base.
+- A first try said `passed` for the branch that should fail: the stand-in command got the make flags as arguments, git refused them, and `!` turned the error into a pass. A stand-in must take its own arguments (`sh -c '...' -`).
+- An earlier version of this change tested the branches after a failed one on its result (marked "a failed base") while waiting. The user's rule is better: those tests would all be run again after the fix.
 
 ## What is still missing
 
-- The session has to be there, watching. Unattended, a failure still waits for the morning.
-- A failure in a branch another lane owns (`--all`) is that lane's: posted, not fixed here.
+- The session has to be there to fix. Unattended, the runner waits `--wait` minutes and stops; the failure waits for the morning.
+- A failure in a branch another lane owns (`--all`) is posted for that lane, not fixed here.
 
 ## Testing note
 
@@ -35,7 +38,7 @@ From a session's tree, with a queue of stacked branches:
 
 | Do | You should see |
 |---|---|
-| `NIGHT_TEST="sh -c 'exit 1' -" python3 tools/night-test.py` | The first branch FAILED, the ones after it tested all the same, `a failed base`, nothing pushed |
-| `python3 tools/night-test.py --wait 60`, a branch failing; push a fix to it | `waiting for a fix to BRANCH`, then within two minutes `BRANCH on ... (round N)`, and the branches after it again |
+| `NIGHT_TEST="sh -c 'exit 1' -" python3 tools/night-test.py --wait 1` | The first branch FAILED, `waiting for a fix (up to 1 min)`, then `no fix pushed for 1 min`, and the branches after it `not run` |
+| `python3 tools/night-test.py --wait 60`, a branch failing; push a fix to it | Within a minute `BRANCH on ... (try 2)`; when it passes, the next branch starts |
 
 Automated: not part of `make test64` - it runs `make test64`.
