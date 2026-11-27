@@ -174,6 +174,7 @@ Each machine has its own table and changes only its own, so two machines never e
 |---|---|
 | MaK-WSL/sched: K190, a child takes its parent's nice; K193 waits for the user's decision (per-CPU locks cost exact fairness) | `k190-nice-inherit` |
 | MaK-WSL/boot: K129, host tests for stage 2 (the ISO reader, the ELF loader, the page tables); waits for the user's yes to merge | `k129-stage2-tests` |
+| MaK-WSL/boot: K131, a fast BIOS read (on top of K129: merged after it); waits for the user's yes to merge | `k131-fast-bios-read` |
 
 ### Now: TheJat-WSL
 
@@ -406,7 +407,7 @@ Era 19 (Desktop: applications people can use daily) builds on these, and points 
 | K47 | Intel HD Audio driver and an audio service | L | Testable in QEMU (`-device intel-hda`) |
 | K48 | WAV playback, then a microphone recorded to a file | M | |
 | K50 | **`bigmem64-test` once did not finish its steps** under KVM (race hunt round 6 of 20, entry 105); not seen in 5 runs under full CPU load; its log was lost | S | Likeliest: host memory and CPU both short with 12 test machines on 11 GiB. `tools/race-hunt.sh` now keeps a failed round's files, so run it again and read them |
-| K51 | **The BIOS loader is slow emulated**: 14 of an 18 s boot pass before the kernel's first byte (idle host, TCG; under KVM well under a second) - stage2 reads the kernel through `int 13h`, back to real mode and out again for each read | S | Measured in entry 105. Read more per `int 13h` call, or stay in real mode for the whole read. The bootloader is MaK-WSL's (rule 7) |
+| K51 | **The BIOS loader is slow emulated**: 14 of an 18 s boot pass before the kernel's first byte (idle host, TCG; under KVM well under a second) - stage2 reads the kernel through `int 13h`, back to real mode and out again for each read | S | Measured in entry 105. Read more per `int 13h` call, or stay in real mode for the whole read. The bootloader is MaK-WSL's (rule 7) **Done by K131 (entry NNN)** |
 | K52 | **`aarch64-tcp-test` expects no segment for a closed connection**: once, in a full emulated `test64` on a busy host, `netinfo` counted 1 answered "no such connection" (41 segments sent again; alone, 0 of 3 runs, with 1-4 sent again) | S | Likely a late retransmission from the host after TheTaaJ closed passively (correct TCP answers it). Check what segment it was, then either allow it or keep the connection longer (entry 105) |
 
 ---
@@ -698,7 +699,7 @@ What is missing:
 | K128 | **`abc.txt` and `random.txt` removed** from TheBootloader | S | MaK-WSL's. First: trivial |
 | K129 | **Host tests** for the ISO 9660 reader, the ELF loader and the page-table builder, as the kernel's crates have | S | **Done (entry NNN)**: `bootloader/tests/`, stage 2's own files run unchanged as 32-bit programs at its own addresses; 152 checks with the build's ISO and kernel (`make stage2-test`); eight bugs found and fixed (four wrap-arounds in the ELF loader's bounds, four in the ISO reader). Left: the UEFI loaders' C code |
 | K130 | **A kernel of any size from BIOS**: read in pieces to anywhere above 1 MiB (unreal mode, or a copy out of a buffer below 1 MiB after each read) | M | Ends the 3 MiB wall; J51 then is no longer urgent |
-| K131 | **A fast BIOS read**: as many sectors per `int 13h` as the BIOS takes, or staying in real mode for the whole read; measured before and after | S | Is K51 |
+| K131 | **A fast BIOS read**: as many sectors per `int 13h` as the BIOS takes, or staying in real mode for the whole read; measured before and after | S | **Done (entry NNN)**: 16 ISO sectors per call (inside every BIOS limit: 127 sectors, one 64 KiB block), whole sectors straight into place; an emulated boot reaches the kernel in about half the time (`tools/boot-time.sh`). Left: a real BIOS (K1) |
 | K132 | **Two kernels, A and B**: a new one is tried once, TheTaaJ marks it good after it has booted, and the loader goes back to the other one if it was not marked | M | The era's milestone. With K134 |
 | K133 | **A boot menu** with a timeout: which kernel, the command line edited, a recovery entry (a shell with nothing started but what is needed) | M | The protocol's `CommandLine` already exists |
 | K134 | **Where kernels live and how they are updated**: on the EFI partition (written from TheTaaJ through Era 14's J68), or a loader that reads TaajFS; one answer for BIOS and UEFI | M | With K12 (the installer) |
