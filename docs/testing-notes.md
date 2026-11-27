@@ -4557,3 +4557,23 @@ From the root of TheTaaJ (the first run installs the nightly; then 20 to 30 minu
 | In `usb/src/tests/mod.rs`, `start`, hand the driver a misaligned base: `(s.memory.base().wrapping_add(1), s.memory.len() - 1)`; then `cd usb && cargo test` | The tests that start the controller (23 of 25) panic: `DMA memory must be aligned to 8 bytes` - the check `Dma::new` now makes. Put it back |
 
 Automated: not part of `make test64`; `make miri` is a night job.
+
+---
+
+## 135 · Night tests: develop by day, run the full test at night
+
+[The entry](journal/135-night-test.md)
+
+From a session's tree (`~/Projects/TheTaaJ-ci`, say), with a queue in `~/.cache/taaj-night/queue`:
+
+| Do | You should see |
+|---|---|
+| `NIGHT_TEST=true python3 tools/night-test.py` | `night-test: BRANCH on main` for each, and a report table, every branch **passed** (nothing is pushed) |
+| `python3 tools/night-test.py` | The same with `make test64`, about 7 minutes a branch on TheJat-WSL; the report in `~/.cache/taaj-night/reports/` |
+
+Automated: not part of `make test64` - it runs `make test64` itself.
+
+## Files
+
+- `tools/night-test.py`: the runner.
+- `Makefile`: `unsafe-check: user64 user-aarch64`.

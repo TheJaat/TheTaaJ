@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """night-test.py [QUEUE] - tests the queued branches, one after another,
-and writes a report for the morning (journal entry NNN).
+and writes a report for the morning (journal entry 135).
 
 By day, items are developed with quick checks only (their own boot test,
 the host tests, `make unsafe-check`) and pushed to their branches. This

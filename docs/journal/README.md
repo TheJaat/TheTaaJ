@@ -142,6 +142,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 132 | [The work list split: the rules in one file, the items a file per era, rows merged one at a time (TheJat-WSL/ci, merged after its night test)](132-work-list-split.md) | written | `d9e48d03` |
 | 133 | [A clean build from a fresh clone, in a container, with one command (TheJat-WSL/ci, merged after its night test)](133-clean-build.md) | written | `7333563d` |
 | 134 | [Miri over the host tests: undefined behaviour in three simulators (TheJat-WSL/ci, merged after its night test)](134-miri.md) | written | `2011ffe8` (TheKernel `36083d5`) |
+| 135 | [Night tests: develop by day, run the full test at night (TheJat-WSL/ci, merged after its night test)](135-night-test.md) | written | `74f7f93f` |
 
 ## How to run what the entries describe
 
