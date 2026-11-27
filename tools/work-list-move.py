@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """work-list-move.py - after docs/who-does-what.md was split (journal entry
-NNN), carries a branch's changes to it into the files they now belong in.
+132), carries a branch's changes to it into the files they now belong in.
 
 A branch made before the split changed rows of who-does-what.md - an item
 marked done, a new item, a note. Merging main into it, git finds those

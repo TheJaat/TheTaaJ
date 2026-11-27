@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
 """merge-main.py [REF] - merges main (origin/main, or REF) into the branch
 this tree is on, and settles by itself the conflicts that are only
-bookkeeping (journal entry NNN):
+bookkeeping (journal entry 132):
 
   1. **Numbers given at another merge.** A branch stacked on another (rule
      2; the night queue) has that one's lines with `NNN` in them - "journal
-     entry NNN", "**Done (entry NNN)**" - and once that one is merged, main
+     entry 132", "**Done (entry 132)**" - and once that one is merged, main
      has the same lines numbered (135). Where this branch changed lines
      next to them, git sees two changes to one place. Here, for each file
      in conflict: every line of the merge base with `NNN` that main has
      with a number instead is numbered the same way in the base and in
      this branch too, and the file merged again - main's change is then
      already in both, and only real changes are left.
-  2. **The work list split** (entry NNN): a conflict in
+  2. **The work list split** (entry 132): a conflict in
      docs/who-does-what.md is handed to tools/work-list-move.py.
 
 Anything else in conflict is left as git left it, and said. Run from the
@@ -43,8 +43,8 @@ def stage(cwd, n, path):
 
 
 def numbering(base, theirs):
-    """{base line: main's numbered line} for each base line with NNN that
-    main has, word for word, with a number in NNN's place."""
+    """{base line: main's numbered line} for each base line with 132 that
+    main has, word for word, with a number in 132's place."""
     found = {}
     theirs_lines = set(theirs.split("\n"))
     for line in set(base.split("\n")):

@@ -1,6 +1,6 @@
 # Coverage of the host tests, and a floor that only rises; make test64 reports every failure, make test64-again runs only those
 
-*Journal entry #NNN · a test (J96). Written on TheJat-WSL/ci. The kernel's crates have hundreds of host tests, but nobody knew how much of the code they run. Now `make coverage` measures it per crate - the kernel library, `abi`, and the fifteen crates of drivers, services and libraries - and fails if a crate falls below its floor in `tools/coverage-floor`. It is a part of `make test64`, about 20 seconds.*
+*Journal entry #137 · a test (J96). Written on TheJat-WSL/ci. The kernel's crates have hundreds of host tests, but nobody knew how much of the code they run. Now `make coverage` measures it per crate - the kernel library, `abi`, and the fifteen crates of drivers, services and libraries - and fails if a crate falls below its floor in `tools/coverage-floor`. It is a part of `make test64`, about 20 seconds.*
 
 ## Why
 

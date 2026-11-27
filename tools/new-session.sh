@@ -48,7 +48,7 @@ else
 fi
 
 # The work list's rows are merged one item at a time (.gitattributes,
-# tools/merge-rows.py, journal entry NNN). The setting is in the
+# tools/merge-rows.py, journal entry 132). The setting is in the
 # repository's own config, which every tree of this machine shares. In a
 # tree whose branch has no merge-rows.py yet, git's own merge.
 git config merge.rows.name "work-list rows, one item at a time"

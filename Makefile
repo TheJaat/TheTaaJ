@@ -901,7 +901,7 @@ endif
 HOST_TRIPLE = $(shell PATH="$(PATH)" rustc -vV | sed -n 's/^host: //p')
 
 # How much of each crate's code its host tests run, and a floor per crate
-# that may only rise (J96, journal entry NNN): tools/coverage-floor. In
+# that may only rise (J96, journal entry 137): tools/coverage-floor. In
 # make test64: about 20 s, its own build in build/coverage.
 coverage:
 	@python3 tools/coverage.py
@@ -912,7 +912,7 @@ coverage-raise:
 # Every unsafe block, impl and public unsafe fn says why it is sound
 # (K112): clippy's two lints for it, as errors, over every crate and CPU.
 # The kernel embeds the user programs (programs.rs), so linting it needs
-# them built - in a fresh tree too, not only inside test64 (entry NNN).
+# them built - in a fresh tree too, not only inside test64 (entry 135).
 unsafe-check: user64 user-aarch64
 	@USER_A64_BINS="$(USER_A64_BINS)" sh tools/unsafe-check.sh
 
@@ -2213,7 +2213,7 @@ TEST64_PARTS = \
 
 # The steps are in tools/test64.sh: a failing part does not stop the
 # others (smp64-test included), and what failed is written down for
-# make test64-again, which runs only that (journal entry NNN).
+# make test64-again, which runs only that (journal entry 137).
 test64:
 	@MAKE="$(MAKE)" TEST_JOBS="$(TEST_JOBS)" TEST64_SHARED="$(TEST64_SHARED)" TEST64_PARTS="$(TEST64_PARTS)" sh tools/test64.sh
 

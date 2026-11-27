@@ -4496,3 +4496,133 @@ make schedbench64-test
 | `schedbench: inherit:` | `a child of a program at nice 7 runs at nice 7` |
 
 Automated: `make test64`
+
+---
+
+## 131 · One commit per merge: the README row's commits written in the merge itself
+
+[The entry](journal/131-one-merge-commit.md)
+
+From a session's tree:
+
+| Do | You should see |
+|---|---|
+| `sh tools/merge-item-test.sh /tmp/mit` | A and D `exit 0`; `second commits: 0`; `the row's commit ... is in main: yes`; B and C stopped as before |
+
+Automated: not part of `make test64` - it is the merge script's own test.
+
+---
+
+## 132 · The work list split: the rules in one file, the items a file per era, rows merged one at a time
+
+[The entry](journal/132-work-list-split.md)
+
+In a session's tree:
+
+| Do | You should see |
+|---|---|
+| `wc -l docs/who-does-what.md docs/items/*.md` | The hub about 173 lines; an era file 15 to 51 |
+| `python3 tools/lanes-check.py` | `every open item is in one lane` |
+| Two branches marking two neighbouring items done, merged | No conflict (with the driver set up: `git config --get merge.rows.driver`) |
+| A branch from before the split: `git merge origin/main`, then `python3 tools/work-list-move.py` | `changed docs/items/...`, `every change made`; `git diff --cached` shows the rows in their era files |
+
+Automated: not part of `make test64`; `merge-item-test.sh` covers the merge script on it.
+
+---
+
+## 133 · A clean build from a fresh clone, in a container, with one command
+
+[The entry](journal/133-clean-build.md)
+
+From any directory (it needs `uidmap`, `curl`, `gpgv`, and a range in `/etc/subuid`; about 35 minutes):
+
+| Do | You should see |
+|---|---|
+| `sh tools/clean-build.sh` | `ubuntu-base-24.04.5-base-amd64.tar.gz: signature and checksum good`, then after about 35 minutes `test64: all passed` and `a fresh clone of main builds and passes on a clean Ubuntu 24.04` |
+| `ls ~/.cache/taaj-clean-build/logs` | The run's log; `grep "LLVM:\|QEMU:" it` shows `18.1.3` and `-accel kvm` |
+
+Automated: not part of `make test64` - it runs `make test64` itself, in the clean machine.
+
+---
+
+## 134 · Miri over the host tests: undefined behaviour in three simulators
+
+[The entry](journal/134-miri.md)
+
+From the root of TheTaaJ (the first run installs the nightly; then 20 to 30 minutes):
+
+| Do | You should see |
+|---|---|
+| `make miri` | A table: the eight crates with `unsafe` and `ok. N passed; 0 failed; M ignored`, the others `skipped: no unsafe` |
+| In `usb/src/tests/mod.rs`, `start`, hand the driver a misaligned base: `(s.memory.base().wrapping_add(1), s.memory.len() - 1)`; then `cd usb && cargo test` | The tests that start the controller (23 of 25) panic: `DMA memory must be aligned to 8 bytes` - the check `Dma::new` now makes. Put it back |
+
+Automated: not part of `make test64`; `make miri` is a night job.
+
+---
+
+## 135 · Night tests: develop by day, run the full test at night
+
+[The entry](journal/135-night-test.md)
+
+From a session's tree (`~/Projects/TheTaaJ-ci`, say), with a queue in `~/.cache/taaj-night/queue`:
+
+| Do | You should see |
+|---|---|
+| `NIGHT_TEST=true python3 tools/night-test.py` | `night-test: BRANCH on main` for each, and a report table, every branch **passed** (nothing is pushed) |
+| `python3 tools/night-test.py` | The same with `make test64`, about 7 minutes a branch on TheJat-WSL; the report in `~/.cache/taaj-night/reports/` |
+
+Automated: not part of `make test64` - it runs `make test64` itself.
+
+## Files
+
+- `tools/night-test.py`: the runner.
+- `Makefile`: `unsafe-check: user64 user-aarch64`.
+
+---
+
+## 136 · Our own CI: every branch of ours tested, the result beside it on GitHub; night tests that wait for the fix
+
+[The entry](journal/136-ci.md)
+
+From a session's tree (`~/Projects/TheTaaJ-ci`, say), logged in with `gh`:
+
+| Do | You should see |
+|---|---|
+| `NIGHT_TEST=true python3 tools/night-test.py --all` | A report headed `CI`: `main`, then each branch `main` does not contain - passed, or `does not merge`; nothing posted |
+| `TAAJ_MACHINE=TheJat-WSL python3 tools/night-test.py --all` | `make test64` on each; on GitHub, each branch's newest commit shows `TheJat-WSL test64` - success or failure; a second run right after tests nothing |
+
+And for part two, the wait for a fix:
+
+From a session's tree, with a queue of stacked branches:
+
+| Do | You should see |
+|---|---|
+| `NIGHT_TEST="sh -c 'exit 1' -" python3 tools/night-test.py --wait 1` | The first branch FAILED, `waiting for a fix (up to 1 min)`, then `no fix pushed for 1 min`, and the branches after it `not run` |
+| `python3 tools/night-test.py --wait 60`, a branch failing; push a fix to it | Within a minute `BRANCH on ... (try 2)`; when it passes, the next branch starts |
+
+Automated: not part of `make test64` - it runs `make test64` itself.
+
+---
+
+## 137 · Coverage of the host tests, and a floor that only rises; make test64 reports every failure, make test64-again runs only those
+
+[The entry](journal/137-coverage.md)
+
+From a session's tree, with rustup (the first run installs `llvm-tools` for Rust 1.100.0):
+
+| Do | You should see |
+|---|---|
+| `make coverage` | A table of 17 crates - lines, functions, lines counted, floor - and `coverage: every crate at or above its floor`, in about 20 seconds |
+| Set a crate's floor in `tools/coverage-floor` above its number, `python3 tools/coverage.py CRATE` | `BELOW ITS FLOOR` and `coverage: FAILED`, exit 1; put the floor back |
+
+And for part two, `make test64-again`:
+
+In a session's tree, after a `make test64`:
+
+| Do | You should see |
+|---|---|
+| `make test64` with a part failing | Every other part still run, then `test64: FAILED: PART - after fixing, make test64-again runs only these`; `cat build/test64-failed` lists it |
+| `make test64-again` | `test64-again: PART`, the shared builds, only that part, and `test64: all passed` once it does |
+| `make test64-again` again | `test64-again: nothing failed in the last make test64` |
+
+Automated: a part of `make test64` (`coverage`); part two is `make test64` itself.

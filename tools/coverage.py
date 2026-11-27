@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """coverage.py [--raise] [CRATE...] - how much of each crate's code its
-host tests run (J96, journal entry NNN).
+host tests run (J96, journal entry 137).
 
   make coverage           the table, and a failure if a crate fell
                           below its floor
@@ -199,7 +199,7 @@ def main():
             floor[crate] = max(floor.get(crate, 0), int(lines))
         with open(FLOOR, "w") as out:
             out.write("# Each crate's host tests cover at least this many percent of its lines\n"
-                      "# (tools/coverage.py; J96, journal entry NNN). Raised by\n"
+                      "# (tools/coverage.py; J96, journal entry 137). Raised by\n"
                       "# `make coverage-raise`; lowered only by hand, saying why.\n")
             for crate in CRATES + sorted(set(floor) - set(CRATES)):
                 if crate in floor:

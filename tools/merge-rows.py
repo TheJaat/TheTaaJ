@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """merge-rows.py BASE OURS THEIRS [PATH] - git's merge driver for the work
-lists (journal entry NNN): table rows merged one item at a time.
+lists (journal entry 132): table rows merged one item at a time.
 
 Two branches that change two different rows of one table - J92 and J94,
 one under the other - are not a conflict. But git merges lines, and two
 changes on neighbouring lines are one conflict to it. With fourteen
-sessions changing their items' rows ("Done (entry NNN)", a note), that was
+sessions changing their items' rows ("Done (entry 132)", a note), that was
 the most common conflict of all.
 
 So, where git's own merge (`git merge-file`) leaves a conflict and every
