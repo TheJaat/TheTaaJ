@@ -40,10 +40,10 @@ Every design, review and item is judged against these. When a choice helps one a
 1. **A separate branch for everything**: every step, fix or document change, with the same name in every repository it touches (for example `r3-std`, `usb-hubs`). Nothing is committed straight to `main`.
 2. **Nothing is merged into `main` without asking the user first**, and only after full testing. The one who did the work merges it:
    - pull `main` and merge it into the branch;
-   - `make test64` passes on the branch with `main` merged in;
+   - `make test64` passes on the branch with `main` merged in - the whole of it, in one run, on exactly what is merged (for a stacked branch, with the ones before it merged in). The shortcuts are for the work before it, never for this: an item's own tests, the host tests and `make test64-again` (only the parts that failed last) qualify nothing for a merge;
    - the step's own new tests pass, and its testing note was checked by a scripted boot;
    - the checklist below ("Before merging") is gone through;
-   - the user is asked and says yes;
+   - the user is asked and says yes - or, for an item in TheJat-WSL's night queue, **the user's standing yes** (2026-11-27): an item whose whole `make test64` passed in the night run, on exactly what is merged, is merged by the runner (`tools/night-test.py --merge`, journal entry 139), without asking again. If `main` moved after the test and touches the item's files or `kernel/abi`, it is tested again first (rule 15). Nothing else is merged without asking;
    - the numbers and the journal row are given (rule 5);
    - then merge and push, TheKernel and TheBootloader first, TheTaaJ last.
 
