@@ -51,7 +51,6 @@ What one lane waits for from another. When an item's dependency isn't merged yet
 |---|---|---|
 | `sched` K98 (and K65) | K61 `channel_call` | `ipc` |
 | `ipc` K73 services with several threads; `taajfs` J78 | K61; then K10 (disk queue, `devices`) and J71 (`taajfs`) | `ipc`, `devices`, `taajfs` |
-| `devices` K79 MSI-X queues per CPU | K68 run queue per CPU | `sched` |
 | `network` K54 shared rings | K63 bigger messages or rings | `ipc` |
 | `taajfs` J79 a shared page cache | K88 a generic pager, J58 sealed objects | `memory` |
 | `libc` J90 a shared libc | J29, K87 (shared code pages) | `memory` |
@@ -192,11 +191,9 @@ Its files: `kernel/kernel64/src/sched.rs`, `smp.rs`, `futex.rs`, `alarms.rs`, `c
 
 | Item | Wave | Note |
 |---|---|---|
-| K24 | 1 | Fine timers |
-| K190 | 2 | A child takes its parent's `nice` (after K20) |
-| J53 | 1 | The ticks mutation test |
-| K96 | 1 | Sleepers in a sorted timer queue |
-| K68 | 1 | A run queue per CPU; `devices`' K79 waits for it |
+| K191 | 2 | More POSIX timers, fine timeouts (after K24) |
+| K192 | 1 | Cross-CPU wake-ups under KVM (entry 128's bug 5) |
+| K193 | 1 | A lock per CPU's run queue (K68's other half) |
 | K101 | 2 | A thread prefers its last CPU |
 | K70 | 2 | Futexes without one shared list |
 | K72 | 2 | Idle CPUs that sleep |
@@ -256,7 +253,7 @@ The real-PC items need the user at the PC (U4): done whenever the user is there,
 | K78 | 2 | USB as a bus |
 | K5 | 2 | Intel I219 |
 | K6 | 2 | Realtek |
-| K79 | 2 | MSI-X queues (after `sched`'s K68) |
+| K79 | 2 | MSI-X queues (K68 done, entry 129) |
 | K22 | 2 | A transmit-interrupt serial writer |
 | K13 | 2 | The AML interpreter |
 | K14 | 2 | `_PRT` |

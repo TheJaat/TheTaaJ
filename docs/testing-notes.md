@@ -4439,3 +4439,60 @@ make run64
 The same on AArch64 with `make run-aarch64`: `with programs devtest` gives the same line.
 
 Automated: `cargo test` in `fileserver`, `make handles64-test aarch64-handles-test`, and `make test64`.
+
+---
+
+## 128 · Timers finer than a tick: one-shot timers, sorted sleepers, and late interrupts
+
+[The entry](journal/128-timers.md)
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `with files clib` | Among the checks: `clib: nanosleep(1 ms) took 1... us at least, of twenty` (about a millisecond, not ten), `clib: setitimer every 5 ms rang 12 times in 60 ms` (about twelve), and `library: 156 checks, all passed` |
+
+```
+make smp64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `[selftest] late interrupts` in `build/smp64-*.out` | `35 ms without any, then 1 came; the tick count moved on by 3` (or 4): the time kept, however late the interrupt |
+
+Automated: `make test64`
+
+---
+
+## 129 · A run queue per CPU (part 1): where a thread waits, and who takes it
+
+[The entry](journal/129-run-queues.md)
+
+```
+make schedbench64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `4 busy programs, 2 s: CPU each` | On 2 CPUs about 1000 ms each, all four - not three at about 830 and one at 1500 |
+| `schedbench64-test passed` | |
+
+Automated: `make test64`
+
+---
+
+## 130 · A child takes its parent's nice
+
+[The entry](journal/130-nice-inherit.md)
+
+```
+make schedbench64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `schedbench: inherit:` | `a child of a program at nice 7 runs at nice 7` |
+
+Automated: `make test64`

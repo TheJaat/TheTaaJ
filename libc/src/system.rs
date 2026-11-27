@@ -116,8 +116,8 @@ pub unsafe extern "C" fn __taaj_parse_float(text: *const c_char, end: *mut *mut 
 /// `struct timeval`, as sys/time.h declares it.
 #[repr(C)]
 pub struct Timeval {
-    tv_sec: c_long,
-    tv_usec: c_long,
+    pub(crate) tv_sec: c_long,
+    pub(crate) tv_usec: c_long,
 }
 
 /// Seconds and microseconds since 1 January 1970, UTC: the kernel's
@@ -162,8 +162,8 @@ pub unsafe extern "C" fn gettimeofday(tv: *mut Timeval, _tz: *mut u8) -> c_int {
 /// `struct timespec`, as time.h declares it.
 #[repr(C)]
 pub struct Timespec {
-    tv_sec: c_long,
-    tv_nsec: c_long,
+    pub(crate) tv_sec: c_long,
+    pub(crate) tv_nsec: c_long,
 }
 
 /// The two clocks time.h names: the time of day, and the time since
@@ -175,7 +175,7 @@ const CLOCK_PROCESS_CPUTIME_ID: c_int = 2;
 const TIME_UTC: c_int = 1;
 
 /// Nanoseconds as a timespec.
-fn timespec(nanoseconds: u64) -> Timespec {
+pub(crate) fn timespec(nanoseconds: u64) -> Timespec {
     Timespec { tv_sec: (nanoseconds / 1_000_000_000) as c_long, tv_nsec: (nanoseconds % 1_000_000_000) as c_long }
 }
 
@@ -231,13 +231,9 @@ pub extern "C" fn clock() -> c_long {
 /// slept in `*left`. 0, or -1 with EINVAL if the time is negative or its
 /// nanoseconds are not below a second.
 ///
-/// The kernel sleeps in ticks, and "n ticks" means until its tick count
-/// is n more than it is now - which, called a moment before a tick, is
-/// barely n - 1 ticks of time. So the sleep is worked out from the
-/// counter instead: the end is now plus `wanted`; the tick to wake at
-/// is the first one at or after it (tick k is when k ticks' time has
-/// passed since boot, clock.rs); and if the program wakes before the
-/// end all the same, it sleeps again.
+/// The end is now plus `wanted`, on the monotonic clock, and the kernel
+/// sleeps until then (SLEEP_UNTIL): to the nanosecond its one-shot timer
+/// gives, not to the next 10 ms tick, as before journal entry 128.
 ///
 /// # Safety
 /// `wanted` must be valid for reading, `left` null or valid for writing.
@@ -262,17 +258,10 @@ pub unsafe extern "C" fn nanosleep(wanted: *const Timespec, left: *mut Timespec)
 
 /// Sleeps until the time since boot is at least `end` nanoseconds.
 /// False if a signal's handler ran first, and the sleep was cut short.
+/// The kernel sleeps to that nanosecond (SLEEP_UNTIL, journal entry
+/// 128), as far as its timer can; it used to be to the tick after.
 pub(crate) fn sleep_until(end: u64) -> bool {
-    let tick = 1_000_000_000 / abi::TICKS_PER_SECOND;
-    // The kernel's longest sleep, ten minutes; a longer one is a few.
-    let longest = 10 * 60 * abi::TICKS_PER_SECOND;
-    while taaj::monotonic_ns() < end {
-        let wake_at = end.div_ceil(tick);
-        if !taaj::sleep_unless_signalled(wake_at.saturating_sub(taaj::ticks()).clamp(1, longest)) {
-            return false;
-        }
-    }
-    true
+    taaj::sleep_until_ns(end)
 }
 
 /// `sched_yield()`: lets the kernel run something else now.
