@@ -1,6 +1,6 @@
 #!/bin/sh
 # merge-item-test.sh - tests tools/merge-item.py without touching the
-# server (journal entry NNN).
+# server (journal entry 125).
 #
 #   sh tools/merge-item-test.sh SCRATCH
 #
