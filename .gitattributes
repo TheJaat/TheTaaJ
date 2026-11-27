@@ -1,0 +1,7 @@
+# The work list's tables are merged one item row at a time (journal entry
+# NNN; tools/merge-rows.py), where a clone has the driver set up
+# (tools/new-session.sh does it). Without it, git merges them as text.
+docs/who-does-what.md merge=rows
+docs/items/*.md merge=rows
+docs/lanes.md merge=rows
+docs/machines.md merge=rows

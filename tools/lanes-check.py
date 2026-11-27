@@ -3,7 +3,8 @@
 
     python3 tools/lanes-check.py
 
-Reads the item tables of docs/who-does-what.md (rows whose first cell is
+Reads the item tables of the work list - docs/who-does-what.md and
+docs/items/*.md (journal entry NNN) - (rows whose first cell is
 an item such as K60, J59 or E1; an item is done when its Notes say
 "**Done") and the lane tables of docs/lanes.md (the first cell of each
 row under a "### `lane`" heading), and says:
@@ -15,6 +16,7 @@ row under a "### `lane`" heading), and says:
 Exits 1 if it found any of these, so it can run before a merge.
 """
 
+import glob
 import re
 import sys
 
@@ -78,7 +80,9 @@ def lanes(path):
 
 
 def main():
-    work = items("docs/who-does-what.md")
+    work = {}
+    for path in ["docs/who-does-what.md"] + sorted(glob.glob("docs/items/*.md")):
+        work.update(items(path))
     table, outside = lanes("docs/lanes.md")
     problems = []
 
@@ -91,7 +95,7 @@ def main():
         if len(places) > 1:
             problems.append(f"{name} is in more than one place: {', '.join(places)}")
         if name not in work:
-            problems.append(f"{name} (lane {places[0]}) is not in docs/who-does-what.md")
+            problems.append(f"{name} (lane {places[0]}) is not in the work list (docs/who-does-what.md, docs/items/)")
         elif work[name]:
             problems.append(f"{name} (lane {places[0]}) is done: take it out of the lane")
 
