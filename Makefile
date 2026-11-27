@@ -1446,6 +1446,16 @@ endif
 GUI64_LOG   = $(BUILD_DIR)/gui64.log
 GUI_A64_LOG = $(BUILD_DIR)/aarch64/gui.log
 
+# The desktop benchmark (K114): one composition of the screen, a window
+# dragged a pixel at a time, and key to screen with four busy programs -
+# on 1 CPU and on 4. The numbers are printed; the test checks they were
+# measured, not how fast (deskbench-test.sh).
+DESKBENCH64_LOG = $(BUILD_DIR)/deskbench64.log
+deskbench64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(DESKBENCH64_LOG).disk)
+	@$(KERNEL64_DIR)/scripts/deskbench-test.sh $(ISO64_IMG) $(DESKBENCH64_LOG).disk $(DESKBENCH64_LOG)
+	@echo "deskbench64-test passed"
+
 gui64-test: iso64 cprogs64 tfstool-rs
 	$(call make-test-disk,$(GUI64_LOG).disk)
 	@$(KERNEL64_DIR)/scripts/gui-test.sh x86_64 $(ISO64_IMG) $(GUI64_LOG).disk $(GUI64_LOG)
@@ -2153,6 +2163,7 @@ TEST64_PARTS = \
 	aarch64-screen-test \
 	gui64-test \
 	aarch64-gui-test \
+	deskbench64-test \
 	edit64-test \
 	aarch64-edit-test \
 	cxx64-test \

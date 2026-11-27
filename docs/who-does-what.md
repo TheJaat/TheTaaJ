@@ -173,6 +173,7 @@ Each machine has its own table and changes only its own, so two machines never e
 | Step | Branch |
 |---|---|
 | MaK-WSL/sched: K190, a child takes its parent's nice; K193 waits for the user's decision (per-CPU locks cost exact fairness) | `k190-nice-inherit` |
+| MaK-WSL/desktop: K114, the desktop benchmark; waits for the user's yes to merge | `k114-desktop-bench` |
 
 ### Now: TheJat-WSL
 
@@ -627,7 +628,7 @@ All of it stays out of the kernel: the compositor, window manager, toolkit, font
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K114 | **A desktop benchmark**: key to screen with four busy programs, frames per second dragging a window, the cost of one composition at the screen's size | S | First. With K95 (K95's own numbers are in entry 116; the key-to-screen part is this item's) |
+| K114 | **A desktop benchmark**: key to screen with four busy programs, frames per second dragging a window, the cost of one composition at the screen's size | S | **Done (entry NNN)**: measured inside `display` (`display bench`, `display keys N`), on 1 CPU and 4 by `deskbench64-test`. Left: AArch64; the keyboard driver's part of key to screen (with K116) |
 | K115 | **`display` split**: the compositor, the window manager, the terminal (K44) and the boot console as programs of their own; a crash in the terminal leaves the screen | M | Early: everything else builds on it |
 | K116 | **Real key events** through the window protocol: key codes, down and up, modifiers, repeat, a keyboard layout chosen in user space; the terminal turns them into bytes for programs that want bytes | M | With K42; Era 11's push-to-talk key needs it |
 | K117 | **Text for every language**: UTF-8 drawn with a TrueType rasteriser (our own, or a port), several sizes, fallback fonts; left-to-right first | L | With K43 |
