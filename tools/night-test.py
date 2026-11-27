@@ -106,15 +106,34 @@ def git(*args, cwd=TREE, check=True):
     return run("git", *args, cwd=cwd, check=check).stdout.strip()
 
 
+SESSIONS = {}  # branch -> the session whose item it is (`session=` on its line)
+OWN = os.environ.get("TAAJ_SESSION", "")
+
+
 def queue():
+    """[(branch, the branch it is stacked on, or None)]. A line is
+    `BRANCH [after BELOW] [session=MACHINE/LANE]`: the session whose item
+    it is, when not this one's (entry NNN) - the README row names it, and
+    a test that fails is that session's to fix: the runner does not wait
+    for it, and goes on."""
     entries = []
     for line in open(QUEUE):
-        line = line.split("#", 1)[0].split()
-        if not line:
+        words = line.split("#", 1)[0].split()
+        if not words:
             continue
-        after = line[2] if len(line) == 3 and line[1] == "after" else None
-        entries.append((line[0], after))
+        for word in words[1:]:
+            if word.startswith("session="):
+                SESSIONS[words[0]] = word[len("session="):]
+        words = [w for w in words if not w.startswith("session=")]
+        after = words[2] if len(words) == 3 and words[1] == "after" else None
+        entries.append((words[0], after))
     return entries
+
+
+def theirs(branch):
+    """An item of another session's, handed to this queue (user's choice B,
+    2026-11-27): tested and merged here, but fixed by its own session."""
+    return bool(SESSIONS.get(branch)) and SESSIONS[branch] != OWN
 
 
 def heads(cwd):
@@ -398,6 +417,10 @@ def night_queue(logs, report, lines):
             lines.append(f"| {branch} | {said}{again} | {result} | {took} | {why} | {f'`{log}`' if log else ''} |")
             write(report, lines)
             waited = time.time()
+            if theirs(branch):
+                lines.append(f"| {branch} | | failed - **for {SESSIONS[branch]} to fix**; not waited for: the branches stacked on it are not run | | | |")
+                write(report, lines)
+                break
             if not wait_for_fix(branch, now):
                 TOTALS["waiting"] += int(time.time() - waited)
                 stop = f"no fix pushed for {WAIT} min" if WAIT else "failed, no --wait"
@@ -448,7 +471,7 @@ def merge_now(branch, main_tested):
     if len(entries) != 1:
         return False, f"want one unnumbered entry, found {len(entries)}: merge it by hand"
     title = open(os.path.join(TREE, "docs/journal", entries[0])).readline().lstrip("# ").strip()
-    session = os.environ.get("TAAJ_SESSION", f"{MACHINE}/ci")
+    session = SESSIONS.get(branch) or os.environ.get("TAAJ_SESSION", f"{MACHINE}/ci")
     row = f"{title} ({session}, merged after its night test)"
     kernel_branch = bool(git("ls-remote", "origin", f"refs/heads/{branch}", cwd=KERNEL))
     head = git("rev-parse", "HEAD")
