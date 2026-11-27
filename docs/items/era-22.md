@@ -1,0 +1,23 @@
+# Era 22 · Observability: logs, crashes, tracing and profiling
+
+*Part of the work list. The rules, who is doing what now, and what waits for the user are in [`docs/who-does-what.md`](../who-does-what.md); the lanes in [`docs/lanes.md`](../lanes.md).*
+
+
+**Done when**: the log of the last boot can be read after a reboot; a kernel panic shows a backtrace on the screen and leaves a crash record that the next boot finds; a program that crashes leaves a report (its registers, backtrace, the last of its output) in a file; a running system can be traced (system calls, IPC, scheduling, faults) and a slow request found from the trace; a profiler shows where a program spends its time; and `top` shows each process's CPU and memory live. Whose it is, and when, is for the user to say. The vision names "observable" as a goal; this is it. Pointed to: K21 (CPU time per process), K113 (Era 18).
+
+What is right: the kernel's messages and every program's output go to one debug log, a serial line, written from a fixed-size ring (`logring.rs`) so printing never waits for the line and a program cannot use the ring up - a message dropped is dropped whole and counted, so the log says something is missing; lines from several writers are kept whole (`logmerge.rs`); at a panic the kernel takes the screen back and prints there too (`lastwords.rs`), so a machine with nobody on its serial port still shows why it stopped; the shell has `ps`, `mem`, `uptime` and `services`.
+
+What is missing: the log lives only on the serial line and on the screen - nothing keeps it, so on the real PC it is gone at the reboot that follows a problem; no levels, no sources, no time on each line; a panic prints its message but no backtrace; no crash record kept across a reboot; a program that crashes leaves a line, not a report; no tracing of system calls, IPC or scheduling; no profiler; no `top`; no debugger on TheTaaJ (QEMU's gdb works from the host, nothing on the real PC).
+
+All of it stays in user space except what only the kernel can see: the kernel provides trace points and a ring of events as a memory object, given to whoever holds a handle for it; collecting, storing and showing them is a service's job.
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| K136 | **A log service**: everything that goes to the debug log also goes to a file on the disk, with the time, the source (kernel or which program) and a level on each line; kept across reboots, the oldest dropped first; read with a `log` command | M | First. The kernel's ring is handed to it as a memory object; the serial line stays as it is |
+| K137 | **A panic that says where**: a backtrace (frame pointers, the kernel's own symbols), the CPU and thread, and a crash record left in memory that survives a warm reboot or in a reserved spot on the disk, which the next boot hands to the log service | M | **Done (entry 122)** for the backtrace and the thread: frame pointers, the kernel's own symbols filled in after linking, on both CPUs, for panics and CPU exceptions; the fault tests require it. The crash record is K188 |
+| K188 | **A crash record the next boot finds**: a panic's report kept in memory that survives a warm reboot, or in a reserved spot on the disk, and handed to the log service at the next boot | M | K137's second half; after K136 (the log service) |
+| K138 | **A crash report per program**: when a process breaks a rule, its registers, a backtrace, its memory map and the last lines it printed, written by a user-space service the kernel tells (as `PeerClosed` tells a client) | M | After K136 |
+| K139 | **Tracing**: trace points in the kernel (system calls, IPC sends and receives, switches, faults, interrupts) written to a per-CPU ring that a tracing service maps, with a handle for it; a `trace` command that records a span and shows it | L | The data the benchmarks of Eras 13 and 17 want |
+| K140 | **A profiler**: the timer samples where each CPU is (program and address); a report per function, with symbols | M | After K139 |
+| K141 | **`top`**: CPU (K21), memory, threads and handles per process, refreshed | S | After K21 |
+| K142 | **A debugger on TheTaaJ**: a debug capability over another process (stop, read and write its memory and registers, breakpoints), given only by its launcher; a small debugger program; a gdb stub on the serial line for the kernel on a real PC | L | |
