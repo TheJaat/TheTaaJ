@@ -25,7 +25,8 @@ For each branch, in its own tree (../TheTaaJ-night, made the first time):
      says so.
 
 NIGHT_TEST="make unsafe-check" (say) runs that instead of make test64, to
-try this script itself in minutes.
+try this script itself in minutes - and then nothing is pushed: only a
+real make test64 makes a branch's merge fit to push.
 """
 import datetime
 import os
@@ -110,6 +111,11 @@ def prepare(branch, base_taaj, base_kernel):
         git("add", "kernel")
     if git("diff", "--cached", "--name-only") or merged.returncode != 0:
         git("commit", "-q", "--no-edit", "-m", f"Merge {base_taaj[:10]} into {branch} (night test)")
+    # The merge may have moved `kernel` (the base's newer one): check out
+    # what the result says, not what the branch had - or the programs are
+    # built against an older ABI than the kernel's.
+    if not kernel_branch:
+        git("submodule", "update", "-q", "kernel")
     git("submodule", "update", "-q", "bootloader")
     return kernel or git("ls-tree", "HEAD", "kernel").split()[2]
 
@@ -127,7 +133,7 @@ def test(log):
 
 def main():
     tree()
-    night = datetime.datetime.now().strftime("%Y%m%d-%H%M")
+    night = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     logs = os.path.join(OUT, "logs", night)
     os.makedirs(logs, exist_ok=True)
     report = os.path.join(OUT, "reports", f"{night}.md")
@@ -146,6 +152,9 @@ def main():
             base_taaj, base_kernel, said = base[0], base[1], f"{after}'s result"
         else:
             base_taaj, base_kernel, said = "origin/main", "origin/main", "main"
+        if not git("ls-remote", "origin", f"refs/heads/{branch}"):
+            lines.append(f"| {branch} | {said} | **not pushed**: no such branch on the server | | | |")
+            continue
         print(f"night-test: {branch} on {said}", flush=True)
         try:
             kernel = prepare(branch, base_taaj, base_kernel)
@@ -158,9 +167,12 @@ def main():
             # morning merge finds the base already merged in.
             tested[branch] = (git("rev-parse", "HEAD"), kernel)
             pushed = []
-            if git("ls-remote", "origin", f"refs/heads/{branch}", cwd=KERNEL):
+            if os.environ.get("NIGHT_TEST"):
+                pass  # a stand-in test: nothing is pushed
+            elif git("ls-remote", "origin", f"refs/heads/{branch}", cwd=KERNEL):
                 pushed.append(run("git", "push", "-q", "origin", f"HEAD:refs/heads/{branch}", cwd=KERNEL, check=False).returncode)
-            pushed.append(run("git", "push", "-q", "origin", f"HEAD:refs/heads/{branch}", check=False).returncode)
+            if not os.environ.get("NIGHT_TEST"):
+                pushed.append(run("git", "push", "-q", "origin", f"HEAD:refs/heads/{branch}", check=False).returncode)
             note = "" if not any(pushed) else " (the merge could not be pushed: the branch moved)"
             lines.append(f"| {branch} | {said} | **passed**{note} | {seconds // 60} min | | `{log}` |")
         else:
