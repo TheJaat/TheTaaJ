@@ -14,6 +14,10 @@ One of the three bottlenecks the user agreed to fix. The second commit doubled e
 
 The commit the row names is the last of the item's own commits, not the numbering commit after it: `git show` of it shows the item's last change, `git log` up to it the whole item.
 
+## A bug found on the way
+
+Replaying the morning's merges in a sandbox (local copies of both repositories, every branch of the queue merged in turn with this script) stopped at the second: the first had left `tools/merge-item.py` changed and not committed. `renumber()` numbers `NNN` on the branch's added lines in every file - a script's comment saying "journal entry NNN" too - but only `docs/` was added to the commit. So the comments were numbered in the tree, left out of `main`, and the next merge found the tree dirty. No merge before this one had added such a comment in TheTaaJ (TheKernel's were added: its own `git add` used the list). Now every file `renumber()` changed is added, and the harness checks it: a comment with `NNN` in a script, numbered on `main`, the tree clean after.
+
 ## How I checked it
 
 `sh tools/merge-item-test.sh SCRATCH` (entry 125's harness: local copies of both repositories, four runs), with main's script and then with this one:
@@ -23,6 +27,7 @@ The commit the row names is the last of the item's own commits, not the numberin
 | A: a clean merge | row `` `0488b8d9` (TheKernel `b612faa`) ``; last commit on main `journal: entry 131's commits` | row `` `074a3915` (TheKernel `0b607cb`) ``; last commit on main the merge itself |
 | B: TheKernel's push refused | stopped, nothing changed | the same |
 | C: TheTaaJ's push refused | stopped, numbering undone | the same |
+| A, a script's comment with `NNN` | numbered in the tree, left out of `main` (found in the sandbox) | numbered on `main`; the tree clean after |
 | D: C's branch, main merged in, run again | the row's commit in main; one second commit | the row's commit in main; **no second commit** |
 
 The harness's last check named entry 124, which main has long passed; it now reads the last row, checks its commit is in `main`'s history, and counts `journal: entry` commits.
