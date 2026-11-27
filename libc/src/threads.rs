@@ -58,7 +58,7 @@ use core::alloc::Layout;
 use core::cell::UnsafeCell;
 use core::ffi::{c_int, c_long, c_void};
 use core::ptr;
-use core::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use taaj::sync::Mutex;
 
@@ -100,6 +100,12 @@ pub struct Thread {
     id: u32,
     /// 1 while the thread runs; the kernel sets it to 0 at its end.
     running: AtomicU32,
+    /// The kernel's number for the thread (THREAD_CREATE's, or
+    /// SCHED_GET's THREAD_ID), for pthread_setaffinity_np and the like on
+    /// another thread; 0 until known. The thread writes it itself as it
+    /// starts, and pthread_create when the kernel says it: whichever is
+    /// first, the same number (journal entry 124).
+    kernel: AtomicU64,
     /// What its start function returned, or pthread_exit was given.
     result: *mut c_void,
     start: Option<Start>,
@@ -130,6 +136,7 @@ impl Thread {
             signal_stack: (0, 0),
             id,
             running: AtomicU32::new(1),
+            kernel: AtomicU64::new(0),
             result: ptr::null_mut(),
             start: None,
             argument: ptr::null_mut(),
@@ -291,11 +298,36 @@ pub(crate) fn init() {
                 (*main).tls_layout = layout;
             }
             let _ = taaj::set_thread_pointer(tp as u64);
+            // SAFETY: nothing else runs yet.
+            unsafe { record_kernel_id(main) };
         }
         // No memory at all: the program cannot run, and saying so needs
         // nothing thread-local.
         None => taaj::exit(127),
     }
+}
+
+/// Writes the running thread's kernel number into its record.
+///
+/// # Safety
+/// `thread` must be the running thread's record.
+unsafe fn record_kernel_id(thread: *mut Thread) {
+    let id = taaj::sched_get(abi::sched::THREAD, 0, abi::sched::THREAD_ID).unwrap_or(0);
+    // SAFETY: the caller's promise.
+    unsafe { (*thread).kernel.store(id, Ordering::Release) };
+}
+
+/// The kernel's number for the thread `pthread`, one of the program's
+/// own; None if it is not, or has not started (sched.rs).
+pub(crate) fn kernel_id(pthread: usize) -> Option<u64> {
+    let thread = pthread as *mut Thread;
+    let known = thread == MAIN.0.get() || THREADS.lock().0.contains(&thread);
+    if !known {
+        return None;
+    }
+    // SAFETY: one of the program's records, alive until joined.
+    let id = unsafe { (*thread).kernel.load(Ordering::Acquire) };
+    (id != 0).then_some(id)
 }
 
 /// The running thread's record.
@@ -565,6 +597,8 @@ pub unsafe extern "C" fn pthread_getattr_np(thread: usize, attr: *mut Attributes
 
 /// Where every thread pthread_create makes begins.
 extern "C" fn begin(thread: *mut Thread) -> ! {
+    // SAFETY: the record is this thread's own.
+    unsafe { record_kernel_id(thread) };
     // SAFETY: pthread_create made the record for this thread.
     let (start, argument) = unsafe { ((*thread).start, (*thread).argument) };
     let result = start.map_or(ptr::null_mut(), |start| start(argument));
@@ -626,7 +660,11 @@ pub unsafe extern "C" fn pthread_create(
     // The stack pointer starts 16-byte aligned, as both ABIs want.
     let top = (base + size) as u64 & !15;
     match taaj::thread_create(begin as *const () as u64, top, thread as u64, tp as u64) {
-        Ok(_) => 0,
+        Ok(id) => {
+            // SAFETY: the record lives until the thread is joined.
+            unsafe { (*thread).kernel.store(id, Ordering::Release) };
+            0
+        }
         Err(_) => {
             if detached {
                 DETACHED.lock().0.retain(|&t| t != thread);

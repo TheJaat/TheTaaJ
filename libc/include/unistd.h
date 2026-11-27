@@ -57,6 +57,10 @@ int unlinkat(int dirfd, const char *path, int flags);
 /* Sleeps for at least that many microseconds (nanosleep, time.h). */
 int usleep(unsigned microseconds);
 
+/* The program's priority moved by `increment` (positive: less
+ * important); the new one, or -1 with EPERM past its ceiling. */
+int nice(int increment);
+
 /* Names that do not start with '/' are taken from path from now on;
  * getcwd says it. For this program only. */
 int chdir(const char *path);

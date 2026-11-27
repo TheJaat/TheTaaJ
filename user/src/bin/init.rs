@@ -246,6 +246,28 @@ struct Service {
 /// Starts `name` with a fresh duplicate of each grant. A duplicate is
 /// made with TRANSFER (needed to hand it over) and then handed over with
 /// only the rights in the grant - so the service cannot pass it on.
+/// The services on the way from a key to the screen: the keyboard
+/// drivers (PS/2, the serial line, USB and its HID devices), the display
+/// and the shell. They run before busy programs, so that typing stays
+/// quick however many are running (MaK-WSL/sched's K20, journal entry
+/// 124). It is init's decision, not the kernel's: the kernel only keeps
+/// the priorities it is given. Everything else, and everything the shell
+/// and posix_spawn start, runs at the default.
+const INTERACTIVE: &[&str] = &["kbd", "serial", "usb", "hid", "display", "shell"];
+const INTERACTIVE_PRIORITY: i64 = -5;
+
+/// Gives a service its priority, if it is one of INTERACTIVE. init may:
+/// its ceiling is the highest, and it started the service (KILL).
+fn prioritize(name: &str, process: Handle) {
+    if !INTERACTIVE.contains(&name) {
+        return;
+    }
+    let level = abi::sched::level(INTERACTIVE_PRIORITY);
+    if let Err(error) = taaj::sched_set(abi::sched::PROCESS, process, abi::sched::PRIORITY, level) {
+        println!("[init] could not give {name} priority {INTERACTIVE_PRIORITY}: {error:?}");
+    }
+}
+
 fn start(launcher: Handle, name: &str, grants: &[&Grant], argument: u64) -> Result<Handle, Error> {
     let mut copies = [(0u64, 0u32); 8];
     for (n, grant) in grants.iter().enumerate() {
@@ -868,6 +890,7 @@ fn main() -> i64 {
                 Device::Mmio(info) => taaj::send(card_info_tx, &info.to_bytes(), &[])?,
             }
         }
+        prioritize(service.name, process);
         Ok::<Handle, Error>(process)
     };
 

@@ -152,6 +152,13 @@ int pthread_attr_getguardsize(const pthread_attr_t *attr, unsigned long *size);
  * and others use. */
 int pthread_getattr_np(pthread_t thread, pthread_attr_t *attr);
 
+/* One thread's CPUs, and its policy (SCHED_OTHER, priority 0): see
+ * sched.h. Error numbers, not errno. */
+int pthread_setaffinity_np(pthread_t thread, size_t size, const cpu_set_t *set);
+int pthread_getaffinity_np(pthread_t thread, size_t size, cpu_set_t *set);
+int pthread_setschedparam(pthread_t thread, int policy, const struct sched_param *param);
+int pthread_getschedparam(pthread_t thread, int *policy, struct sched_param *param);
+
 pthread_t pthread_self(void);
 int pthread_equal(pthread_t a, pthread_t b);
 int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)(void *), void *argument);

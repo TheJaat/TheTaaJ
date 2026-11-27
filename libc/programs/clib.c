@@ -25,6 +25,7 @@
 #include <locale.h>
 #include <math.h>
 #include <pthread.h>
+#include <sched.h>
 #include <setjmp.h>
 #include <signal.h>
 #include <stdint.h>
@@ -32,6 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <time.h>
@@ -212,6 +214,51 @@ static void cpu_time(void)
     clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &cpu1);
     check(nanoseconds(cpu1) - nanoseconds(cpu0) < 50000000LL && clock() - clock0 < 50000,
           "asleep for 200 ms: almost no CPU time");
+}
+
+/* Priorities and CPUs (journal entry 124): this program may make itself
+ * less important, not more - its ceiling is the default - and may choose
+ * the CPUs it runs on. Run last of the checks that care, and put back:
+ * the rest of clib runs at the default on every CPU. */
+static void scheduling(void)
+{
+    errno = 0;
+    check(getpriority(PRIO_PROCESS, 0) == 0 && errno == 0, "getpriority: the default, 0");
+    check(nice(5) == 5 && getpriority(PRIO_PROCESS, 0) == 5, "nice(5): priority 5");
+    errno = 0;
+    check(nice(-10) == -1 && errno == EPERM, "nice(-10) past the ceiling: EPERM");
+    errno = 0;
+    check(setpriority(PRIO_PROCESS, 0, -1) == -1 && errno == EACCES, "setpriority above the ceiling: EACCES");
+    check(setpriority(PRIO_PROCESS, 0, 0) == 0 && getpriority(PRIO_PROCESS, 0) == 0, "back to 0: setpriority");
+    errno = 0;
+    check(getpriority(PRIO_PROCESS, 99999) == -1 && errno == ESRCH, "getpriority of nobody: ESRCH");
+    errno = 0;
+    check(getpriority(PRIO_PGRP, 0) == -1 && errno == EINVAL, "PRIO_PGRP: EINVAL");
+
+    cpu_set_t all, one, read;
+    check(sched_getaffinity(0, sizeof all, &all) == 0 && CPU_ISSET(0, &all), "sched_getaffinity: CPU 0 is there");
+    CPU_ZERO(&one);
+    CPU_SET(0, &one);
+    check(sched_setaffinity(0, sizeof one, &one) == 0, "sched_setaffinity: CPU 0 alone");
+    check(sched_getaffinity(0, sizeof read, &read) == 0 && CPU_COUNT(&read) == 1 && CPU_ISSET(0, &read),
+          "sched_getaffinity: CPU 0 alone, read back");
+    CPU_ZERO(&one);
+    CPU_SET(63, &one);
+    errno = 0;
+    check(sched_setaffinity(0, sizeof one, &one) == -1 && errno == EINVAL, "sched_setaffinity to no CPU there: EINVAL");
+    check(pthread_setaffinity_np(pthread_self(), sizeof all, &all) == 0
+              && pthread_getaffinity_np(pthread_self(), sizeof read, &read) == 0 && CPU_COUNT(&read) == CPU_COUNT(&all),
+          "pthread_setaffinity_np: every CPU again");
+
+    struct sched_param param = {0};
+    check(sched_getscheduler(0) == SCHED_OTHER && sched_setscheduler(0, SCHED_OTHER, &param) == 0, "SCHED_OTHER");
+    param.sched_priority = 10;
+    errno = 0;
+    check(sched_setscheduler(0, SCHED_FIFO, &param) == -1 && errno == EPERM, "SCHED_FIFO: EPERM");
+    int policy = -1;
+    check(pthread_getschedparam(pthread_self(), &policy, &param) == 0 && policy == SCHED_OTHER && param.sched_priority == 0,
+          "pthread_getschedparam: SCHED_OTHER, 0");
+    check(sched_get_priority_min(SCHED_OTHER) == 0 && sched_get_priority_max(SCHED_FIFO) == 99, "sched_get_priority_*");
 }
 
 static void times(void)
@@ -513,6 +560,7 @@ int main(int argc, char **argv)
     numbers();
     times();
     cpu_time();
+    scheduling();
     files();
     for_cxx();
     for_llvm();

@@ -45,6 +45,18 @@ struct rlimit {
 int getrlimit(int resource, struct rlimit *limit);
 int setrlimit(int resource, const struct rlimit *limit);
 
+/* A process's priority, as nice counts it: -20 the most important, 19
+ * the least, 0 the default (libc's sched.rs; journal entry 124). `who`
+ * is 0 or the program itself, or a child it has not waited for. More
+ * important than the program's ceiling - 0 for everything the shell
+ * starts - is EACCES. Only PRIO_PROCESS; getpriority's -1 can be a
+ * priority, so clear errno before it. */
+#define PRIO_PROCESS 0
+#define PRIO_PGRP 1
+#define PRIO_USER 2
+int getpriority(int which, int who);
+int setpriority(int which, int who, int priority);
+
 /* What wait4 would say a child used; there are no children. */
 struct rusage {
     struct timeval ru_utime;

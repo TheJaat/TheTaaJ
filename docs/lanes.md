@@ -194,9 +194,8 @@ Its files: `kernel/kernel64/src/sched.rs`, `smp.rs`, `futex.rs`, `alarms.rs`, `c
 
 | Item | Wave | Note |
 |---|---|---|
-| K20 | 1 | Priorities and affinity, with J80 (the user's decision, 2026-11-26) |
-| J80 | 1 | `nice` and the `sched_*` calls: with K20 |
 | K24 | 1 | Fine timers |
+| K190 | 2 | A child takes its parent's `nice` (after K20) |
 | J53 | 1 | The ticks mutation test |
 | K96 | 1 | Sleepers in a sorted timer queue |
 | K68 | 1 | A run queue per CPU; `devices`' K79 waits for it |

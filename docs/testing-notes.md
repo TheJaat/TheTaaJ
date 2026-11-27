@@ -4344,6 +4344,42 @@ Automated: `make test64` (`fuzz64-test`, `aarch64-fuzz-test`).
 
 ---
 
+## 124 · Priorities and affinity: who runs first, and where
+
+[The entry](journal/124-priorities.md)
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `cprimes 24000000 &` four times, then type at the prompt | The letters appear at once: the shell and the keyboard driver run before the busy programs |
+| `ps` | The four `cprimes` with growing CPU times |
+
+```
+make schedbench64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `same, two at nice 10: CPU each (nice)` | With 1 and 2 CPUs: about 1000 (1 CPU) or 2000 ms (2 CPUs) for each at nice 0, and 0 ms for each at nice 10 |
+| `2 threads pinned to CPU 0 / free: CPU` | About 1000 ms pinned, 2000 free |
+| `wake, every CPU busy at nice 10` | A median of a few microseconds; at nice 0, milliseconds |
+| `schedbench64-test passed` | |
+
+```
+make boot64-test
+```
+
+| Look for | Meaning |
+|---|---|
+| `library: 135 checks, all passed` | J80's calls, with the rest |
+
+Automated: `make test64`
+
+---
+
 ## 125 · /tmp in memory
 
 [The entry](journal/125-tmp.md)
