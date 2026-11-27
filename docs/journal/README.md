@@ -142,6 +142,12 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 132 | [The work list split: the rules in one file, the items a file per era, rows merged one at a time (TheJat-WSL/ci, merged after its night test)](132-work-list-split.md) | written | `d9e48d03` |
 | 133 | [A clean build from a fresh clone, in a container, with one command (TheJat-WSL/ci, merged after its night test)](133-clean-build.md) | written | `7333563d` |
 | 134 | [Miri over the host tests: undefined behaviour in three simulators (TheJat-WSL/ci, merged after its night test)](134-miri.md) | written | `2011ffe8` (TheKernel `36083d5`) |
+| 135 | [Night tests: develop by day, run the full test at night (TheJat-WSL/ci, merged after its night test)](135-night-test.md) | written | `74f7f93f` |
+| 136 | [Our own CI: every branch of ours tested, the result beside it on GitHub; night tests that wait for the fix (TheJat-WSL/ci, merged after its night test)](136-ci.md) | written | `86a7e98e` |
+| 137 | [Coverage of the host tests, and a floor that only rises; make test64 reports every failure, make test64-again runs only those (TheJat-WSL/ci, merged after its night test)](137-coverage.md) | written | `0d4468d3` |
+| 138 | [make test64 no longer rebuilds what has not changed: 51 s to 17 s (TheJat-WSL/ci, merged after its night test)](138-no-rebuild.md) | written | `fc1fe91f` |
+| 139 | [Stacks kept stacked, merges rehearsed by day, and the night runner merges what passed (TheJat-WSL/ci, merged after its night test)](139-merge-tools.md) | written | `4f46b182` |
+| 140 | [The first night: nine items tested and merged, and what it found (TheJat-WSL/ci, merged after its night test)](140-night-2026-11-27.md) | written | `3019b5e1` |
 
 ## How to run what the entries describe
 
