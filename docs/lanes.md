@@ -4,7 +4,7 @@ Fourteen **lanes**, each worked by one session on one machine, so that the eras 
 
 A new session reads `docs/start-here.md` first; it says how to work. This file says **what** each lane does, in which order, which files are its own, and what it waits for from other lanes.
 
-**Status lives in `docs/who-does-what.md`, not here.** An item's Notes there say when it is done ("**Done (entry NNN)**"). This file holds each lane's order, and a lane's table is changed only by that lane's session (rule 6). `python3 tools/lanes-check.py` says which open items are in no lane, or in two.
+**Status lives in the work list (`docs/items/*.md`, indexed in `docs/who-does-what.md`), not here.** An item's Notes there say when it is done ("**Done (entry 132)**"). This file holds each lane's order, and a lane's table is changed only by that lane's session (rule 6). `python3 tools/lanes-check.py` says which open items are in no lane, or in two.
 
 ## The week (from 2026-11-27)
 
@@ -40,6 +40,7 @@ A machine may run fewer sessions than it has lanes: then it starts them in the o
 - Era 10 and 11 (sound and voice), apart from the two sound items in `devices`' last wave;
 - Era 30 (the assistant);
 - E6-E8, J50, J97, which come later or wait for the user.
+- J51 (test programs out of the kernel image): not needed if K130 comes - the user's decision (U7).
 - K186 (files after the disk driver is restarted), found by `ci` in entry 117: for the `services` lane to take into its table.
 
 ## Across lanes
@@ -123,16 +124,12 @@ Its files: the test rules of the `Makefile`, `kernel/kernel64/scripts/*-test.sh`
 
 | Item | Wave | Note |
 |---|---|---|
-| J51 | 1 | Test programs out of the kernel image: every lane's new tests need room |
-| J92 | 1 | A clean build from a fresh clone, in a container (is J54) |
-| J54 | 1 | Done by J92 |
 | J93 | 1 | Our own CI: `main` built and tested after every merge |
 | J95 | 2 | No flaky tests (every part 50 times) |
 | K50 | 2 | `bigmem64-test` once did not finish under KVM |
 | K52 | 2 | `aarch64-tcp-test`'s late segment |
 | J96 | 2 | Coverage of the host tests |
 | K189 | 2 | `cargo fuzz` on the host for every parser (K104's second half) |
-| K187 | 2 | Miri over the host tests (K112's second half) |
 | K136 | 3 | The log service |
 | K188 | 3 | A crash record the next boot finds (K137's second half) |
 | K138 | 3 | A crash report per program |
