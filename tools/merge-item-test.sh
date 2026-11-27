@@ -80,6 +80,7 @@ T=$S/mt/taaj.git; K=$S/mt/kernel.git
 work() { git -C "$1" show main:docs/who-does-what.md; for f in $(git -C "$1" ls-tree --name-only main docs/items/); do git -C "$1" show "main:$f"; done; }
 echo "items: $(work $T | grep -cE '^\| K[0-9]+ \| \*\*A test item')  rules untouched: $(git -C $T show main:docs/who-does-what.md | grep -c 'K?-hubs')"
 echo "pointer $(git -C $T ls-tree main kernel | awk '{print substr($3,1,7)}') = kernel main $(git -C $K rev-parse --short main)"
+echo "row: $(git -C $T show main:docs/journal/README.md | grep "^| [0-9]* |" | tail -1 | grep -o "| written | .*")  second commits: $(git -C $T log --format=%s "$(git -C "$CI" rev-parse "${MT_BASE:-origin/main}")..main" | grep -c '^journal: entry')  last on main: $(git -C $T log -1 --format=%s main | cut -c1-60)"
 
 echo "== B: TheKernel's push refused"
 fresh || exit 1
@@ -106,5 +107,8 @@ git fetch -q origin && git merge -q --no-edit origin/main && git push -q origin 
 kc=$(git -C kernel rev-parse HEAD)
 python3 tools/merge-item.py "$row"; echo "exit $?"
 echo "pointer $(git -C $S/mt/taaj.git ls-tree main kernel | awk '{print substr($3,1,7)}') = the item's TheKernel commit $(echo $kc | cut -c1-7)"
-git -C $S/mt/taaj.git show main:docs/journal/README.md | grep "^| 124 |" | grep -o "| written | .*"
+git -C $S/mt/taaj.git show main:docs/journal/README.md | grep "^| [0-9]* |" | tail -1 | grep -o "| written | .*"
+c=$(git -C $S/mt/taaj.git show main:docs/journal/README.md | grep "^| [0-9]* |" | tail -1 | sed -n 's/.*| written | .\([0-9a-f]*\).*/\1/p')
+echo "the row's commit $c is in main: $(git -C $S/mt/taaj.git merge-base --is-ancestor "$c" main && echo yes || echo NO)"
+echo "second commits (journal: entry N's commits): $(git -C $S/mt/taaj.git log --format=%s "$(git -C "$CI" rev-parse "${MT_BASE:-origin/main}")..main" | grep -c '^journal: entry')"
 echo "items: $(work $S/mt/taaj.git | grep -cE '^\| K[0-9]+ \| \*\*A test item')"
