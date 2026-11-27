@@ -166,7 +166,7 @@ Each machine has its own table and changes only its own, so two machines never e
 | Step | Branch |
 |---|---|
 | E: LLVM 23 - **paused**: a work-in-progress commit on `llvm-23` in TheTaaJ and TheKernel, to be finished later (what is left is in its commit message) | `llvm-23` |
-| TheJat-VM/files: J55, programs moved into `/bin` (J65 merged, entry 127) | `j55-bin` |
+| TheJat-VM/files: a stack of items built by day and tested at night (merged in this order, each only after its test64): J55 `/bin` on `j55-bin` (from main, **untested**); then J66 `/proc` on `j66-proc` (from `j55-bin`) | `j55-bin`, `j66-proc` |
 
 ### Now: MaK-WSL
 
@@ -297,7 +297,7 @@ The order matters here: each item is needed by the ones after it.
 | J52 | A test that fails when rule 1 or rule 3 of `threads.rs` is broken | S | **Done (entry 119)**: rule 1 checked at every switch (the lock still held where it is released), rule 3 by the threads self-test (a waiter woken before it waits is still in its queue); each broken on purpose panics. Found and fixed with it: a panic on a machine with more CPUs than the kernel uses was a triple fault (the stopping NMI reached the CPUs left asleep); `fault-test.sh`'s new `page@20` checks it |
 | J53 | A test for the ticks mutation from entry 097 (late timer interrupts) | S | Perhaps by stopping a CPU for a while |
 | J54 | A fresh `git clone --recurse-submodules` builds and passes (in a clean container) | S | Never tried |
-| J55 | Programs moved into `/bin` on the run disks (libc's exec and the shell both look there, entries 100 and 101) | S | The disk recipes and every test put programs in the root and look for them there |
+| J55 | Programs moved into `/bin` on the run disks (libc's exec and the shell both look there, entries 100 and 101) | S | **Done (entry NNN)**: the run disks, `make cput`, `put-tcc.sh` (`/bin/tcc`) and the shared test disk put every program in `/bin`; `put-program` removes an older disk's copy in the root as it fills `/bin`; the tests that read a program as data name `bin/ls` and `/bin/cwords` |
 | J56 | zlib (and later other libraries) installed on TheTaaJ's disk with its header, for programs compiled there | S | With step E, when there is a place for libraries on the disk |
 | J57 | exec without the go-between: signals sent to it passed on to the program it started, and a keyboard handed on | M | Entry 100's exec is spawn-and-wait |
 

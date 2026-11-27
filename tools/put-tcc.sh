@@ -2,7 +2,8 @@
 # put-tcc.sh - puts TCC and what it needs on a TaajFS disk, where tcc
 # on TheTaaJ looks for it:
 #
-#   /tcc                 the compiler
+#   /bin/tcc             the compiler (in /bin with the other programs,
+#                        J55; found by name, as every program is)
 #   /include/...         the C library's headers (libc/include)
 #   /lib/libc.a          the C library
 #   /lib/libc-rust.o     its Rust half, for building it on TheTaaJ
@@ -38,7 +39,10 @@ tree() {
     for f in $(cd "$1" && find . -type f | sort); do put "$2/${f#./}" "$1/${f#./}"; done
 }
 
-put tcc "$TCC_DIR/tcc"
+directory bin
+# Where an older disk had it: it would be found before /bin/tcc.
+"$TFSTOOL" rm "$DISK" tcc > /dev/null 2>&1 || true
+put bin/tcc "$TCC_DIR/tcc"
 tree "$ROOT/libc/include" include
 directory lib
 put lib/libc.a "$LIBC_A"

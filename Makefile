@@ -265,12 +265,12 @@ TAAJ_LDFLAGS = -static -nostdlib --gc-sections -s -T user/user.ld
 # as on any terminal. Under KVM this happens every time.
 ifeq ($(HAVE_CC),yes)
 C_PROGRAMS   = chello cmem cprint cfile cstdio cwords cask cprimes cnet cfloat clib sh
-ROOT_FILES   = 39
-C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret w i t h spc f i l e s spc c f i l e spc c h e c k ret c f i l e spc c a t spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc n o f i l e spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc w r i t e spc c n o spc x ret w i t h spc f i l e s spc c f i l e spc w r i t e spc c n o t e spc m a d e spc b y spc c ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc l o n g spc shift-dot spc c l o n g ret c f i l e spc c a t spc shift-comma spc l o n g spc shift-dot spc c l o n g 2 ret c f i l e ret c a s k ret a d a ret 4 0 ret x ret 2 ret ctrl-d c a s k spc o n e ret f i r s t ret e c h o spc a f t e r ret e c h o spc a d a spc shift-dot spc w h o ret c a s k spc o n e spc shift-comma spc w h o ret c a t spc l o n g spc shift-backslash spc c w o r d s spc minus n spc 3 ret w i t h spc r e a d o n l y spc c w o r d s spc minus n spc 2 5 spc c w o r d s spc l o n g spc shift-dot spc c w 1 ret c w o r d s spc minus n spc 5 spc shift-comma spc l o n g spc shift-dot spc c w 2 ret c w o r d s spc l o n g ret c w o r d s spc minus n spc n o n e ret c w o r d s spc minus x ret w i t h spc f i l e s spc c s t d i o spc c h e c k ret c s t d i o spc l i n e s spc w e l c o m e ret c s t d i o spc l i n e s spc shift-comma spc w e l c o m e ret w i t h spc r e a d o n l y spc c s t d i o spc l i n e s spc l o n g spc shift-dot spc c n u m ret w i t h spc f i l e s spc c s t d i o spc c o p y spc l o n g spc c c o p y ret c s t d i o spc o r d e r ret c s t d i o spc e n d spc shift-dot spc c e n d ret c s t d i o spc l o s t spc shift-dot spc c l o s t ret c s t d i o spc e n d ret c s t d i o ret c p r i n t spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c p r i n t spc l o n g spc shift-backslash spc w c ret c p r i n t spc shift-dot spc p o u t ret c m e m ret c m e m spc s o r t spc p e a r spc a p p l e spc f i g spc a p p l e ret c m e m spc h u g e ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret w i t h spc f i l e s spc c l i b ret c l i b spc a s s e r t ret c p r i m e s spc 1 0 0 ret ~ c p r i m e s spc $(call spell-keys,$(CPRIMES_LIMIT)) spc shift-7 ret c p r i m e s spc $(call spell-keys,$(CPRIMES_LIMIT)) spc shift-7 ret c p r i m e s spc $(call spell-keys,$(CPRIMES_LIMIT)) spc shift-7 ret c p r i m e s spc $(call spell-keys,$(CPRIMES_LIMIT)) spc shift-7 ret c f l o a t spc 1 spc shift-7 ret c f l o a t spc 2 spc shift-7 ret c f l o a t spc 3 spc shift-7 ret c f l o a t spc 4 spc shift-7 ret t i m e spc w a i t ret ~~
+ROOT_FILES   = 4
+C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret w i t h spc f i l e s spc c f i l e spc c h e c k ret c f i l e spc c a t spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc n o f i l e spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc w r i t e spc c n o spc x ret w i t h spc f i l e s spc c f i l e spc w r i t e spc c n o t e spc m a d e spc b y spc c ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc l o n g spc shift-dot spc c l o n g ret c f i l e spc c a t spc shift-comma spc l o n g spc shift-dot spc c l o n g 2 ret c f i l e ret c a s k ret a d a ret 4 0 ret x ret 2 ret ctrl-d c a s k spc o n e ret f i r s t ret e c h o spc a f t e r ret e c h o spc a d a spc shift-dot spc w h o ret c a s k spc o n e spc shift-comma spc w h o ret c a t spc l o n g spc shift-backslash spc c w o r d s spc minus n spc 3 ret w i t h spc r e a d o n l y spc c w o r d s spc minus n spc 2 5 spc slash b i n slash c w o r d s spc l o n g spc shift-dot spc c w 1 ret c w o r d s spc minus n spc 5 spc shift-comma spc l o n g spc shift-dot spc c w 2 ret c w o r d s spc l o n g ret c w o r d s spc minus n spc n o n e ret c w o r d s spc minus x ret w i t h spc f i l e s spc c s t d i o spc c h e c k ret c s t d i o spc l i n e s spc w e l c o m e ret c s t d i o spc l i n e s spc shift-comma spc w e l c o m e ret w i t h spc r e a d o n l y spc c s t d i o spc l i n e s spc l o n g spc shift-dot spc c n u m ret w i t h spc f i l e s spc c s t d i o spc c o p y spc l o n g spc c c o p y ret c s t d i o spc o r d e r ret c s t d i o spc e n d spc shift-dot spc c e n d ret c s t d i o spc l o s t spc shift-dot spc c l o s t ret c s t d i o spc e n d ret c s t d i o ret c p r i n t spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c p r i n t spc l o n g spc shift-backslash spc w c ret c p r i n t spc shift-dot spc p o u t ret c m e m ret c m e m spc s o r t spc p e a r spc a p p l e spc f i g spc a p p l e ret c m e m spc h u g e ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret w i t h spc f i l e s spc c l i b ret c l i b spc a s s e r t ret c p r i m e s spc 1 0 0 ret ~ c p r i m e s spc $(call spell-keys,$(CPRIMES_LIMIT)) spc shift-7 ret c p r i m e s spc $(call spell-keys,$(CPRIMES_LIMIT)) spc shift-7 ret c p r i m e s spc $(call spell-keys,$(CPRIMES_LIMIT)) spc shift-7 ret c p r i m e s spc $(call spell-keys,$(CPRIMES_LIMIT)) spc shift-7 ret c f l o a t spc 1 spc shift-7 ret c f l o a t spc 2 spc shift-7 ret c f l o a t spc 3 spc shift-7 ret c f l o a t spc 4 spc shift-7 ret t i m e spc w a i t ret ~~
 EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^files: 48 checks, all passed;^cfile: welcome: this program was not given the files;^cfile: nofile: no such file or directory;^cno: the files are read-only here;^cnote: 10 bytes;^usage: cfile cat;^hello, ada \(typed\);^cask: not a number: x;^total: 42;^one line: first \(typed\);^after\s*$$;^one line: ada \(from a file or another program\);^ +301  300\s*$$;^ +300  line\s*$$;^1200 words, 302 different;^cwords: long: this program was not given the files;^0 words, 0 different;^cwords: -n needs a number from 1 up, not .none.;^usage: cwords \[-n COUNT\];^streams: 52 checks, all passed;^cstdio: welcome: this program was not given the files;^   1  Hello from the host;^ccopy: 4692 bytes;^write was called second - printf was called first\s*$$;^no new line, and still here;^usage: cstdio lines;^printf: 42 -7 ff 0X2A \[   hi\] \[hi   \] \[00042\] x 100.\s*$$;^sizes: 18446744073709551615 -9223372036854775808\s*$$;^printf returned 6\s*$$;^snprintf: wanted 12, kept <hello, >;^argument 2 of 2: two words\s*$$;^puts: a line of its own\s*$$;^fputs and putchar\s*$$;^cprint: 9 lines went to standard output;^cprint: 7 lines went to standard output;^1 line, 1 word, 601 bytes;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes;^library: [0-9]+ checks, all passed;^library: atexit ran its handlers, newest first;^libc/programs/clib.c:[0-9]+: main: assertion failed: number == 2;^clib was ended by signal 6 \(SIGABRT\);^cprimes: 25 primes below 100\s*$$;^\[4\] cprimes $(CPRIMES_LIMIT);cfloat 1: 30000000 rounds, 0 wrong;cfloat 2: 30000000 rounds, 0 wrong;cfloat 3: 30000000 rounds, 0 wrong;cfloat 4: 30000000 rounds, 0 wrong;^took [0-9]+\.[0-9][0-9] s; the 4 CPUs worked for [0-9]+\.[0-9][0-9] s in all
 else
 C_PROGRAMS   =
-ROOT_FILES   = 27
+ROOT_FILES   = 4
 C_KEYS       =
 EXPECT_C     =
 endif
@@ -325,14 +325,14 @@ TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
                c a t spc o u t ret l s spc d o c s shift-dot l i s t ret w c spc shift-comma spc l i s t ret \
                w c spc l o n g ret w c spc shift-comma spc l o n g ret \
                c a t spc shift-comma spc l o n g spc shift-dot spc l o n g 3 ret \
-               c a t spc l s spc l s spc shift-dot spc b i g ret c a t spc shift-comma spc b i g spc shift-dot spc b i g 2 ret \
+               c a t spc b i n slash l s spc b i n slash l s spc shift-dot spc b i g ret c a t spc shift-comma spc b i g spc shift-dot spc b i g 2 ret \
                c a t spc w e l c o m e spc o u t spc shift-dot spc b o t h ret p s spc shift-dot spc p r o c s ret \
                e c h o spc shift-apostrophe a spc shift-dot spc b shift-apostrophe ret \
                w c spc shift-comma spc n o n e ret e c h o spc x spc shift-dot spc d o c s ret e c h o spc x spc shift-dot ret \
                c a t spc n o n e spc shift-dot spc e r r ret n o s u c h spc shift-dot spc e m p t y ret \
                c a t spc l o n g spc shift-backslash spc w c spc shift-dot spc p i p e d ret \
                c a t spc shift-comma spc l o n g spc shift-backslash spc w c spc shift-dot shift-dot spc p i p e d ret \
-               c a t spc l s spc l s spc shift-backslash spc c a t spc shift-backslash spc c a t spc shift-dot spc b i g 3 ret \
+               c a t spc b i n slash l s spc b i n slash l s spc shift-backslash spc c a t spc shift-backslash spc c a t spc shift-dot spc b i g 3 ret \
                e c h o spc o n e spc t w o spc t h r e e spc shift-backslash spc w c ret \
                t i m e spc c a t spc l o n g spc shift-backslash spc w c ret \
                y e s spc shift-backslash spc g i v e n spc x p i p e ret \
@@ -341,7 +341,7 @@ TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
                l s spc shift-backslash spc c d ret \
                l s spc shift-backslash spc n o s u c h 2 ret \
                l s spc shift-dot spc x spc shift-backslash spc w c ret \
-               c a t spc l s spc l s spc shift-backslash spc c a t spc shift-dot spc b i g 4 spc shift-7 ret \
+               c a t spc b i n slash l s spc b i n slash l s spc shift-backslash spc c a t spc shift-dot spc b i g 4 spc shift-7 ret \
                f o r e v e r spc s l e e p spc shift-dot spc f l o g spc shift-7 ret \
                f o r e v e r spc y i e l d spc shift-7 ret \
                j o b s ret \
@@ -385,7 +385,7 @@ TEST_TYPED   = Hi there
 # (Joined on one line: a continued line would start each pattern with a
 # space.)
 EXPECT_SHELL = unknown command: Hi;  PID  NAME;init +running +[0-9]+\.[0-9]{3} s;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
-EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^ +dir  dev/;^ +dir  docs/;^ +dir  tmp/;^4 directories, $(ROOT_FILES) files, [0-9]+ bytes;^cat: notes: no such file;^cat exited with code 1;^kept\s*$$;^Hello from the host;^saved: 5 bytes
+EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^ +dir  bin/;^ +dir  dev/;^ +dir  docs/;^ +dir  tmp/;^5 directories, $(ROOT_FILES) files, [0-9]+ bytes;^cat: notes: no such file;^cat exited with code 1;^kept\s*$$;^Hello from the host;^saved: 5 bytes
 EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(4096 KiB\);^0000  4a 41 46 53 .*JAFS;^disk: sector 5: the disk is read-only;^disk: sector 99999: no such sector;^disk check: all 9 checks passed;^took [0-9]+\.[0-9][0-9] s;^line 300 of 300
 EXPECT_RUN   = \[init\] started primes for the shell, from a file;^primes below 50: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47;^primes exited with code 0;^error: welcome is not a program;^error: broken is not a program;^error: no such program;\[init\] started ls for the shell, from a file;^cat exited with code 0;^rm: notes: no such file;^rm: saved2: no such file;^rm exited with code 1;^usage: write FILE TEXT;^write exited with code 2;$(EXPECT_GIVEN);$(EXPECT_WATCH);$(EXPECT_KILL)
 EXPECT_DIRS  = ^ +23  readme;^1 file, 23 bytes;^Read me, from the host;^docs/deep/note: 7 bytes;^docs:;^ +dir  deep/;^1 directory, 1 file, 23 bytes;^docs/deep:;^ +7  note;^rm: docs: the directory is not empty;^mkdir: docs: there is already something with that name;^cat: docs: is a directory;^write: welcome/x: not a directory;^ls: work: no such file or directory;\[init\] started tools/given for the shell, from a file;^mkdir: x: the files are read-only here
@@ -397,7 +397,7 @@ EXPECT_GIVEN = ^given: the screen, no files;^given: arguments .a. .b.\s*$$;^give
 EXPECT_WATCH = \[blk\] asked to stall;\[init\] blk has not answered for 2 s - stopping it;\[init\] blk ended with code -1001 - restarting it;^during: 2 bytes;\[display\] asked to stall;\[init\] display has not answered for 2 s - stopping it;\[init\] display ended with code -1001 - restarting it;\[display\] the text on the screen was kept: [0-9]+ lines shown again;\[kbd\] F11: simulating a driver bug;\[init\] kbd has not answered for 2 s - stopping it;\[init\] kbd ended with code -1001 - restarting it;\[shell\] line: .echo keys.
 EXPECT_KILL  = ^forever: spin until stopped;^forever: wait until stopped;^forever: sleep until stopped;\[process\] [0-9]+ .forever. ended by signal 2 \(SIGINT\);^\^C;^forever was stopped
 EXPECT_PIPE  = ^1 line, 3 words, 14 bytes;^301 lines, 1212 words;^given: arguments .xpipe.;^p . q\s*$$;^there is a . with no command on one side of it;^cd is one of the shell.s own commands;^unknown command: nosuch2;^only the last command of a pipeline
-EXPECT_JOBS  = ^\[1\] cat ls ls . cat > big4;^\[2\] forever sleep > flog;^\[3\] forever yield;^forever: yield until stopped;^\[2\] running  forever sleep > flog;^\[3\] running  forever yield;^\[3\] stopped  forever yield;^\[2\] stopped  forever sleep > flog;^kill: no job 9;^\[1\] done  cat ls ls . cat > big4;^no jobs;^echo is one of the shell.s own commands: it cannot run in the background;^a & can only end the line;^x & y\s*$$
+EXPECT_JOBS  = ^\[1\] cat bin/ls bin/ls . cat > big4;^\[2\] forever sleep > flog;^\[3\] forever yield;^forever: yield until stopped;^\[2\] running  forever sleep > flog;^\[3\] running  forever yield;^\[3\] stopped  forever yield;^\[2\] stopped  forever sleep > flog;^kill: no job 9;^\[1\] done  cat bin/ls bin/ls . cat > big4;^no jobs;^echo is one of the shell.s own commands: it cannot run in the background;^a & can only end the line;^x & y\s*$$
 EXPECT_NAMES = \[registry\] ready;\[registry\] fs may ask for: disk\s*$$;\[registry\] shell may ask for: keys display init system files files.look tmp tmp.look dev disk.look;^keys display init system files files.look tmp tmp.look dev disk.look nic net windows\s*$$;^files: there for the shell;^disk: no such service - for the shell;\[registry\] shell asked for .disk.: it is not in its namespace;^nosuch: no such service - for the shell;\[registry\] asked to crash;\[init\] registry ended with code 1 - restarting it;^files.look: there for the shell
 EXPECT_GIVE  = \[registry\] shell gave ls: files=files.look tmp=tmp.look dev;\[registry\] shell gave write: files tmp dev\s*$$;\[registry\] shell gave given: files tmp dev\s*$$;\[registry\] shell gave given: files=files.look tmp=tmp.look dev;^given: it may ask for: files tmp dev\s*$$
 # The keyboard as a program's standard input: lines typed to wc and to
@@ -470,13 +470,22 @@ define put-site
 	    $(TFSTOOL_RS) put $(1) www/$$file $(SITE_DIR)/$$file > /dev/null || exit 1; \
 	done
 endef
+# put-program DISK NAME FILE (J55): a program into /bin on a disk that is
+# kept from one run to the next - /bin made if it is not there yet, and
+# the copy an older disk had in the root taken away, or it would be found
+# first (libc and the shell look in / and then /bin).
+define put-program
+$(TFSTOOL_RS) mkdir $(1) bin > /dev/null 2>&1; $(TFSTOOL_RS) rm $(1) $(2) > /dev/null 2>&1; $(TFSTOOL_RS) rm $(1) bin/$(2) > /dev/null 2>&1; $(TFSTOOL_RS) put $(1) bin/$(2) $(3) > /dev/null
+endef
 # make-test-disk-from DISK USER_BIN C_BIN: the programs are those
-# compiled for one CPU or the other; everything else is the same.
+# compiled for one CPU or the other; everything else is the same. The
+# programs go in /bin (J55).
 define make-test-disk-from
 	@rm -f $(1) && $(TFSTOOL_RS) mkfs $(1) 1024 > /dev/null && truncate -s 4M $(1)
 	@printf 'Hello from the host\n' > $(1).welcome && $(TFSTOOL_RS) put $(1) welcome $(1).welcome > /dev/null
-	@for program in $(DISK_PROGRAMS); do $(TFSTOOL_RS) put $(1) $$program $(2)/$$program > /dev/null || exit 1; done
-	@for program in $(C_PROGRAMS); do $(TFSTOOL_RS) put $(1) $$program $(3)/$$program > /dev/null || exit 1; done
+	@$(TFSTOOL_RS) mkdir $(1) bin > /dev/null
+	@for program in $(DISK_PROGRAMS); do $(TFSTOOL_RS) put $(1) bin/$$program $(2)/$$program > /dev/null || exit 1; done
+	@for program in $(C_PROGRAMS); do $(TFSTOOL_RS) put $(1) bin/$$program $(3)/$$program > /dev/null || exit 1; done
 	@head -c 300 $(2)/primes > $(1).broken && $(TFSTOOL_RS) put $(1) broken $(1).broken > /dev/null
 	@seq 300 | sed 's/.*/line & of 300/' > $(1).long && $(TFSTOOL_RS) put $(1) long $(1).long > /dev/null
 	@$(TFSTOOL_RS) mkdir $(1) docs > /dev/null && printf 'Read me, from the host\n' > $(1).readme \
@@ -528,46 +537,43 @@ run-disk: user64 cprogs64 pdpmake64 tcc64 cxx64 zlib64 tfstool-rs
 	@[ -f $(RUN_DISK) ] || { $(TFSTOOL_RS) mkfs $(RUN_DISK) $(RUN_DISK_BLOCKS) > /dev/null && truncate -s $$(($(RUN_DISK_BLOCKS) * 4096)) $(RUN_DISK) \
 	    && echo "Made a new disk: $(RUN_DISK)"; }
 	@for program in $(DISK_PROGRAMS); do \
-	    $(TFSTOOL_RS) rm $(RUN_DISK) $$program > /dev/null 2>&1; \
-	    $(TFSTOOL_RS) put $(RUN_DISK) $$program $(USER_BIN)/$$program > /dev/null || exit 1; \
+	    $(call put-program,$(RUN_DISK),$$program,$(USER_BIN)/$$program) || exit 1; \
 	done
 	@for program in $(C_PROGRAMS); do \
-	    $(TFSTOOL_RS) rm $(RUN_DISK) $$program > /dev/null 2>&1; \
-	    $(TFSTOOL_RS) put $(RUN_DISK) $$program $(C_BIN)/$$program > /dev/null || exit 1; \
+	    $(call put-program,$(RUN_DISK),$$program,$(C_BIN)/$$program) || exit 1; \
 	done
 	$(call put-site,$(RUN_DISK))
 ifeq ($(HAVE_CC),yes)
 	@TFSTOOL=$(TFSTOOL_RS) tools/put-tcc.sh $(RUN_DISK) $(TCC_X86_DIR) $(LIBC_A)
 	@TFSTOOL=$(TFSTOOL_RS) tools/put-sources.sh $(RUN_DISK) x86_64 $(TCC_X86_DIR)
 	@for program in $(CXX_PROGRAMS); do \
-	    $(TFSTOOL_RS) rm $(RUN_DISK) $$program > /dev/null 2>&1; \
-	    $(TFSTOOL_RS) put $(RUN_DISK) $$program $(CXX_X86_DIR)/bin/$$program > /dev/null || exit 1; \
+	    $(call put-program,$(RUN_DISK),$$program,$(CXX_X86_DIR)/bin/$$program) || exit 1; \
 	done
-	@$(TFSTOOL_RS) rm $(RUN_DISK) make > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) make $(C_BIN)/make > /dev/null
+	@$(call put-program,$(RUN_DISK),make,$(C_BIN)/make)
 	@clang $(TAAJ_CFLAGS) -c $(THREADS_C) -o $(C_BIN)/threads.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/threads.o $(LIBC_A) -o $(C_BIN)/threads
-	@$(TFSTOOL_RS) rm $(RUN_DISK) threads > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) threads $(C_BIN)/threads > /dev/null
+	@$(call put-program,$(RUN_DISK),threads,$(C_BIN)/threads)
 	@clang $(TAAJ_CFLAGS) -c $(BIGMEM_C) -o $(C_BIN)/bigmem.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/bigmem.o $(LIBC_A) -o $(C_BIN)/bigmem
-	@$(TFSTOOL_RS) rm $(RUN_DISK) bigmem > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) bigmem $(C_BIN)/bigmem > /dev/null
+	@$(call put-program,$(RUN_DISK),bigmem,$(C_BIN)/bigmem)
 	@clang $(TAAJ_CFLAGS) -c $(BASICS_C) -o $(C_BIN)/basics.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/basics.o $(LIBC_A) -o $(C_BIN)/basics
-	@$(TFSTOOL_RS) rm $(RUN_DISK) basics > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) basics $(C_BIN)/basics > /dev/null
+	@$(call put-program,$(RUN_DISK),basics,$(C_BIN)/basics)
 	@clang $(TAAJ_CFLAGS) -c $(GROUND_C) -o $(C_BIN)/ground.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/ground.o $(LIBC_A) -o $(C_BIN)/ground
-	@$(TFSTOOL_RS) rm $(RUN_DISK) ground > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) ground $(C_BIN)/ground > /dev/null
+	@$(call put-program,$(RUN_DISK),ground,$(C_BIN)/ground)
 	@clang $(TAAJ_CFLAGS) $(ZLIB_CFLAGS) -c $(GROUND2_C) -o $(C_BIN)/ground2.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/ground2.o $(C_BIN)/libz.a $(LIBC_A) -o $(C_BIN)/ground2
-	@$(TFSTOOL_RS) rm $(RUN_DISK) ground2 > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) ground2 $(C_BIN)/ground2 > /dev/null
+	@$(call put-program,$(RUN_DISK),ground2,$(C_BIN)/ground2)
 	@clang $(TAAJ_CFLAGS) -c $(HANDLES_C) -o $(C_BIN)/handles.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/handles.o $(LIBC_A) -o $(C_BIN)/handles
-	@$(TFSTOOL_RS) rm $(RUN_DISK) handles > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) handles $(C_BIN)/handles > /dev/null
+	@$(call put-program,$(RUN_DISK),handles,$(C_BIN)/handles)
 	@clang $(TAAJ_CFLAGS) -c $(NAMESPACE_C) -o $(C_BIN)/namespace.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/namespace.o $(LIBC_A) -o $(C_BIN)/namespace
-	@$(TFSTOOL_RS) rm $(RUN_DISK) namespace > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) namespace $(C_BIN)/namespace > /dev/null
+	@$(call put-program,$(RUN_DISK),namespace,$(C_BIN)/namespace)
 	@clang $(TAAJ_CFLAGS) -c $(AT_C) -o $(C_BIN)/at.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/at.o $(LIBC_A) -o $(C_BIN)/at
-	@$(TFSTOOL_RS) rm $(RUN_DISK) at > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) at $(C_BIN)/at > /dev/null
+	@$(call put-program,$(RUN_DISK),at,$(C_BIN)/at)
 	@clang $(TAAJ_CFLAGS) -c $(TMP_C) -o $(C_BIN)/tmptest.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/tmptest.o $(LIBC_A) -o $(C_BIN)/tmptest
 	@clang $(TAAJ_CFLAGS) -c $(DEV_C) -o $(C_BIN)/devtest.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/devtest.o $(LIBC_A) -o $(C_BIN)/devtest
-	@$(TFSTOOL_RS) rm $(RUN_DISK) tmptest > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) tmptest $(C_BIN)/tmptest > /dev/null
-	@$(TFSTOOL_RS) rm $(RUN_DISK) devtest > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) devtest $(C_BIN)/devtest > /dev/null
+	@$(call put-program,$(RUN_DISK),tmptest,$(C_BIN)/tmptest)
+	@$(call put-program,$(RUN_DISK),devtest,$(C_BIN)/devtest)
 	@clang $(TAAJ_CFLAGS) -c $(PAGES_C) -o $(C_BIN)/pages.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/pages.o $(LIBC_A) -o $(C_BIN)/pages
-	@$(TFSTOOL_RS) rm $(RUN_DISK) pages > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) pages $(C_BIN)/pages > /dev/null
+	@$(call put-program,$(RUN_DISK),pages,$(C_BIN)/pages)
 endif
-	@$(TFSTOOL_RS) rm $(RUN_DISK) threadcheck > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) threadcheck $(USER_BIN)/threadcheck > /dev/null
+	@$(call put-program,$(RUN_DISK),threadcheck,$(USER_BIN)/threadcheck)
 
 # One C program of your own, built and put on that disk (close QEMU
 # first: the disk is its while it runs):
@@ -578,7 +584,7 @@ cput: run-disk
 	@[ -n "$(C)" ] || { echo "usage: make cput C=name   (builds libc/programs/name.c and puts it on $(RUN_DISK))"; exit 1; }
 	@[ -f $(LIBC_DIR)/programs/$(C).c ] || { echo "cput: there is no $(LIBC_DIR)/programs/$(C).c"; exit 1; }
 	@$(MAKE) --no-print-directory cprogs64 C_PROGRAMS=$(C)
-	@$(TFSTOOL_RS) rm $(RUN_DISK) $(C) > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_DISK) $(C) $(C_BIN)/$(C) > /dev/null
+	@$(call put-program,$(RUN_DISK),$(C),$(C_BIN)/$(C))
 	@echo "$(C) is on $(RUN_DISK): make run64, and type $(C)"
 
 # The UEFI loader needs Clang and lld (`sudo apt install clang lld`).
@@ -1128,46 +1134,43 @@ run-aarch64-disk: user-aarch64 cprogs-aarch64 pdpmake-aarch64 tcc-aarch64 cxx-aa
 	    && printf 'Hello from the host\n' > $(RUN_A64_DISK).welcome && $(TFSTOOL_RS) put $(RUN_A64_DISK) welcome $(RUN_A64_DISK).welcome > /dev/null \
 	    && echo "Made a new disk: $(RUN_A64_DISK)"; }
 	@for program in $(DISK_PROGRAMS); do \
-	    $(TFSTOOL_RS) rm $(RUN_A64_DISK) $$program > /dev/null 2>&1; \
-	    $(TFSTOOL_RS) put $(RUN_A64_DISK) $$program $(A64_USER_BIN)/$$program > /dev/null || exit 1; \
+	    $(call put-program,$(RUN_A64_DISK),$$program,$(A64_USER_BIN)/$$program) || exit 1; \
 	done
 	@for program in $(C_PROGRAMS); do \
-	    $(TFSTOOL_RS) rm $(RUN_A64_DISK) $$program > /dev/null 2>&1; \
-	    $(TFSTOOL_RS) put $(RUN_A64_DISK) $$program $(C_A64_BIN)/$$program > /dev/null || exit 1; \
+	    $(call put-program,$(RUN_A64_DISK),$$program,$(C_A64_BIN)/$$program) || exit 1; \
 	done
 	$(call put-site,$(RUN_A64_DISK))
 ifeq ($(HAVE_CC),yes)
 	@TFSTOOL=$(TFSTOOL_RS) tools/put-tcc.sh $(RUN_A64_DISK) $(TCC_A64_DIR) $(C_A64_BIN)/libc.a
 	@TFSTOOL=$(TFSTOOL_RS) tools/put-sources.sh $(RUN_A64_DISK) aarch64 $(TCC_A64_DIR)
 	@for program in $(CXX_PROGRAMS); do \
-	    $(TFSTOOL_RS) rm $(RUN_A64_DISK) $$program > /dev/null 2>&1; \
-	    $(TFSTOOL_RS) put $(RUN_A64_DISK) $$program $(CXX_A64_DIR)/bin/$$program > /dev/null || exit 1; \
+	    $(call put-program,$(RUN_A64_DISK),$$program,$(CXX_A64_DIR)/bin/$$program) || exit 1; \
 	done
-	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) make > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) make $(C_A64_BIN)/make > /dev/null
+	@$(call put-program,$(RUN_A64_DISK),make,$(C_A64_BIN)/make)
 	@clang $(TAAJ_A64_CFLAGS) -c $(THREADS_C) -o $(C_A64_BIN)/threads.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/threads.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/threads
-	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) threads > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) threads $(C_A64_BIN)/threads > /dev/null
+	@$(call put-program,$(RUN_A64_DISK),threads,$(C_A64_BIN)/threads)
 	@clang $(TAAJ_A64_CFLAGS) -c $(BIGMEM_C) -o $(C_A64_BIN)/bigmem.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/bigmem.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/bigmem
-	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) bigmem > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) bigmem $(C_A64_BIN)/bigmem > /dev/null
+	@$(call put-program,$(RUN_A64_DISK),bigmem,$(C_A64_BIN)/bigmem)
 	@clang $(TAAJ_A64_CFLAGS) -c $(BASICS_C) -o $(C_A64_BIN)/basics.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/basics.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/basics
-	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) basics > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) basics $(C_A64_BIN)/basics > /dev/null
+	@$(call put-program,$(RUN_A64_DISK),basics,$(C_A64_BIN)/basics)
 	@clang $(TAAJ_A64_CFLAGS) -c $(GROUND_C) -o $(C_A64_BIN)/ground.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/ground.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/ground
-	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) ground > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) ground $(C_A64_BIN)/ground > /dev/null
+	@$(call put-program,$(RUN_A64_DISK),ground,$(C_A64_BIN)/ground)
 	@clang $(TAAJ_A64_CFLAGS) $(ZLIB_CFLAGS) -c $(GROUND2_C) -o $(C_A64_BIN)/ground2.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/ground2.o $(C_A64_BIN)/libz.a $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/ground2
-	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) ground2 > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) ground2 $(C_A64_BIN)/ground2 > /dev/null
+	@$(call put-program,$(RUN_A64_DISK),ground2,$(C_A64_BIN)/ground2)
 	@clang $(TAAJ_A64_CFLAGS) -c $(HANDLES_C) -o $(C_A64_BIN)/handles.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/handles.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/handles
-	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) handles > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) handles $(C_A64_BIN)/handles > /dev/null
+	@$(call put-program,$(RUN_A64_DISK),handles,$(C_A64_BIN)/handles)
 	@clang $(TAAJ_A64_CFLAGS) -c $(NAMESPACE_C) -o $(C_A64_BIN)/namespace.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/namespace.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/namespace
-	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) namespace > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) namespace $(C_A64_BIN)/namespace > /dev/null
+	@$(call put-program,$(RUN_A64_DISK),namespace,$(C_A64_BIN)/namespace)
 	@clang $(TAAJ_A64_CFLAGS) -c $(AT_C) -o $(C_A64_BIN)/at.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/at.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/at
-	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) at > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) at $(C_A64_BIN)/at > /dev/null
+	@$(call put-program,$(RUN_A64_DISK),at,$(C_A64_BIN)/at)
 	@clang $(TAAJ_A64_CFLAGS) -c $(TMP_C) -o $(C_A64_BIN)/tmptest.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/tmptest.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/tmptest
 	@clang $(TAAJ_A64_CFLAGS) -c $(DEV_C) -o $(C_A64_BIN)/devtest.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/devtest.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/devtest
-	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) tmptest > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) tmptest $(C_A64_BIN)/tmptest > /dev/null
-	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) devtest > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) devtest $(C_A64_BIN)/devtest > /dev/null
+	@$(call put-program,$(RUN_A64_DISK),tmptest,$(C_A64_BIN)/tmptest)
+	@$(call put-program,$(RUN_A64_DISK),devtest,$(C_A64_BIN)/devtest)
 	@clang $(TAAJ_A64_CFLAGS) -c $(PAGES_C) -o $(C_A64_BIN)/pages.o && ld.lld $(TAAJ_A64_LDFLAGS) $(C_A64_BIN)/pages.o $(C_A64_BIN)/libc.a -o $(C_A64_BIN)/pages
-	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) pages > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) pages $(C_A64_BIN)/pages > /dev/null
+	@$(call put-program,$(RUN_A64_DISK),pages,$(C_A64_BIN)/pages)
 endif
-	@$(TFSTOOL_RS) rm $(RUN_A64_DISK) threadcheck > /dev/null 2>&1; $(TFSTOOL_RS) put $(RUN_A64_DISK) threadcheck $(A64_USER_BIN)/threadcheck > /dev/null
+	@$(call put-program,$(RUN_A64_DISK),threadcheck,$(A64_USER_BIN)/threadcheck)
 
 # The serial port is this terminal: what you type goes to the shell.
 # Ctrl+A, then X, leaves QEMU. RUN_A64 adds QEMU options:
