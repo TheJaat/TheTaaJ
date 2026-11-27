@@ -193,7 +193,6 @@ Its files: `kernel/kernel64/src/sched.rs`, `smp.rs`, `futex.rs`, `alarms.rs`, `c
 
 | Item | Wave | Note |
 |---|---|---|
-| K190 | 2 | A child takes its parent's `nice` (after K20) |
 | K191 | 2 | More POSIX timers, fine timeouts (after K24) |
 | K192 | 1 | Cross-CPU wake-ups under KVM (entry 128's bug 5) |
 | K193 | 1 | A lock per CPU's run queue (K68's other half) |

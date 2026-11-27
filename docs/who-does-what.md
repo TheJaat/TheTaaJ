@@ -172,7 +172,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| MaK-WSL/sched: K68 part 1, a run queue per CPU; then K193 | `k68-run-queues` |
+| MaK-WSL/sched: K190, a child takes its parent's nice; K193 waits for the user's decision (per-CPU locks cost exact fairness) | `k190-nice-inherit` |
 
 ### Now: TheJat-WSL
 
@@ -340,7 +340,7 @@ The order matters here: each item is needed by the ones after it.
 | K19 | **Run `make test64` under KVM repeatedly** (say 20 times) and fix every race found | M | **Done (entries 104, 105)**: the tests choose KVM themselves, the typed boot test's typing races; twenty rounds under KVM (`tools/race-hunt.sh`): SIGCHLD before `waitid` returns fixed in the kernel, upper time limits retried; one failure left open as K50 |
 | K20 | Process priorities and choosing a thread's CPU (affinity) | M | **Done (entry 124)**, with J80: a priority (-20 to 19) and an affinity per thread, strict priorities and taking a CPU at once, a ceiling per process (init's the highest), SCHED_SET/SCHED_GET; init raises the keyboard-to-screen services to -5. Left: shares (K100), real-time classes (K99), K190 |
 | K21 | CPU time per process in `ps` | S | **Done (entry 114)**: the kernel counts each process's CPU time at every switch and tick (`clock::PROCESS_CPU`, one more word in `ProcessEntry`); `ps` has a CPU column; libc's `clock()` and `CLOCK_PROCESS_CPUTIME_ID` give it |
-| K190 | A child takes its parent's `nice` - through `posix_spawn` and the shell, as the memory limit travels with the program file (entry 096) - instead of always starting at 0 | S | After K20 (entry 124) |
+| K190 | A child takes its parent's `nice` - through `posix_spawn` and the shell, as the memory limit travels with the program file (entry 096) - instead of always starting at 0 | S | **Done (entry NNN)**: MEMORY_CREATE records its maker's priority, SPAWN_IMAGE gives it to the child, clamped to the child's ceiling (so the shell's -5 is not passed on) |
 | K191 | More POSIX timers: several per process (`timer_create` makes one now), SIGEV_THREAD and SIGEV_NONE, `timer_getoverrun` counting; fine timeouts for futexes and OBJECT_WAIT_UNTIL (`pthread_cond_timedwait`, `poll`), which still wait to the tick | M | After K24 (entry 128) |
 | K192 | **Waking a thread on another CPU is slower under KVM** since the one-shot timers: two CPUs' wake-to-run median 46-109 us against 4 on `main`; not under TCG. Find why (the host waking a halted vCPU; halt polling; the APIC timer's mode) | S | Found in entry 128, bug 5 |
 | K193 | **A lock per CPU's run queue** instead of one for all (K68's other half): a switch takes only its CPU's lock, a thread moving between CPUs takes two, in order; rule 1 of threads.rs (the lock held across a switch) rewritten for it | M | After K68 part 1 (entry 129) |
