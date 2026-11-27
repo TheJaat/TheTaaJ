@@ -1,6 +1,6 @@
 # The night tree builds TheBootloader from nothing when its commit changes
 
-*Journal entry #NNN · a fix to the night runner. Written on TheJat-WSL/ci. The second night's `k130-any-size` (MaK-WSL/boot) failed after 41 seconds, in `test64-shared`: TheBootloader's `stage2.bin` did not link, `undefined reference to 'BootHeader'`. MaK-WSL's own checks had passed, and a fresh build of the same commit passes. The night tree's build was stale.*
+*Journal entry #148 · a fix to the night runner. Written on TheJat-WSL/ci. The second night's `k130-any-size` (MaK-WSL/boot) failed after 41 seconds, in `test64-shared`: TheBootloader's `stage2.bin` did not link, `undefined reference to 'BootHeader'`. MaK-WSL's own checks had passed, and a fresh build of the same commit passes. The night tree's build was stale.*
 
 ## What happened
 

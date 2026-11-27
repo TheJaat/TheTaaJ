@@ -4821,3 +4821,15 @@ make run64
 | `display keys 0` | `usage: display keys COUNT (1 to 200)` |
 
 Automated: `make deskbench64-test` (part of `make test64`)
+
+---
+
+## 148 · The night tree builds TheBootloader from nothing when its commit changes
+
+[The entry](journal/148-bootloader-fresh.md)
+
+| Do | You should see |
+|---|---|
+| A night queue with two branches pointing at different TheBootloader commits, the second changing an `.inc` | The second builds TheBootloader from nothing and passes |
+
+Automated: not part of `make test64`.

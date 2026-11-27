@@ -282,7 +282,7 @@ def prepare(branch, base_taaj, base_kernel):
     # file includes: built before at another commit, its objects can be
     # stale - k130-any-size's `global BootHeader`, added to an .inc, was
     # missing from the stage2.o the branch before had built, and the link
-    # failed (entry NNN). It builds in seconds: from nothing, whenever its
+    # failed (entry 148). It builds in seconds: from nothing, whenever its
     # commit is not the one built last.
     boot = os.path.join(TREE, "bootloader")
     built = os.path.join(TREE, "build", ".bootloader-commit")
