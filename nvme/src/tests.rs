@@ -15,7 +15,72 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 const PHYSICAL: u64 = 0x0040_0000;
-const BLOCKS: u64 = 8192;
+// Smaller under Miri, which interprets every byte copied (K187).
+const BLOCKS: u64 = if cfg!(miri) { 512 } else { 8192 };
+
+
+/// The DMA memory: bytes, page-aligned as real DMA memory is. The driver
+/// reads and writes it in 32- and 64-bit words; in a `Vec<u8>` those were
+/// at any address, and a misaligned word is undefined behaviour, which
+/// Miri found (K187), as in usb's.
+///
+/// And one base pointer for everyone: the driver's `Dma` and the
+/// simulator's slices both come from it. With the driver's pointer taken
+/// through a `&mut [u8]`, each slice the simulator took afterwards was a
+/// new exclusive borrow that made the driver's pointer invalid - Rust's
+/// aliasing rules, which Miri checks: the simulator plays a device, which
+/// on a real machine is outside Rust altogether.
+pub struct Memory {
+    pages: Vec<Page>,
+    length: usize,
+    base: *mut u8,
+}
+
+impl Default for Memory {
+    fn default() -> Memory {
+        Memory::new(0)
+    }
+}
+
+#[derive(Clone, Copy)]
+#[repr(C, align(4096))]
+struct Page([u8; 4096]);
+
+impl Memory {
+    pub fn new(length: usize) -> Memory {
+        let mut pages = std::vec![Page([0; 4096]); length.div_ceil(4096)];
+        // From the Vec's buffer, with no reference in between; the pages
+        // never move (the Vec is never grown).
+        let base = pages.as_mut_ptr().cast();
+        Memory { pages, length, base }
+    }
+
+    /// The memory's start, for the driver's `Dma`.
+    pub fn base(&self) -> *mut u8 {
+        self.base
+    }
+
+    /// Makes it `length` bytes long, if that is shorter (as Vec::truncate).
+    pub fn truncate(&mut self, length: usize) {
+        self.length = self.length.min(length);
+    }
+}
+
+impl core::ops::Deref for Memory {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        // SAFETY: the pages are `length` bytes and more, one after another,
+        // owned by `self`.
+        unsafe { core::slice::from_raw_parts(self.base, self.length) }
+    }
+}
+
+impl core::ops::DerefMut for Memory {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        // SAFETY: as for `deref`, and borrowed mutably.
+        unsafe { core::slice::from_raw_parts_mut(self.base, self.length) }
+    }
+}
 
 #[derive(Clone, Copy, Default, Debug)]
 struct SubmissionQueue {
@@ -46,7 +111,7 @@ struct State {
     acq: u64,
     sqs: [Option<SubmissionQueue>; 4],
     cqs: [Option<CompletionQueue>; 4],
-    memory: Vec<u8>,
+    memory: Memory,
     disk: Vec<u8>,
     model: String,
     /// MDTS: the most one command moves, a power of two of 4 KiB pages.
@@ -338,7 +403,7 @@ fn cap(entries: u32, stride: u64) -> u64 {
 fn machine() -> Sim {
     let s = State {
         cap: cap(64, 0),
-        memory: vec![0; layout::needed(32 * layout::PAGE)],
+        memory: Memory::new(layout::needed(32 * layout::PAGE)),
         disk: (0..BLOCKS as usize * SECTOR).map(|i| (i * 13 + i / SECTOR) as u8).collect(),
         model: "QEMU NVMe Ctrl".into(),
         mdts: 7,
@@ -352,7 +417,7 @@ fn machine() -> Sim {
 fn start(sim: &Sim, interrupts: bool) -> Result<Disk<Sim>, &'static str> {
     let (base, size) = {
         let mut s = sim.0.borrow_mut();
-        (s.memory.as_mut_ptr(), s.memory.len())
+        (s.memory.base(), s.memory.len())
     };
     // SAFETY: the Vec stays alive (and is never resized) as long as the
     // Sim, which the Disk holds.
@@ -406,7 +471,9 @@ fn every_shape_of_transfer_goes_and_comes_back() {
     // One sector; a page; a page and a sector (PRP2 a page); two pages;
     // two and a bit (PRP2 a list); all 256 sectors (a list of 31).
     for (n, &count) in [1u32, 8, 9, 16, 17, 256].iter().enumerate() {
-        let at = 1000 + 300 * n as u64;
+        // On the disk whatever its size (smaller under Miri); with 8192
+        // blocks, 1000 to 2500 as always.
+        let at = (1000 + 300 * n as u64) % (BLOCKS - 256);
         let pattern: Vec<u8> = (0..count as usize * SECTOR).map(|i| (i % 253) as u8 ^ n as u8).collect();
         data(&mut disk, pattern.len()).copy_from_slice(&pattern);
         disk.transfer(true, at, count).unwrap();

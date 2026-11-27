@@ -178,7 +178,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| TheJat-WSL/ci: J92, a clean build from a fresh clone, in a container; K187, Miri | `j92-clean-build`, `k187-miri` |
+| TheJat-WSL/ci: J92, K187 and the night runner, waiting for the night test; next J93 | `j92-clean-build`, `k187-miri`, `night-test` |
 
 ## The decided order
 
@@ -610,7 +610,7 @@ All of it keeps the kernel pure: the kernel counts, checks rights and enforces; 
 | K110 | **Speculation mitigations**: IBRS/IBPB or retpolines, buffers cleared on return to user mode, on the CPUs that need them; the AArch64 equivalents | M | With K94 |
 | K111 | **`DEBUG_WRITE` behind a capability**: a log handle given to whoever may write the kernel console | S | Small |
 | K112 | **Every `unsafe` with a written reason** (`// SAFETY:`), checked by a lint; Miri over the host tests of the kernel's crates | M | **Done (entry 121)** for the lint: `make unsafe-check`, in `make test64` - clippy's `undocumented_unsafe_blocks` and `missing_safety_doc` as errors, over every crate and CPU; the 68 places without a reason given one. Miri is K187 |
-| K187 | **Miri over the host tests** of the kernel's crates and the logic crates: the tests run in Rust's interpreter, which catches undefined behaviour (an `unsafe` whose reason is wrong) | M | K112's second half; needs a nightly Rust on each machine |
+| K187 | **Miri over the host tests** of the kernel's crates and the logic crates: the tests run in Rust's interpreter, which catches undefined behaviour (an `unsafe` whose reason is wrong) | M | **Done (entry NNN)**: `make miri` - every crate with `unsafe`, under Miri (nightly-2026-11-25); undefined behaviour found and fixed in the `usb`, `nvme` and `ahci` test simulators (misaligned DMA words; a pointer made invalid by a later borrow), and two test helpers' leaks. `libc` and `user/` not yet |
 | K113 | **An audit log**: grants, kills, power, spawns with powers, kept by a user-space service and readable only with a handle for it | M | Before the assistant era, whose "undo" and activity log build on it |
 
 ---
