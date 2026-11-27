@@ -4712,3 +4712,27 @@ make -C bootloader test
 | `stage2 host tests:` | `142 checks, 0 failed` |
 
 Automated: `make test64`
+
+---
+
+## 143 · A fast BIOS read: sixteen sectors per trip to real mode
+
+[The entry](journal/143-fast-bios-read.md)
+
+```
+tools/boot-time.sh build/image64.iso tcg
+```
+
+| Look for | You should see |
+|---|---|
+| `boot-time (tcg): median` | About half of what the same command gives on the ISO of `main` before this change |
+
+```
+make stage2-test
+```
+
+| Look for | You should see |
+|---|---|
+| `stage2 host tests:` | `167 checks, 0 failed` (with the build's ISO and kernel) |
+
+Automated: `make test64`

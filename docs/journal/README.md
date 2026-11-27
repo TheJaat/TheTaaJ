@@ -150,6 +150,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 140 | [The first night: nine items tested and merged, and what it found (TheJat-WSL/ci, merged after its night test)](140-night-2026-11-27.md) | written | `3019b5e1` |
 | 141 | [Other sessions' finished branches in the night queue (TheJat-WSL/ci, merged after its night test)](141-queue-sessions.md) | written | `ad3ee12f` |
 | 142 | [Stage 2 on the host: tests for the ISO reader, the ELF loader and the page tables (MaK-WSL/boot, merged after its night test)](142-stage2-tests.md) | written | `482cbf57` |
+| 143 | [A fast BIOS read: sixteen sectors per trip to real mode (MaK-WSL/boot, merged after its night test)](143-fast-bios-read.md) | written | `1911f6b8` |
 
 ## How to run what the entries describe
 

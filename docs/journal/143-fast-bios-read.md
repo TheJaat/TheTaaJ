@@ -1,6 +1,6 @@
 # A fast BIOS read: sixteen sectors per trip to real mode
 
-*Journal entry #NNN · a step, MaK-WSL/boot's K131 (which is K51). Written on MaK-WSL/boot. Stage 2 read the kernel through the BIOS one 2 KiB sector at a time, dropping from 32-bit protected mode to real mode and back for every one: about 830 round trips for the 1.7 MB kernel. Now whole runs of sectors are read sixteen per call, straight into place. An emulated BIOS boot reaches the kernel in about half the time.*
+*Journal entry #143 · a step, MaK-WSL/boot's K131 (which is K51). Written on MaK-WSL/boot. Stage 2 read the kernel through the BIOS one 2 KiB sector at a time, dropping from 32-bit protected mode to real mode and back for every one: about 830 round trips for the 1.7 MB kernel. Now whole runs of sectors are read sixteen per call, straight into place. An emulated BIOS boot reaches the kernel in about half the time.*
 
 ## Why
 
