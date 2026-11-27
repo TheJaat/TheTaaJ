@@ -41,6 +41,12 @@
 //!     as fast as it comes - every message already waiting goes into
 //!     the grid before anything is drawn - so lines that scroll past
 //!     between two paints are never drawn at all.
+//!
+//! The desktop benchmark (K114) is measured here, where the screen is
+//! drawn: `display bench` times one composition of the whole screen and
+//! a window dragged a pixel at a time (`Server::bench`); `display keys N`
+//! times the next N keys from their arrival here to the composition that
+//! shows the terminal's echo of them (`KeyTimes`).
 
 #![no_std]
 #![no_main]
@@ -49,7 +55,7 @@ use abi::display::{Pointer as Report, ABSOLUTE_MAX};
 use abi::FramebufferInfo;
 use console::{font, Grid, MAX_COLUMNS, MAX_ROWS};
 use gfx::{Format, Image, Pointer, Rect, Surface};
-use gui::desktop::{Damage, Desktop, Id, Response, BORDER, TITLE_HEIGHT, WINDOWS_MAX};
+use gui::desktop::{Damage, Desktop, Id, Response, BORDER, LEFT, TITLE_HEIGHT, WINDOWS_MAX};
 use gui::protocol::{Event, Open, Request};
 use gui::toolkit::{draw_frame, Theme};
 use taaj::{println, Buffer, Error, Handle};
@@ -71,6 +77,101 @@ struct Shown {
     cursor: (usize, usize),
 }
 static mut SHOWN: Shown = Shown { cells: [[0; MAX_COLUMNS]; MAX_ROWS], cursor: (usize::MAX, usize::MAX) };
+
+/// The desktop benchmark's key to screen (K114): from a key's arrival
+/// here, on its way to the shell, to the end of the composition that
+/// puts the shell's echo of it on the screen.
+///
+/// The keys are matched to their echoes by count: while keys wait, each
+/// printable byte of text from the shell is one echo, and a composition
+/// after text arrived ends as many waits as echoes came, oldest first.
+/// The test types single letters at the prompt, so the text that comes
+/// is their echo and nothing else. What is not measured: the driver's
+/// part, from the keyboard's interrupt to the key reaching this program
+/// - a channel message, microseconds - and the framebuffer's way to the
+/// monitor.
+struct KeyTimes {
+    /// How many keys this measurement takes; 0 when none is running.
+    wanted: usize,
+    /// When each key still waiting for its echo arrived (monotonic ns),
+    /// oldest first.
+    arrived: [u64; KEYS_WAITING],
+    waiting: usize,
+    /// Echoes taken in since the last composition.
+    echoed: usize,
+    /// How long each measured key took, in ns.
+    took: [u64; abi::display::KEYS_MAX as usize],
+    done: usize,
+}
+
+/// Keys waiting for their echo at once, at most: more are not timed.
+const KEYS_WAITING: usize = 64;
+
+impl KeyTimes {
+    const fn new() -> KeyTimes {
+        KeyTimes { wanted: 0, arrived: [0; KEYS_WAITING], waiting: 0, echoed: 0, took: [0; abi::display::KEYS_MAX as usize], done: 0 }
+    }
+
+    fn start(&mut self, count: u32) {
+        *self = KeyTimes::new();
+        self.wanted = (count as usize).min(self.took.len());
+        println!("[display] key to screen: timing the next {} keys", self.wanted);
+    }
+
+    /// Keys on their way to the shell.
+    fn key(&mut self, bytes: &[u8]) {
+        if self.wanted == 0 {
+            return;
+        }
+        let now = taaj::monotonic_ns();
+        for _ in bytes.iter().filter(|&&b| printable(b)) {
+            if self.waiting < KEYS_WAITING && self.done + self.waiting < self.wanted {
+                self.arrived[self.waiting] = now;
+                self.waiting += 1;
+            }
+        }
+    }
+
+    /// Text from the shell, taken into the grid.
+    fn text(&mut self, bytes: &[u8]) {
+        if self.waiting > 0 {
+            self.echoed += bytes.iter().filter(|&&b| printable(b)).count();
+        }
+    }
+
+    /// A composition has just ended: the echoes taken in since the last
+    /// one are on the screen.
+    fn shown(&mut self) {
+        if self.echoed == 0 || self.waiting == 0 {
+            self.echoed = 0;
+            return;
+        }
+        let now = taaj::monotonic_ns();
+        let ended = self.echoed.min(self.waiting);
+        for &arrived in &self.arrived[..ended] {
+            self.took[self.done] = now.saturating_sub(arrived);
+            self.done += 1;
+        }
+        self.arrived.copy_within(ended..self.waiting, 0);
+        self.waiting -= ended;
+        self.echoed = 0;
+        if self.done == self.wanted {
+            let took = &mut self.took[..self.done];
+            took.sort_unstable();
+            println!(
+                "[display] key to screen: {} keys, median {} us, worst {} us",
+                took.len(),
+                took[took.len() / 2] / 1000,
+                took[took.len() - 1] / 1000
+            );
+            self.wanted = 0;
+        }
+    }
+}
+
+fn printable(byte: u8) -> bool {
+    (0x20..0x7F).contains(&byte)
+}
 
 /// Most messages taken in before the screen is brought up to date: a
 /// program that never stops printing must not keep the screen frozen.
@@ -307,6 +408,7 @@ struct Server {
     clients: [Option<Client>; WINDOWS_MAX],
     shell_keys: Handle,
     damage: Damage,
+    key_times: KeyTimes,
 }
 
 impl Server {
@@ -363,6 +465,7 @@ impl Server {
             // The terminal: to the shell, as the driver would have sent
             // them. A shell that lags loses keys, as before.
             None => {
+                self.key_times.key(bytes);
                 let _ = taaj::send(self.shell_keys, bytes, &[]);
             }
         }
@@ -452,6 +555,71 @@ impl Server {
         println!("[display] window {} closed", client.id);
         let response = self.desktop.close(client.id);
         self.apply(response);
+    }
+
+    /// Everything damaged, to the screen.
+    fn flush(&mut self) {
+        let damage = core::mem::take(&mut self.damage);
+        for rect in damage.rects() {
+            self.compose(*rect);
+        }
+    }
+
+    /// The desktop benchmark (K114, `display bench`): one composition of
+    /// the whole screen - the most a frame can cost - and the terminal
+    /// dragged by its title bar a pixel at a time, 100 to the right and
+    /// back, each step through the same code a mouse's drag goes
+    /// through (`Desktop::pointer`, the damage, the compositions). The
+    /// drag's rate is what composing can do, not what a mouse sends:
+    /// QEMU's mouse moves come far slower. The terminal ends where it
+    /// was; the arrow is put back.
+    fn bench(&mut self, terminal: Id, mouse: &mut Mouse) {
+        let drawn = mouse.arrow.shown().is_some();
+        mouse.arrow.hide(&mut self.screen.surface());
+
+        const TIMES: usize = 21;
+        let mut took = [0u64; TIMES];
+        for time in took.iter_mut() {
+            let start = taaj::monotonic_ns();
+            self.compose(self.desktop.screen());
+            *time = taaj::monotonic_ns() - start;
+        }
+        took.sort_unstable();
+        let screen = self.desktop.screen();
+        println!(
+            "[display] one composition of the {}x{} screen: median {} us, best {} us ({TIMES} times)",
+            screen.width,
+            screen.height,
+            took[TIMES / 2] / 1000,
+            took[0] / 1000
+        );
+
+        const STEPS: i32 = 100;
+        let frame = self.desktop.window(terminal).expect("never closed").frame();
+        // On the title bar, clear of the close box at its right end.
+        let (x, y) = (frame.x + 60, frame.y + (BORDER + TITLE_HEIGHT / 2) as i32);
+        let start = taaj::monotonic_ns();
+        let step = |server: &mut Server, x: i32, buttons: u8| {
+            let response = server.desktop.pointer(x, y, buttons);
+            server.apply(response);
+            server.flush();
+        };
+        step(self, x, LEFT);
+        for dx in (1..=STEPS).chain((0..STEPS).rev()) {
+            step(self, x + dx, LEFT);
+        }
+        step(self, x, 0);
+        let elapsed = (taaj::monotonic_ns() - start).max(1);
+        let frames = 2 * STEPS as u64;
+        println!(
+            "[display] dragging a window a pixel at a time: {frames} frames in {} ms, {} frames/s",
+            elapsed / 1_000_000,
+            frames * 1_000_000_000 / elapsed
+        );
+
+        if drawn {
+            mouse.arrow.show(&mut self.screen.surface(), mouse.x, mouse.y);
+        }
     }
 
     /// Composes `rect` of the screen into the back buffer - desktop,
@@ -604,6 +772,7 @@ fn main() -> i64 {
         clients: [const { None }; WINDOWS_MAX],
         shell_keys,
         damage: Damage::default(),
+        key_times: KeyTimes::new(),
     };
 
     // Where the text lives. If init gave memory for it, there: that
@@ -684,6 +853,7 @@ fn main() -> i64 {
         let mut taken = 0;
         let mut stall = 0;
         let mut moved = false;
+        let mut bench = false;
         while taken < BATCH {
             let Ok(Some(ready)) = taaj::poll(waited) else { break };
             taken += 1;
@@ -695,6 +865,7 @@ fn main() -> i64 {
                 };
                 if n > 0 && message[0] == abi::display::TEXT {
                     grid.write_all(&message[1..n], &mut |_| {});
+                    server.key_times.text(&message[1..n]);
                 }
                 if let Some(report) = Report::from_message(&message[..n]) {
                     mouse.take(report, fb.width, fb.height);
@@ -706,6 +877,14 @@ fn main() -> i64 {
                     let mut ticks = [0u8; 8];
                     ticks.copy_from_slice(&message[1..9]);
                     stall = u64::from_le_bytes(ticks).min(abi::STALL_MAX);
+                }
+                if n == 1 && message[0] == abi::display::BENCH {
+                    bench = true;
+                }
+                if n == 5 && message[0] == abi::display::KEYS {
+                    let mut count = [0u8; 4];
+                    count.copy_from_slice(&message[1..5]);
+                    server.key_times.start(u32::from_le_bytes(count).min(abi::display::KEYS_MAX));
                 }
             } else if ready == 1 {
                 match receive(keys_in, &mut message) {
@@ -745,6 +924,12 @@ fn main() -> i64 {
             if drawn || moved {
                 mouse.arrow.show(&mut server.screen.surface(), mouse.x, mouse.y);
             }
+        }
+        // What this batch drew is on the screen: keys whose echo it
+        // drew have reached it.
+        server.key_times.shown();
+        if bench {
+            server.bench(terminal_id, &mut mouse);
         }
         // The test of a display that has stopped: what was asked for
         // is on the screen, and then nothing is done.

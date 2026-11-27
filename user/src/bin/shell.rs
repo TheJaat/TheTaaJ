@@ -976,7 +976,29 @@ impl Shell {
                     let _ = taaj::send(screen, &message, &[]);
                 }
                 (Some(1..=30), None) => self.write(b"no display\n"),
-                _ => self.write(b"usage: display stall SECONDS (1 to 30)\n"),
+                // The desktop benchmark (K114): composing and dragging,
+                // timed by the display itself.
+                _ if rest.trim() == "bench" => match self.screen {
+                    Some(screen) => {
+                        let _ = taaj::send(screen, &[abi::display::BENCH], &[]);
+                    }
+                    None => self.write(b"no display\n"),
+                },
+                // ... and key to screen: the next N keys, from their
+                // arrival at the display to their echo on the screen.
+                _ if rest.starts_with("keys ") => {
+                    match (rest["keys ".len()..].trim().parse::<u32>().ok().filter(|n| (1..=abi::display::KEYS_MAX).contains(n)), self.screen) {
+                        (Some(count), Some(screen)) => {
+                            let mut message = [0u8; 5];
+                            message[0] = abi::display::KEYS;
+                            message[1..].copy_from_slice(&count.to_le_bytes());
+                            let _ = taaj::send(screen, &message, &[]);
+                        }
+                        (Some(_), None) => self.write(b"no display\n"),
+                        (None, _) => say!(self, "usage: display keys COUNT (1 to {})\n", abi::display::KEYS_MAX),
+                    }
+                }
+                _ => self.write(b"usage: display stall SECONDS (1 to 30), display bench, display keys COUNT\n"),
             },
             "disk" => self.disk(rest),
             "poweroff" | "reboot" => self.power(command == "poweroff"),
