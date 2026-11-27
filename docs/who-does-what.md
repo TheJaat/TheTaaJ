@@ -125,7 +125,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| MaK-WSL/sched: K193, a lock per CPU's run queue - the user chose "peek, then lock one" (2026-11-27). Built and tested (`make test64` passed, race hunt running); waits for the user's yes to merge | `k193-cpu-locks` |
+| MaK-WSL/sched: K193, a lock per CPU's run queue - the user chose "peek, then lock one" (2026-11-27). Built and tested: `make test64` passed with main (entry 140) merged in, and the race hunt's last 9 rounds all passed (2026-11-27); waits for the user's yes to merge | `k193-cpu-locks` |
 
 ### Now: TheJat-WSL
 
