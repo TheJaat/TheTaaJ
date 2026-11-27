@@ -29,6 +29,16 @@ It is set up once per machine (the repository's config, which every tree shares)
 
 Merging `main` into a branch that changed `who-does-what.md` stops with a conflict: the branch changed lines that `main` moved. `tools/work-list-move.py`, run in the stopped merge, takes the branch's own changes (the merge base's file against the branch's, from git's index), puts `main`'s hub back, and makes each change again where its lines are now - found by the lines it replaced, or the lines around an addition - in exactly one file, or not at all: a change found nowhere or twice is printed for the session. The hub's first lines say so, where a session with that conflict will look.
 
+### Merging main: `tools/merge-main.py`
+
+Replaying the morning's merges in a sandbox - every branch of the night queue merged in turn, with `merge-item.py`, against local copies of both repositories - showed a second kind of bookkeeping conflict. A branch stacked on another has that one's lines with `NNN` ("journal entry NNN", "**Done (entry NNN)**"); once that one is merged, `main` has them numbered (135, 133), and where the stacked branch changed the lines next to them, git sees two changes to one place. `j93-ci` stopped in `tools/night-test.py` and `docs/items/era-25.md` so.
+
+`tools/merge-main.py` merges `main` in (TheKernel's first, for an item with a TheKernel branch) and settles both kinds: for each file in conflict, every line of the merge base with `NNN` that `main` has with a number instead is numbered the same way in the base and the branch, and the file merged again - `main`'s change is then in both, and only real changes are left; a conflict in `who-does-what.md` goes to `work-list-move.py`. Anything else is left, and named. It does not commit.
+
+In the sandbox, on the stopped `j93-ci` merge: both files settled, one line each; J92's row kept `main`'s 133, J93's its own `NNN`; `night-test.py`'s first line 135, j93's own line `NNN`, numbered at its own merge.
+
+The same replay found two more things, fixed here: `merge-item.py` numbered `K?-port` - an item already on `main`, never numbered, whose row the split moved - as new (now it numbers only items `main` does not list yet), and one of this branch's commits had taken a kernel submodule checked out for another branch (its pointer put back; commits here name their files since).
+
 ### The tools that read the list
 
 - `merge-item.py`: the next K and J numbers from every file of the list on `main`; new items (`K?-word`) added in any of them.
