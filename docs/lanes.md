@@ -210,9 +210,6 @@ Its files: all of TheBootloader; `kernel/kernel64/src/bootinfo.rs`, `elf.rs`, th
 
 | Item | Wave | Note |
 |---|---|---|
-| K129 | 1 | Host tests for the ISO reader, the ELF loader, the page tables |
-| K131 | 1 | A fast BIOS read (is K51) |
-| K51 | 1 | Done by K131 |
 | K130 | 1 | A kernel of any size: ends the 3 MiB wall every lane is near |
 | K135 | 2 | A relocatable kernel |
 | K25 | 2 | ASLR (the kernel's half after K135) |
