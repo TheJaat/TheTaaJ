@@ -66,7 +66,7 @@ What one lane waits for from another. When an item's dependency isn't merged yet
 | `files` K108 users | J62 (its own), J76 owners | `taajfs` |
 | `ci` K141 `top` | K21 CPU time per process | `sched` |
 | `desktop` K45 job control, `libc` J84/J85 | K44 pseudo-terminals | `desktop` |
-| **Every lane that adds kernel tests** | J51 test programs out of the kernel image, or K130 a kernel of any size: the image has about 680 KiB left under its 3 MiB limit | `ci`, `boot` - both first wave |
+| **Every lane that adds kernel tests** | ~~J51 test programs out of the kernel image, or K130 a kernel of any size~~ - K130 (entry 146) ended the 3 MiB wall: the BIOS loader takes a kernel up to 1 GiB | `boot` - done; J51 is `ci`'s to order |
 
 ## Lanes
 
@@ -210,7 +210,6 @@ Its files: all of TheBootloader; `kernel/kernel64/src/bootinfo.rs`, `elf.rs`, th
 
 | Item | Wave | Note |
 |---|---|---|
-| K130 | 1 | A kernel of any size: ends the 3 MiB wall every lane is near |
 | K135 | 2 | A relocatable kernel |
 | K25 | 2 | ASLR (the kernel's half after K135) |
 | K133 | 2 | A boot menu |
@@ -268,7 +267,6 @@ Its files: `gui/`, `gfx/`, `input/`, `console/`, `user/src/window.rs`, `user/src
 
 | Item | Wave | Note |
 |---|---|---|
-| K114 | 1 | The desktop benchmark: first |
 | K115 | 1 | `display` split: compositor, window manager, terminal |
 | K44 | 1 | The terminal as its own program; pseudo-terminals; `libc`'s J85 waits for it |
 | K116 | 1 | Real key events (with K42) |

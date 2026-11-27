@@ -4761,3 +4761,63 @@ make run64
 | Watch the screen while it boots | Stage 2's few lines - the mount, the kernel loading - not a scroll of file names |
 
 Automated: `make test64`
+
+---
+
+## 145 · Using TheTaaJ: a page for the people who run it
+
+[The entry](journal/145-using-taaj.md)
+
+```
+make run64
+```
+
+| Do | You should see |
+|---|---|
+| Follow `docs/using-taaj.md` from the top | Each command doing what the page says |
+
+Automated: none - a document. `make test64` checks the commands it shows, among much else.
+
+---
+
+## 146 · A kernel of any size: the 3 MiB wall is gone
+
+[The entry](journal/146-any-size-kernel.md)
+
+```
+make big64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `[test] big image:` | `the kernel ends at 0x69c000, above 3 MiB; 4096 KiB of it ... is byte for byte what was built`, in both the BIOS and the UEFI log |
+| `ramdisk` (BIOS log) | `0x2000 bytes at 0x69c000` - on the page after the kernel |
+| `big64-test passed` | |
+
+```
+make stage2-test
+```
+
+| Look for | You should see |
+|---|---|
+| `stage2 host tests:` | `181 checks, 0 failed` |
+
+Automated: `make test64`
+
+---
+
+## 147 · The desktop benchmark: what a frame costs, and how long a key takes to show
+
+[The entry](journal/147-desktop-bench.md)
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `display bench` | `[display] one composition of the 1024x768 screen: median ... us` and `[display] dragging a window a pixel at a time: 200 frames in ... ms, ... frames/s` in the log; on the screen, the terminal slides right and back |
+| `display keys 5`, then `abcde` | `[display] key to screen: timing the next 5 keys`, then `[display] key to screen: 5 keys, median ... us, worst ... us` |
+| `display keys 0` | `usage: display keys COUNT (1 to 200)` |
+
+Automated: `make deskbench64-test` (part of `make test64`)

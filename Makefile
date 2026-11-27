@@ -857,7 +857,7 @@ BIG64_DIR = $(BUILD_DIR)/big64
 BIG64_ISO = $(BUILD_DIR)/big64.iso
 BIG64_ELF = $(KERNEL64_DIR)/target/big-image/x86_64-unknown-none/release/kernel64
 BIG64_LOG = $(BUILD_DIR)/big64
-BIG64_SAID = \[test\] big image: the kernel ends at 0x[0-9a-f]+, above 2 MiB; 256 KiB of it at 0x[0-9a-f]+-0x[0-9a-f]+ is byte for byte what was built
+BIG64_SAID = \[test\] big image: the kernel ends at 0x[0-9a-f]+, above 3 MiB; 4096 KiB of it at 0x[0-9a-f]+-0x[0-9a-f]+ is byte for byte what was built
 big64-test: build-bootloader user64 uefi-loader
 	@echo "Building a kernel that ends above 2 MiB..."
 	cd $(KERNEL64_DIR) && cargo build --release --quiet --features big-image --target-dir target/big-image
@@ -884,8 +884,11 @@ endif
 	@$(KERNEL64_DIR)/scripts/qemu-boot.sh $(BIG64_ISO) $(BIG64_LOG)-bios.log 40
 	@grep -qE "$(BIG64_SAID)" $(BIG64_LOG)-bios.log \
 	    || { tail -5 $(BIG64_LOG)-bios.log; echo "FAIL: BIOS: the big kernel did not boot, or was not loaded whole"; exit 1; }
-	@grep -q "ramdisk        0x2000 bytes at 0x300000" $(BIG64_LOG)-bios.log \
-	    || { grep "ramdisk" $(BIG64_LOG)-bios.log; echo "FAIL: BIOS: the ramdisk is not at 3 MiB, above the kernel"; exit 1; }
+	@# Since K130 the ramdisk goes on the page after the kernel's end -
+	@# not at 3 MiB, where the whole kernel file used to be staged.
+	@addr=$$(grep -ao 'ramdisk *0x2000 bytes at 0x[0-9a-f]*' $(BIG64_LOG)-bios.log | awk '{print $$NF}'); \
+	    [ -n "$$addr" ] && [ $$(($$addr)) -ge $$((0x600000)) ] \
+	    || { grep -a "ramdisk" $(BIG64_LOG)-bios.log; echo "FAIL: BIOS: the ramdisk is not after the big kernel (near 7 MiB)"; exit 1; }
 	@! grep -q "FAILED\|PANIC\|EXCEPTION" $(BIG64_LOG)-bios.log || { echo "FAIL: BIOS: the big kernel reported a failure"; exit 1; }
 ifeq ($(HAVE_CLANG),yes)
 	@echo "Booting it via UEFI (serial log: $(BIG64_LOG)-uefi.log)..."
@@ -1491,6 +1494,16 @@ endif
 # the PS/2 mouse, on AArch64 with a virtio tablet.
 GUI64_LOG   = $(BUILD_DIR)/gui64.log
 GUI_A64_LOG = $(BUILD_DIR)/aarch64/gui.log
+
+# The desktop benchmark (K114): one composition of the screen, a window
+# dragged a pixel at a time, and key to screen with four busy programs -
+# on 1 CPU and on 4. The numbers are printed; the test checks they were
+# measured, not how fast (deskbench-test.sh).
+DESKBENCH64_LOG = $(BUILD_DIR)/deskbench64.log
+deskbench64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(DESKBENCH64_LOG).disk)
+	@$(KERNEL64_DIR)/scripts/deskbench-test.sh $(ISO64_IMG) $(DESKBENCH64_LOG).disk $(DESKBENCH64_LOG)
+	@echo "deskbench64-test passed"
 
 gui64-test: iso64 cprogs64 tfstool-rs
 	$(call make-test-disk,$(GUI64_LOG).disk)
@@ -2201,6 +2214,7 @@ TEST64_PARTS = \
 	aarch64-screen-test \
 	gui64-test \
 	aarch64-gui-test \
+	deskbench64-test \
 	edit64-test \
 	aarch64-edit-test \
 	cxx64-test \
