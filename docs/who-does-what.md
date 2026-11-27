@@ -87,7 +87,7 @@ MaK-WSL's memory can grow: a `.wslconfig` gives WSL more of the laptop's memory,
 1. **A separate branch for everything**: every step, fix or document change, with the same name in every repository it touches (for example `r3-std`, `usb-hubs`). Nothing is committed straight to `main`.
 2. **Nothing is merged into `main` without asking the user first**, and only after full testing. The one who did the work merges it:
    - pull `main` and merge it into the branch;
-   - `make test64` passes on the branch with `main` merged in;
+   - `make test64` passes on the branch with `main` merged in - the whole of it, in one run, on exactly what is merged (for a stacked branch, with the ones before it merged in). The shortcuts are for the work before it, never for this: an item's own tests, the host tests and `make test64-again` (only the parts that failed last) qualify nothing for a merge;
    - the step's own new tests pass, and its testing note was checked by a scripted boot;
    - the checklist below ("Before merging") is gone through;
    - the user is asked and says yes;

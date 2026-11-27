@@ -25,6 +25,19 @@ The steps moved into `tools/test64.sh`, which the Makefile runs with its lists:
 
 `make test64-again` reads the list and runs the shared builds (up to date in seconds after a test-only fix) and then only those parts - `smp64-test` alone first if it is one - and writes the list again: empty when all passed. With nothing listed, it says so and passes. If make's output could not be read, the list says `test64-parts`, and all of them run again: never fewer than failed.
 
+## The rule: the shortcuts never qualify a merge
+
+Rule 2 now says it outright: a branch is merged only after one whole `make test64`, in one run, on exactly what is merged - `main` merged in, and for a stacked branch the ones before it. `make test64-again`, an item's own boot test and the host tests are for the work before it. So every shortcut saves time while an item is developed and fixed, and none takes a test away from what reaches `main`:
+
+| Stage | What runs |
+|---|---|
+| By day, developing | The item's own test, the host tests, `make coverage`, `make unsafe-check` |
+| After a fix | `make test64-again` - or all of `make test64` if the fix touched the kernel, libc, `kernel/abi` or the build |
+| Before the merge | All of `make test64` on the merge result (the night test, stacked in merge order) |
+| After merges | `night-test.py --all` tests `main` itself (J93): what two changes tested apart break together, and what rule 15's shortcut for a moved `main` let through |
+
+The night queue on TheJat-WSL is stacked in merge order for the same reason: each branch tested on the one before's result is what each morning merge makes, not a combination no test has seen.
+
 ## How I checked it
 
 - A scratch Makefile with stand-in parts: `smp64-test` failing, a part failing, a part whose build fails. `make test64` ran all of them and listed `p2 p3 smp64-test`; with two fixed, `test64-again` ran just those three and listed `p2`; with that fixed, ran only `p2`, `test64: all passed`; then "nothing failed". `test64-parts` in the list ran every part, without `smp64-test`.
