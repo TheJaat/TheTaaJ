@@ -149,6 +149,8 @@ Each session has its own tree (rule 13), with its own `build/` and submodules, a
    If a push is refused, someone merged first: pull, take the next number, push again.
 8. Tell the user it is merged, with the testing note, then go back to step 1 of section 5 for the next item.
 
+**Stacked branches** (one item needing another not merged yet): `python3 tools/restack.py` carries a fix to a lower branch up through the ones above it, in the night queue's order, with their `kernel` pointers right; `sh tools/merge-rehearsal.sh` tries the whole queue's merges in a sandbox first, in seconds (journal entry NNN).
+
 **Merge `main` in with `python3 tools/merge-main.py`** (journal entry NNN). It merges `origin/main` - TheKernel's first, when your item has a TheKernel branch - and settles the conflicts that are only bookkeeping: lines with `NNN` that main has since numbered (a branch stacked on another, once that one is merged), and, for a branch made before the work list was split, its changes to `docs/who-does-what.md` moved to the files they are in now (`tools/work-list-move.py`). A real conflict it leaves, and says which. It does not commit: test (rule 15), then `git commit`.
 
 `main` moves often with fourteen sessions. Rule 15 in `who-does-what.md` says when a merge of `main` into your branch needs a new `make test64`, and when it doesn't.
