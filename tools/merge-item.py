@@ -144,14 +144,18 @@ def main():
     # ---- 2. numbers -------------------------------------------------------
     readme_main = git("show", "origin/main:docs/journal/README.md")
     number = max(int(n) for n in re.findall(r"^\| (\d+) \|", readme_main, re.M)) + 1
-    work_main = git("show", "origin/main:docs/who-does-what.md")
+    # The work list: who-does-what.md and the item files (entry NNN).
+    listed = ["docs/who-does-what.md"] + [f for f in git("ls-tree", "--name-only", "origin/main", "docs/items/").split()
+                                          if f.endswith(".md")]
+    work_main = "\n".join(git("show", f"origin/main:{f}") for f in listed)
     next_k = max([int(n) for n in re.findall(r"^\| K(\d+) \|", work_main, re.M)] or [0]) + 1
     next_j = max([int(n) for n in re.findall(r"^\| J(\d+) \|", work_main, re.M)] or [0]) + 1
-    # New items: rows this branch added to who-does-what.md's tables that
+    # New items: rows this branch added to the work list's tables that
     # begin `| K?-word |` or `| J?-word |`. Not every K?-word on an added
     # line - an entry or a script that explains the convention names some.
     items = []
-    for line in added_lines(ROOT, "origin/main").get("docs/who-does-what.md", []):
+    added = added_lines(ROOT, "origin/main")
+    for line in [l for f, ls in added.items() if f == "docs/who-does-what.md" or f.startswith("docs/items/") for l in ls]:
         found = re.match(r"^\| ([KJ])\?-([a-z0-9-]+) \|", line)
         if found and found.groups() not in items:
             items.append(found.groups())

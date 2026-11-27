@@ -1,0 +1,19 @@
+# Era 25 · Build, toolchain and tests
+
+*Part of the work list. The rules, who is doing what now, and what waits for the user are in [`docs/who-does-what.md`](../who-does-what.md); the lanes in [`docs/lanes.md`](../lanes.md).*
+
+
+**Done when**: a fresh clone builds and passes on a clean machine with one documented command; every push to a branch is built and tested automatically on a machine of ours, and the result is shown; `make test64` takes under a time set when the era starts, with no test that fails now and then; the tests' coverage of the kernel's crates is measured; and TheTaaJ can rebuild its own kernel and libc. Whose it is, and when, is for the user to say. Pointed to: J51-J54 (Test suite health), J45 and J46 (rebuilding on TheTaaJ), J15/R3 and J21/R4 (Rust's std and rustc, Era 9), K50 and K52 (flaky tests), the race hunt (entries 104, 105).
+
+What is right: `make test64` (about 60 parts, `TEST64_PARTS`, on both CPUs) is run in full before every merge, with main merged in; host tests for every crate that can have them; the race hunt (`tools/race-hunt.sh`) runs the whole suite twenty times under KVM; timing tests follow written rules ("Before merging"); the toolchain is ours (host LLVM 23.1.5 built by `tools/build-host-llvm.sh`, step E) and C, C++ and LLVM itself are built for and on TheTaaJ.
+
+What is missing: **no CI** - tests run only when someone runs them, on their own machine; `make test64` takes about 14 minutes on either machine (Measured times), `boot64-test`'s typing over 6 of them and some parts have failed now and then (K50, K52); nobody knows the tests' coverage; a fresh clone has never been tried on a clean machine (J54); the kernel image is near the BIOS loader's 3 MiB (J51, Era 21); the build is one big Makefile with a host-side script per port; and TheTaaJ cannot yet build its own kernel (no Rust on it before Era 9).
+
+| # | Item | Size | Notes |
+|---|---|---|---|
+| J92 | **A clean build from a fresh clone**, in a container, with one documented command; the setup script (`tools/setup-wsl.sh`) checked by it | S | Is J54. First |
+| J93 | **Our own CI**: a machine of ours (TheJat-WSL suits it) that builds every pushed branch, runs the host tests and `make test64`, and posts the result where the branches are; no outside service gets the code to run | M | After J92. Never builds anyone else's pull request (rule) |
+| J94 | **A faster `make test64`**: parts run in parallel up to the machine's CPUs, one disk image built once and shared, the boot shortened; measured before and after | M | **Done (entry 117)**: the shared builds not run again in the test phase (`make -o`), so LLVM's tools are linked once per run, not twice - 22% less CPU; `smp64-test` alone first; test disks `cache=unsafe`, Ctrl+C after a started program - two failures under load gone. Left: LLVM's tools still linked on every run in `test64-shared`; the suite is now bound by the machine's CPUs, not by waits - see the entry |
+| J95 | **No flaky tests**: every part run 50 times in CI; each that ever fails is fixed or its limits measured again (K50, K52) | M | After J93 |
+| J96 | **Coverage** of the host tests of the kernel's crates, kept in the journal; a floor that may only rise | S | |
+| J97 | **TheTaaJ builds itself**: libc and the C programs today (J45, J46), the kernel once Rust runs there (after R4) | L | After Era 9 |

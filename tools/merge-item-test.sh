@@ -21,7 +21,7 @@ M=NN; M="${M}N"; export M
 
 setup() (
 set -eu
-TM=$(git -C "$CI" rev-parse origin/main)
+TM=$(git -C "$CI" rev-parse "${MT_BASE:-origin/main}")  # MT_BASE: a branch to try as main
 KM=$(git -C "$CI/kernel" rev-parse origin/main)
 KGIT=$(cd "$CI/kernel" && cd "$(git rev-parse --git-dir)" && pwd)
 rm -rf "$S/mt"; mkdir -p "$S/mt"; cd "$S/mt"
@@ -43,7 +43,8 @@ git switch -q -c mt-test
 cp "$CI/tools/merge-item.py" tools/  # the version being tested
 printf '# A test entry\n\n*Journal entry #%s · a test. It keeps `%s-name.md` as it is.*\n\nSee K?-mt.\n\n## Testing note\n\nNothing.\n' "$M" "$M" > "docs/journal/$M-mt.md"
 python3 - <<'PY'
-p='docs/who-does-what.md'; s=open(p).read()
+import glob
+p=[f for f in ['docs/who-does-what.md']+glob.glob('docs/items/*.md') if '| K189 |' in open(f).read()][0]; s=open(p).read()
 i=s.index('| K189 |'); j=s.index('\n',i)
 s=s[:j+1]+"| K?-mt | **A test item** | S | for merge-item's test (entry "+__import__("os").environ["M"]+") |\n"+s[j+1:]
 open(p,'w').write(s)
@@ -76,7 +77,8 @@ echo "== A: clean"
 fresh || exit 1
 python3 tools/merge-item.py "$row"; echo "exit $?"
 T=$S/mt/taaj.git; K=$S/mt/kernel.git
-echo "items: $(git -C $T show main:docs/who-does-what.md | grep -cE '^\| K[0-9]+ \| \*\*A test item')  rules untouched: $(git -C $T show main:docs/who-does-what.md | grep -c 'K?-hubs')"
+work() { git -C "$1" show main:docs/who-does-what.md; for f in $(git -C "$1" ls-tree --name-only main docs/items/); do git -C "$1" show "main:$f"; done; }
+echo "items: $(work $T | grep -cE '^\| K[0-9]+ \| \*\*A test item')  rules untouched: $(git -C $T show main:docs/who-does-what.md | grep -c 'K?-hubs')"
 echo "pointer $(git -C $T ls-tree main kernel | awk '{print substr($3,1,7)}') = kernel main $(git -C $K rev-parse --short main)"
 
 echo "== B: TheKernel's push refused"
@@ -105,4 +107,4 @@ kc=$(git -C kernel rev-parse HEAD)
 python3 tools/merge-item.py "$row"; echo "exit $?"
 echo "pointer $(git -C $S/mt/taaj.git ls-tree main kernel | awk '{print substr($3,1,7)}') = the item's TheKernel commit $(echo $kc | cut -c1-7)"
 git -C $S/mt/taaj.git show main:docs/journal/README.md | grep "^| 124 |" | grep -o "| written | .*"
-echo "items: $(git -C $S/mt/taaj.git show main:docs/who-does-what.md | grep -cE '^\| K[0-9]+ \| \*\*A test item')"
+echo "items: $(work $S/mt/taaj.git | grep -cE '^\| K[0-9]+ \| \*\*A test item')"
