@@ -310,7 +310,6 @@ Its files: `libc/src/descriptors.rs`, `user/src/files.rs`, the `fileserver` crat
 
 | Item | Wave | Note |
 |---|---|---|
-| J64 | 2 | `/tmp` in memory |
 | J65 | 2 | `/dev` |
 | J55 | 2 | Programs moved into `/bin` |
 | J66 | 2 | `/proc` |

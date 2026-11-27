@@ -4393,3 +4393,26 @@ From a session's tree, on an item's branch that is ready (tested, the user's yes
 | The same, after another session merged first | `merge-item: TheKernel's push was refused ...` or `TheTaaJ's push was refused ...`, and the trees as they were |
 
 Automated: `make test64` does not run it; `sh tools/merge-item-test.sh SCRATCH` tests it, without touching the server.
+
+---
+
+## 126 · /tmp in memory
+
+[The entry](journal/126-tmp.md)
+
+Start TheTaaJ:
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `with programs tmptest` | `tmp: 11 checks, all passed` |
+| `echo hi > /tmp/x` then `ls /tmp` | `x` (and `a`, which `tmptest` leaves there) |
+| `ls /` | `tmp/` among the directories |
+| reboot, then `ls /tmp` | empty: nothing in `/tmp` survives |
+
+The same on AArch64 with `make run-aarch64`: `with programs tmptest` gives the same line.
+
+Automated: `make handles64-test aarch64-handles-test`, and `make test64`.
