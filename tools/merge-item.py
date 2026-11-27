@@ -177,6 +177,15 @@ def main():
             next_j += 1
     say(f"entry {number}" + (f"; new items: {', '.join(n for _, n in renames[1::2])}" if renames else ""))
 
+    # The lanes checked before anything is pushed: found only after
+    # TheKernel's push, a refusal left TheKernel's main with an item whose
+    # TheTaaJ half was not merged (found rehearsing MaK-WSL's branches,
+    # entry NNN). Checked again after the numbering, below.
+    lanes = subprocess.run(["python3", "tools/lanes-check.py"], cwd=ROOT, capture_output=True, text=True)
+    if lanes.returncode != 0:
+        say(lanes.stdout + lanes.stderr)
+        stop("lanes-check failed (above), before anything was changed - fix the lanes in the branch, and run this again")
+
     # ---- 3. TheKernel -----------------------------------------------------
     kernel_commit = kernel_head
     if kernel_changed:
