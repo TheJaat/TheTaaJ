@@ -145,7 +145,7 @@ def main():
     # ---- 2. numbers -------------------------------------------------------
     readme_main = git("show", "origin/main:docs/journal/README.md")
     number = max(int(n) for n in re.findall(r"^\| (\d+) \|", readme_main, re.M)) + 1
-    # The work list: who-does-what.md and the item files (entry NNN).
+    # The work list: who-does-what.md and the item files (entry 132).
     listed = ["docs/who-does-what.md"] + [f for f in git("ls-tree", "--name-only", "origin/main", "docs/items/").split()
                                           if f.endswith(".md")]
     work_main = "\n".join(git("show", f"origin/main:{f}") for f in listed)
@@ -159,7 +159,7 @@ def main():
     for line in [l for f, ls in added.items() if f == "docs/who-does-what.md" or f.startswith("docs/items/") for l in ls]:
         found = re.match(r"^\| ([KJ])\?-([a-z0-9-]+) \|", line)
         # Only items main does not list yet: a row moved from one file of
-        # the list to another (entry NNN's split) is not new, and keeps
+        # the list to another (entry 132's split) is not new, and keeps
         # its name until its own branch numbers it.
         if found and re.search(rf"^\| {found.group(1)}\?-{re.escape(found.group(2))} \|", work_main, re.M):
             continue

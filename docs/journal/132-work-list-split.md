@@ -1,6 +1,6 @@
 # The work list split: the rules in one file, the items a file per era, rows merged one at a time
 
-*Journal entry #NNN · a change to how we work. Written on TheJat-WSL/ci. `docs/who-does-what.md` was 954 lines: the rules, the machines, who does what now, and all 302 items of seventeen eras. Every session read all of it, and every session's branch changed some of it - the most common merge conflict, and a big part of each session's reading. Now it keeps the rules, Now, what waits for the user and an index (173 lines); the items are in `docs/items/`, a file per era; the machines in `docs/machines.md`. And git merges the tables' rows one item at a time, so two branches changing two rows of one table no longer conflict.*
+*Journal entry #132 · a change to how we work. Written on TheJat-WSL/ci. `docs/who-does-what.md` was 954 lines: the rules, the machines, who does what now, and all 302 items of seventeen eras. Every session read all of it, and every session's branch changed some of it - the most common merge conflict, and a big part of each session's reading. Now it keeps the rules, Now, what waits for the user and an index (173 lines); the items are in `docs/items/`, a file per era; the machines in `docs/machines.md`. And git merges the tables' rows one item at a time, so two branches changing two rows of one table no longer conflict.*
 
 ## Why
 
@@ -31,7 +31,7 @@ Merging `main` into a branch that changed `who-does-what.md` stops with a confli
 
 ### Merging main: `tools/merge-main.py`
 
-Replaying the morning's merges in a sandbox - every branch of the night queue merged in turn, with `merge-item.py`, against local copies of both repositories - showed a second kind of bookkeeping conflict. A branch stacked on another has that one's lines with `NNN` ("journal entry NNN", "**Done (entry NNN)**"); once that one is merged, `main` has them numbered (135, 133), and where the stacked branch changed the lines next to them, git sees two changes to one place. `j93-ci` stopped in `tools/night-test.py` and `docs/items/era-25.md` so.
+Replaying the morning's merges in a sandbox - every branch of the night queue merged in turn, with `merge-item.py`, against local copies of both repositories - showed a second kind of bookkeeping conflict. A branch stacked on another has that one's lines with `NNN` ("journal entry 132", "**Done (entry 132)**"); once that one is merged, `main` has them numbered (135, 133), and where the stacked branch changed the lines next to them, git sees two changes to one place. `j93-ci` stopped in `tools/night-test.py` and `docs/items/era-25.md` so.
 
 `tools/merge-main.py` merges `main` in (TheKernel's first, for an item with a TheKernel branch) and settles both kinds: for each file in conflict, every line of the merge base with `NNN` that `main` has with a number instead is numbered the same way in the base and the branch, and the file merged again - `main`'s change is then in both, and only real changes are left; a conflict in `who-does-what.md` goes to `work-list-move.py`. Anything else is left, and named. It does not commit.
 

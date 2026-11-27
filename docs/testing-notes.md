@@ -4510,3 +4510,20 @@ From a session's tree:
 | `sh tools/merge-item-test.sh /tmp/mit` | A and D `exit 0`; `second commits: 0`; `the row's commit ... is in main: yes`; B and C stopped as before |
 
 Automated: not part of `make test64` - it is the merge script's own test.
+
+---
+
+## 132 · The work list split: the rules in one file, the items a file per era, rows merged one at a time
+
+[The entry](journal/132-work-list-split.md)
+
+In a session's tree:
+
+| Do | You should see |
+|---|---|
+| `wc -l docs/who-does-what.md docs/items/*.md` | The hub about 173 lines; an era file 15 to 51 |
+| `python3 tools/lanes-check.py` | `every open item is in one lane` |
+| Two branches marking two neighbouring items done, merged | No conflict (with the driver set up: `git config --get merge.rows.driver`) |
+| A branch from before the split: `git merge origin/main`, then `python3 tools/work-list-move.py` | `changed docs/items/...`, `every change made`; `git diff --cached` shows the rows in their era files |
+
+Automated: not part of `make test64`; `merge-item-test.sh` covers the merge script on it.

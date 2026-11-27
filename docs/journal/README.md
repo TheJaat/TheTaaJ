@@ -139,6 +139,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 129 | [A run queue per CPU, part 1 (MaK-WSL/sched, K68, with half of K101): a woken thread waits at the CPU that takes it, or the idle one it last ran on, or the home with fewest waiting; choosing strict and FIFO across all queues, so an idle CPU takes work from a busy one and four busy programs on two CPUs get 998-999 ms each; own-queue-first was unfair (one got 1497 ms) and was taken out; the lock per queue is K193](129-run-queues.md) | written | `f42de356` (TheKernel `b5fc3b3`) |
 | 130 | [A child takes its parent's nice (MaK-WSL/sched, K190): a memory object records its maker's priority, and a program started from it takes that priority, as it takes its memory limit (entry 096); clamped to the child's ceiling, so the shell's -5 is not passed on](130-nice-inherit.md) | written | `4198dbab` (TheKernel `63a5492`) |
 | 131 | [One commit per merge: the README row's commits written in the merge itself (TheJat-WSL/ci, merged after its night test)](131-one-merge-commit.md) | written | `ced87562` |
+| 132 | [The work list split: the rules in one file, the items a file per era, rows merged one at a time (TheJat-WSL/ci, merged after its night test)](132-work-list-split.md) | written | `d9e48d03` |
 
 ## How to run what the entries describe
 

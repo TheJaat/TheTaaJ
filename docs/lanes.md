@@ -4,7 +4,7 @@ Fourteen **lanes**, each worked by one session on one machine, so that the eras 
 
 A new session reads `docs/start-here.md` first; it says how to work. This file says **what** each lane does, in which order, which files are its own, and what it waits for from other lanes.
 
-**Status lives in the work list (`docs/items/*.md`, indexed in `docs/who-does-what.md`), not here.** An item's Notes there say when it is done ("**Done (entry NNN)**"). This file holds each lane's order, and a lane's table is changed only by that lane's session (rule 6). `python3 tools/lanes-check.py` says which open items are in no lane, or in two.
+**Status lives in the work list (`docs/items/*.md`, indexed in `docs/who-does-what.md`), not here.** An item's Notes there say when it is done ("**Done (entry 132)**"). This file holds each lane's order, and a lane's table is changed only by that lane's session (rule 6). `python3 tools/lanes-check.py` says which open items are in no lane, or in two.
 
 ## The week (from 2026-11-27)
 
