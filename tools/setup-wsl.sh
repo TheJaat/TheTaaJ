@@ -67,6 +67,11 @@ esac
 
 # --- 2. Packages -----------------------------------------------------------
 
+# As root - in a container (tools/clean-build.sh, journal entry NNN) - there is no
+# one to ask, and often no sudo: run the commands as they are.
+SUDO=sudo
+[ "$(id -u)" = 0 ] && SUDO=
+
 say "2/7 Installing Ubuntu packages (sudo)"
 PACKAGES=(
     # building
@@ -83,8 +88,8 @@ PACKAGES=(
     # handy: reading AArch64's device tree, debugging
     device-tree-compiler gdb
 )
-sudo apt-get update -q
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q "${PACKAGES[@]}"
+$SUDO apt-get update -q
+$SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y -q "${PACKAGES[@]}"
 
 # --- 3. Rust ---------------------------------------------------------------
 
@@ -109,10 +114,10 @@ if [ -e /dev/kvm ]; then
     if [ -r /dev/kvm ] && [ -w /dev/kvm ]; then
         note "/dev/kvm is usable: QEMU will run x86_64 at full speed"
     else
-        sudo usermod -aG kvm "$USER"
+        $SUDO usermod -aG kvm "$USER"
         note "added $USER to the kvm group; it takes effect in a new shell."
         note "Until then: sudo setfacl -m u:$USER:rw /dev/kvm (done now)"
-        sudo setfacl -m "u:$USER:rw" /dev/kvm 2>/dev/null || true
+        $SUDO setfacl -m "u:$USER:rw" /dev/kvm 2>/dev/null || true
     fi
 else
     note "no /dev/kvm: QEMU will emulate (slow, but everything works)."

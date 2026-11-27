@@ -83,9 +83,72 @@ struct SlotState {
     endpoints: HashMap<u8, Endpoint>,
 }
 
+/// The DMA memory: bytes, page-aligned as real DMA memory is. The driver
+/// reads and writes it in 32- and 64-bit words; in a `Vec<u8>` those were
+/// at any address, and a misaligned word is undefined behaviour, which
+/// Miri found (K187).
+///
+/// And one base pointer for everyone: the driver's `Dma` and the
+/// simulator's slices both come from it. With the driver's pointer taken
+/// through a `&mut [u8]`, each slice the simulator took afterwards was a
+/// new exclusive borrow that made the driver's pointer invalid - Rust's
+/// aliasing rules, which Miri checks: the simulator plays a device, which
+/// on a real machine is outside Rust altogether.
+pub struct Memory {
+    pages: Vec<Page>,
+    length: usize,
+    base: *mut u8,
+}
+
+impl Default for Memory {
+    fn default() -> Memory {
+        Memory::new(0)
+    }
+}
+
+#[derive(Clone, Copy)]
+#[repr(C, align(4096))]
+struct Page([u8; 4096]);
+
+impl Memory {
+    pub fn new(length: usize) -> Memory {
+        let mut pages = std::vec![Page([0; 4096]); length.div_ceil(4096)];
+        // From the Vec's buffer, with no reference in between; the pages
+        // never move (the Vec is never grown).
+        let base = pages.as_mut_ptr().cast();
+        Memory { pages, length, base }
+    }
+
+    /// The memory's start, for the driver's `Dma`.
+    pub fn base(&self) -> *mut u8 {
+        self.base
+    }
+
+    /// Makes it `length` bytes long, if that is shorter (as Vec::truncate).
+    pub fn truncate(&mut self, length: usize) {
+        self.length = self.length.min(length);
+    }
+}
+
+impl core::ops::Deref for Memory {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        // SAFETY: the pages are `length` bytes and more, one after another,
+        // owned by `self`.
+        unsafe { core::slice::from_raw_parts(self.base, self.length) }
+    }
+}
+
+impl core::ops::DerefMut for Memory {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        // SAFETY: as for `deref`, and borrowed mutably.
+        unsafe { core::slice::from_raw_parts_mut(self.base, self.length) }
+    }
+}
+
 #[derive(Default)]
 pub struct State {
-    pub memory: Vec<u8>,
+    pub memory: Memory,
     pub time: u64,
     /// How much of the register space the driver is given (Bus::size).
     pub registers_size: usize,
@@ -128,7 +191,7 @@ pub struct Sim(pub Rc<RefCell<State>>);
 impl Sim {
     pub fn new(ports: usize, usb3_from: usize) -> Sim {
         let mut state = State {
-            memory: std::vec![0u8; crate::xhci::layout::STORAGE_END],
+            memory: Memory::new(crate::xhci::layout::STORAGE_END),
             context_size: 32,
             registers_size: 0x4000,
             halted: true,
