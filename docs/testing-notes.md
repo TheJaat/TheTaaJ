@@ -4736,3 +4736,28 @@ make stage2-test
 | `stage2 host tests:` | `167 checks, 0 failed` (with the build's ISO and kernel) |
 
 Automated: `make test64`
+
+---
+
+## 144 · Boot time, measured and cut: the loader was copying a byte at a time and talking to the screen
+
+[The entry](journal/144-boot-time.md)
+
+```
+python3 -I tools/boot-timeline.py build/image64.iso --accel tcg
+```
+
+| Look for | You should see |
+|---|---|
+| `[stage2] started` ... `Hello from TheTaaJ!` | Each of the loader's steps with its time; the kernel's first line well under a second after `[stage2] started` |
+| `tcg:` | The whole boot to the shell, in seconds |
+
+```
+make run64
+```
+
+| Do | You should see |
+|---|---|
+| Watch the screen while it boots | Stage 2's few lines - the mount, the kernel loading - not a scroll of file names |
+
+Automated: `make test64`

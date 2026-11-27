@@ -1,10 +1,10 @@
 # Boot time, measured and cut: the loader was copying a byte at a time and talking to the screen
 
-*Journal entry #NNN · a step, MaK-WSL/boot's K23, with K128. Written on MaK-WSL/boot. A boot's time, stamped line by line from outside, with stage 2 now marking its own steps on the serial port. It showed where the loader's time went: copying memory one byte per turn of an unoptimised C loop (emulated, ten seconds), and printing on the VGA text screen (under KVM, most of a second). Both cut. An emulated boot reaches the kernel in under half a second instead of fourteen; one under KVM in about half the time.*
+*Journal entry #144 · a step, MaK-WSL/boot's K23, with K128. Written on MaK-WSL/boot. A boot's time, stamped line by line from outside, with stage 2 now marking its own steps on the serial port. It showed where the loader's time went: copying memory one byte per turn of an unoptimised C loop (emulated, ten seconds), and printing on the VGA text screen (under KVM, most of a second). Both cut. An emulated boot reaches the kernel in under half a second instead of fourteen; one under KVM in about half the time.*
 
 ## Why
 
-K23: "measure boot time on KVM and on the real PC, cut the slow parts". K131 (entry NNN, just before this one) halved an emulated boot's way to the kernel by reading 16 sectors per BIOS call - but measured only the total. Where the rest went, nobody could see: stage 2 writes on the screen, and the screen is in no log.
+K23: "measure boot time on KVM and on the real PC, cut the slow parts". K131 (entry 144, just before this one) halved an emulated boot's way to the kernel by reading 16 sectors per BIOS call - but measured only the total. Where the rest went, nobody could see: stage 2 writes on the screen, and the screen is in no log.
 
 ## How it was measured
 
