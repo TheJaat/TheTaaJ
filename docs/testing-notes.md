@@ -4527,3 +4527,18 @@ In a session's tree:
 | A branch from before the split: `git merge origin/main`, then `python3 tools/work-list-move.py` | `changed docs/items/...`, `every change made`; `git diff --cached` shows the rows in their era files |
 
 Automated: not part of `make test64`; `merge-item-test.sh` covers the merge script on it.
+
+---
+
+## 133 · A clean build from a fresh clone, in a container, with one command
+
+[The entry](journal/133-clean-build.md)
+
+From any directory (it needs `uidmap`, `curl`, `gpgv`, and a range in `/etc/subuid`; about 35 minutes):
+
+| Do | You should see |
+|---|---|
+| `sh tools/clean-build.sh` | `ubuntu-base-24.04.5-base-amd64.tar.gz: signature and checksum good`, then after about 35 minutes `test64: all passed` and `a fresh clone of main builds and passes on a clean Ubuntu 24.04` |
+| `ls ~/.cache/taaj-clean-build/logs` | The run's log; `grep "LLVM:\|QEMU:" it` shows `18.1.3` and `-accel kvm` |
+
+Automated: not part of `make test64` - it runs `make test64` itself, in the clean machine.

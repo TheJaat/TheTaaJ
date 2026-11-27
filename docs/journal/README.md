@@ -140,6 +140,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 130 | [A child takes its parent's nice (MaK-WSL/sched, K190): a memory object records its maker's priority, and a program started from it takes that priority, as it takes its memory limit (entry 096); clamped to the child's ceiling, so the shell's -5 is not passed on](130-nice-inherit.md) | written | `4198dbab` (TheKernel `63a5492`) |
 | 131 | [One commit per merge: the README row's commits written in the merge itself (TheJat-WSL/ci, merged after its night test)](131-one-merge-commit.md) | written | `ced87562` |
 | 132 | [The work list split: the rules in one file, the items a file per era, rows merged one at a time (TheJat-WSL/ci, merged after its night test)](132-work-list-split.md) | written | `d9e48d03` |
+| 133 | [A clean build from a fresh clone, in a container, with one command (TheJat-WSL/ci, merged after its night test)](133-clean-build.md) | written | `7333563d` |
 
 ## How to run what the entries describe
 
