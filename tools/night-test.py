@@ -455,7 +455,7 @@ def merge_now(branch, main_tested):
     try:
         # A git error here - the branch checked out in another tree, say -
         # leaves this branch for its session; it does not end the night
-        # (the first real night's last merge, entry NNN).
+        # (the first real night's last merge, entry 140).
         git("switch", "-q", "-C", branch, head)
         if kernel_branch:
             git("switch", "-q", "-C", branch, git("rev-parse", "HEAD", cwd=KERNEL), cwd=KERNEL)

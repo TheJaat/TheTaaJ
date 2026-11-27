@@ -4657,3 +4657,18 @@ From a session's tree:
 | `TAAJ_SESSION=TheJat-WSL/ci python3 tools/night-test.py --wait 60 --merge` | The night: each branch tested, `merged`, the next on `main` |
 
 Automated: not part of `make test64`.
+
+---
+
+## 140 · The first night: nine items tested and merged, and what it found
+
+[The entry](journal/140-night-2026-11-27.md)
+
+From a session's tree, on a branch not in the queue:
+
+| Do | You should see |
+|---|---|
+| `python3 tools/night-test.py --merge QUEUE` with a queued branch checked out in another tree | `night-test: --merge, but these queued branches are checked out in other trees:` and the branch and tree; exit 1; nothing tested |
+| `sh tools/merge-rehearsal.sh` | Each queued branch `passed`, then `merged`; `N of N merged` |
+
+Automated: not part of `make test64`.
