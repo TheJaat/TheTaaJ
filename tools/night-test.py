@@ -213,15 +213,61 @@ def prepare(branch, base_taaj, base_kernel):
     return kernel or git("ls-tree", "HEAD", "kernel").split()[2]
 
 
+TOTALS = {"tests": 0, "testing": 0, "cpu": 0.0, "waiting": 0, "passed": 0, "failed": 0, "fixes": 0}
+
+
 def test(log):
+    """make test64 (or the stand-in), under the machine's test64 lock.
+    Every line of the log is stamped with the minutes and seconds since
+    the start - a part's output comes as a block when it ends
+    (--output-sync), so its stamp is when it finished - and the end
+    has the CPU time and memory /usr/bin/time measured; all for the
+    morning's look at what to make faster (entry NNN). Returns (status,
+    seconds, the parts that failed, CPU seconds)."""
     command = os.environ.get("NIGHT_TEST", "make --no-print-directory -k test64")
     setup = f". {LLVM} && make_flags=\"LLVM_TBLGEN=$LLVM_TBLGEN\" || make_flags=" if os.path.isfile(LLVM) else "make_flags="
-    script = f"{setup}; flock /tmp/taaj-test64.lock sh -c \"{command} $make_flags\""
+    measured = "/usr/bin/time -f 'night-test: CPU %U s user, %S s system; at most %M KB; %e s' " if os.path.exists("/usr/bin/time") else ""
+    script = f"{setup}; flock /tmp/taaj-test64.lock sh -c \"echo night-test: the test64 lock taken; {measured}{command} $make_flags\""
+    failed_list = os.path.join(TREE, "build/test64-failed")
+    if os.path.exists(failed_list):
+        os.remove(failed_list)
     start = time.time()
     with open(log, "w") as out:
-        status = subprocess.run(["sh", "-c", script], cwd=TREE, stdout=out, stderr=subprocess.STDOUT).returncode
-    failed = sorted({m for m in re.findall(r"FAIL[^:]*: (.{0,80})", open(log, errors="replace").read())})
-    return status, int(time.time() - start), failed
+        child = subprocess.Popen(["sh", "-c", script], cwd=TREE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                 text=True, errors="replace")
+        for line in child.stdout:
+            gone = int(time.time() - start)
+            out.write(f"[{gone // 60:02}:{gone % 60:02}] {line}")
+        status = child.wait()
+    seconds = int(time.time() - start)
+    text = open(log, errors="replace").read()
+    # make test64 writes what failed (tools/test64.sh); else the FAIL lines.
+    if os.path.exists(failed_list) and open(failed_list).read().split():
+        failed = open(failed_list).read().split()
+    else:
+        failed = sorted({m for m in re.findall(r"FAIL[^:]*: (.{0,80})", text)})
+    cpu = re.search(r"night-test: CPU ([\d.]+) s user, ([\d.]+) s system", text)
+    cpu = float(cpu.group(1)) + float(cpu.group(2)) if cpu else 0.0
+    TOTALS["tests"] += 1
+    TOTALS["testing"] += seconds
+    TOTALS["cpu"] += cpu
+    TOTALS["passed" if status == 0 else "failed"] += 1
+    return status, seconds, failed, cpu
+
+
+def minutes(seconds):
+    return f"{seconds // 60} min {seconds % 60:02} s" if seconds >= 60 else f"{seconds} s"
+
+
+def fixes(before, after):
+    """The commits that came between a failed try and the next: the fix,
+    as its commit messages say."""
+    found = []
+    for cwd, commits in ((TREE, (before[0], after[0])), (KERNEL, (before[1], after[1]))):
+        if commits[0] and commits[1] and commits[0] != commits[1]:
+            out = git("log", "--format=%h %s", f"{commits[0]}..{commits[1]}", cwd=cwd, check=False)
+            found += [line[:120] for line in out.splitlines()]
+    return found
 
 
 def every_branch(logs, report, lines, taaj, kernel_heads, taaj_repository, kernel_repository, record):
@@ -247,7 +293,7 @@ def every_branch(logs, report, lines, taaj, kernel_heads, taaj_repository, kerne
         how = "main as it is" if branch == "main" else "with main merged in"
         for where, commit in ((taaj_repository, taaj.get(branch)), (kernel_repository, kernel_head)):
             post(where, commit, "pending", f"make test64 running, {how}")
-        status, seconds, failed = test(log)
+        status, seconds, failed, cpu = test(log)
         if status == 0:
             said_result = f"passed in {seconds // 60} min, {how}"
         else:
@@ -255,7 +301,7 @@ def every_branch(logs, report, lines, taaj, kernel_heads, taaj_repository, kerne
         for where, commit in ((taaj_repository, taaj.get(branch)), (kernel_repository, kernel_head)):
             post(where, commit, "success" if status == 0 else "failure", said_result)
         remember(branch)
-        lines.append(f"| {branch} | main | **{'passed' if status == 0 else f'FAILED ({status})'}** | {seconds // 60} min | {'; '.join(failed[:5])} | `{log}` |")
+        lines.append(f"| {branch} | main | **{'passed' if status == 0 else f'FAILED ({status})'}** | {minutes(seconds)} (CPU {minutes(int(cpu))}) | {'; '.join(failed[:5])} | `{log}` |")
         open(report, "w").write("\n".join(lines) + "\n")
 
 
@@ -288,22 +334,33 @@ def night_queue(logs, report, lines):
             log = os.path.join(logs, f"{branch}-{attempt}.log")
             try:
                 kernel = prepare(branch, base_taaj, base_kernel)
-                status, seconds, failed = test(log)
+                status, seconds, failed, cpu = test(log)
                 why = "; ".join(failed[:5]) or "see the log"
             except RuntimeError as error:
-                status, seconds, why, log = "does not merge", 0, str(error), None
+                status, seconds, why, log, cpu = "does not merge", 0, str(error), None, 0.0
+            took = f"{minutes(seconds)} (CPU {minutes(int(cpu))})" if seconds else ""
             if status == 0:
                 tested[branch] = (git("rev-parse", "HEAD"), kernel)
                 note = push(branch)
-                lines.append(f"| {branch} | {said}{again} | **passed**{note} | {seconds // 60} min | | `{log}` |")
+                lines.append(f"| {branch} | {said}{again} | **passed**{note} | {took} | | `{log}` |")
                 write(report, lines)
                 break
             result = "**does not merge**" if status == "does not merge" else f"**FAILED** ({status})"
-            lines.append(f"| {branch} | {said}{again} | {result} | {seconds // 60} min | {why} | {f'`{log}`' if log else ''} |")
+            lines.append(f"| {branch} | {said}{again} | {result} | {took} | {why} | {f'`{log}`' if log else ''} |")
             write(report, lines)
+            waited = time.time()
             if not wait_for_fix(branch, now):
-                lines.append(f"| {branch} | | no fix pushed for {WAIT} min: the branches after it are not run | | | |")
+                TOTALS["waiting"] += int(time.time() - waited)
+                stop = f"no fix pushed for {WAIT} min" if WAIT else "failed, no --wait"
+                lines.append(f"| {branch} | | {stop}: the branches after it are not run | | | |")
                 break
+            git("fetch", "-q", "origin")
+            git("fetch", "-q", "origin", cwd=KERNEL)
+            fixed_by = fixes(now, heads_of(branch))
+            TOTALS["waiting"] += int(time.time() - waited)
+            TOTALS["fixes"] += 1
+            lines.append(f"| {branch} | | fixed in {minutes(int(time.time() - waited))} by: {'; '.join(fixed_by) or 'a new commit'} | | | |")
+            write(report, lines)
 
 
 def heads_of(branch):
@@ -342,6 +399,9 @@ def write(report, lines):
     open(report, "w").write("\n".join(lines) + "\n")
 
 
+STARTED = time.time()
+
+
 def main():
     tree()
     night = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -359,6 +419,16 @@ def main():
         night_queue(logs, report, lines)
     else:
         every_branch(logs, report, lines, taaj, kernel_heads, taaj_repository, kernel_repository, record)
+    wall = int(time.time() - STARTED)
+    lines += ["", "## For the morning", "",
+              f"- Wall time {minutes(wall)}: testing {minutes(TOTALS['testing'])} ({TOTALS['tests']} runs: "
+              f"{TOTALS['passed']} passed, {TOTALS['failed']} failed), waiting for fixes {minutes(TOTALS['waiting'])} "
+              f"({TOTALS['fixes']} fixes), the rest fetching and merging.",
+              f"- CPU {minutes(int(TOTALS['cpu']))} in all"
+              + (f", {TOTALS['cpu'] / max(TOTALS['testing'], 1):.1f} CPUs busy on average while testing." if TOTALS['cpu'] else "."),
+              "- Each log's lines are stamped with the time since its test started: a part's block ends when the part did - "
+              "the slow ones are where to look first.",
+              "- The session's notes, what it fixed and what could be faster: the night's journal entry."]
     open(report, "w").write("\n".join(lines) + "\n")
     print("\n".join(lines))
     print(f"\nnight-test: the report is {report}")
