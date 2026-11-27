@@ -4542,3 +4542,18 @@ From any directory (it needs `uidmap`, `curl`, `gpgv`, and a range in `/etc/subu
 | `ls ~/.cache/taaj-clean-build/logs` | The run's log; `grep "LLVM:\|QEMU:" it` shows `18.1.3` and `-accel kvm` |
 
 Automated: not part of `make test64` - it runs `make test64` itself, in the clean machine.
+
+---
+
+## 134 · Miri over the host tests: undefined behaviour in three simulators
+
+[The entry](journal/134-miri.md)
+
+From the root of TheTaaJ (the first run installs the nightly; then 20 to 30 minutes):
+
+| Do | You should see |
+|---|---|
+| `make miri` | A table: the eight crates with `unsafe` and `ok. N passed; 0 failed; M ignored`, the others `skipped: no unsafe` |
+| In `usb/src/tests/mod.rs`, `start`, hand the driver a misaligned base: `(s.memory.base().wrapping_add(1), s.memory.len() - 1)`; then `cd usb && cargo test` | The tests that start the controller (23 of 25) panic: `DMA memory must be aligned to 8 bytes` - the check `Dma::new` now makes. Put it back |
+
+Automated: not part of `make test64`; `make miri` is a night job.
