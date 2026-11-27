@@ -173,6 +173,7 @@ Each machine has its own table and changes only its own, so two machines never e
 | Step | Branch |
 |---|---|
 | MaK-WSL/sched: K190, a child takes its parent's nice; K193 waits for the user's decision (per-CPU locks cost exact fairness) | `k190-nice-inherit` |
+| MaK-WSL/boot: K129, host tests for stage 2 (the ISO reader, the ELF loader, the page tables); waits for the user's yes to merge | `k129-stage2-tests` |
 
 ### Now: TheJat-WSL
 
@@ -695,7 +696,7 @@ What is missing:
 | # | Item | Size | Notes |
 |---|---|---|---|
 | K128 | **`abc.txt` and `random.txt` removed** from TheBootloader | S | MaK-WSL's. First: trivial |
-| K129 | **Host tests** for the ISO 9660 reader, the ELF loader and the page-table builder, as the kernel's crates have | S | Early: the items below change all three |
+| K129 | **Host tests** for the ISO 9660 reader, the ELF loader and the page-table builder, as the kernel's crates have | S | **Done (entry NNN)**: `bootloader/tests/`, stage 2's own files run unchanged as 32-bit programs at its own addresses; 152 checks with the build's ISO and kernel (`make stage2-test`); eight bugs found and fixed (four wrap-arounds in the ELF loader's bounds, four in the ISO reader). Left: the UEFI loaders' C code |
 | K130 | **A kernel of any size from BIOS**: read in pieces to anywhere above 1 MiB (unreal mode, or a copy out of a buffer below 1 MiB after each read) | M | Ends the 3 MiB wall; J51 then is no longer urgent |
 | K131 | **A fast BIOS read**: as many sectors per `int 13h` as the BIOS takes, or staying in real mode for the whole read; measured before and after | S | Is K51 |
 | K132 | **Two kernels, A and B**: a new one is tried once, TheTaaJ marks it good after it has booted, and the loader goes back to the other one if it was not marked | M | The era's milestone. With K134 |
