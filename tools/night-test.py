@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """night-test.py [QUEUE] - tests the queued branches, one after another,
 and writes a report for the morning (journal entry NNN).
+night-test.py --all - our own CI (J93): main, and every branch of ours
+not merged yet whose newest commit has not been tested (entry NNN).
 
 By day, items are developed with quick checks only (their own boot test,
 the host tests, `make unsafe-check`) and pushed to their branches. This
@@ -24,11 +26,24 @@ For each branch, in its own tree (../TheTaaJ-night, made the first time):
      failed, the log. A branch that does not merge, or whose base failed,
      says so.
 
+--all needs no queue. It finds the branches itself: every branch on
+TheTaaJ's server (`origin`; only the project's own branches - never a
+pull request or a fork, rule 14) that main does not already contain,
+`llvm-23` left out, and main itself, tested as it is. A branch is
+tested again only when it (or its TheKernel branch) has a new commit:
+what was tested is kept in ~/.cache/taaj-night/tested. Nothing is
+pushed - the branches are other sessions'. Each result is posted
+instead, as a commit status on the branch's newest commit, TheTaaJ's
+and TheKernel's (`gh`; context "MACHINE test64", MACHINE from
+TAAJ_MACHINE, say TheJat-WSL), where the session whose branch it is
+sees it on GitHub.
+
 NIGHT_TEST="make unsafe-check" (say) runs that instead of make test64, to
-try this script itself in minutes - and then nothing is pushed: only a
-real make test64 makes a branch's merge fit to push.
+try this script itself in minutes - and then nothing is pushed or
+posted: only a real make test64 makes a branch's merge fit to push.
 """
 import datetime
+import json
 import os
 import re
 import subprocess
@@ -36,8 +51,14 @@ import sys
 import time
 
 HOME = os.path.expanduser("~")
-QUEUE = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HOME, ".cache/taaj-night/queue")
+ALL = "--all" in sys.argv[1:]
+ARGS = [a for a in sys.argv[1:] if a != "--all"]
+QUEUE = ARGS[0] if ARGS else os.path.join(HOME, ".cache/taaj-night/queue")
 OUT = os.path.join(HOME, ".cache/taaj-night")
+TESTED = os.path.join(OUT, "tested")
+MACHINE = os.environ.get("TAAJ_MACHINE", "ci")
+STAND_IN = bool(os.environ.get("NIGHT_TEST"))
+NOT_TESTED = {"main", "llvm-23"}  # main is tested as it is, first
 SOURCE = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True, check=True).stdout.strip()
 TREE = os.path.join(os.path.dirname(SOURCE), "TheTaaJ-night")
 KERNEL = os.path.join(TREE, "kernel")
@@ -66,6 +87,59 @@ def queue():
     return entries
 
 
+def heads(cwd):
+    """Branch -> newest commit, on the server."""
+    found = {}
+    for line in git("ls-remote", "--heads", "origin", cwd=cwd).splitlines():
+        commit, ref = line.split()
+        found[ref.removeprefix("refs/heads/")] = commit
+    return found
+
+
+def tested_before():
+    try:
+        return json.load(open(TESTED))
+    except (OSError, ValueError):
+        return {}
+
+
+def everything(taaj, kernel):
+    """--all: main, then each branch main does not contain, whose commits
+    (TheTaaJ's and TheKernel's) were not tested before. Branches only from
+    our own server: no pull request, no fork (rule 14)."""
+    before = tested_before()
+    entries = []
+    if before.get("main") != [taaj["main"], kernel.get("main")]:
+        entries.append(("main", None))
+    for branch in sorted(taaj):
+        if branch in NOT_TESTED:
+            continue
+        if run("git", "merge-base", "--is-ancestor", taaj[branch], "origin/main", check=False).returncode == 0:
+            continue  # merged already
+        if before.get(branch) != [taaj[branch], kernel.get(branch)]:
+            entries.append((branch, None))
+    return entries
+
+
+def post(repository, commit, state, description):
+    """A commit status on GitHub, beside the branch; a failure to post is
+    only reported."""
+    if STAND_IN or not commit:
+        return
+    done = subprocess.run(["gh", "api", "-X", "POST", f"repos/{repository}/statuses/{commit}",
+                           "-f", f"state={state}", "-f", f"context={MACHINE} test64",
+                           "-f", f"description={description[:140]}"],
+                          capture_output=True, text=True)
+    if done.returncode != 0:
+        print(f"night-test: could not post to {repository}: {done.stderr.strip()[:200]}", flush=True)
+
+
+def repository(cwd):
+    """owner/name of the server's repository, from origin's address."""
+    url = git("remote", "get-url", "origin", cwd=cwd)
+    return re.search(r"[:/]([^/:]+/[^/]+?)(\.git)?$", url).group(1)
+
+
 def tree():
     """The night's own tree: a worktree of this repository, with the
     submodules and the cross compiler (as new-session.sh makes them)."""
@@ -88,6 +162,9 @@ def prepare(branch, base_taaj, base_kernel):
     git("reset", "-q", "--hard")
     git("checkout", "-q", "--detach", f"origin/{branch}")
     git("submodule", "update", "-q", "--init", "kernel", "bootloader")
+    if branch == "main":
+        # main as it is: its own pointer, nothing merged.
+        return git("ls-tree", "HEAD", "kernel").split()[2]
     kernel_branch = git("ls-remote", "origin", f"refs/heads/{branch}", cwd=KERNEL)
     kernel = None
     if kernel_branch:
@@ -138,11 +215,14 @@ def main():
     os.makedirs(logs, exist_ok=True)
     report = os.path.join(OUT, "reports", f"{night}.md")
     os.makedirs(os.path.dirname(report), exist_ok=True)
-    lines = [f"# Night test {night}", "", "| Branch | Base | Result | Time | What failed | Log |", "|---|---|---|---|---|---|"]
+    lines = [f"# {'CI' if ALL else 'Night test'} {night}", "", "| Branch | Base | Result | Time | What failed | Log |", "|---|---|---|---|---|---|"]
     tested = {}  # branch -> (TheTaaJ commit, TheKernel commit), if it passed
     git("fetch", "-q", "origin")
     git("fetch", "-q", "origin", cwd=KERNEL)
-    for branch, after in queue():
+    taaj, kernel_heads = heads(TREE), heads(KERNEL)
+    taaj_repository, kernel_repository = repository(TREE), repository(KERNEL)
+    record = tested_before()
+    for branch, after in (everything(taaj, kernel_heads) if ALL else queue()):
         log = os.path.join(logs, f"{branch}.log")
         if after:
             base = tested.get(after)
@@ -159,10 +239,34 @@ def main():
         try:
             kernel = prepare(branch, base_taaj, base_kernel)
         except RuntimeError as why:
+            if ALL:
+                post(taaj_repository, taaj.get(branch), "failure", f"does not merge with main: {why}")
+                if not STAND_IN:  # tried again only when the branch moves
+                    record[branch] = [taaj.get(branch), kernel_heads.get(branch)]
+                    with open(TESTED, "w") as out:
+                        json.dump(record, out, indent=1, sort_keys=True)
             lines.append(f"| {branch} | {said} | **does not merge** | | {why} | |")
             continue
+        # main's own pointer for main (TheKernel's main may be newer).
+        kernel_head = (kernel if branch == "main" else kernel_heads.get(branch)) if ALL else None
+        how = "main as it is" if branch == "main" else "with main merged in"
+        if ALL:
+            post(taaj_repository, taaj.get(branch), "pending", f"make test64 running, {how}")
+            post(kernel_repository, kernel_head, "pending", f"make test64 running, {how}")
         status, seconds, failed = test(log)
-        if status == 0:
+        if ALL:
+            if status == 0:
+                said_result = f"passed in {seconds // 60} min, {how}"
+            else:
+                said_result = f"failed: {'; '.join(failed[:3]) or 'see the night report'}"
+            for where, commit in ((taaj_repository, taaj.get(branch)), (kernel_repository, kernel_head)):
+                post(where, commit, "success" if status == 0 else "failure", said_result)
+            if not STAND_IN:
+                record[branch] = [taaj.get(branch), kernel_heads.get(branch)]
+                with open(TESTED, "w") as out:
+                    json.dump(record, out, indent=1, sort_keys=True)
+            lines.append(f"| {branch} | {said} | **{'passed' if status == 0 else f'FAILED ({status})'}** | {seconds // 60} min | {'; '.join(failed[:5])} | `{log}` |")
+        elif status == 0:
             # Kept for the branches stacked on this one, and pushed, so the
             # morning merge finds the base already merged in.
             tested[branch] = (git("rev-parse", "HEAD"), kernel)
