@@ -91,8 +91,9 @@ unshare --map-auto --map-root-user --mount --pid --fork sh -eu -c '
 ' sh "$DIR" "$ROOTFS" "$IMAGE" "$REF" "$REPO" > "$LOG" 2>&1 && status=0 || status=$?
 
 tail -5 "$LOG"
-# The container's files, as the user namespace's root again.
-unshare --map-auto --map-root-user rm -rf "$ROOTFS"
+# The container's files - and the package cache's partial/, which apt's own
+# user owns - as the user namespace's root again.
+unshare --map-auto --map-root-user sh -c 'rm -rf "$1"; rm -rf "$2/partial"' sh "$ROOTFS" "$DIR/apt"
 if [ $status -eq 0 ]; then
     say "a fresh clone of $REF builds and passes on a clean Ubuntu 24.04 (log: $LOG)"
 else
