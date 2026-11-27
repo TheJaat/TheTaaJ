@@ -13,13 +13,79 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 const PHYSICAL: u64 = 0x0012_3000;
-const DISK_SECTORS: u64 = 4096;
+// Smaller under Miri, which interprets every byte copied: 2 MiB of disk
+// made each test take minutes there (K187).
+const DISK_SECTORS: u64 = if cfg!(miri) { 256 } else { 4096 };
+
+
+/// The DMA memory: bytes, page-aligned as real DMA memory is. The driver
+/// reads and writes it in 32- and 64-bit words; in a `Vec<u8>` those were
+/// at any address, and a misaligned word is undefined behaviour, which
+/// Miri found (K187), as in usb's.
+///
+/// And one base pointer for everyone: the driver's `Dma` and the
+/// simulator's slices both come from it. With the driver's pointer taken
+/// through a `&mut [u8]`, each slice the simulator took afterwards was a
+/// new exclusive borrow that made the driver's pointer invalid - Rust's
+/// aliasing rules, which Miri checks: the simulator plays a device, which
+/// on a real machine is outside Rust altogether.
+pub struct Memory {
+    pages: Vec<Page>,
+    length: usize,
+    base: *mut u8,
+}
+
+impl Default for Memory {
+    fn default() -> Memory {
+        Memory::new(0)
+    }
+}
+
+#[derive(Clone, Copy)]
+#[repr(C, align(4096))]
+struct Page([u8; 4096]);
+
+impl Memory {
+    pub fn new(length: usize) -> Memory {
+        let mut pages = std::vec![Page([0; 4096]); length.div_ceil(4096)];
+        // From the Vec's buffer, with no reference in between; the pages
+        // never move (the Vec is never grown).
+        let base = pages.as_mut_ptr().cast();
+        Memory { pages, length, base }
+    }
+
+    /// The memory's start, for the driver's `Dma`.
+    pub fn base(&self) -> *mut u8 {
+        self.base
+    }
+
+    /// Makes it `length` bytes long, if that is shorter (as Vec::truncate).
+    pub fn truncate(&mut self, length: usize) {
+        self.length = self.length.min(length);
+    }
+}
+
+impl core::ops::Deref for Memory {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        // SAFETY: the pages are `length` bytes and more, one after another,
+        // owned by `self`.
+        unsafe { core::slice::from_raw_parts(self.base, self.length) }
+    }
+}
+
+impl core::ops::DerefMut for Memory {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        // SAFETY: as for `deref`, and borrowed mutably.
+        unsafe { core::slice::from_raw_parts_mut(self.base, self.length) }
+    }
+}
 
 #[derive(Default)]
 struct State {
     global: [u32; 0x20],
     ports: [[u32; 0x20]; 32],
-    memory: Vec<u8>,
+    memory: Memory,
     physical: u64,
     disk: Vec<u8>,
     identify: Vec<u8>,
@@ -299,7 +365,7 @@ fn identify_data(sectors: u64, lba48: bool, model: &str) -> Vec<u8> {
 /// drive on port 1, and memory for 16 sectors at a time.
 fn machine(disk_on: Option<usize>) -> Sim {
     let mut s = State {
-        memory: vec![0; layout::needed(16 * SECTOR)],
+        memory: Memory::new(layout::needed(16 * SECTOR)),
         physical: PHYSICAL,
         disk: (0..DISK_SECTORS as usize * SECTOR).map(|i| (i * 7 + i / SECTOR) as u8).collect(),
         identify: identify_data(DISK_SECTORS, true, "QEMU HARDDISK"),
@@ -322,7 +388,7 @@ fn machine(disk_on: Option<usize>) -> Sim {
 fn start(sim: &Sim, interrupts: bool) -> Result<Disk<Sim>, &'static str> {
     let (base, size) = {
         let mut s = sim.0.borrow_mut();
-        (s.memory.as_mut_ptr(), s.memory.len())
+        (s.memory.base(), s.memory.len())
     };
     // SAFETY: the Vec stays alive (and is never resized) as long as the
     // Sim, which the Disk holds.
@@ -369,6 +435,7 @@ fn without_an_interrupt_nothing_is_enabled() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "sectors past the smaller disk Miri gets (K187)")]
 fn sectors_go_to_the_disk_and_come_back() {
     let sim = machine(Some(0));
     let mut disk = start(&sim, true).unwrap();
@@ -494,9 +561,9 @@ fn memory_above_4_gib_needs_64_bit_dma() {
         let mut s = sim.0.borrow_mut();
         s.global[reg(hba::CAP)] &= !hba::CAP_S64A;
     }
-    let mut memory = vec![0u8; layout::needed(SECTOR)];
+    let memory = Memory::new(layout::needed(SECTOR));
     // SAFETY: as in `start`; never handed to the HBA (refused first).
-    let dma = unsafe { Dma::new(memory.as_mut_ptr(), 0xFFFF_F000, memory.len()) };
+    let dma = unsafe { Dma::new(memory.base(), 0xFFFF_F000, memory.len()) };
     assert_eq!(
         Disk::start(sim.clone(), dma, true).err(),
         Some("the DMA memory is above 4 GiB, which this controller cannot reach")
@@ -504,6 +571,7 @@ fn memory_above_4_gib_needs_64_bit_dma() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore = "sectors past the smaller disk Miri gets (K187)")]
 fn a_28_bit_disk_gets_the_old_commands() {
     let sim = machine(Some(0));
     sim.0.borrow_mut().identify = identify_data(DISK_SECTORS, false, "OLD DISK");

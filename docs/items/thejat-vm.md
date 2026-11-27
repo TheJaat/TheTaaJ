@@ -74,10 +74,10 @@ The order matters here: each item is needed by the ones after it.
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| J51 | Test programs out of the kernel image (onto the test disk) | M | The kernel image has ~680 KiB left under 3 MiB |
+| J51 | Test programs out of the kernel image (onto the test disk) | M | The kernel image has ~500 KiB left under 3 MiB (entry 122). **Not needed if K130 comes** (U7, the user's decision, 2026-11-27): the every-boot self-tests stay in the kernel |
 | J52 | A test that fails when rule 1 or rule 3 of `threads.rs` is broken | S | **Done (entry 119)**: rule 1 checked at every switch (the lock still held where it is released), rule 3 by the threads self-test (a waiter woken before it waits is still in its queue); each broken on purpose panics. Found and fixed with it: a panic on a machine with more CPUs than the kernel uses was a triple fault (the stopping NMI reached the CPUs left asleep); `fault-test.sh`'s new `page@20` checks it |
 | J53 | A test for the ticks mutation from entry 097 (late timer interrupts) | S | **Done (entry 128)**: the late-interrupts self-test (35 ms with interrupts off); entry 097's mutation now caught on x86 (on AArch64 it changes nothing) |
-| J54 | A fresh `git clone --recurse-submodules` builds and passes (in a clean container) | S | Never tried |
+| J54 | A fresh `git clone --recurse-submodules` builds and passes (in a clean container) | S | **Done (entry NNN)**, by J92 |
 | J55 | Programs moved into `/bin` on the run disks (libc's exec and the shell both look there, entries 100 and 101) | S | The disk recipes and every test put programs in the root and look for them there |
 | J56 | zlib (and later other libraries) installed on TheTaaJ's disk with its header, for programs compiled there | S | With step E, when there is a place for libraries on the disk |
 | J57 | exec without the go-between: signals sent to it passed on to the program it started, and a keyboard handed on | M | Entry 100's exec is spawn-and-wait |
