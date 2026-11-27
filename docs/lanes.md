@@ -211,7 +211,6 @@ Its files: all of TheBootloader; `kernel/kernel64/src/bootinfo.rs`, `elf.rs`, th
 | Item | Wave | Note |
 |---|---|---|
 | K128 | 1 | `abc.txt` and `random.txt` removed |
-| K129 | 1 | Host tests for the ISO reader, the ELF loader, the page tables |
 | K130 | 1 | A kernel of any size: ends the 3 MiB wall every lane is near |
 | K23 | 1 | Boot time measured and cut |
 | K135 | 2 | A relocatable kernel |
