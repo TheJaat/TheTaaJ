@@ -1,6 +1,6 @@
 # The fourth night: two branches merged, and the race hunt's first ten rounds, all passed
 
-*Journal entry #NNN · the night of 2026-11-28, on TheJat-WSL, written by TheJat-WSL/ci. Two branches were queued; both passed the first time and were merged under the user's standing yes (rule 2). Then the runner's new `--hunt 10` ran the first 10 of J95's 50 rounds on main: 67 parts each, and none failed.*
+*Journal entry #158 · the night of 2026-11-28, on TheJat-WSL, written by TheJat-WSL/ci. Two branches were queued; both passed the first time and were merged under the user's standing yes (rule 2). Then the runner's new `--hunt 10` ran the first 10 of J95's 50 rounds on main: 67 parts each, and none failed.*
 
 ## What was merged
 

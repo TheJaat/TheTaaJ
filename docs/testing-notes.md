@@ -4992,3 +4992,15 @@ make run64
 | On the keys labelled `hg;rpat patsfk f;`, then Enter | `display: keyboard layout us`: the keys type as labelled again |
 
 Automated: `make gui64-test`, `make aarch64-gui-test`, `make test64`
+
+---
+
+## 158 · The fourth night: two branches merged, and the race hunt's first ten rounds, all passed
+
+[The entry](journal/158-night-4.md)
+
+| Do | You should see |
+|---|---|
+| `cat ../TheTaaJ-night/build/race-hunt/tally.txt` | `race-hunt: 10 rounds in all`, and no part failed |
+
+Automated: not part of `make test64`.

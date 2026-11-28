@@ -165,6 +165,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 155 | [The third night: four branches, four passes, and the first parts ordered by their times (TheJat-WSL/ci, merged after its night test)](155-night-3.md) | written | `1e2567e6` |
 | 156 | [No flaky tests, part one: the q35's power test fixed, the TCP test's packets kept, and a race hunt night after night (TheJat-WSL/ci, merged after its night test)](156-no-flaky.md) | written | `b342c218` (TheKernel `84889a9`) |
 | 157 | [Real keys: one keyboard, its layout and its repeat, in the display (MaK-WSL/desktop, merged after its make test64)](157-real-keys.md) | written | `39c12ef4` (TheKernel `d8fb51f`) |
+| 158 | [The fourth night: two branches merged, and the race hunt's first ten rounds, all passed (TheJat-WSL/ci, merged after its night test)](158-night-4.md) | written | `b58747f8` |
 
 ## How to run what the entries describe
 
