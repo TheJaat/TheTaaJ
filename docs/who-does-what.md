@@ -125,7 +125,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| MaK-WSL/sched: K?-slow-kill, the self-test's kill too slow under load (entry 160's bug 6): every try's ticks in the panic, then a race hunt on `aarch64-thread-test`; K192, K101, K194, K195 after | `slow-kill` |
+| MaK-WSL/sched: K?-slow-kill, the self-test's kill too slow under load (entry 160's bug 6): every try's ticks in the panic; 4 full race-hunt rounds passed, 20 more tonight (`ALL=1 tools/race-hunt.sh 20`); K192, K101, K194, K195 after | `slow-kill` |
 | MaK-WSL/devices: K75, K77, K76, K81 next (K82 merged, entry 160) | |
 
 ### Now: TheJat-WSL
