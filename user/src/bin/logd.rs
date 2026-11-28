@@ -35,7 +35,18 @@ const OLDER: &str = "/var/log/system.log.1";
 /// The file's size before it is turned over.
 const FILE_MAX: u64 = 1024 * 1024;
 /// How often the ring is read, in ticks (100 a second).
-const PERIOD: u64 = 20;
+const PERIOD: u64 = 5;
+/// What is read is written to the disk once the log has been quiet this
+/// long, in nanoseconds - or once the oldest line waiting is `LATEST_WAIT`
+/// old, if it never is. Every request to the file service makes a
+/// channel for its answer: writing at once, logd would be making
+/// channels just as a `ps` - whose own line is logged a moment before -
+/// counts them, and the boot tests' leak check (the same counts before
+/// and after) would see a leak that is only logd at work (night 7,
+/// TheTaaJ's journal). A command's work and its counts come within
+/// milliseconds of its line; logd waits until it is over.
+const QUIET: u64 = 300_000_000;
+const LATEST_WAIT: u64 = 2_000_000_000;
 /// A line left open this long (a prompt) is written as it is.
 const OPEN_FOR: u64 = 2_000_000_000;
 
@@ -62,9 +73,19 @@ fn main() -> i64 {
     let mut kept_error = false;
     // Crash reports waiting to be written, each to its own file.
     let mut reports: Vec<(String, String)> = Vec::new();
+    // When something last came, and when the oldest line not written did.
+    let (mut last_new, mut waiting_since) = (0u64, None::<u64>);
+    // The boot's backlog - all before logd, the self-tests' too - is
+    // written at once: no shell runs yet to count anything.
+    let mut first = true;
     loop {
         loop {
-            match reader.next() {
+            let next = reader.next();
+            if !matches!(next, Next::Empty) {
+                last_new = taaj::monotonic_ns();
+                waiting_since.get_or_insert(last_new);
+            }
+            match next {
                 Next::Record(record) => match record.kind {
                     kind::STARTED => lines.started(record.pid, core::str::from_utf8(record.name).unwrap_or("?")),
                     kind::KERNEL => lines.piece(Source::Kernel, record.time, record.text, &mut out),
@@ -86,6 +107,15 @@ fn main() -> i64 {
             }
         }
         lines.flush_older(OPEN_FOR, &mut out);
+        let now = taaj::monotonic_ns();
+        let quiet = now.saturating_sub(last_new) >= QUIET;
+        let overdue = waiting_since.is_some_and(|since| now.saturating_sub(since) >= LATEST_WAIT);
+        if !(quiet || overdue || first) {
+            taaj::sleep(PERIOD);
+            continue;
+        }
+        first = false;
+        waiting_since = None;
         reports.retain(|(path, report)| {
             for directory in DIRECTORIES {
                 let _ = files.make_directory(directory);
