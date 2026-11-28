@@ -125,8 +125,8 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| MaK-WSL/sched: K192, K101, K194, K195 next (K193 merged, entry 153) | |
-| MaK-WSL/devices: K82, drivers killed mid-I/O (`kill64-test`): `make test64` passed; waits for the user's yes to merge | `k82-kill-drivers` |
+| MaK-WSL/sched: K?-slow-kill, the self-test's kill too slow under load (entry 160's bug 6): every try's ticks in the panic, then a race hunt on `aarch64-thread-test`; K192, K101, K194, K195 after | `slow-kill` |
+| MaK-WSL/devices: K75, K77, K76, K81 next (K82 merged, entry 160) | |
 
 ### Now: TheJat-WSL
 
