@@ -71,7 +71,7 @@ of every part (`ALL=1 tools/race-hunt.sh ROUNDS`), each round under the
 test64 lock. The hunt goes on from night to night where it stopped
 (build/race-hunt/summary.txt), and the report has the night's rounds
 and the tally of all of them: which parts ever failed, how often. A
-failed round's files are kept in build/race-hunt/round-N/. (entry NNN)
+failed round's files are kept in build/race-hunt/round-N/. (entry 156)
 
 --from BRANCH: starts the queue at BRANCH - after a runner fault, the
 rest of the night's queue. The branches before it are passed over; one

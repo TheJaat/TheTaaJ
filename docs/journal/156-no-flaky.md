@@ -1,6 +1,6 @@
 # No flaky tests, part one: the q35's power test fixed, the TCP test's packets kept, and a race hunt night after night
 
-*Journal entry #NNN · J95, first part (with K50 and K52). Written on TheJat-WSL/ci, by day, with quick checks only. J95 asks for every part of `make test64` run 50 times, and each part that ever fails fixed, or its limits measured again. This entry fixes the one flaky part the nights have shown so far, makes the other two known ones (K50, K52) leave enough behind to be understood, and lets the night runner run the 50 rounds a few at a time after each night's queue.*
+*Journal entry #156 · J95, first part (with K50 and K52). Written on TheJat-WSL/ci, by day, with quick checks only. J95 asks for every part of `make test64` run 50 times, and each part that ever fails fixed, or its limits measured again. This entry fixes the one flaky part the nights have shown so far, makes the other two known ones (K50, K52) leave enough behind to be understood, and lets the night runner run the 50 rounds a few at a time after each night's queue.*
 
 ## The q35's power test: `poweroff` typed before init gave up on the AHCI driver
 
