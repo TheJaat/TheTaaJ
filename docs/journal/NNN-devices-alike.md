@@ -55,6 +55,8 @@ Their first startup handle is the device's handle, no longer its registers, and 
 
 **6. Not explained: once, two channels more at the session's end.** After bug 4's fix, one `aarch64-keys-test` run of ten on K75 had 33 channels at its *last* `ps` against 31 at its first; the other nine, and seven on plain main, matched. Nothing was being written then, no driver restarted in the seconds before; `ps` cannot say whose the channels are. Left open as K?-ps-channels in `sched`, with bug 5: a count of channels per process in `ps` is the tool it needs.
 
+**7. Another race since the system log: `disk check` on a disk being written.** The next `make test64`: `aarch64-keys-test` - "disk check: FAILED - sectors read together differ from sectors read one by one". The shell's check reads the disk's first 256 sectors at once, then one at a time, and compares. Those are TaajFS's superblock and the blocks after it, which every commit rewrites, and since K136 logd commits the system log in the background - here just after the test's serial stalls, which log a few lines. The check now reads the 256 sectors at once again after the single reads: if those changed, so did the disk, and it tries again (five times at most); if they did not, the single reads must match them - so a driver that really returns different bytes still fails it. Not K75's, but it is where it showed.
+
 ## How I checked it
 
 - **Host**: `kernel/abi` (a `Bar` through its bytes, `config`'s argument), the PCI library's tests (`kind()` gone).

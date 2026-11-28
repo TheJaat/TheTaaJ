@@ -1249,13 +1249,30 @@ impl Shell {
         let full = u64::from(SECTORS_MAX) * SECTOR as u64;
 
         // 1. Many sectors at once are the same bytes as one at a time.
+        // The disk may be written meanwhile - the file service commits
+        // the system log to it in the background (logd, K136), and these
+        // first sectors are its superblock and what follows - so the
+        // many are read again after the ones: if they changed, the disk
+        // did, and it is tried again; if not, the ones must match them
+        // (K75's journal entry, bug 7).
         let mut window = Window::new(SECTORS_MAX).map_err(|_| "no memory for a window")?;
+        let mut again = Window::new(SECTORS_MAX).map_err(|_| "no memory for a window")?;
         let count = SECTORS_MAX.min(sectors as u32);
-        let many = disk.read_many(&mut window, 0, count).is_ok();
-        let mut same = many;
         let mut single = [0u8; SECTOR];
-        for n in 0..count as usize {
-            same = same && disk.read(n as u64, &mut single).is_ok() && window.bytes()[n * SECTOR..][..SECTOR] == single;
+        let mut same = false;
+        for _ in 0..5 {
+            let many = disk.read_many(&mut window, 0, count).is_ok();
+            same = many;
+            for n in 0..count as usize {
+                same = same && disk.read(n as u64, &mut single).is_ok() && window.bytes()[n * SECTOR..][..SECTOR] == single;
+            }
+            let bytes = count as usize * SECTOR;
+            let unchanged = disk.read_many(&mut again, 0, count).is_ok() && window.bytes()[..bytes] == again.bytes()[..bytes];
+            // Done if they match, or if they differ on a disk that did
+            // not change; written meanwhile, once more.
+            if same || unchanged {
+                break;
+            }
         }
         check(same, "sectors read together differ from sectors read one by one")?;
 
