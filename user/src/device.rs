@@ -9,7 +9,9 @@
 //! `claim_pci` and `claim_mmio` ask for those and fill in the parts of
 //! the description the kernel used to (`registers`, `io_base`, `msix`,
 //! `msi`; init fills `dma_physical` and `dma_size`), so that a driver's
-//! start goes on as before, with the handles it used to be given.
+//! start goes on as before, with the handles it used to be given. And
+//! `claim_pci` asks for the device's DMA, which lasts until the driver
+//! ends (K77).
 
 use abi::device::{self as op, Bar};
 use abi::{call, Error, MmioDeviceInfo, PciDeviceInfo};
@@ -46,6 +48,13 @@ pub fn dma(handle: Handle, pages: u64) -> Result<(Handle, u64), Error> {
     Ok((memory, physical))
 }
 
+/// The device's permission to do DMA (K77): bus mastering is on while
+/// this handle, or a copy, is open - closing the last, as a driver's
+/// end does, switches it off.
+pub fn bus_master(handle: Handle) -> Result<Handle, Error> {
+    device(handle, op::BUS_MASTER, 0, 0)
+}
+
 /// A PCI driver's start: the first of `kinds` of interrupt the device
 /// has (none, if it has none of them: the driver polls), then BAR `n` -
 /// in that order, since a device whose interrupt is MSI gets its whole
@@ -67,6 +76,10 @@ pub fn claim_pci(handle: Handle, info: &mut PciDeviceInfo, n: u64, kinds: &[u64]
         }
     }
     let (registers, bar) = self::bar(handle, n)?;
+    // DMA, for as long as this driver runs: the handle is never closed,
+    // so it closes when the driver ends, and the kernel switches its
+    // device's bus mastering off then (K77).
+    self::bus_master(handle)?;
     if bar.io {
         info.io_base = bar.base as u16;
         info.io_size = bar.size as u16;

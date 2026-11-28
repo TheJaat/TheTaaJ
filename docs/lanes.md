@@ -223,7 +223,7 @@ The real-PC items need the user at the PC (U4): done whenever the user is there,
 
 | Item | Wave | Note |
 |---|---|---|
-| K77 | 1 | Bus mastering tied to a handle |
+| K?-kill-points | 1 | `kill64-test`'s deaths at fixed writes again: since logd writes the system log (entry 163) `disk crash N` counts its writes too, and the torn superblock is no longer certain (K77's entry, bug 1) |
 | K76 | 1 | The device manager |
 | K81 | 1 | virtio 1.x; `desktop`'s K123 waits for it |
 | K1 | real PC | R7: boot from a USB stick |
