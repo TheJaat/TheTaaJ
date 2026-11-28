@@ -62,6 +62,7 @@ fn main() -> i64 {
                 Next::Record(record) => match record.kind {
                     kind::STARTED => lines.started(record.pid, core::str::from_utf8(record.name).unwrap_or("?")),
                     kind::KERNEL => lines.piece(Source::Kernel, record.time, record.text, &mut out),
+                    kind::CRASH => lines.piece(Source::Crash, record.time, record.text, &mut out),
                     _ => lines.piece(Source::Program(record.pid), record.time, record.text, &mut out),
                 },
                 Next::Lost(bytes) => out.push(Line {

@@ -1098,6 +1098,14 @@ $(FAULT64_PARTS): fault64-%-test: build-bootloader user64
 
 fault64-test: $(FAULT64_PARTS)
 
+# The crash record (K188): a kernel built to panic once, reset, and
+# find its last words at the next boot, in the system log
+# (scripts/crash-test.sh).
+crash64-test: build-bootloader user64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(BUILD_DIR)/crash64.disk)
+	@$(KERNEL64_DIR)/scripts/crash-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR)/crash64.disk $(BUILD_DIR)
+	@echo "crash64-test passed"
+
 # ---- AArch64 (Era 3) -------------------------------------------------
 #
 # The same kernel crate, built for a second architecture. There is no
@@ -2243,6 +2251,7 @@ TEST64_PARTS = \
 	big64-test \
 	stage2-test \
 	$(FAULT64_PARTS) \
+	crash64-test \
 	aarch64-test \
 	aarch64-uefi-test \
 	net64-test \

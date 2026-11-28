@@ -79,6 +79,9 @@ pub fn level(text: &str) -> Level {
 pub enum Source {
     Kernel,
     Program(u32),
+    /// The boot before this one: the last words its kernel left in the
+    /// crash record (K188). Every line of them is `crit`.
+    Crash,
 }
 
 /// A whole line.
@@ -140,6 +143,7 @@ impl Lines {
     fn name(&self, source: Source) -> String {
         match source {
             Source::Kernel => "kernel".to_string(),
+            Source::Crash => "crash".to_string(),
             Source::Program(pid) => match self.names.iter().rev().find(|(p, _)| *p == pid) {
                 Some((_, name)) => name.clone(),
                 None => format!("pid {pid}"),
@@ -155,7 +159,8 @@ impl Lines {
             .filter(|&c| c != '\r')
             .map(|c| if c.is_control() && c != '\t' { '?' } else { c })
             .collect();
-        Line { time, source: self.name(source), level: level(&text), text }
+        let level = if source == Source::Crash { Level::Crit } else { level(&text) };
+        Line { time, source: self.name(source), level, text }
     }
 
     /// A piece `source` wrote at `time`; each line it ends goes to `out`.
@@ -196,7 +201,10 @@ impl Lines {
                 let full = open.text.len() == LINE_MAX;
                 if full || (ends && text.is_empty()) {
                     let open = self.open.remove(at);
-                    out.push(self.line(open.source, open.time, &open.text));
+                    // The last words' blank lines say nothing.
+                    if !(source == Source::Crash && open.text.is_empty()) {
+                        out.push(self.line(open.source, open.time, &open.text));
+                    }
                     index = None;
                 } else {
                     index = Some(at);

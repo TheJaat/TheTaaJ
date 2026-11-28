@@ -122,3 +122,11 @@ fn a_formatted_line_is_parsed_back() {
     assert_eq!(parse("not a line"), None);
     assert_eq!(parse("2026-11-28 12:34:56.789 kernel     loud  x"), None);
 }
+
+#[test]
+fn the_last_boots_words_are_crash_lines_every_one_crit() {
+    let mut lines = Lines::new();
+    let out = lines_of(&mut lines, &[(Source::Crash, 77, "\n*** KERNEL PANIC: at x.rs:1\n  backtrace:\n")]);
+    let got: Vec<(&str, u64, Level, &str)> = out.iter().map(|l| (l.source.as_str(), l.time, l.level, l.text.as_str())).collect();
+    assert_eq!(got, [("crash", 77, Level::Crit, "*** KERNEL PANIC: at x.rs:1"), ("crash", 77, Level::Crit, "  backtrace:")]);
+}
