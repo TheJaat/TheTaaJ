@@ -44,7 +44,7 @@ In `TheTaaJ-boot`, `make build-bootloader`, each build's exit code and what it a
 
 Then the night run's whole `make test64` (below).
 
-- `make test64` (night run): RESULT.
+- `make test64` (night run, MaK-WSL, 2026-11-28): passed (14 min 43 s), with `main` merged in.
 
 ## What I learned
 
