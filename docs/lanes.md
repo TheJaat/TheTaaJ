@@ -192,6 +192,8 @@ Its files: `kernel/kernel64/src/sched.rs`, `smp.rs`, `futex.rs`, `alarms.rs`, `c
 | K192 | 1 | Cross-CPU wake-ups under KVM (entry 128's bug 5) |
 | K101 | 2 | A thread prefers its last CPU |
 | K70 | 2 | Futexes without one shared list |
+| K?-wake-records | 2 | Wake-ups without the directory lock (after K193) |
+| K?-join-counter | 2 | The join counter per CPU (after K193) |
 | K72 | 2 | Idle CPUs that sleep |
 | K74 | 2 | More than 16 CPUs (with `devices`' K7) |
 | K102 | 2 | More than 64 CPUs |
