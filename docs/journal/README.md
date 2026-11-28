@@ -178,6 +178,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 168 | [Tracing: what the kernel does, on every CPU, as it does it (TheJat-WSL/ci, merged after its night test)](168-tracing.md) | written | `7185eee7` (TheKernel `bbfd29a`) |
 | 169 | [A profiler: where the CPUs spend their time (TheJat-WSL/ci, merged after its night test)](169-profiler.md) | written | `6b7c2e5c` (TheKernel `f596c37`) |
 | 170 | [A debugger: stop a program, read its registers and memory, catch it at a breakpoint (TheJat-WSL/ci, merged after its night test)](170-debugger.md) | written | `cf434513` (TheKernel `a2d7a6e`) |
+| 171 | [Every device handed out the same way: a device handle for each PCI function and virtio place, which drivers ask for their BAR, interrupt and DMA memory; the kernel's lists of device kinds, vendors and DMA sizes gone (MaK-WSL/devices, merged after its make test64)](171-devices-alike.md) | written | `b0471ac0` (TheKernel `64284fe`) |
 
 ## How to run what the entries describe
 

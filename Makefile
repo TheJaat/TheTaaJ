@@ -278,7 +278,7 @@ endif
 # After F12's crash, logd writes the crash report (K138) - see: waits
 # until it says it has written the crashed driver's, before the first
 # `ps` counts channels: a write still under way holds one, and the two
-# counts must match (K75's entry NNN, bug 4). Its report comes after
+# counts must match (K75's entry 171, bug 4). Its report comes after
 # those of the programs the kernel's self-tests crash at boot, in the
 # order logd writes them. The keyboard's driver is kbd on a PC, serial
 # on AArch64 (aarch64-keys-test sets it).

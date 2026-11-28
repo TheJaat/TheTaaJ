@@ -1,6 +1,6 @@
 # Every device handed out the same way
 
-*Journal entry #NNN · a step, MaK-WSL/devices' K75, Era 15's first item. Written on MaK-WSL/devices. Until now the kernel chose which devices got a driver - AHCI, NVMe and xHCI controllers by their class, Intel's e1000 cards by their numbers, virtio's by theirs - and knew for each which BAR its registers are in, which kind of interrupt suits it, and how much DMA memory its driver wants. Every new driver was a kernel change. Now the kernel hands every PCI function and every virtio place to init the same way - a description and a **device handle** - and a driver asks the handle for what its device needs. The kernel holds no list of device kinds or vendors.*
+*Journal entry #171 · a step, MaK-WSL/devices' K75, Era 15's first item. Written on MaK-WSL/devices. Until now the kernel chose which devices got a driver - AHCI, NVMe and xHCI controllers by their class, Intel's e1000 cards by their numbers, virtio's by theirs - and knew for each which BAR its registers are in, which kind of interrupt suits it, and how much DMA memory its driver wants. Every new driver was a kernel change. Now the kernel hands every PCI function and every virtio place to init the same way - a description and a **device handle** - and a driver asks the handle for what its device needs. The kernel holds no list of device kinds or vendors.*
 
 ## Why
 

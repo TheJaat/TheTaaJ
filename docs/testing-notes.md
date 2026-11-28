@@ -5173,3 +5173,22 @@ Automated: `make profile64-test` (part of `make test64`).
 | `cont`, then `quit` | It goes on past it; then it ends |
 
 Automated: `make debug64-test` (part of `make test64`).
+
+---
+
+## 171 · Every device handed out the same way
+
+[The entry](journal/171-devices-alike.md)
+
+```
+make boot64-test ahci64-test nvme64-test usb64-test e1000-64-test aarch64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `[pci] N of N functions handed to init` | every function on the bus, each with a device handle |
+| `[ahci] ... (BAR 5), 132 KiB DMA ..., MSI` | the driver's own choice of BAR and interrupt |
+| `[nvme] ... +0x2000 (BAR 0) ... MSI-X` | the BAR short of the MSI-X table |
+| `[virtio] 0xa003e00: interrupt 79 set up for its driver` | on AArch64, the line set up when blk asks |
+
+Automated: `make test64`

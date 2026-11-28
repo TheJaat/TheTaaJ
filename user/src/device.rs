@@ -1,5 +1,5 @@
 //! A device handle, from a driver's side (call::DEVICE, abi::device;
-//! K75, TheTaaJ entry NNN).
+//! K75, TheTaaJ entry 171).
 //!
 //! The kernel hands every device it finds to init the same way - a
 //! description and a device handle - and knows no kind of device. So

@@ -389,7 +389,7 @@ Its files: `kernel/kernel64/src/arch/`, new `arch/` directories, the linker scri
 | K161 | 2 | The page size a parameter (after `memory`'s K90/K91) |
 | K162 | 2 | Page tables of any shape (with K161) |
 | K164 | 2 | Non-coherent DMA (with `devices`' K80) |
-| K167 | 2 | PCIe on AArch64 (`devices`' K75 done, entry NNN) |
+| K167 | 2 | PCIe on AArch64 (`devices`' K75 done, entry 171) |
 | K168 | 2 | Every Tier 1 test on both Tier 1 CPUs |
 | K170 | 3 | LoongArch64 |
 | K171 | 3 | PowerPC64 |
