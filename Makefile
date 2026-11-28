@@ -924,6 +924,15 @@ unsafe-check: user64 user-aarch64
 miri:
 	@sh tools/miri-check.sh
 
+# The parsers of untrusted input fuzzed on the host (K189): every target
+# in fuzz/ for FUZZ_SECONDS each (tools/fuzz.sh says what it found). Not
+# part of make test64: it finds new inputs, and a crash it finds becomes
+# a host test beside the parser's others.
+FUZZ_SECONDS ?= 60
+.PHONY: fuzz
+fuzz:
+	tools/fuzz.sh run $(FUZZ_SECONDS)
+
 kernel64-test:
 	cd $(KERNEL64_DIR) && cargo test --lib --target $(HOST_TRIPLE)
 	cd kernel/abi && cargo test
