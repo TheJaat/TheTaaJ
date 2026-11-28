@@ -167,6 +167,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 157 | [Real keys: one keyboard, its layout and its repeat, in the display (MaK-WSL/desktop, merged after its make test64)](157-real-keys.md) | written | `39c12ef4` (TheKernel `d8fb51f`) |
 | 158 | [The fourth night: two branches merged, and the race hunt's first ten rounds, all passed (TheJat-WSL/ci, merged after its night test)](158-night-4.md) | written | `b58747f8` |
 | 159 | [The two longest parts split into twelve, and the race hunt measured (TheJat-WSL/ci, merged after its night test)](159-split-long-parts.md) | written | `0c79ed5b` (TheKernel `c17ccbc`) |
+| 160 | [Drivers killed mid-I/O: each disk driver three times mid-write, the network card's mid-download - every acknowledged write on the disk, the download whole (MaK-WSL/devices, merged after its make test64)](160-kill-drivers.md) | written | `c9383961` (TheKernel `1190f85`) |
+| 161 | [The fifth night: the split parts merged, a 20-CPU boot that held up the others, and race-hunt rounds 11 to 20 (TheJat-WSL/ci, merged after its night test)](161-night-5.md) | written | `d9fe795b` (TheKernel `32f6a02`) |
 
 ## How to run what the entries describe
 
