@@ -58,9 +58,23 @@ branch with more than one unnumbered entry, or one merge-item refuses,
 is left for its session, and the branches stacked on it are not run.
 (entry 139)
 
+A part that fails is run once more (make test64-again, only the parts
+that failed) before the branch is called failed: a boot that missed its
+timing window - k114-desktop-bench's power64-test, on night 2 - passes
+the second time, and a real failure fails twice. Passed on that retry,
+the report says which parts needed it (flaky: J95's list). A failed
+shared build is not retried: it fails the same way. (entry 149)
+
+--from BRANCH: starts the queue at BRANCH - after a runner fault, the
+rest of the night's queue. The branches before it are passed over; one
+already on main counts as merged, for the branches stacked on it.
+(entry 149)
+
 NIGHT_TEST="make unsafe-check" (say) runs that instead of make test64, to
 try this script itself in minutes - and then nothing is pushed or
 posted: only a real make test64 makes a branch's merge fit to push.
+NIGHT_TEST_AGAIN, with it, stands in for make test64-again (the retry
+is not tried without it).
 """
 import datetime
 import json
@@ -74,6 +88,7 @@ HOME = os.path.expanduser("~")
 ALL = "--all" in sys.argv[1:]
 WAIT = 0  # --wait MINUTES
 MERGE = False  # --merge: the user's standing yes (rule 2)
+FROM = None  # --from BRANCH: the queue from that branch on
 ARGS = []
 _args = iter(sys.argv[1:])
 for _a in _args:
@@ -81,6 +96,8 @@ for _a in _args:
         WAIT = int(next(_args))
     elif _a == "--merge":
         MERGE = True
+    elif _a == "--from":
+        FROM = next(_args)
     elif _a != "--all":
         ARGS.append(_a)
 QUEUE = ARGS[0] if ARGS else os.path.join(HOME, ".cache/taaj-night/queue")
@@ -297,20 +314,21 @@ def prepare(branch, base_taaj, base_kernel):
 TOTALS = {"tests": 0, "testing": 0, "cpu": 0.0, "waiting": 0, "passed": 0, "failed": 0, "fixes": 0}
 
 
-def test(log):
+def test(log, again=False):
     """make test64 (or the stand-in), under the machine's test64 lock.
     Every line of the log is stamped with the minutes and seconds since
     the start - a part's output comes as a block when it ends
     (--output-sync), so its stamp is when it finished - and the end
     has the CPU time and memory /usr/bin/time measured; all for the
     morning's look at what to make faster (entry 136). Returns (status,
-    seconds, the parts that failed, CPU seconds)."""
-    command = os.environ.get("NIGHT_TEST", "make --no-print-directory -k test64")
+    seconds, the parts that failed, CPU seconds). again: make test64-again,
+    the parts build/test64-failed has."""
+    command = os.environ.get("NIGHT_TEST_AGAIN" if again else "NIGHT_TEST", f"make --no-print-directory -k test64{'-again' if again else ''}")
     setup = f". {LLVM} && make_flags=\"LLVM_TBLGEN=$LLVM_TBLGEN\" || make_flags=" if os.path.isfile(LLVM) else "make_flags="
     measured = "/usr/bin/time -f 'night-test: CPU %U s user, %S s system; at most %M KB; %e s' " if os.path.exists("/usr/bin/time") else ""
     script = f"{setup}; flock /tmp/taaj-test64.lock sh -c \"echo night-test: the test64 lock taken; {measured}{command} $make_flags\""
     failed_list = os.path.join(TREE, "build/test64-failed")
-    if os.path.exists(failed_list):
+    if os.path.exists(failed_list) and not again:
         os.remove(failed_list)
     start = time.time()
     with open(log, "w") as out:
@@ -334,6 +352,23 @@ def test(log):
     TOTALS["cpu"] += cpu
     TOTALS["passed" if status == 0 else "failed"] += 1
     return status, seconds, failed, cpu
+
+
+def test_retrying(log):
+    """test(), and the parts that failed once more (make test64-again)
+    before the branch is called failed. Returns test()'s four and a note
+    for the report: which parts passed only on the retry."""
+    status, seconds, failed, cpu = test(log)
+    if status == 0 or (STAND_IN and not os.environ.get("NIGHT_TEST_AGAIN")) or not failed or {"test64-shared", "test64-parts"} & set(failed):
+        return status, seconds, failed, cpu, ""
+    print(f"night-test: failed: {' '.join(failed)} - once more (make test64-again)", flush=True)
+    status, more, again, more_cpu = test(log.removesuffix(".log") + "-retry.log", again=True)
+    if status == 0:
+        note = f" on a retry of {', '.join(failed)} (failed once: flaky?)"
+    else:
+        note = " (failed on the retry too)"
+        failed = again or failed
+    return status, seconds + more, failed, cpu + more_cpu, note
 
 
 def minutes(seconds):
@@ -374,9 +409,9 @@ def every_branch(logs, report, lines, taaj, kernel_heads, taaj_repository, kerne
         how = "main as it is" if branch == "main" else "with main merged in"
         for where, commit in ((taaj_repository, taaj.get(branch)), (kernel_repository, kernel_head)):
             post(where, commit, "pending", f"make test64 running, {how}")
-        status, seconds, failed, cpu = test(log)
+        status, seconds, failed, cpu, retried = test_retrying(log)
         if status == 0:
-            said_result = f"passed in {seconds // 60} min, {how}"
+            said_result = f"passed in {seconds // 60} min, {how}{retried}"
         else:
             said_result = f"failed: {'; '.join(failed[:3]) or 'see the night report'}"
         for where, commit in ((taaj_repository, taaj.get(branch)), (kernel_repository, kernel_head)):
@@ -393,7 +428,19 @@ def night_queue(logs, report, lines):
     branches after it are stacked on its result, and a test on a failed
     base would have to be run again after the fix anyway."""
     tested = {}  # branch -> (TheTaaJ commit, TheKernel commit), if it passed
+    starting = FROM is None
     for branch, after in queue():
+        if not starting:
+            if branch != FROM:
+                # Passed over (--from); on main already - merge-item.py's
+                # commit there, the branch itself deleted - merged.
+                on_main = bool(git("log", "-1", "--format=%h", "--grep", f"^{re.escape(branch)}, entry [0-9]*:", "origin/main")) \
+                    or run("git", "merge-base", "--is-ancestor", f"origin/{branch}", "origin/main", check=False).returncode == 0
+                if on_main:
+                    tested[branch] = ("origin/main", "origin/main")
+                lines.append(f"| {branch} | | passed over (--from {FROM}){': on main already' if on_main else ''} | | | |")
+                continue
+            starting = True
         if after:
             if after not in tested:
                 lines.append(f"| {branch} | after {after} | **not run**: {after} did not pass | | | |")
@@ -417,15 +464,15 @@ def night_queue(logs, report, lines):
             try:
                 main_tested = git("rev-parse", "origin/main")
                 kernel = prepare(branch, base_taaj, base_kernel)
-                status, seconds, failed, cpu = test(log)
+                status, seconds, failed, cpu, retried = test_retrying(log)
                 why = "; ".join(failed[:5]) or "see the log"
             except RuntimeError as error:
-                status, seconds, why, log, cpu = "does not merge", 0, str(error), None, 0.0
+                status, seconds, why, log, cpu, retried = "does not merge", 0, str(error), None, 0.0, ""
             took = f"{minutes(seconds)} (CPU {minutes(int(cpu))})" if seconds else ""
             if status == 0:
                 tested[branch] = (git("rev-parse", "HEAD"), kernel)
                 note = push(branch)
-                lines.append(f"| {branch} | {said}{again} | **passed**{note} | {took} | | `{log}` |")
+                lines.append(f"| {branch} | {said}{again} | **passed**{retried}{note} | {took} | | `{log}` |")
                 write(report, lines)
                 if MERGE and (not STAND_IN or rehearsal()) and fine_base(after, tested):
                     merged, why = merge_now(branch, main_tested)
@@ -443,7 +490,7 @@ def night_queue(logs, report, lines):
                         tested.pop(branch, None)
                 break
             result = "**does not merge**" if status == "does not merge" else f"**FAILED** ({status})"
-            lines.append(f"| {branch} | {said}{again} | {result} | {took} | {why} | {f'`{log}`' if log else ''} |")
+            lines.append(f"| {branch} | {said}{again} | {result}{retried} | {took} | {why} | {f'`{log}`' if log else ''} |")
             write(report, lines)
             waited = time.time()
             if theirs(branch):
@@ -592,6 +639,8 @@ def checked_out_elsewhere(branches):
 
 
 def main():
+    if FROM and FROM not in [b for b, _ in queue()]:
+        sys.exit(f"night-test: --from {FROM}, but it is not in the queue {QUEUE}")
     if MERGE and not ALL:
         busy = checked_out_elsewhere({b for b, _ in queue()})
         if busy:

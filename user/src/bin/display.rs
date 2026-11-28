@@ -55,7 +55,7 @@ use abi::display::{Pointer as Report, ABSOLUTE_MAX};
 use abi::FramebufferInfo;
 use console::{font, Grid, MAX_COLUMNS, MAX_ROWS};
 use gfx::{Format, Image, Pointer, Rect, Surface};
-use gui::desktop::{Damage, Desktop, Id, Response, BORDER, LEFT, TITLE_HEIGHT, WINDOWS_MAX};
+use gui::desktop::{Damage, Desktop, Id, Part, Response, BORDER, LEFT, TITLE_HEIGHT, WINDOWS_MAX};
 use gui::protocol::{Event, Open, Request};
 use gui::toolkit::{draw_frame, Theme};
 use taaj::{println, Buffer, Error, Handle};
@@ -389,7 +389,7 @@ impl Mouse {
         }
         let pressed = report.buttons & !self.buttons;
         self.buttons = report.buttons;
-        for (bit, name) in [(1, "left"), (2, "right"), (4, "middle")] {
+        for (bit, name) in [(1, "left"), (2, "right"), (4, "middle"), (8, "side"), (16, "extra")] {
             if pressed & bit != 0 {
                 println!("[display] {name} button at ({}, {})", self.x, self.y);
             }
@@ -409,6 +409,8 @@ struct Server {
     shell_keys: Handle,
     damage: Damage,
     key_times: KeyTimes,
+    /// The modifier keys held now, from the drivers' KEY messages (K42).
+    modifiers: u8,
 }
 
 impl Server {
@@ -468,6 +470,39 @@ impl Server {
                 self.key_times.key(bytes);
                 let _ = taaj::send(self.shell_keys, bytes, &[]);
             }
+        }
+    }
+
+    /// The wheel turned (K46): told to the program whose window's content
+    /// is under the pointer - not the one with the focus, as desktops do,
+    /// so that a window behind can be scrolled without clicking it. The
+    /// terminal, under it, has nothing to scroll yet.
+    fn wheel(&mut self, x: i32, y: i32, clicks: i8) {
+        if let Some((id, Part::Content)) = self.desktop.at(x, y) {
+            let content = self.desktop.window(id).map(|window| window.content);
+            if let (Some(client), Some(content)) = (self.client(id), content) {
+                client.send(Event::Wheel { x: x - content.x, y: y - content.y, clicks });
+            }
+        }
+    }
+
+    /// A key went down or up (K42): the modifiers kept up to date, and the
+    /// key told to a program's window with the focus. The terminal is not
+    /// told: what it needs, the bytes, comes from `keys`.
+    fn key_code(&mut self, code: u16, down: bool) {
+        let bit = match code {
+            42 | 54 => gui::protocol::SHIFT,   // left and right Shift
+            29 | 97 => gui::protocol::CONTROL, // left and right Control
+            56 | 100 => gui::protocol::ALT,    // left and right Alt
+            _ => 0,
+        };
+        if down {
+            self.modifiers |= bit;
+        } else {
+            self.modifiers &= !bit;
+        }
+        if let Some(client) = self.desktop.focus().and_then(|id| self.client(id)) {
+            client.send(Event::KeyCode { code, down, modifiers: self.modifiers });
         }
     }
 
@@ -773,6 +808,7 @@ fn main() -> i64 {
         shell_keys,
         damage: Damage::default(),
         key_times: KeyTimes::new(),
+        modifiers: 0,
     };
 
     // Where the text lives. If init gave memory for it, there: that
@@ -872,11 +908,17 @@ fn main() -> i64 {
                     moved = true;
                     let response = server.desktop.pointer(mouse.x, mouse.y, mouse.buttons);
                     server.apply(response);
+                    if report.wheel != 0 {
+                        server.wheel(mouse.x, mouse.y, report.wheel);
+                    }
                 }
                 if n == 9 && message[0] == abi::display::STALL {
                     let mut ticks = [0u8; 8];
                     ticks.copy_from_slice(&message[1..9]);
                     stall = u64::from_le_bytes(ticks).min(abi::STALL_MAX);
+                }
+                if n == abi::display::KEY_SIZE && message[0] == abi::display::KEY && message[3] <= 1 {
+                    server.key_code(u16::from_le_bytes([message[1], message[2]]), message[3] == 1);
                 }
                 if n == 1 && message[0] == abi::display::BENCH {
                     bench = true;

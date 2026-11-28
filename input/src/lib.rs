@@ -66,6 +66,9 @@ const SHIFTED: &[u8; 0x3A] = b"\0\x1b!@#$%^&*()_+\x08\tQWERTYUIOP{}\n\0ASDFGHJKL
 #[derive(Default)]
 pub struct Decoder {
     extended: bool,
+    /// The key code (Linux's numbering, `evdev`) of the last key decoded:
+    /// what a window is told besides the bytes (K42). 0 before any.
+    last: u16,
     left_shift: bool,
     right_shift: bool,
     control: bool,
@@ -77,6 +80,7 @@ impl Decoder {
     pub const fn new() -> Decoder {
         Decoder {
             extended: false,
+            last: 0,
             left_shift: false,
             right_shift: false,
             control: false,
@@ -89,6 +93,13 @@ impl Decoder {
         self.control
     }
 
+    /// The key code of the key the last event that `feed` returned was
+    /// about (`evdev`'s numbering, which names keys, not characters: 30
+    /// is the A key, whatever the layout or Shift make of it) - K42.
+    pub fn code(&self) -> u16 {
+        self.last
+    }
+
     /// Feeds one byte from the keyboard. Returns an event once a whole
     /// scancode has arrived (a prefix alone produces nothing).
     pub fn feed(&mut self, byte: u8) -> Option<KeyEvent> {
@@ -99,6 +110,7 @@ impl Decoder {
         let extended = core::mem::take(&mut self.extended);
         let pressed = byte & 0x80 == 0;
         let code = byte & 0x7F;
+        self.last = evdev::from_scancode(extended, code).unwrap_or(0);
 
         let key = if extended {
             match code {

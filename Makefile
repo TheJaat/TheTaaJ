@@ -2165,7 +2165,9 @@ endif
 #
 # The parts are listed longest first - make starts them in this order -
 # so the boots that take minutes (the typed sessions, clang) are not
-# left to begin when the short ones are done (journal entry 080).
+# left to begin when the short ones are done (journal entry 080). That is
+# the first run's order only: after it, tools/test64.sh orders them by
+# their times in the last run (build/test64-times), longest first.
 #
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs

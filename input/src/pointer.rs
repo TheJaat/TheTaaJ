@@ -23,6 +23,9 @@
 pub const LEFT: u8 = 1 << 0;
 pub const RIGHT: u8 = 1 << 1;
 pub const MIDDLE: u8 = 1 << 2;
+/// The two side buttons a mouse may have (K46): back and forward.
+pub const SIDE: u8 = 1 << 3;
+pub const EXTRA: u8 = 1 << 4;
 
 /// A tablet's position is scaled to 0..=ABSOLUTE_MAX on each axis,
 /// whatever range the device itself uses; the screen scales it again to
@@ -33,10 +36,11 @@ pub const ABSOLUTE_MAX: i32 = 0x7FFF;
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Report {
     /// Moved by (dx, dy) pixels - right and *down* are positive, as on
-    /// the screen.
-    Relative { dx: i32, dy: i32, buttons: u8 },
+    /// the screen. `wheel`: the scroll wheel's clicks since the last
+    /// report, positive away from the user (up), as Linux counts them.
+    Relative { dx: i32, dy: i32, buttons: u8, wheel: i32 },
     /// Is at (x, y), each 0..=ABSOLUTE_MAX across the screen.
-    Absolute { x: i32, y: i32, buttons: u8 },
+    Absolute { x: i32, y: i32, buttons: u8, wheel: i32 },
 }
 
 impl Report {
@@ -45,18 +49,59 @@ impl Report {
             Report::Relative { buttons, .. } | Report::Absolute { buttons, .. } => buttons,
         }
     }
+
+    pub fn wheel(&self) -> i32 {
+        match *self {
+            Report::Relative { wheel, .. } | Report::Absolute { wheel, .. } => wheel,
+        }
+    }
+}
+
+/// Which packets a PS/2 mouse sends: what it answered when asked its ID
+/// after the "knocks" (K46). A mouse that knows none of them stays at 0.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Ps2Format {
+    /// ID 0: three bytes, three buttons.
+    #[default]
+    Plain,
+    /// ID 3, "IntelliMouse": a fourth byte, the wheel (-128..127).
+    Wheel,
+    /// ID 4, "IntelliMouse Explorer": a fourth byte, the wheel in its low
+    /// four bits (-8..7) and buttons 4 and 5 in bits 4 and 5.
+    Explorer,
+}
+
+impl Ps2Format {
+    /// The format a mouse's ID names; Plain for one not known.
+    pub fn from_id(id: u8) -> Ps2Format {
+        match id {
+            3 => Ps2Format::Wheel,
+            4 => Ps2Format::Explorer,
+            _ => Ps2Format::Plain,
+        }
+    }
+
+    fn length(self) -> usize {
+        if self == Ps2Format::Plain { 3 } else { 4 }
+    }
 }
 
 /// A PS/2 mouse's packets, a byte at a time.
 #[derive(Default)]
 pub struct Ps2Mouse {
-    packet: [u8; 3],
+    packet: [u8; 4],
     count: usize,
+    format: Ps2Format,
 }
 
 impl Ps2Mouse {
     pub const fn new() -> Ps2Mouse {
-        Ps2Mouse { packet: [0; 3], count: 0 }
+        Ps2Mouse { packet: [0; 4], count: 0, format: Ps2Format::Plain }
+    }
+
+    /// For a mouse that answered the knocks with `format` (K46).
+    pub const fn with_format(format: Ps2Format) -> Ps2Mouse {
+        Ps2Mouse { packet: [0; 4], count: 0, format }
     }
 
     /// Feeds one byte from the mouse; a report once three have come.
@@ -73,11 +118,11 @@ impl Ps2Mouse {
         }
         self.packet[self.count] = byte;
         self.count += 1;
-        if self.count < 3 {
+        if self.count < self.format.length() {
             return None;
         }
         self.count = 0;
-        let [flags, x, y] = self.packet;
+        let [flags, x, y, extra] = self.packet;
         // Nine-bit numbers: the sign is in the first byte. On overflow
         // the movement is too big to say, and is better dropped than
         // read wrong.
@@ -90,7 +135,20 @@ impl Ps2Mouse {
         };
         let dx = nine(x, flags & 0x10 != 0, flags & 0x40 != 0);
         let dy = nine(y, flags & 0x20 != 0, flags & 0x80 != 0);
-        Some(Report::Relative { dx, dy: -dy, buttons: flags & (LEFT | RIGHT | MIDDLE) })
+        // The wheel: positive towards the user on the wire, positive away
+        // from the user in a Report (Linux's sign) - so negated.
+        let (wheel, more) = match self.format {
+            Ps2Format::Plain => (0, 0),
+            Ps2Format::Wheel => (-i32::from(extra as i8), 0),
+            Ps2Format::Explorer => {
+                let low = (extra & 0x0F) as i8;
+                let z = if low & 0x08 != 0 { low - 16 } else { low };
+                let side = if extra & 0x10 != 0 { SIDE } else { 0 };
+                let more = if extra & 0x20 != 0 { EXTRA } else { 0 };
+                (-i32::from(z), side | more)
+            }
+        };
+        Some(Report::Relative { dx, dy: -dy, buttons: flags & (LEFT | RIGHT | MIDDLE) | more, wheel })
     }
 
     /// Forgets a packet half read - after the mouse was reset.
@@ -109,11 +167,14 @@ pub mod codes {
     pub const EV_ABS: u16 = 0x03;
     pub const REL_X: u16 = 0x00;
     pub const REL_Y: u16 = 0x01;
+    pub const REL_WHEEL: u16 = 0x08;
     pub const ABS_X: u16 = 0x00;
     pub const ABS_Y: u16 = 0x01;
     pub const BTN_LEFT: u16 = 0x110;
     pub const BTN_RIGHT: u16 = 0x111;
     pub const BTN_MIDDLE: u16 = 0x112;
+    pub const BTN_SIDE: u16 = 0x113;
+    pub const BTN_EXTRA: u16 = 0x114;
     /// Below this, a key code is a keyboard's key; from here up, buttons.
     pub const BTN_MISC: u16 = 0x100;
 }
@@ -129,6 +190,8 @@ pub struct Events {
     x_range: (i32, i32),
     y_range: (i32, i32),
     buttons: u8,
+    /// The wheel's clicks since the last report (K46).
+    wheel: i32,
     /// Whether anything has changed since the last report.
     changed: bool,
     absolute: bool,
@@ -148,6 +211,7 @@ impl Events {
         match (kind, code) {
             (codes::EV_REL, codes::REL_X) => self.dx = self.dx.saturating_add(value),
             (codes::EV_REL, codes::REL_Y) => self.dy = self.dy.saturating_add(value),
+            (codes::EV_REL, codes::REL_WHEEL) => self.wheel = self.wheel.saturating_add(value),
             (codes::EV_ABS, codes::ABS_X) => {
                 self.x = Some(scale(value, self.x_range));
                 self.absolute = true;
@@ -156,11 +220,13 @@ impl Events {
                 self.y = Some(scale(value, self.y_range));
                 self.absolute = true;
             }
-            (codes::EV_KEY, codes::BTN_LEFT | codes::BTN_RIGHT | codes::BTN_MIDDLE) => {
+            (codes::EV_KEY, codes::BTN_LEFT | codes::BTN_RIGHT | codes::BTN_MIDDLE | codes::BTN_SIDE | codes::BTN_EXTRA) => {
                 let bit = match code {
                     codes::BTN_LEFT => LEFT,
                     codes::BTN_RIGHT => RIGHT,
-                    _ => MIDDLE,
+                    codes::BTN_MIDDLE => MIDDLE,
+                    codes::BTN_SIDE => SIDE,
+                    _ => EXTRA,
                 };
                 // 0 is up; 1 down, 2 "still down" (repeat).
                 if value == 0 {
@@ -176,10 +242,12 @@ impl Events {
                 self.changed = false;
                 return Some(if self.absolute {
                     // An axis that did not move keeps its last place.
-                    Report::Absolute { x: self.x.unwrap_or(0), y: self.y.unwrap_or(0), buttons: self.buttons }
+                    let report = Report::Absolute { x: self.x.unwrap_or(0), y: self.y.unwrap_or(0), buttons: self.buttons, wheel: self.wheel };
+                    self.wheel = 0;
+                    report
                 } else {
-                    let report = Report::Relative { dx: self.dx, dy: self.dy, buttons: self.buttons };
-                    (self.dx, self.dy) = (0, 0);
+                    let report = Report::Relative { dx: self.dx, dy: self.dy, buttons: self.buttons, wheel: self.wheel };
+                    (self.dx, self.dy, self.wheel) = (0, 0, 0);
                     report
                 });
             }
@@ -214,13 +282,13 @@ mod tests {
     fn a_ps2_packet_is_movement_and_buttons() {
         let mut mouse = Ps2Mouse::new();
         // Right 5, up 3, left button: the screen's y goes down.
-        assert_eq!(packet(&mut mouse, [0x09, 5, 3]), Some(Report::Relative { dx: 5, dy: -3, buttons: LEFT }));
+        assert_eq!(packet(&mut mouse, [0x09, 5, 3]), Some(Report::Relative { dx: 5, dy: -3, buttons: LEFT, wheel: 0 }));
         // Left 1 and down 2 (both negative): nine-bit numbers.
-        assert_eq!(packet(&mut mouse, [0x08 | 0x10 | 0x20, 0xFF, 0xFE]), Some(Report::Relative { dx: -1, dy: 2, buttons: 0 }));
+        assert_eq!(packet(&mut mouse, [0x08 | 0x10 | 0x20, 0xFF, 0xFE]), Some(Report::Relative { dx: -1, dy: 2, buttons: 0, wheel: 0 }));
         // The farthest each way.
-        assert_eq!(packet(&mut mouse, [0x08 | 0x10, 0x00, 0xFF]), Some(Report::Relative { dx: -256, dy: -255, buttons: 0 }));
+        assert_eq!(packet(&mut mouse, [0x08 | 0x10, 0x00, 0xFF]), Some(Report::Relative { dx: -256, dy: -255, buttons: 0, wheel: 0 }));
         // Overflow: movement dropped, buttons kept.
-        assert_eq!(packet(&mut mouse, [0x08 | 0x40 | 0x80 | 0x06, 0x12, 0x34]), Some(Report::Relative { dx: 0, dy: 0, buttons: RIGHT | MIDDLE }));
+        assert_eq!(packet(&mut mouse, [0x08 | 0x40 | 0x80 | 0x06, 0x12, 0x34]), Some(Report::Relative { dx: 0, dy: 0, buttons: RIGHT | MIDDLE, wheel: 0 }));
     }
 
     #[test]
@@ -229,11 +297,11 @@ mod tests {
         // A stray byte without bit 3 before a packet: thrown away.
         assert_eq!(mouse.feed(0x00), None);
         assert_eq!(mouse.feed(0x20), None);
-        assert_eq!(packet(&mut mouse, [0x08, 7, 0]), Some(Report::Relative { dx: 7, dy: 0, buttons: 0 }));
+        assert_eq!(packet(&mut mouse, [0x08, 7, 0]), Some(Report::Relative { dx: 7, dy: 0, buttons: 0, wheel: 0 }));
         // A packet cut short, and the mouse reset: start over.
         assert_eq!(mouse.feed(0x08), None);
         mouse.restart();
-        assert_eq!(packet(&mut mouse, [0x08, 0, 1]), Some(Report::Relative { dx: 0, dy: -1, buttons: 0 }));
+        assert_eq!(packet(&mut mouse, [0x08, 0, 1]), Some(Report::Relative { dx: 0, dy: -1, buttons: 0, wheel: 0 }));
     }
 
     #[test]
@@ -243,20 +311,20 @@ mod tests {
         assert_eq!(events.feed(EV_REL, REL_X, 3), None);
         assert_eq!(events.feed(EV_REL, REL_X, 4), None);
         assert_eq!(events.feed(EV_REL, REL_Y, (-2i32) as u32), None);
-        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Relative { dx: 7, dy: -2, buttons: 0 }));
+        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Relative { dx: 7, dy: -2, buttons: 0, wheel: 0 }));
         // Nothing new: no report.
         assert_eq!(events.feed(EV_SYN, 0, 0), None);
         // A button alone, then held while moving, then let go.
         assert_eq!(events.feed(EV_KEY, BTN_LEFT, 1), None);
-        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Relative { dx: 0, dy: 0, buttons: LEFT }));
+        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Relative { dx: 0, dy: 0, buttons: LEFT, wheel: 0 }));
         events.feed(EV_REL, REL_Y, 1);
         events.feed(EV_KEY, BTN_RIGHT, 1);
-        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Relative { dx: 0, dy: 1, buttons: LEFT | RIGHT }));
+        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Relative { dx: 0, dy: 1, buttons: LEFT | RIGHT, wheel: 0 }));
         events.feed(EV_KEY, BTN_LEFT, 0);
         events.feed(EV_KEY, BTN_MIDDLE, 2);
         assert_eq!(events.feed(EV_SYN, 0, 0).map(|report| report.buttons()), Some(RIGHT | MIDDLE));
         // Codes it does not know change nothing.
-        assert_eq!(events.feed(EV_REL, 8, 1), None); // the wheel
+        assert_eq!(events.feed(EV_REL, 6, 1), None); // a horizontal wheel (REL_HWHEEL): not yet (the wheel, 8, is since K46)
         assert_eq!(events.feed(EV_KEY, 30, 1), None); // a keyboard's 'a'
         assert_eq!(events.feed(EV_SYN, 0, 0), None);
     }
@@ -268,21 +336,72 @@ mod tests {
         let mut events = Events::new((0, 32767), (0, 32767));
         events.feed(EV_ABS, ABS_X, 16384);
         events.feed(EV_ABS, ABS_Y, 0);
-        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Absolute { x: 16384, y: 0, buttons: 0 }));
+        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Absolute { x: 16384, y: 0, buttons: 0, wheel: 0 }));
         // Only Y moved: X stays.
         events.feed(EV_ABS, ABS_Y, 32767);
-        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Absolute { x: 16384, y: ABSOLUTE_MAX, buttons: 0 }));
+        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Absolute { x: 16384, y: ABSOLUTE_MAX, buttons: 0, wheel: 0 }));
         // Another device's range, and a value outside it.
         let mut events = Events::new((100, 300), (-50, 50));
         events.feed(EV_ABS, ABS_X, 200);
         events.feed(EV_ABS, ABS_Y, 1000);
-        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Absolute { x: ABSOLUTE_MAX / 2, y: ABSOLUTE_MAX, buttons: 0 }));
+        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Absolute { x: ABSOLUTE_MAX / 2, y: ABSOLUTE_MAX, buttons: 0, wheel: 0 }));
         // A range that says nothing: the value as it is, clamped.
         let mut events = Events::new((0, 0), (5, 5));
         events.feed(EV_ABS, ABS_X, 40000);
         events.feed(EV_ABS, ABS_Y, 7);
-        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Absolute { x: ABSOLUTE_MAX, y: 7, buttons: 0 }));
+        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Absolute { x: ABSOLUTE_MAX, y: 7, buttons: 0, wheel: 0 }));
         assert_eq!(scale(i32::MIN, (i32::MIN, i32::MAX)), 0);
         assert_eq!(scale(i32::MAX, (i32::MIN, i32::MAX)), ABSOLUTE_MAX);
+    }
+
+    // ---- K46: the wheel, the side buttons, acceleration ----------------------
+
+    #[test]
+    fn an_explorer_mouse_sends_its_wheel_and_side_buttons() {
+        let mut mouse = Ps2Mouse::with_format(Ps2Format::Explorer);
+        let mut feed = |bytes: [u8; 4]| bytes.iter().filter_map(|&b| mouse.feed(b)).last();
+        // Wheel -1 on the wire (towards the user): +1... no - down, so -1 up is +1.
+        assert_eq!(feed([0x08, 0, 0, 0x0F]), Some(Report::Relative { dx: 0, dy: 0, buttons: 0, wheel: 1 }));
+        assert_eq!(feed([0x08, 0, 0, 0x01]), Some(Report::Relative { dx: 0, dy: 0, buttons: 0, wheel: -1 }));
+        assert_eq!(feed([0x09, 3, 0, 0x30]), Some(Report::Relative { dx: 3, dy: 0, buttons: LEFT | SIDE | EXTRA, wheel: 0 }));
+        assert_eq!(feed([0x08, 0, 0, 0x08]), Some(Report::Relative { dx: 0, dy: 0, buttons: 0, wheel: 8 }), "-8, the most it says");
+    }
+
+    #[test]
+    fn a_wheel_mouse_sends_its_wheel_in_a_whole_byte() {
+        let mut mouse = Ps2Mouse::with_format(Ps2Format::Wheel);
+        let mut feed = |bytes: [u8; 4]| bytes.iter().filter_map(|&b| mouse.feed(b)).last();
+        assert_eq!(feed([0x08, 0, 0, 0xFE]), Some(Report::Relative { dx: 0, dy: 0, buttons: 0, wheel: 2 }));
+        assert_eq!(feed([0x08, 0, 0, 0x30]), Some(Report::Relative { dx: 0, dy: 0, buttons: 0, wheel: -48 }), "bits 4, 5 are wheel here, not buttons");
+    }
+
+    #[test]
+    fn a_mouse_s_id_names_its_packets() {
+        assert_eq!(Ps2Format::from_id(0), Ps2Format::Plain);
+        assert_eq!(Ps2Format::from_id(3), Ps2Format::Wheel);
+        assert_eq!(Ps2Format::from_id(4), Ps2Format::Explorer);
+        assert_eq!(Ps2Format::from_id(0xFA), Ps2Format::Plain, "an ACK, not an ID: as plain");
+        // A plain mouse's packets stay three bytes.
+        let mut mouse = Ps2Mouse::with_format(Ps2Format::Plain);
+        assert_eq!([0x08, 1, 0].iter().filter_map(|&b| mouse.feed(b)).last(), Some(Report::Relative { dx: 1, dy: 0, buttons: 0, wheel: 0 }));
+    }
+
+    #[test]
+    fn a_virtio_wheel_and_side_buttons_reach_the_report() {
+        use codes::*;
+        let mut events = Events::default();
+        events.feed(EV_REL, codes::REL_WHEEL, 1);
+        events.feed(EV_REL, codes::REL_WHEEL, 1);
+        events.feed(EV_KEY, codes::BTN_SIDE, 1);
+        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Relative { dx: 0, dy: 0, buttons: SIDE, wheel: 2 }));
+        events.feed(EV_REL, codes::REL_WHEEL, (-1i32) as u32);
+        events.feed(EV_KEY, codes::BTN_SIDE, 0);
+        events.feed(EV_KEY, codes::BTN_EXTRA, 1);
+        assert_eq!(events.feed(EV_SYN, 0, 0), Some(Report::Relative { dx: 0, dy: 0, buttons: EXTRA, wheel: -1 }), "the wheel counted afresh");
+        // A tablet's wheel too.
+        let mut tablet = Events::new((0, 100), (0, 100));
+        tablet.feed(EV_ABS, ABS_X, 50);
+        tablet.feed(EV_REL, codes::REL_WHEEL, 1);
+        assert_eq!(tablet.feed(EV_SYN, 0, 0).map(|r| r.wheel()), Some(1));
     }
 }

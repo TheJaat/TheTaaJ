@@ -126,7 +126,8 @@ Each machine has its own table and changes only its own, so two machines never e
 | Step | Branch |
 |---|---|
 | MaK-WSL/sched: K190, a child takes its parent's nice; K193 waits for the user's decision (per-CPU locks cost exact fairness) | `k190-nice-inherit` |
-| MaK-WSL/boot: TheBootloader's objects depend on the files they include (`nasm -MD`, `gcc -MMD`), the cause of entry 148's stale build; in the next night's queue | `bootloader-deps` |
+| MaK-WSL/desktop: K42, key events to windows; the night run of 2026-11-27/28 failed only the coverage floor - fixed with a host test of `key_message`; in the next night's queue | `k42-key-events` |
+| MaK-WSL/desktop: K46, the scroll wheel and two more buttons (on top of K42: merged after it); in the next night's queue, after K42 | `k46-wheel` |
 
 ### Now: TheJat-WSL
 

@@ -92,6 +92,13 @@ const KEY: u8 = 3;
 const POINTER: u8 = 4;
 const FOCUS: u8 = 5;
 const CLOSE: u8 = 6;
+const KEY_CODE: u8 = 7;
+const WHEEL: u8 = 8;
+
+/// The modifier keys held, in `Event::KeyCode` (K42).
+pub const SHIFT: u8 = 1;
+pub const CONTROL: u8 = 2;
+pub const ALT: u8 = 4;
 
 /// What the server tells a program about its window.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -116,6 +123,17 @@ pub enum Event<'a> {
     /// Its close box was clicked: the program is asked to close it. It
     /// decides - a program with unsaved work may ask first.
     Close,
+    /// A key went down or up while the window has the focus (K42): which
+    /// key - Linux's key codes, which name keys, not characters (42 left
+    /// Shift, 30 the A key) - and the modifiers held after it (SHIFT,
+    /// CONTROL, ALT). Besides `Key`'s bytes, not instead: a key that
+    /// makes no byte - Shift alone, any key going up - is seen only here.
+    KeyCode { code: u16, down: bool, modifiers: u8 },
+    /// The scroll wheel turned while the pointer was over the window
+    /// (K46) - over it, not with the focus, as desktops do: where, as
+    /// for `Pointer`, and by how many clicks, positive away from the
+    /// user (scrolling up).
+    Wheel { x: i32, y: i32, clicks: i8 },
 }
 
 impl<'a> Event<'a> {
@@ -147,6 +165,18 @@ impl<'a> Event<'a> {
                 writer.byte(u8::from(focused))?;
             }
             Event::Close => writer.byte(CLOSE)?,
+            Event::KeyCode { code, down, modifiers } => {
+                writer.byte(KEY_CODE)?;
+                writer.bytes(&code.to_le_bytes())?;
+                writer.byte(u8::from(down))?;
+                writer.byte(modifiers)?;
+            }
+            Event::Wheel { x, y, clicks } => {
+                writer.byte(WHEEL)?;
+                writer.bytes(&x.to_le_bytes())?;
+                writer.bytes(&y.to_le_bytes())?;
+                writer.byte(clicks as u8)?;
+            }
         }
         Some(writer.length)
     }
@@ -169,6 +199,16 @@ impl<'a> Event<'a> {
             }),
             (FOCUS, 1) if rest[0] <= 1 => Some(Event::Focus(rest[0] == 1)),
             (CLOSE, 0) => Some(Event::Close),
+            (WHEEL, 9) => Some(Event::Wheel {
+                x: i32::from_le_bytes(rest[0..4].try_into().ok()?),
+                y: i32::from_le_bytes(rest[4..8].try_into().ok()?),
+                clicks: rest[8] as i8,
+            }),
+            (KEY_CODE, 4) if rest[2] <= 1 => Some(Event::KeyCode {
+                code: u16::from_le_bytes([rest[0], rest[1]]),
+                down: rest[2] == 1,
+                modifiers: rest[3],
+            }),
             _ => None,
         }
     }
@@ -294,6 +334,10 @@ mod tests {
             Event::Focus(true),
             Event::Focus(false),
             Event::Close,
+            Event::KeyCode { code: 42, down: true, modifiers: SHIFT },
+            Event::KeyCode { code: 30, down: false, modifiers: CONTROL },
+            Event::Wheel { x: -5, y: 300, clicks: -2 },
+            Event::Wheel { x: 0, y: 0, clicks: 127 },
         ];
         let mut out = [0u8; 64];
         for event in events {
@@ -316,6 +360,9 @@ mod tests {
             b"\x04\x00\x00\x00\x00\x00\x00\x00", // POINTER cut short
             b"\x05\x02",                         // focus neither yes nor no
             b"\x06\x00",                         // CLOSE with something after it
+            b"\x07\x2a\x00\x01",                 // KEY_CODE cut short
+            b"\x07\x2a\x00\x02\x00",             // a key neither down nor up
+            b"\x08\x00\x00\x00\x00\x00\x00\x00\x00",     // WHEEL cut short
             b"\x09",                             // no such event
         ] {
             assert_eq!(Event::decode(bytes), None, "{bytes:?}");
