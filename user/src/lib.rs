@@ -17,6 +17,7 @@ pub mod net;
 pub mod nic;
 pub mod nic_service;
 pub mod services;
+pub mod start;
 pub mod sync;
 pub mod thread;
 pub mod window;

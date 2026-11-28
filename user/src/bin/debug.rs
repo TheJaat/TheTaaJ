@@ -43,54 +43,15 @@ const REGISTERS: [&str; 31] = [
     "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30",
 ];
 
-/// Starts `name` from the disk through init, with this program's output
-/// as its own; its process handle - with DEBUG, as the starter's. The
-/// program's file goes to init as a memory object (abi::init::IMAGE),
-/// read here, as libc's spawn does.
+/// Starts `name` from the disk through init (taaj::start), with this
+/// program's output as its own; its process handle - with DEBUG, as the
+/// starter's.
 fn start(name: &str, arguments: &[String]) -> Result<Handle, String> {
-    let services = taaj::services().ok_or("given no services")?;
-    let init = services.lookup("init").map_err(|_| "not given init")?;
-    let files = taaj::files::Files::new(services.lookup("files").map_err(|_| "not given the files")?);
-    let path = alloc::format!("/{name}");
-    let size = files.size(&path).map_err(|_| "no such program on the disk")?;
-    if size == 0 || size > abi::PROGRAM_IMAGE_MAX {
-        return Err(String::from("not a program"));
-    }
-    let image = taaj::memory_create(size).map_err(|_| "no memory for its file")?;
-    if files.read_into(&path, image) != Ok(size) {
-        let _ = taaj::close(image);
-        return Err(String::from("its file could not be read"));
-    }
-    let mut encoded = [0u8; abi::MESSAGE_MAX as usize];
-    let length = abi::arguments::encode(arguments.iter().map(String::as_str), &mut encoded).ok_or("arguments too long")?;
-    let file = path;
-    let request = abi::init::Run {
-        kind: abi::init::IMAGE | abi::init::REPLY,
-        flags: abi::startup::STDOUT as u8,
-        name,
-        directory: "",
-        file: &file,
-        arguments: &encoded[..length],
-    };
-    let mut message = [0u8; abi::MESSAGE_MAX as usize];
-    let size = request.encode(&mut message).ok_or("request too long")?;
-    let output = taaj::stdout().and_then(|out| taaj::duplicate(out, abi::rights::SEND | abi::rights::DUPLICATE | abi::rights::TRANSFER).ok());
-    let (mine, theirs) = taaj::channel_create().map_err(|_| "no channel")?;
-    // The image, the output (the flags' order), the reply.
-    let Some(output) = output else {
-        return Err(String::from("no output to give it"));
-    };
-    let given = [image, output, theirs];
-    taaj::send(init, &message[..size], &given).map_err(|e| alloc::format!("init did not take the request: {e:?}"))?;
-    let mut answer = [0u8; 128];
-    let mut process = [0u64; 1];
-    let reply = taaj::receive(mine, &mut answer, &mut process);
-    let _ = taaj::close(mine);
-    match reply {
-        Ok((2, 1)) if &answer[..2] == b"ok" => Ok(process[0]),
-        Ok((n, _)) => Err(String::from(core::str::from_utf8(&answer[..n]).unwrap_or("error"))),
-        Err(e) => Err(alloc::format!("no answer from init: {e:?}")),
-    }
+    let output = taaj::stdout()
+        .and_then(|out| taaj::duplicate(out, abi::rights::SEND | abi::rights::DUPLICATE | abi::rights::TRANSFER).ok())
+        .ok_or("no output to give it")?;
+    let words: Vec<&str> = arguments.iter().map(String::as_str).collect();
+    taaj::start::start(name, &words, taaj::start::Given { output: Some(output), input: None })
 }
 
 fn number(word: &str) -> Option<u64> {

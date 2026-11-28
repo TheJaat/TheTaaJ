@@ -79,7 +79,6 @@ Its files: `kernel/kernel64/src/channel.rs`, `ipc.rs`, `cap.rs`, the channel and
 
 | Item | Wave | Note |
 |---|---|---|
-| K60 | 1 | The IPC benchmark: first |
 | K64 | 1 | Waiting until a channel is writable |
 | K66 | 1 | The cycle leak |
 | K61 | 1 | `channel_call`: `sched`'s K98 and this lane's K73 wait for it |

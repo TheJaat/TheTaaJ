@@ -1792,6 +1792,16 @@ endif
 # numbers are in $(SCHEDBENCH64_LOG).summary, for the journal.
 SCHEDBENCH64_LOG = $(BUILD_DIR)/schedbench64.log
 SCHEDBENCH_C     = $(KERNEL64_DIR)/scripts/schedbench.c
+# The IPC benchmark (K60): round trips between programs and threads,
+# bulk data through messages and through shared memory, on 1 and 2 CPUs,
+# on a PC and on AArch64; the numbers in build/ipcbench64.log.summary
+# (scripts/ipcbench-test.sh).
+IPCBENCH64_LOG = $(BUILD_DIR)/ipcbench64.log
+ipcbench64-test: iso64 user64 user-aarch64 kernel-aarch64 tfstool-rs
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/ipcbench-test.sh $(ISO64_IMG) $(KERNEL_A64_IMAGE) $(IPCBENCH64_LOG).disk $(IPCBENCH64_LOG) \
+	    $(USER_BIN)/ipcbench $(A64_USER_BIN)/ipcbench
+	@echo "ipcbench64-test passed"
+
 schedbench64-test: iso64 user64 libc64 tfstool-rs
 ifeq ($(HAVE_CC),yes)
 	@clang $(TAAJ_CFLAGS) -c $(SCHEDBENCH_C) -o $(C_BIN)/schedbench.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/schedbench.o $(LIBC_A) -o $(C_BIN)/schedbench
@@ -2358,6 +2368,7 @@ TEST64_PARTS = \
 	aarch64-pipe-test \
 	thread64-test \
 	schedbench64-test \
+	ipcbench64-test \
 	aarch64-thread-test \
 	bigmem64-test \
 	aarch64-bigmem-test \

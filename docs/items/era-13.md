@@ -11,7 +11,7 @@ The design - channels, handles with rights, bounded inboxes, handles carried in 
 
 | # | Item | Size | Notes |
 |---|---|---|---|
-| K60 | **An IPC benchmark**: round-trip time of a small request and reply, and bulk throughput through messages and through a shared memory object; on both CPUs, under KVM and emulated; the numbers kept in the journal | S | First: the items below are measured against it |
+| K60 | **An IPC benchmark**: round-trip time of a small request and reply, and bulk throughput through messages and through a shared memory object; on both CPUs, under KVM and emulated; the numbers kept in the journal | S | **Done (entry NNN)**, by `ci` for `ipc` with the user's OK: `ipcbench` (round trips of 16 bytes to another program and to another thread; 8 MiB through 1 KiB messages; 16 MiB through a shared memory object, every byte checked), `ipcbench64-test` on 1 and 2 CPUs, on a PC (KVM) and AArch64 (emulated); the first numbers are in the entry. One CPU: 2.8 us a round trip between programs; two: 21 us - waking a thread on the other CPU (`sched`'s K192) |
 | K61 | **`channel_call`**: send a request and wait for its reply in one system call, switching straight to the server's waiting thread and back (as L4, seL4 and Zircon do) | M | After K60 |
 | K62 | One copy per message: straight from the sender into a receiver that is already waiting, and no kernel allocation for each message | M | After K60 |
 | K63 | Bigger messages (today 1 KiB; 4 to 64 KiB) or shared rings for streams - fs and net cut streams into 1023-byte pieces | M | After K60; changes the `abi` with the services and libc in step |

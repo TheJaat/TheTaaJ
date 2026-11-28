@@ -132,7 +132,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| TheJat-WSL/ci: its own items done but J95 (the race hunt, by night: 20 of 50 rounds); K84 for `memory`, with the user's OK | `k84-smep-smap` |
+| TheJat-WSL/ci: its own items done but J95 (the race hunt, by night: 20 of 50 rounds); K84 for `memory` and K60 for `ipc`, with the user's OK | `k84-smep-smap`, `k60-ipc-benchmark` |
 
 ## Where the items are
 
