@@ -4848,3 +4848,16 @@ Automated: not part of `make test64`.
 | `sh tools/merge-rehearsal.sh` | `toolchain/i686` in the sandbox's trees |
 
 Automated: not part of `make test64`.
+
+---
+
+## 150 · The second night: MaK-WSL's finished branches through TheJat-WSL's queue
+
+[The entry](journal/150-night-2.md)
+
+| Do | You should see |
+|---|---|
+| `git log --oneline origin/main` | entries 141 to 148, one commit each |
+| The night's reports, `~/.cache/taaj-night/reports/` | two: the first pass and the second |
+
+Automated: not part of `make test64`.

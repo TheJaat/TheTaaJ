@@ -1,6 +1,6 @@
 # The second night: MaK-WSL's finished branches through TheJat-WSL's queue
 
-*Journal entry #NNN · a night. Written on TheJat-WSL/ci. The first night that ran another machine's work: the user's choice B - MaK-WSL's finished branches tested with the whole `make test64` and merged by TheJat-WSL's runner, crediting their sessions. Eight items merged, entries 141 to 148; two of MaK-WSL's wait for a test of their own. The two failures that were not MaK-WSL's - a stale build in the runner's tree, a flaky check - were found out the same night, and the branches passed on a second run.*
+*Journal entry #150 · a night. Written on TheJat-WSL/ci. The first night that ran another machine's work: the user's choice B - MaK-WSL's finished branches tested with the whole `make test64` and merged by TheJat-WSL's runner, crediting their sessions. Eight items merged, entries 141 to 148; two of MaK-WSL's wait for a test of their own. The two failures that were not MaK-WSL's - a stale build in the runner's tree, a flaky check - were found out the same night, and the branches passed on a second run.*
 
 ## Before
 
