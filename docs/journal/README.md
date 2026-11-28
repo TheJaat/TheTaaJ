@@ -158,6 +158,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 148 | [The night tree builds TheBootloader from nothing when its commit changes (TheJat-WSL/ci, merged after its night test)](148-bootloader-fresh.md) | written | `43e46740` |
 | 149 | [The night, faster and fairer: parts ordered by their times, a retry before a failure, --from, and the rehearsal's toolchain link (TheJat-WSL/ci, merged after its night test)](149-night-speed.md) | written | `3679761a` |
 | 150 | [The second night: MaK-WSL's finished branches through TheJat-WSL's queue (TheJat-WSL/ci, merged after its night test)](150-night-2.md) | written | `a9f3f1d2` |
+| 151 | [Keys, not only bytes: a window is told when Shift goes down (MaK-WSL/desktop, merged after its night test)](151-key-events.md) | written | `8f2dab41` (TheKernel `ea502e4`) |
 
 ## How to run what the entries describe
 

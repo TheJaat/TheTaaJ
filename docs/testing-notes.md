@@ -4861,3 +4861,22 @@ Automated: not part of `make test64`.
 | The night's reports, `~/.cache/taaj-night/reports/` | two: the first pass and the second |
 
 Automated: not part of `make test64`.
+
+---
+
+## 151 · Keys, not only bytes: a window is told when Shift goes down
+
+[The entry](journal/151-key-events.md)
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `counter &` | counter's window, with the focus |
+| Press and release Shift alone | In the log: `[counter] key code 42 down (modifiers 1)`, then `[counter] key code 42 up (modifiers 0)` |
+| Press and release Control alone | `[counter] key code 29 down (modifiers 2)`, then `up (modifiers 0)` |
+| Type `a` | `[counter] key a` (the byte, as before), and `key code 30 down` and `up` |
+
+Automated: `make gui64-test`, `make aarch64-gui-test` (both part of `make test64`)

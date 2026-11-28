@@ -90,7 +90,7 @@ Era 19 (Desktop: applications people can use daily) builds on these, and points 
 | K39 | The screen at the real PC's native resolution (UEFI GOP and VESA modes chosen well) | S | |
 | K40 | Windows: resize, minimise, a task bar | M | |
 | K41 | Copy and paste between windows | S | |
-| K42 | Key up/down and lone Shift/Control reach windows | S | **Done (entry NNN)**: every key, down and up, to the window with the focus as `Event::KeyCode` (Linux's key codes, modifiers held), from all three keyboard drivers through the one decoder; the bytes unchanged. Left: the rest of K116 (repeat, a layout in user space, the terminal translating) |
+| K42 | Key up/down and lone Shift/Control reach windows | S | **Done (entry 151)**: every key, down and up, to the window with the focus as `Event::KeyCode` (Linux's key codes, modifiers held), from all three keyboard drivers through the one decoder; the bytes unchanged. Left: the rest of K116 (repeat, a layout in user space, the terminal translating) |
 | K43 | A font with more than ASCII (UTF-8 drawn, not '?') | M | |
 | K44 | The terminal as its own program; pseudo-terminals | M | |
 | K45 | Job control: process groups, Ctrl+Z, `fg`, `bg`, SIGTSTP/SIGCONT | M | |
