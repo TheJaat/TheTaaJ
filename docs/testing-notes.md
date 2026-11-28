@@ -5080,3 +5080,16 @@ Automated: not part of `make test64`.
 | `poweroff`, boot again, `log -a -s logd` | `--- the system started ---` once for each boot |
 
 Automated: `make log64-test` (part of `make test64`).
+
+---
+
+## 164 · The crash record: a kernel's last words, found by the next boot
+
+[The entry](journal/164-crash-record.md)
+
+| Do | You should see |
+|---|---|
+| `make crash64-test` | `crash64-test passed`; in `build/crash64.log`, the panic, `[test] resetting...`, then `[kernel] the boot before this one stopped: ...` and the `crash` lines from `log -s crash` |
+| After any panic, a warm reset (QEMU: `system_reset` in the monitor), then `log -s crash` | The last boot's last words, `crit` |
+
+Automated: `make crash64-test` (part of `make test64`).

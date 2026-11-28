@@ -1,6 +1,6 @@
 # The crash record: a kernel's last words, found by the next boot
 
-*Journal entry #NNN · K188, K137's second half (Era 22). Written on TheJat-WSL/ci, by day, with quick checks only; it stands on K136, the system log.*
+*Journal entry #164 · K188, K137's second half (Era 22). Written on TheJat-WSL/ci, by day, with quick checks only; it stands on K136, the system log.*
 
 ## The problem
 
