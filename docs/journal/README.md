@@ -173,6 +173,8 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 163 | [The system log: the kernel's ring, logd, and a `log` command (TheJat-WSL/ci, merged after its night test)](163-log-service.md) | written | `74fcff5d` (TheKernel `0f5ad59`) |
 | 164 | [The crash record: a kernel's last words, found by the next boot (TheJat-WSL/ci, merged after its night test)](164-crash-record.md) | written | `a2931a7e` (TheKernel `ce861ab`) |
 | 165 | [A crash report per program (TheJat-WSL/ci, merged after its night test)](165-crash-report.md) | written | `5ab6f47b` (TheKernel `17d9848`) |
+| 166 | [The sixth night: five branches merged, the 20-CPU boot fixed, and the first retry's finding (TheJat-WSL/ci, merged after its night test)](166-night-6.md) | written | `26a2e423` |
+| 167 | [top (TheJat-WSL/ci, merged after its night test)](167-top.md) | written | `cc1d0f8d` (TheKernel `177bb78`) |
 
 ## How to run what the entries describe
 

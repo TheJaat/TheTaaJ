@@ -1257,11 +1257,29 @@ impl Shell {
         // 1. Many sectors at once are the same bytes as one at a time.
         let mut window = Window::new(SECTORS_MAX).map_err(|_| "no memory for a window")?;
         let count = SECTORS_MAX.min(sectors as u32);
-        let many = disk.read_many(&mut window, 0, count).is_ok();
-        let mut same = many;
+        // The disk may be written meanwhile - these are the file system's
+        // own tables, and logd appends to the system log (K136): read them
+        // together again after, and only a try in which they did not
+        // change counts. A few tries; a disk that changes every time is
+        // not one to judge the driver by.
         let mut single = [0u8; SECTOR];
-        for n in 0..count as usize {
-            same = same && disk.read(n as u64, &mut single).is_ok() && window.bytes()[n * SECTOR..][..SECTOR] == single;
+        let mut again = Window::new(SECTORS_MAX).map_err(|_| "no memory for a window")?;
+        let mut same = false;
+        for _ in 0..5 {
+            let many = disk.read_many(&mut window, 0, count).is_ok();
+            let mut matched = many;
+            for n in 0..count as usize {
+                matched = matched && disk.read(n as u64, &mut single).is_ok() && window.bytes()[n * SECTOR..][..SECTOR] == single;
+            }
+            let length = count as usize * SECTOR;
+            let unchanged = disk.read_many(&mut again, 0, count).is_ok() && again.bytes()[..length] == window.bytes()[..length];
+            same = matched;
+            // The same: passed. Different, and the disk did not change
+            // meanwhile: the driver's fault. Else written meanwhile:
+            // once more.
+            if matched || unchanged {
+                break;
+            }
         }
         check(same, "sectors read together differ from sectors read one by one")?;
 
