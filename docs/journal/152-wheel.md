@@ -1,6 +1,6 @@
 # The scroll wheel, and two more buttons
 
-*Journal entry #NNN · a step, MaK-WSL/desktop's K46 (part: the wheel and the buttons; acceleration left). Written on MaK-WSL/desktop. Mice have had a wheel for thirty years; TheTaaJ read three bytes per movement and dropped everything else. Now the PS/2 mouse is asked for its wheel - the IntelliMouse "knocks" - and the virtio and USB mice's wheels and side buttons are read too. A turn of the wheel reaches the window under the pointer as `Event::Wheel`; the side buttons travel with the others.*
+*Journal entry #152 · a step, MaK-WSL/desktop's K46 (part: the wheel and the buttons; acceleration left). Written on MaK-WSL/desktop. Mice have had a wheel for thirty years; TheTaaJ read three bytes per movement and dropped everything else. Now the PS/2 mouse is asked for its wheel - the IntelliMouse "knocks" - and the virtio and USB mice's wheels and side buttons are read too. A turn of the wheel reaches the window under the pointer as `Event::Wheel`; the side buttons travel with the others.*
 
 ## Why
 

@@ -94,7 +94,7 @@ Era 19 (Desktop: applications people can use daily) builds on these, and points 
 | K43 | A font with more than ASCII (UTF-8 drawn, not '?') | M | |
 | K44 | The terminal as its own program; pseudo-terminals | M | |
 | K45 | Job control: process groups, Ctrl+Z, `fg`, `bg`, SIGTSTP/SIGCONT | M | |
-| K46 | Scroll wheel, more mouse buttons, pointer acceleration | S | **Wheel and buttons done (entry NNN)**: the PS/2 mouse asked for its wheel (ID 4: wheel and five buttons), virtio and USB wheels and side buttons read; `Event::Wheel` to the window under the pointer. Left: acceleration - first the PC's GUI test on an absolute tablet (it checks exact pixels after relative moves) |
+| K46 | Scroll wheel, more mouse buttons, pointer acceleration | S | **Wheel and buttons done (entry 152)**: the PS/2 mouse asked for its wheel (ID 4: wheel and five buttons), virtio and USB wheels and side buttons read; `Event::Wheel` to the window under the pointer. Left: acceleration - first the PC's GUI test on an absolute tablet (it checks exact pixels after relative moves) |
 
 ### Sound (Era 10's ground)
 

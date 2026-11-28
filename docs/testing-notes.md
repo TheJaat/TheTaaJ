@@ -4880,3 +4880,21 @@ make run64
 | Type `a` | `[counter] key a` (the byte, as before), and `key code 30 down` and `up` |
 
 Automated: `make gui64-test`, `make aarch64-gui-test` (both part of `make test64`)
+
+---
+
+## 152 · The scroll wheel, and two more buttons
+
+[The entry](journal/152-wheel.md)
+
+```
+make run64
+```
+
+| Do | You should see |
+|---|---|
+| Watch the log as it boots | `[kbd] PS/2 keyboard ready ...; the mouse too, with a wheel and five buttons` |
+| `counter &`, then turn the mouse's wheel over its window | `[counter] wheel 1 at (...)` for each click up, `wheel -1` down |
+| Turn it over the terminal | Nothing: the terminal has nothing to scroll yet |
+
+Automated: `make gui64-test`, `make aarch64-gui-test` (both part of `make test64`)
