@@ -128,7 +128,6 @@ Its files: the test rules of the `Makefile`, `kernel/kernel64/scripts/*-test.sh`
 | J95 | 2 | No flaky tests (every part 50 times) |
 | K50 | 2 | `bigmem64-test` once did not finish under KVM |
 | K52 | 2 | `aarch64-tcp-test`'s late segment |
-| K139 | 3 | Tracing |
 | K140 | 3 | A profiler |
 | K142 | 3 | A debugger |
 
