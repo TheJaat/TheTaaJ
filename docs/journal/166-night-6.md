@@ -1,6 +1,6 @@
 # The sixth night: five branches merged, the 20-CPU boot fixed, and the first retry's finding
 
-*Journal entry #NNN · the night of 2026-11-28, on TheJat-WSL, written by TheJat-WSL/ci. The user asked for the queue only, with no race-hunt rounds: the hunt is for a later night. All five branches passed and were merged under the user's standing yes (rule 2), one of them on the runner's new retry. That retry hid a real race, which this entry fixes.*
+*Journal entry #166 · the night of 2026-11-28, on TheJat-WSL, written by TheJat-WSL/ci. The user asked for the queue only, with no race-hunt rounds: the hunt is for a later night. All five branches passed and were merged under the user's standing yes (rule 2), one of them on the runner's new retry. That retry hid a real race, which this entry fixes.*
 
 ## What was merged
 
