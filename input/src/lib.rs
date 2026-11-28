@@ -22,6 +22,7 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod evdev;
+pub mod keyboard;
 pub mod line;
 pub mod pointer;
 pub mod serial;
@@ -62,6 +63,43 @@ pub struct KeyEvent {
 /// character key.
 const PLAIN: &[u8; 0x3A] = b"\0\x1b1234567890-=\x08\tqwertyuiop[]\n\0asdfghjkl;'`\0\\zxcvbnm,./\0*\0 ";
 const SHIFTED: &[u8; 0x3A] = b"\0\x1b!@#$%^&*()_+\x08\tQWERTYUIOP{}\n\0ASDFGHJKL:\"~\0|ZXCVBNM<>?\0*\0 ";
+/// Dvorak (K116), on the same keys: the letters and the punctuation
+/// moved, the digits, Escape, Enter and the space where they were.
+/// ASCII only, as the terminal's font is (K43 is a font beyond it).
+const DVORAK_PLAIN: &[u8; 0x3A] = b"\0\x1b1234567890[]\x08\t',.pyfgcrl/=\n\0aoeuidhtns-`\0\\;qjkxbmwvz\0*\0 ";
+const DVORAK_SHIFTED: &[u8; 0x3A] = b"\0\x1b!@#$%^&*(){}\x08\t\"<>PYFGCRL?+\n\0AOEUIDHTNS_~\0|:QJKXBMWVZ\0*\0 ";
+
+/// Which character each key makes (K116): chosen in user space, by the
+/// display (`display layout NAME`), not built into a driver.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Layout {
+    #[default]
+    Us,
+    Dvorak,
+}
+
+impl Layout {
+    pub const ALL: [Layout; 2] = [Layout::Us, Layout::Dvorak];
+
+    /// Its name, as `display layout` takes it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Layout::Us => "us",
+            Layout::Dvorak => "dvorak",
+        }
+    }
+
+    pub fn from_name(name: &[u8]) -> Option<Layout> {
+        Layout::ALL.into_iter().find(|layout| layout.name().as_bytes() == name)
+    }
+
+    fn tables(self) -> (&'static [u8; 0x3A], &'static [u8; 0x3A]) {
+        match self {
+            Layout::Us => (PLAIN, SHIFTED),
+            Layout::Dvorak => (DVORAK_PLAIN, DVORAK_SHIFTED),
+        }
+    }
+}
 
 #[derive(Default)]
 pub struct Decoder {
@@ -74,6 +112,7 @@ pub struct Decoder {
     control: bool,
     alt: bool,
     caps_lock: bool,
+    layout: Layout,
 }
 
 impl Decoder {
@@ -86,7 +125,17 @@ impl Decoder {
             control: false,
             alt: false,
             caps_lock: false,
+            layout: Layout::Us,
         }
+    }
+
+    /// The layout characters are made with from now on (K116).
+    pub fn set_layout(&mut self, layout: Layout) {
+        self.layout = layout;
+    }
+
+    pub fn layout(&self) -> Layout {
+        self.layout
     }
 
     pub fn control_held(&self) -> bool {
@@ -165,14 +214,15 @@ impl Decoder {
 
     fn character(&self, code: u8) -> Option<char> {
         let index = code as usize;
-        let plain = *PLAIN.get(index)?;
+        let (plain_table, shifted_table) = self.layout.tables();
+        let plain = *plain_table.get(index)?;
         if plain == 0 || plain.is_ascii_control() {
             return None; // Escape, Backspace, Tab, Enter are handled above
         }
         let shift = self.left_shift || self.right_shift;
         // Caps Lock flips the case of letters only - not digits or symbols.
         let use_shifted = if plain.is_ascii_alphabetic() { shift != self.caps_lock } else { shift };
-        let byte = if use_shifted { SHIFTED[index] } else { plain };
+        let byte = if use_shifted { shifted_table[index] } else { plain };
         Some(byte as char)
     }
 }

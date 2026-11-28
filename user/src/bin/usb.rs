@@ -291,7 +291,9 @@ impl Driver {
         let mut next: Option<u64> = None;
         for in_use in self.devices.iter_mut().flatten() {
             if let Some(code) = in_use.repeat.due(now) {
-                // A repeat: bytes again, but no new key event (K116's).
+                // A repeat: bytes again, for the serial terminal, but no
+                // new key event - with a display, the display repeats
+                // held keys itself (K116) and drops these bytes.
                 press(&mut in_use.decoder, self.keys_out, None, code, true);
             }
             if let Some(at) = in_use.repeat.next() {

@@ -126,7 +126,7 @@ Each machine has its own table and changes only its own, so two machines never e
 | Step | Branch |
 |---|---|
 | MaK-WSL/sched: K192, K101, K194, K195 next (K193 merged, entry 153) | |
-| MaK-WSL/desktop: K116, real key events - repeat, the layout in user space, the terminal turning events into bytes (K42 and K46 merged, entries 151, 152) | `k116-real-keys` |
+| MaK-WSL/desktop: K116, real key events - the layout, repeat and bytes in the display, stray ups held back; built and its tests passed, `make test64` next | `k116-real-keys` |
 
 ### Now: TheJat-WSL
 

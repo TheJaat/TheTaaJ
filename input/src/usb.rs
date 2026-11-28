@@ -24,8 +24,10 @@
 //! layout and modifiers as the PS/2 one, decided in one place.
 //!
 //! A USB keyboard does not repeat a held key by itself, as a PS/2 one
-//! does: it says once that the key is down. Repeating is the driver's
-//! (`Repeat`).
+//! does: it says once that the key is down. The driver repeats it
+//! (`Repeat`) for the serial terminal; with a display, the display
+//! repeats every keyboard's keys itself (`keyboard`, K116), with this
+//! `Repeat` and its timing.
 
 use crate::pointer::Report;
 

@@ -274,7 +274,10 @@ impl Device {
             for &byte in &bytes[..length] {
                 let Some(event) = self.keys.feed(byte) else { continue };
                 // The key itself, for windows (K42); a repeat (value 2) is
-                // not a new press - repeat is K116's.
+                // not a new press: the display repeats held keys itself,
+                // the same for every keyboard (K116). The bytes below,
+                // repeats too, are for the serial terminal only - with a
+                // display, it makes the bytes from the key events.
                 if value != 2 {
                     let _ = taaj::send(pointer_out, &abi::display::key_message(code, event.pressed), &[]);
                 }

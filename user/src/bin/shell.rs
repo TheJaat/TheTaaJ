@@ -886,6 +886,7 @@ impl Shell {
                   \x20 disk stall SECONDS, display stall SECONDS   the same,\n\
                   \x20              for the disk driver and the display\n\
                   \x20 (F11 hangs the keyboard driver, F12 crashes it)\n\
+                  \x20 display layout NAME   the keyboard's layout: us, dvorak\n\
                   \x20 services [NAME]   the services the shell can ask for; ask for one\n\
                   \x20 disk, disk read N, disk write N TEXT   size; show sector N; set it\n\
                   \x20 disk check        test the disk driver\n\
@@ -998,7 +999,28 @@ impl Shell {
                         (None, _) => say!(self, "usage: display keys COUNT (1 to {})\n", abi::display::KEYS_MAX),
                     }
                 }
-                _ => self.write(b"usage: display stall SECONDS (1 to 30), display bench, display keys COUNT\n"),
+                // The keyboard layout (K116): the display makes every
+                // keyboard's characters, in the layout chosen here.
+                _ if rest.trim() == "layout" || rest.starts_with("layout ") => {
+                    let name = rest["layout".len()..].trim();
+                    match (input::Layout::from_name(name.as_bytes()), self.screen) {
+                        (Some(layout), Some(screen)) => {
+                            if let Some((message, n)) = abi::display::layout_message(layout.name().as_bytes()) {
+                                let _ = taaj::send(screen, &message[..n], &[]);
+                                say!(self, "display: keyboard layout {}\n", layout.name());
+                            }
+                        }
+                        (Some(_), None) => self.write(b"no display: the serial terminal's keys are the host's\n"),
+                        (None, _) => {
+                            self.write(b"usage: display layout NAME - the layouts:");
+                            for layout in input::Layout::ALL {
+                                say!(self, " {}", layout.name());
+                            }
+                            self.write(b"\n");
+                        }
+                    }
+                }
+                _ => self.write(b"usage: display stall SECONDS (1 to 30), display bench, display keys COUNT, display layout NAME\n"),
             },
             "disk" => self.disk(rest),
             "poweroff" | "reboot" => self.power(command == "poweroff"),

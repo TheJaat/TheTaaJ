@@ -8,7 +8,9 @@
 //!      the sending end (the shell), and POINTER from the drivers of
 //!      the mouse or tablet
 //!   3  pings from init (abi::PING)
-//!   4  the keyboard drivers' keys: the bytes a terminal sends
+//!   4  the keyboard drivers' bytes: read and dropped - the display makes
+//!      the terminal's bytes itself, from the keys (K116); the drivers'
+//!      are for the serial terminal, where there is no display
 //!   5  the shell's keys: where those go while the terminal has the focus
 //!   6  the window server's channel (the registry's "windows"): OPEN
 //!      requests from programs (gui::protocol)
@@ -58,6 +60,8 @@ use gfx::{Format, Image, Pointer, Rect, Surface};
 use gui::desktop::{Damage, Desktop, Id, Part, Response, BORDER, LEFT, TITLE_HEIGHT, WINDOWS_MAX};
 use gui::protocol::{Event, Open, Request};
 use gui::toolkit::{draw_frame, Theme};
+use input::keyboard::{Keyboard, Press};
+use input::Layout;
 use taaj::{println, Buffer, Error, Handle};
 
 taaj::program!(main);
@@ -411,7 +415,20 @@ struct Server {
     key_times: KeyTimes,
     /// The modifier keys held now, from the drivers' KEY messages (K42).
     modifiers: u8,
+    /// Every keyboard's keys, one state (K116): the layout, Shift and
+    /// Caps Lock, the held key's repeat, the terminal's bytes.
+    keyboard: Keyboard,
+    /// For each key code down now, the window its down was told to -
+    /// 0 for the terminal or nobody. Its up goes there and nowhere
+    /// else: a window is never told of an up whose down it did not see
+    /// (Enter pressed in the terminal, opening a window that has the
+    /// focus by the time Enter comes up), and the window that saw the
+    /// down sees the up even if the focus moved meanwhile (K116).
+    key_window: [Id; KEY_CODES],
 }
+
+/// Key codes followed: as `input::keyboard`'s.
+const KEY_CODES: usize = 0x300;
 
 impl Server {
     fn client(&self, id: Id) -> Option<&Client> {
@@ -460,16 +477,76 @@ impl Server {
         }
     }
 
-    /// Keys from the drivers: to the window with the focus.
-    fn keys(&mut self, bytes: &[u8]) {
-        match self.desktop.focus().and_then(|id| self.client(id)) {
-            Some(client) => client.send(Event::Key(bytes)),
-            // The terminal: to the shell, as the driver would have sent
-            // them. A shell that lags loses keys, as before.
+    /// A key went down or up, at tick `now` (K42, K116): through the
+    /// keyboard (a keyboard's own repeats dropped), then told.
+    fn key_code(&mut self, code: u16, down: bool, now: u64) {
+        if let Some(press) = self.keyboard.key(code, down, now) {
+            self.press(press);
+        }
+    }
+
+    /// The held key, pressed again if its time has come.
+    fn repeat(&mut self, now: u64) {
+        if let Some(press) = self.keyboard.due(now) {
+            self.press(press);
+        }
+    }
+
+    /// A press, a release or a repeat: the modifiers kept up to date;
+    /// the key told to the window that should hear it (K42) - a down to
+    /// the window with the focus, an up to the one that heard the down -
+    /// and the bytes (K116) to the window with the focus, or to the shell
+    /// while that is the terminal.
+    fn press(&mut self, press: Press) {
+        let Press { code, down, repeat, bytes } = press;
+        let bit = match code {
+            42 | 54 => gui::protocol::SHIFT,   // left and right Shift
+            29 | 97 => gui::protocol::CONTROL, // left and right Control
+            56 | 100 => gui::protocol::ALT,    // left and right Alt
+            _ => 0,
+        };
+        if down {
+            self.modifiers |= bit;
+        } else {
+            self.modifiers &= !bit;
+        }
+        let focus = self.desktop.focus().filter(|&id| self.client(id).is_some());
+        let index = usize::from(code);
+        let to = if index >= KEY_CODES {
+            0
+        } else if repeat {
+            // A repeat goes where the key's down went, so that the window
+            // told of the repeats is the one told of the up.
+            self.key_window[index]
+        } else if down {
+            self.key_window[index] = focus.unwrap_or(0);
+            self.key_window[index]
+        } else {
+            core::mem::take(&mut self.key_window[index])
+        };
+        if let Some(client) = self.client(to) {
+            client.send(Event::KeyCode { code, down, modifiers: self.modifiers });
+        }
+        let Some(bytes) = bytes else { return };
+        match focus.and_then(|id| self.client(id)) {
+            Some(client) => client.send(Event::Key(bytes.as_bytes())),
+            // The terminal: to the shell. A shell that lags loses keys,
+            // as before.
             None => {
-                self.key_times.key(bytes);
-                let _ = taaj::send(self.shell_keys, bytes, &[]);
+                self.key_times.key(bytes.as_bytes());
+                let _ = taaj::send(self.shell_keys, bytes.as_bytes(), &[]);
             }
+        }
+    }
+
+    /// `display layout NAME` (K116): the characters keys make from now on.
+    fn layout(&mut self, name: &[u8]) {
+        match Layout::from_name(name) {
+            Some(layout) => {
+                self.keyboard.set_layout(layout);
+                println!("[display] keyboard layout: {}", layout.name());
+            }
+            None => println!("[display] no keyboard layout named \"{}\"", core::str::from_utf8(name).unwrap_or("?")),
         }
     }
 
@@ -483,26 +560,6 @@ impl Server {
             if let (Some(client), Some(content)) = (self.client(id), content) {
                 client.send(Event::Wheel { x: x - content.x, y: y - content.y, clicks });
             }
-        }
-    }
-
-    /// A key went down or up (K42): the modifiers kept up to date, and the
-    /// key told to a program's window with the focus. The terminal is not
-    /// told: what it needs, the bytes, comes from `keys`.
-    fn key_code(&mut self, code: u16, down: bool) {
-        let bit = match code {
-            42 | 54 => gui::protocol::SHIFT,   // left and right Shift
-            29 | 97 => gui::protocol::CONTROL, // left and right Control
-            56 | 100 => gui::protocol::ALT,    // left and right Alt
-            _ => 0,
-        };
-        if down {
-            self.modifiers |= bit;
-        } else {
-            self.modifiers &= !bit;
-        }
-        if let Some(client) = self.desktop.focus().and_then(|id| self.client(id)) {
-            client.send(Event::KeyCode { code, down, modifiers: self.modifiers });
         }
     }
 
@@ -809,6 +866,8 @@ fn main() -> i64 {
         damage: Damage::default(),
         key_times: KeyTimes::new(),
         modifiers: 0,
+        keyboard: Keyboard::new(),
+        key_window: [0; KEY_CODES],
     };
 
     // Where the text lives. If init gave memory for it, there: that
@@ -882,8 +941,19 @@ fn main() -> i64 {
             }
         }
         let waited = &waited[..count];
-        if taaj::object_wait(waited).is_err() {
-            return 5;
+        // Until something comes - or a held key's next repeat (K116).
+        match server.keyboard.next() {
+            Some(at) => {
+                if taaj::object_wait_until(waited, at).is_err() {
+                    return 5;
+                }
+                server.repeat(taaj::ticks());
+            }
+            None => {
+                if taaj::object_wait(waited).is_err() {
+                    return 5;
+                }
+            }
         }
         // Everything already waiting, up to BATCH, before any drawing.
         let mut taken = 0;
@@ -918,7 +988,10 @@ fn main() -> i64 {
                     stall = u64::from_le_bytes(ticks).min(abi::STALL_MAX);
                 }
                 if n == abi::display::KEY_SIZE && message[0] == abi::display::KEY && message[3] <= 1 {
-                    server.key_code(u16::from_le_bytes([message[1], message[2]]), message[3] == 1);
+                    server.key_code(u16::from_le_bytes([message[1], message[2]]), message[3] == 1, taaj::ticks());
+                }
+                if n > 1 && message[0] == abi::display::LAYOUT {
+                    server.layout(&message[1..n]);
                 }
                 if n == 1 && message[0] == abi::display::BENCH {
                     bench = true;
@@ -929,10 +1002,10 @@ fn main() -> i64 {
                     server.key_times.start(u32::from_le_bytes(count).min(abi::display::KEYS_MAX));
                 }
             } else if ready == 1 {
-                match receive(keys_in, &mut message) {
-                    Ok(n) if n > 0 => server.keys(&message[..n]),
-                    Ok(_) => {}
-                    Err(_) => return 5,
+                // The drivers' bytes: dropped. The bytes come from the
+                // keys (KEY, above), in the layout chosen here (K116).
+                if receive(keys_in, &mut message).is_err() {
+                    return 5;
                 }
             } else if ready == 2 {
                 let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
