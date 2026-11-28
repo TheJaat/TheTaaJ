@@ -21,6 +21,8 @@
 //! the kernel before anything is mapped or touched, so a wrong one
 //! costs the client its request and the driver nothing.
 
+use core::sync::atomic::{AtomicU64, Ordering};
+
 use abi::block;
 
 use crate::{println, Error, Handle};
@@ -149,6 +151,40 @@ fn answer(device: &mut impl Device, request: &[u8], reply: &mut [u8], may_write:
     1 + length
 }
 
+/// The test of a driver killed in the middle of its I/O (K82): how many
+/// writes until it dies in one, 0 for never. Set by a CRASH request;
+/// one driver per process, so one count.
+static CRASH_IN: AtomicU64 = AtomicU64::new(0);
+
+/// Before a request is answered: if it is the write the driver is to
+/// die in, the first half of a WRITE_MANY's sectors written (none of a
+/// one-sector WRITE), then the driver faults - no answer, the request
+/// half done, as when a driver is killed mid-I/O. init restarts it; the
+/// client is told the driver stopped (its reply channel closes).
+fn crash_if_due(device: &mut impl Device, name: &str, request: &[u8], lent: Option<Handle>) {
+    let op = request.first().copied();
+    if !matches!(op, Some(block::WRITE | block::WRITE_MANY)) || CRASH_IN.load(Ordering::Relaxed) == 0 {
+        return;
+    }
+    if CRASH_IN.fetch_sub(1, Ordering::Relaxed) != 1 {
+        return;
+    }
+    if let (Some(block::WRITE_MANY), Some(lent), true) = (op, lent, request.len() == block::MANY_REQUEST_SIZE) {
+        let sector = u64::from_le_bytes(request[1..9].try_into().unwrap_or([0; 8]));
+        let count = u32::from_le_bytes(request[9..13].try_into().unwrap_or([0; 4]));
+        let written = count / 2;
+        if written > 0 {
+            let _ = transfer_many(device, true, sector, written, lent);
+        }
+        println!("[{name}] dying mid-write, as asked: {written} of {count} sectors from sector {sector} written");
+    } else {
+        println!("[{name}] dying mid-write, as asked: a one-sector write, not written");
+    }
+    // SAFETY: none - this is the test: a driver that faults with a
+    // request half done. Address 0 is never mapped.
+    unsafe { core::ptr::read_volatile(core::ptr::null::<u8>()) };
+}
+
 /// What `serve_one` did.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Served {
@@ -193,10 +229,19 @@ pub fn serve_one(device: &mut impl Device, name: &str, requests: Handle, may_wri
         ticks.copy_from_slice(&message[1..9]);
         stall = u64::from_le_bytes(ticks);
     }
+    // On either channel, as STALL: the shell, which only reads the disk,
+    // asks; the writes counted are fs's (K82).
+    let crash = block::crash_count(&message[..n]);
     let length = if (1..=abi::STALL_MAX).contains(&stall) {
         reply[0] = block::OK;
         1
+    } else if let Some(writes) = crash {
+        CRASH_IN.store(writes, Ordering::Relaxed);
+        println!("[{name}] asked to die in the middle of write {writes} from now");
+        reply[0] = block::OK;
+        1
     } else {
+        crash_if_due(device, name, &message[..n], lent);
         stall = 0;
         answer(device, &message[..n], &mut reply, may_write, lent)
     };

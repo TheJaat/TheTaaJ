@@ -201,8 +201,23 @@ fn main() -> i64 {
         None => {}
         Some("restart") if arguments.len() == 1 => return restart(&mut card),
         Some("stall") if arguments.len() == 1 => return stall(&card),
+        // The test of a driver killed mid-I/O (K82): it will die in the
+        // middle of sending its Nth frame from now - while some program
+        // (httpd, in kill-test.sh) is sending.
+        Some("crash") if arguments.len() == 2 => {
+            let Some(request) = arguments[1].parse::<u64>().ok().and_then(nic::crash_request) else {
+                println!("usage: niccheck crash FRAMES (1 to {})", nic::CRASH_MAX);
+                return 2;
+            };
+            if card.raw(&request).is_err() {
+                println!("[niccheck] FAILED: the driver cannot be asked to die");
+                return line!() as i64;
+            }
+            println!("[niccheck] the driver will die in the middle of sending frame {} from now", arguments[1]);
+            return 0;
+        }
         Some(_) => {
-            println!("usage: niccheck, niccheck restart, niccheck stall");
+            println!("usage: niccheck, niccheck restart, niccheck stall, niccheck crash FRAMES");
             return 2;
         }
     }
