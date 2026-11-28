@@ -168,6 +168,9 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 158 | [The fourth night: two branches merged, and the race hunt's first ten rounds, all passed (TheJat-WSL/ci, merged after its night test)](158-night-4.md) | written | `b58747f8` |
 | 159 | [The two longest parts split into twelve, and the race hunt measured (TheJat-WSL/ci, merged after its night test)](159-split-long-parts.md) | written | `0c79ed5b` (TheKernel `c17ccbc`) |
 | 160 | [Drivers killed mid-I/O: each disk driver three times mid-write, the network card's mid-download - every acknowledged write on the disk, the download whole (MaK-WSL/devices, merged after its make test64)](160-kill-drivers.md) | written | `c9383961` (TheKernel `1190f85`) |
+| 161 | [The fifth night: the split parts merged, a 20-CPU boot that held up the others, and race-hunt rounds 11 to 20 (TheJat-WSL/ci, merged after its night test)](161-night-5.md) | written | `d9fe795b` (TheKernel `32f6a02`) |
+| 162 | [Fuzzing the parsers on the host: nine targets, LLVM's libFuzzer, and two bugs in the first minute (TheJat-WSL/ci, merged after its night test)](162-fuzzing.md) | written | `b865cbc9` |
+| 163 | [The system log: the kernel's ring, logd, and a `log` command (TheJat-WSL/ci, merged after its night test)](163-log-service.md) | written | `74fcff5d` (TheKernel `0f5ad59`) |
 
 ## How to run what the entries describe
 
