@@ -1,6 +1,6 @@
 # A profiler: where the CPUs spend their time
 
-*Journal entry #NNN · K140 (Era 22). Written on TheJat-WSL/ci, by day, with quick checks only; it stands on K139, tracing. The item: "the timer samples where each CPU is (program and address); a report per function, with symbols".*
+*Journal entry #169 · K140 (Era 22). Written on TheJat-WSL/ci, by day, with quick checks only; it stands on K139, tracing. The item: "the timer samples where each CPU is (program and address); a report per function, with symbols".*
 
 ## What it shows
 
