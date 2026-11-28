@@ -1,6 +1,6 @@
 # The two longest parts split into twelve, and the race hunt measured
 
-*Journal entry #NNN · three fixes from the fourth night's notes. Written on TheJat-WSL/ci, by day, with quick checks only.*
+*Journal entry #159 · three fixes from the fourth night's notes. Written on TheJat-WSL/ci, by day, with quick checks only.*
 
 ## `fault64-test` and `e1000-64-test`, one part per boot
 

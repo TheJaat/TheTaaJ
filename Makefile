@@ -1075,7 +1075,7 @@ stage2-test: iso64
 	@grep -E "^stage2 host tests:" $(STAGE2_TEST_LOG)
 	@echo "stage2-test passed"
 
-# One part per fault (journal entry NNN): each is a kernel built with
+# One part per fault (journal entry 159): each is a kernel built with
 # its own feature and a boot of its own, independent of the others, and
 # one after another they were the second longest part of make test64
 # (354 s). In parallel, make test64 runs them TEST_JOBS at a time.
@@ -1381,7 +1381,7 @@ stick64-test: iso64 cprogs64 tfstool-rs
 	@OVMF=$(OVMF) $(KERNEL64_DIR)/scripts/stick-test.sh $(ISO64_IMG) $(STICK64_LOG).img $(STICK64_LOG).disk $(STICK64_LOG)
 	@echo "stick64-test passed"
 
-# Four boots, one part each (journal entry NNN): one after another they
+# Four boots, one part each (journal entry 159): one after another they
 # were the longest part of make test64 (377 s). The test disk is made
 # once; each boot has a copy of its own, as two QEMUs may not share one.
 E1000_64_LOG = $(BUILD_DIR)/e1000-64

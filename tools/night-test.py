@@ -547,7 +547,7 @@ def hunt(lines):
     before = open(summary).read() if os.path.exists(summary) else ""
     command = os.environ.get("NIGHT_HUNT", f"ALL=1 tools/race-hunt.sh {HUNT}")
     # Measured as test() measures make test64: the report's "CPUs busy"
-    # counted the hunt's minutes but not its CPU time (night 4, entry NNN).
+    # counted the hunt's minutes but not its CPU time (night 4, entry 159).
     measured = "/usr/bin/time -f 'night-test: CPU %U s user, %S s system' " if os.path.exists("/usr/bin/time") else ""
     done = subprocess.run(["sh", "-c", f"{setup}; {measured}sh -c '{command}'" if measured else f"{setup}; {command}"],
                           cwd=TREE, capture_output=True, text=True)
