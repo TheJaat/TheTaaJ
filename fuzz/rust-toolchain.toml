@@ -1,0 +1,5 @@
+# The kernel's compiler (kernel/kernel64/rust-toolchain.toml): the
+# parsers fuzzed are the kernel's own code, built as it builds them.
+[toolchain]
+channel = "1.100.0"
+profile = "minimal"

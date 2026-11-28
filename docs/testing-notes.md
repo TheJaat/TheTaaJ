@@ -5038,3 +5038,58 @@ make kill64-test
 By hand, in `make run64` with a disk: `disk crash 5`, then `with files killcheck write x 10` - one write fails, is tried again, and all ten are acked; `with files killcheck check x 10` says all as written.
 
 Automated: `make kill64-test`, `make test64`
+
+---
+
+## 161 · The fifth night: the split parts merged, a 20-CPU boot that held up the others, and race-hunt rounds 11 to 20
+
+[The entry](journal/161-night-5.md)
+
+| Do | You should see |
+|---|---|
+| `make fault64-page-20-test` | `fault-page-20: ok` in a few seconds |
+| A race-hunt round | `fault64-page-20-test` a few seconds in `round-N.times` |
+
+Automated: the fault parts are parts of `make test64`.
+
+---
+
+## 162 · Fuzzing the parsers on the host: nine targets, LLVM's libFuzzer, and two bugs in the first minute
+
+[The entry](journal/162-fuzzing.md)
+
+| Do | You should see |
+|---|---|
+| `tools/fuzz.sh run 20 elf` | `fuzz: elf: 20 s, cov: ...` over 100, `crashes 0` |
+| `tools/fuzz.sh run 30 usb_descriptors` | `crashes` many, and one place: `usb/src/descriptor.rs:135:45: index out of bounds` (until K197 is fixed) |
+| `make fuzz FUZZ_SECONDS=10` | Each of the nine targets, its edges and corpus |
+
+Automated: not part of `make test64`.
+
+---
+
+## 163 · The system log: the kernel's ring, logd, and a `log` command
+
+[The entry](journal/163-log-service.md)
+
+| Do | You should see |
+|---|---|
+| Boot with a disk, then `log` | The last 20 lines: date, writer, level, text |
+| `log -l warn` after F12 (the keyboard driver crashes) | `init ... kbd ended ... - restarting it` as `warn` |
+| `log -s kernel -n 5` | The kernel's last five lines |
+| `poweroff`, boot again, `log -a -s logd` | `--- the system started ---` once for each boot |
+
+Automated: `make log64-test` (part of `make test64`).
+
+---
+
+## 164 · The crash record: a kernel's last words, found by the next boot
+
+[The entry](journal/164-crash-record.md)
+
+| Do | You should see |
+|---|---|
+| `make crash64-test` | `crash64-test passed`; in `build/crash64.log`, the panic, `[test] resetting...`, then `[kernel] the boot before this one stopped: ...` and the `crash` lines from `log -s crash` |
+| After any panic, a warm reset (QEMU: `system_reset` in the monitor), then `log -s crash` | The last boot's last words, `crit` |
+
+Automated: `make crash64-test` (part of `make test64`).
