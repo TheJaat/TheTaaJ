@@ -322,6 +322,8 @@ fn main() -> i64 {
     // description and its ports, DMA memory and interrupt.
     let mut framebuffer = None;
     let mut fb_memory = 0;
+    // The kernel's copy of the debug log, for logd (K136); 0 if none.
+    let mut log_memory = 0;
     let mut disk: Option<(Device, [Handle; 3], usize)> = None;
     let mut card: Option<(Device, [Handle; 3], usize)> = None;
     // A USB (xHCI) controller: its description, registers, DMA memory
@@ -370,6 +372,9 @@ fn main() -> i64 {
             } else {
                 println!("[init] no driver for PCI device {:04x}:{:04x}", info.vendor_id, info.device_id);
             }
+        } else if (message, count) == (&b"log"[..], 1) {
+            log_memory = handles[0];
+            used = true;
         } else if let Some(info) = message.strip_prefix(b"power").and_then(PowerInfo::from_bytes) {
             if power.is_none() && count == info.handles() && count <= 5 {
                 let mut kept = [0; 5];
@@ -573,6 +578,7 @@ fn main() -> i64 {
         Grant { handle: tmp_look_out, rights: SEND | DELEGABLE }, // 54: read-only requests, to tmp
         Grant { handle: dev_in, rights: RECEIVE },            // 55: requests, for dev
         Grant { handle: dev_out, rights: SEND | DELEGABLE },  // 56: requests, to dev
+        Grant { handle: log_memory, rights: READ },           // 57: the kernel's log ring, for logd (K136)
     ];
     // Only the shell's screen and the files (the disk's, /tmp's and
     // /dev's) can be copied and passed on.
@@ -692,6 +698,9 @@ fn main() -> i64 {
         Service { name: "tmp", grants: &[51, 53], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
         // /dev: its devices (dev.rs).
         Service { name: "dev", grants: &[55], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
+        // The system log (K136, TheJat-WSL/ci's): the kernel's ring, kept
+        // in a file through fs.
+        Service { name: "logd", grants: &[57, 11], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: log_memory == 0, watch: None },
         Service {
             name: disk_driver,
             grants: match disk {
@@ -1258,7 +1267,7 @@ fn shut_down(services: &mut [Service], action: u8, power: Handle, files_look: Ha
     // usb stops with the keyboards - unless it is the disk's driver,
     // which waits for fs.
     let usb = if disk_driver == "usb" { "" } else { "usb" };
-    let order = ["shell", "hid", usb, "kbd", "serial", "net", card_driver, "dev", "tmp", "fs", disk_driver, "display", "registry"];
+    let order = ["shell", "hid", usb, "kbd", "serial", "net", card_driver, "logd", "dev", "tmp", "fs", disk_driver, "display", "registry"];
     for name in order {
         let Some(service) = services.iter_mut().find(|s| s.name == name && !s.given_up) else { continue };
         let between = name != "fs" || between_requests(files_look);

@@ -457,7 +457,7 @@ TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EX
 # and what must not run, or must not write.
 USER_BIN     = user/target/x86_64-unknown-none/release
 TFSTOOL_RS   = tools/tfstool-rs/target/release/tfstool
-DISK_PROGRAMS = ls cat write append rm mkdir mv cp wc yes primes forever given niccheck ping netinfo udpecho udpsend tcpecho tcpsend httpd counter edit
+DISK_PROGRAMS = ls cat write append rm mkdir mv cp wc yes primes forever given niccheck ping netinfo udpecho udpsend tcpecho tcpsend httpd counter edit log
 # The web site httpd gives out (user/www), put in the directory www of a
 # disk: put-site DISK. Only the run disks and the HTTP test's disk have
 # it - the other test disks are counted, directory by directory.
@@ -812,6 +812,15 @@ endif
 	@TFSTOOL=$(TFSTOOL_RS) OVMF=$(OVMF) $(KERNEL64_DIR)/scripts/power-test.sh x86 $(ISO64_IMG) $(POWER64_LOG).disk $(POWER64_LOG)
 	@echo "power64-test passed"
 
+# The system log (K136): logd keeps what the kernel and the programs
+# write in /var/log/system.log, read with `log`, kept across a switch-off
+# (scripts/log-test.sh).
+LOG64_LOG = $(BUILD_DIR)/log64.log
+log64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(LOG64_LOG).disk)
+	@$(KERNEL64_DIR)/scripts/log-test.sh $(ISO64_IMG) $(LOG64_LOG).disk $(LOG64_LOG)
+	@echo "log64-test passed"
+
 # The same ISO, the same kernel, booted by UEFI firmware instead.
 boot64-uefi-test: iso64 cprogs64 tfstool-rs | smp64-test
 ifneq ($(HAVE_CLANG),yes)
@@ -940,6 +949,7 @@ kernel64-test:
 	cd e1000 && cargo test
 	cd usb && cargo test
 	cd net && cargo test
+	cd syslog && cargo test
 	cd gfx && cargo test
 	cd gui && cargo test
 	$(MAKE) libc-test
@@ -2211,6 +2221,7 @@ TEST64_PARTS = \
 	ahci64-test \
 	nvme64-test \
 	power64-test \
+	log64-test \
 	aarch64-power-test \
 	aarch64-keys-test \
 	clang64-test \

@@ -18,3 +18,4 @@ usb 92
 net 97
 gfx 100
 gui 95
+syslog 97

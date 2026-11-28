@@ -39,7 +39,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FLOOR = os.path.join(ROOT, "tools/coverage-floor")
 OUT = os.path.join(ROOT, "build/coverage")
 CRATES = ["kernel/kernel64", "kernel/abi", "input", "console", "heap", "fileserver", "registry", "taajfs",
-          "virtio", "ahci", "nvme", "acpi", "e1000", "usb", "net", "gfx", "gui"]
+          "virtio", "ahci", "nvme", "acpi", "e1000", "usb", "net", "gfx", "gui", "syslog"]
 HOST = "x86_64-unknown-linux-gnu"
 IGNORE = r"(/\.cargo/|/rustc/|/tests\.rs$|/tests/|/build/coverage/)"
 

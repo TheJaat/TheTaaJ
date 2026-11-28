@@ -91,6 +91,7 @@ A program you start by name can open **no files at all**: it gets its arguments,
 | `ping`, `netinfo`, `httpd`, `udpecho`, `udpsend`, `tcpecho`, `tcpsend` | The network (below) |
 | `chello`, `cwords`, `cprimes`, `cask`, `cfloat`, ... | C programs (`libc/programs/`) |
 | `forever [spin\|yield\|sleep\|wait]` | Never ends, in the way you choose: for trying Ctrl+C and `kill` |
+| `log [-n LINES \| -a] [-l LEVEL] [-s WRITER] [-b]` | The system log (below) |
 
 ## Windows
 
@@ -152,6 +153,8 @@ then `httpd` at TheTaaJ's prompt, and open `http://localhost:8080` on your machi
 Every driver and service is an ordinary program, watched by `init`. One that crashes or stops answering is started again, and the kernel's log says so (`[init] fs ended ... - restarting it`). You can try it: **F12** crashes the keyboard driver, **F11** makes it hang - typing comes back by itself a moment later. `display stall 5` makes the screen freeze for five seconds, the same way; `fs stall 5` and `disk stall 5` the file service and the disk driver.
 
 A program that does something it must not - reads memory it was not given, writes to its own code - is ended, and the log says why; the rest of the system goes on.
+
+**The system log.** Everything the kernel and the programs write to the debug log is also kept on the disk, in `/var/log/system.log` (by the `logd` service): a line each, with the time, who wrote it and a level - `info`, `warn` (something went wrong and was dealt with: a driver restarted), `error` (something failed), `crit` (the system stopped). It is kept across a switch-off; at 1 MiB it becomes `system.log.1` and a new one begins. `log` shows the last 20 lines; `log -l warn` only what went wrong, `log -s fs` only what `fs` wrote (`kernel` for the kernel's), `log -b` only since the last start, `log -a` all of it.
 
 ## More
 
