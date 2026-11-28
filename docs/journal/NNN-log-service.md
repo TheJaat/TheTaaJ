@@ -51,6 +51,7 @@ The user chose (A) for this: `ci` makes the hooks itself and says so here.
 - **The log could not go in `/log`.** The test disk has the `log` program itself at `/log`, so `logd`'s `mkdir log` answered "not a directory". The log now lives in `/var/log`, as on Unix.
 - **The first ring was made too late.** It was made in `start_init`, after the self-tests. Their lines, `hello`'s among them, were on the serial line but not in the log. Now it is made before the self-tests.
 - **`logd` started before the disk.** It starts after `dev` and before the disk's driver, so its first `mkdir` reached a file service with no disk yet. Now the directory is made whenever a write finds it missing.
+- **The boot test counts the disk's root.** `boot64-test` lists it and expected 4 directories and 39 files (27 without the C compiler). With `log` on the disk and `logd`'s `/var`, it is 5 and 40 (28), and `dir  var/` is among them. K188's quick checks found this; K136's had not run `boot64-test`.
 - **A line longer than 1024 bytes lost its rest.** The host test caught it before any boot did. Now the rest begins the next line.
 
 ## Checked
