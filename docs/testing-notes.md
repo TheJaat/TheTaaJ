@@ -5132,3 +5132,17 @@ Automated: `boot64-test` and `boot64-uefi-test` (part of `make test64`).
 | `top -n 1 -d 2` | One frame, its CPU% over two seconds |
 
 Automated: `make top64-test` (part of `make test64`).
+
+---
+
+## 168 · Tracing: what the kernel does, on every CPU, as it does it
+
+[The entry](journal/168-tracing.md)
+
+| Do | You should see |
+|---|---|
+| `trace` | One second: every kind counted, by CPU and by process, and the last 20 events |
+| `trace -s 2 &`, then `ls` | `ls` among the processes; sends and receives with `fs` |
+| Two `trace` at once | The second says tracing is on already |
+
+Automated: `make trace64-test` (part of `make test64`).

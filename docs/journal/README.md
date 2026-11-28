@@ -175,6 +175,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 165 | [A crash report per program (TheJat-WSL/ci, merged after its night test)](165-crash-report.md) | written | `5ab6f47b` (TheKernel `17d9848`) |
 | 166 | [The sixth night: five branches merged, the 20-CPU boot fixed, and the first retry's finding (TheJat-WSL/ci, merged after its night test)](166-night-6.md) | written | `26a2e423` |
 | 167 | [top (TheJat-WSL/ci, merged after its night test)](167-top.md) | written | `cc1d0f8d` (TheKernel `177bb78`) |
+| 168 | [Tracing: what the kernel does, on every CPU, as it does it (TheJat-WSL/ci, merged after its night test)](168-tracing.md) | written | `7185eee7` (TheKernel `bbfd29a`) |
 
 ## How to run what the entries describe
 
