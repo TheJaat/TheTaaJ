@@ -1,6 +1,6 @@
 # The system log: the kernel's ring, logd, and a `log` command
 
-*Journal entry #NNN · K136, the first item of Era 22 (observability). Written on TheJat-WSL/ci, by day, with quick checks only. Until now, the debug log was a serial line: whatever it said was gone unless someone was reading the serial port, and gone at every switch-off. Now everything it says is also kept on the disk, a line at a time, with the time, who wrote it and a level, and the `log` command reads it.*
+*Journal entry #163 · K136, the first item of Era 22 (observability). Written on TheJat-WSL/ci, by day, with quick checks only. Until now, the debug log was a serial line: whatever it said was gone unless someone was reading the serial port, and gone at every switch-off. Now everything it says is also kept on the disk, a line at a time, with the time, who wrote it and a level, and the `log` command reads it.*
 
 ## How it goes
 

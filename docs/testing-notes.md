@@ -5065,3 +5065,18 @@ Automated: the fault parts are parts of `make test64`.
 | `make fuzz FUZZ_SECONDS=10` | Each of the nine targets, its edges and corpus |
 
 Automated: not part of `make test64`.
+
+---
+
+## 163 · The system log: the kernel's ring, logd, and a `log` command
+
+[The entry](journal/163-log-service.md)
+
+| Do | You should see |
+|---|---|
+| Boot with a disk, then `log` | The last 20 lines: date, writer, level, text |
+| `log -l warn` after F12 (the keyboard driver crashes) | `init ... kbd ended ... - restarting it` as `warn` |
+| `log -s kernel -n 5` | The kernel's last five lines |
+| `poweroff`, boot again, `log -a -s logd` | `--- the system started ---` once for each boot |
+
+Automated: `make log64-test` (part of `make test64`).
