@@ -1,6 +1,6 @@
 # The third night: four branches, four passes, and the first parts ordered by their times
 
-*Journal entry #NNN · the night of 2026-11-28, on TheJat-WSL, written by TheJat-WSL/ci. Four branches were queued, and all four passed their whole `make test64` on the first try and were merged under the user's standing yes (rule 2). Nothing failed and nothing was waited for. The night took 41 minutes.*
+*Journal entry #155 · the night of 2026-11-28, on TheJat-WSL, written by TheJat-WSL/ci. Four branches were queued, and all four passed their whole `make test64` on the first try and were merged under the user's standing yes (rule 2). Nothing failed and nothing was waited for. The night took 41 minutes.*
 
 ## What was merged
 

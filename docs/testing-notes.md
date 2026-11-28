@@ -4946,3 +4946,15 @@ make build-bootloader
 | `make build-bootloader` once more, nothing touched | nothing assembled, compiled or linked |
 
 Automated: `make test64` builds TheBootloader; the replay above is by hand.
+
+---
+
+## 155 · The third night: four branches, four passes, and the first parts ordered by their times
+
+[The entry](journal/155-night-3.md)
+
+| Do | You should see |
+|---|---|
+| `cat ../TheTaaJ-night/build/test64-times` | Each part's seconds in the last run, longest first |
+
+Automated: not part of `make test64`.
