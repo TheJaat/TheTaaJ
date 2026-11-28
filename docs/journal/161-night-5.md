@@ -1,6 +1,6 @@
 # The fifth night: the split parts merged, a 20-CPU boot that held up the others, and race-hunt rounds 11 to 20
 
-*Journal entry #NNN · the night of 2026-11-28, on TheJat-WSL, written by TheJat-WSL/ci. Two branches were queued; both passed and were merged under the user's standing yes (rule 2). The race hunt's rounds 11 to 20 all passed. But the night was slower, not faster: the first part-by-part times of the hunt showed why, and the fix is in this entry.*
+*Journal entry #161 · the night of 2026-11-28, on TheJat-WSL, written by TheJat-WSL/ci. Two branches were queued; both passed and were merged under the user's standing yes (rule 2). The race hunt's rounds 11 to 20 all passed. But the night was slower, not faster: the first part-by-part times of the hunt showed why, and the fix is in this entry.*
 
 ## What was merged
 

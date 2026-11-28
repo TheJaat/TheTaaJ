@@ -5038,3 +5038,16 @@ make kill64-test
 By hand, in `make run64` with a disk: `disk crash 5`, then `with files killcheck write x 10` - one write fails, is tried again, and all ten are acked; `with files killcheck check x 10` says all as written.
 
 Automated: `make kill64-test`, `make test64`
+
+---
+
+## 161 · The fifth night: the split parts merged, a 20-CPU boot that held up the others, and race-hunt rounds 11 to 20
+
+[The entry](journal/161-night-5.md)
+
+| Do | You should see |
+|---|---|
+| `make fault64-page-20-test` | `fault-page-20: ok` in a few seconds |
+| A race-hunt round | `fault64-page-20-test` a few seconds in `round-N.times` |
+
+Automated: the fault parts are parts of `make test64`.
