@@ -6,7 +6,8 @@
 #   make test64         1. the shared builds (test64-shared);
 #                       2. smp64-test alone (its 20-CPU boot needs every
 #                          boot slot, entry 117);
-#                       3. every other part, in parallel.
+#                       3. every other part, in parallel - the longest
+#                          first, by the last run's times (below).
 #                       A failing part does not stop the others - nor does
 #                       smp64-test the parts after it: one run reports
 #                       every failure. Only a failed build stops it: the
@@ -23,10 +24,20 @@
 # because a build they needed failed; `test64-parts` if make's output
 # could not be read (then every part again); `test64-shared` when the
 # shared builds failed (then all of make test64).
+#
+# build/test64-times has each part's seconds in the last run that ran it
+# (tools/part-time.sh measures them). make starts the parts in the order
+# given, TEST_JOBS at a time: a long part given late is still running
+# when the rest are done - aarch64-keys-test, times64-test and
+# schedbench64-test ended the first nights' runs a minute after the
+# others (journal entry 149). So the parts are given longest first by
+# those times, and a part with none yet (a new one) before them all. The
+# Makefile's order is the first run's.
 set -u
 mkdir -p build
 FAILED=build/test64-failed
 LOG=build/test64-parts.log
+TIMES=build/test64-times
 
 smp=yes
 parts=$TEST64_PARTS
@@ -64,8 +75,27 @@ fi
 if [ -n "$(echo $parts)" ]; then
     skip=
     for target in $TEST64_SHARED smp64-test; do skip="$skip -o $target"; done
-    { $MAKE --no-print-directory -k -j"$TEST_JOBS" --output-sync=target $skip $parts 2>&1
+    if [ -s "$TIMES" ]; then
+        parts=$(for part in $parts; do echo "$part"; done | awk -v times="$TIMES" '
+            BEGIN { while ((getline line < times) > 0) { split(line, f, " "); took[f[1]] = f[2] } }
+            { n++; if ($1 in took) print took[$1], n, $1; else print -1, n, $1 }' |
+            sort -k1,1nr -k2,2n | awk '$1 < 0 { new = new " " $3; next } { old = old " " $3 } END { print new old }')
+    fi
+    raw=build/test64-times.raw
+    : > "$raw"
+    { TAAJ_PART_TIMES=$(pwd)/$raw $MAKE --no-print-directory -k -j"$TEST_JOBS" --output-sync=target $skip \
+          --eval "$(echo $parts): SHELL = $(pwd)/tools/part-time.sh \$@" $parts 2>&1
       echo $? > "$LOG.status"; } | tee "$LOG"
+    # Each part's time: its first line's start to its last line's end.
+    awk -v parts=" $(echo $parts) " '
+        index(parts, " " $1 " ") { if (!($1 in a) || $2 < a[$1]) a[$1] = $2; if ($3 > b[$1]) b[$1] = $3 }
+        END { for (p in a) printf "%s %d\n", p, b[p] - a[p] + 0.5 }' "$raw" > "$raw.new"
+    if [ -s "$raw.new" ]; then
+        { [ -f "$TIMES" ] && awk 'FNR == NR { got[$1] = 1; next } !($1 in got)' "$raw.new" "$TIMES"
+          cat "$raw.new"; } | sort -k2,2nr > "$TIMES.new" && mv "$TIMES.new" "$TIMES"
+        echo "test64: the longest parts (s): $(sort -k2,2nr "$raw.new" | head -5 | tr '\n' ' ')- all in $TIMES"
+    fi
+    rm -f "$raw" "$raw.new"
     if [ "$(cat "$LOG.status")" != 0 ]; then
         # The parts that failed, and those a failed build stopped (make
         # -k: "Target 'X' not remade because of errors") - at the parts'

@@ -15,11 +15,11 @@ All of it stays out of the kernel: the compositor, window manager, toolkit, font
 |---|---|---|---|
 | K114 | **A desktop benchmark**: key to screen with four busy programs, frames per second dragging a window, the cost of one composition at the screen's size | S | **Done (entry 147)**: measured inside `display` (`display bench`, `display keys N`), on 1 CPU and 4 by `deskbench64-test`. Left: AArch64; the keyboard driver's part of key to screen (with K116) |
 | K115 | **`display` split**: the compositor, the window manager, the terminal (K44) and the boot console as programs of their own; a crash in the terminal leaves the screen | M | Early: everything else builds on it |
-| K116 | **Real key events** through the window protocol: key codes, down and up, modifiers, repeat, a keyboard layout chosen in user space; the terminal turns them into bytes for programs that want bytes | M | With K42; Era 11's push-to-talk key needs it |
+| K116 | **Real key events** through the window protocol: key codes, down and up, modifiers, repeat, a keyboard layout chosen in user space; the terminal turns them into bytes for programs that want bytes | M | With K42; Era 11's push-to-talk key needs it K42 (entry 151) did the events, down and up, with codes and modifiers; left: repeat, the layout in user space, the terminal turning events into bytes, and whether an up never seen down is held back |
 | K117 | **Text for every language**: UTF-8 drawn with a TrueType rasteriser (our own, or a port), several sizes, fallback fonts; left-to-right first | L | With K43 |
 | K118 | **A toolkit to build applications with**: layout, text fields, lists, menus, scroll bars, dialogs, keyboard focus between widgets; its logic tested on the host as `gui` is | L | After K116 and K117 |
 | K119 | **A panel**: a launcher, the open windows, a clock; windows resized, minimised and maximised | M | With K40 |
-| K120 | **Copy and paste**: a clipboard service that hands a memory object from the copying program to the pasting one, only on the user's keys | S | With K41 |
+| K120 | **Copy and paste**: a clipboard service that hands a memory object from the copying program to the pasting one, only on the user's keys | S | With K41 Waits for something to select text in - the editor's selection (J49) or the terminal's - to copy from |
 | K121 | **The first applications**: a terminal window, a file manager, settings, an image viewer, a calculator; `edit` on the new toolkit | L | After K118; the file manager after Era 14's handles |
 | K122 | **PNG and JPEG** decoders as libraries in user space, fuzzed (K104) | M | For K121' image viewer and icons |
 | K123 | **virtio-gpu**: 2D first, scanout and vsync; the compositor using it where it is there | M | After K81. Real GPUs much later |

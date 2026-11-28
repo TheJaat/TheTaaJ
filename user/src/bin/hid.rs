@@ -273,6 +273,11 @@ impl Device {
             let Some((bytes, length)) = evdev::scancode(code, value != 0) else { return };
             for &byte in &bytes[..length] {
                 let Some(event) = self.keys.feed(byte) else { continue };
+                // The key itself, for windows (K42); a repeat (value 2) is
+                // not a new press - repeat is K116's.
+                if value != 2 {
+                    let _ = taaj::send(pointer_out, &abi::display::key_message(code, event.pressed), &[]);
+                }
                 if let Some(text) = terminal_bytes(event, self.keys.control_held()) {
                     // A reader that lags loses keys, not the driver.
                     let _ = taaj::send(keys_out, text.as_bytes(), &[]);
@@ -282,8 +287,10 @@ impl Device {
         }
         if matches!(self.kind, Kind::Mouse | Kind::Tablet) {
             let message = match self.pointer.feed(kind, code, value) {
-                Some(Report::Relative { dx, dy, buttons }) => Pointer { absolute: false, x: dx, y: dy, buttons },
-                Some(Report::Absolute { x, y, buttons }) => Pointer { absolute: true, x, y, buttons },
+                Some(Report::Relative { dx, dy, buttons, wheel }) => {
+                    Pointer { absolute: false, x: dx, y: dy, buttons, wheel: wheel.clamp(-128, 127) as i8 }
+                }
+                Some(Report::Absolute { x, y, buttons, wheel }) => Pointer { absolute: true, x, y, buttons, wheel: wheel.clamp(-128, 127) as i8 },
                 None => return,
             };
             let _ = taaj::send(pointer_out, &message.to_message(), &[]);
