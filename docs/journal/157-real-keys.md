@@ -1,6 +1,6 @@
 # Real keys: one keyboard, its layout and its repeat, in the display
 
-*Journal entry #NNN · a step, MaK-WSL/desktop's K116. Written on MaK-WSL/desktop. Each keyboard driver used to make the terminal's bytes itself, with the US layout built in, and each repeated a held key its own way - or not at all. Now the display turns every keyboard's key events into characters, in a layout chosen while running (`display layout dvorak`); repeats a held key the same way for all of them; and tells a window of a key coming up only if it was told of it going down.*
+*Journal entry #157 · a step, MaK-WSL/desktop's K116. Written on MaK-WSL/desktop. Each keyboard driver used to make the terminal's bytes itself, with the US layout built in, and each repeated a held key its own way - or not at all. Now the display turns every keyboard's key events into characters, in a layout chosen while running (`display layout dvorak`); repeats a held key the same way for all of them; and tells a window of a key coming up only if it was told of it going down.*
 
 ## Why
 

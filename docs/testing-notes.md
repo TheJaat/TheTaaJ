@@ -4973,3 +4973,22 @@ Automated: not part of `make test64`.
 | `night-test.py --hunt 10` | After the queue, "The race hunt (J95)" in the report, with the night's rounds and the tally |
 
 Automated: `power64-test`, `tcp64-test` and `aarch64-tcp-test` are parts of `make test64`; the hunt is not.
+
+---
+
+## 157 · Real keys: one keyboard, its layout and its repeat, in the display
+
+[The entry](journal/157-real-keys.md)
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| Hold a letter key | It types once, then after half a second repeats steadily, about 25 a second |
+| `display layout` | `usage: display layout NAME - the layouts: us dvorak` |
+| `display layout dvorak`, then type on the keys labelled `dijs h.soav` | The line reads `echo dvorak`; Enter prints `dvorak` |
+| On the keys labelled `hg;rpat patsfk f;`, then Enter | `display: keyboard layout us`: the keys type as labelled again |
+
+Automated: `make gui64-test`, `make aarch64-gui-test`, `make test64`
