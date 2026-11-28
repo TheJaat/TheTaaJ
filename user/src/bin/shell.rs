@@ -107,7 +107,18 @@ const TYPED_AHEAD_MAX: usize = 256;
 /// the ones whose whole job is files - and each only as much of it as
 /// that job takes. These read; they get the channel that cannot change
 /// anything.
-const LOOK_PROGRAMS: &[&str] = &["ls", "cat", "wc"];
+const LOOK_PROGRAMS: &[&str] = &["ls", "cat", "wc", "log"];
+/// And these look at the system - the processes, as `ps` does: `top`
+/// (K141). The system's handle, which can look and not touch.
+const SYSTEM_PROGRAMS: &[&str] = &["top"];
+/// And these are given tracing's handle (K139): who holds it can switch
+/// tracing on and read what the kernel does - and the kernel's symbols,
+/// for the profiler (K140).
+const TRACE_PROGRAMS: &[&str] = &["trace", "profile"];
+/// And this starts the program it debugs (K142): it reads the program's
+/// file and asks init, and so holds the handle with DEBUG that only a
+/// starter has.
+const DEBUG_PROGRAMS: &[&str] = &["debug"];
 /// And these change files - the C compiler too, which reads sources,
 /// headers and libraries and writes what it makes of them.
 const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp", "tcc"];
@@ -886,9 +897,11 @@ impl Shell {
                   \x20 disk stall SECONDS, display stall SECONDS   the same,\n\
                   \x20              for the disk driver and the display\n\
                   \x20 (F11 hangs the keyboard driver, F12 crashes it)\n\
+                  \x20 display layout NAME   the keyboard's layout: us, dvorak\n\
                   \x20 services [NAME]   the services the shell can ask for; ask for one\n\
                   \x20 disk, disk read N, disk write N TEXT   size; show sector N; set it\n\
                   \x20 disk check        test the disk driver\n\
+                  \x20 disk crash N      a test: the disk driver dies in the middle of its Nth write\n\
                   \x20 poweroff, reboot  stop the services, then switch the machine off or reset it\n",
             ),
             "echo" => say!(self, "{rest}\n"),
@@ -976,7 +989,50 @@ impl Shell {
                     let _ = taaj::send(screen, &message, &[]);
                 }
                 (Some(1..=30), None) => self.write(b"no display\n"),
-                _ => self.write(b"usage: display stall SECONDS (1 to 30)\n"),
+                // The desktop benchmark (K114): composing and dragging,
+                // timed by the display itself.
+                _ if rest.trim() == "bench" => match self.screen {
+                    Some(screen) => {
+                        let _ = taaj::send(screen, &[abi::display::BENCH], &[]);
+                    }
+                    None => self.write(b"no display\n"),
+                },
+                // ... and key to screen: the next N keys, from their
+                // arrival at the display to their echo on the screen.
+                _ if rest.starts_with("keys ") => {
+                    match (rest["keys ".len()..].trim().parse::<u32>().ok().filter(|n| (1..=abi::display::KEYS_MAX).contains(n)), self.screen) {
+                        (Some(count), Some(screen)) => {
+                            let mut message = [0u8; 5];
+                            message[0] = abi::display::KEYS;
+                            message[1..].copy_from_slice(&count.to_le_bytes());
+                            let _ = taaj::send(screen, &message, &[]);
+                        }
+                        (Some(_), None) => self.write(b"no display\n"),
+                        (None, _) => say!(self, "usage: display keys COUNT (1 to {})\n", abi::display::KEYS_MAX),
+                    }
+                }
+                // The keyboard layout (K116): the display makes every
+                // keyboard's characters, in the layout chosen here.
+                _ if rest.trim() == "layout" || rest.starts_with("layout ") => {
+                    let name = rest["layout".len()..].trim();
+                    match (input::Layout::from_name(name.as_bytes()), self.screen) {
+                        (Some(layout), Some(screen)) => {
+                            if let Some((message, n)) = abi::display::layout_message(layout.name().as_bytes()) {
+                                let _ = taaj::send(screen, &message[..n], &[]);
+                                say!(self, "display: keyboard layout {}\n", layout.name());
+                            }
+                        }
+                        (Some(_), None) => self.write(b"no display: the serial terminal's keys are the host's\n"),
+                        (None, _) => {
+                            self.write(b"usage: display layout NAME - the layouts:");
+                            for layout in input::Layout::ALL {
+                                say!(self, " {}", layout.name());
+                            }
+                            self.write(b"\n");
+                        }
+                    }
+                }
+                _ => self.write(b"usage: display stall SECONDS (1 to 30), display bench, display keys COUNT, display layout NAME\n"),
             },
             "disk" => self.disk(rest),
             "poweroff" | "reboot" => self.power(command == "poweroff"),
@@ -1153,11 +1209,20 @@ impl Shell {
                     Err(error) => say!(self, "disk: {}\n", error.describe()),
                 }
             }
+            // The test of a driver killed mid-I/O (K82): it dies in the
+            // middle of its Nth write from now, half of it written.
+            ("crash", Some(Ok(writes)), None) => match abi::block::crash_request(writes) {
+                Some(request) => match disk.raw(&request, None) {
+                    Ok(()) => say!(self, "disk: the driver will die in the middle of write {writes} from now\n"),
+                    Err(error) => say!(self, "disk: {}\n", error.describe()),
+                },
+                None => say!(self, "usage: disk crash WRITES (1 to {})\n", abi::block::CRASH_MAX),
+            },
             ("check", None, None) => match self.disk_check(disk) {
                 Ok(checks) => say!(self, "disk check: all {checks} checks passed\n"),
                 Err(failed) => say!(self, "disk check: FAILED - {failed}\n"),
             },
-            _ => self.write(b"usage: disk, disk read N, disk write N TEXT, disk check, disk stall SECONDS\n"),
+            _ => self.write(b"usage: disk, disk read N, disk write N TEXT, disk check, disk stall SECONDS, disk crash WRITES\n"),
         }
     }
 
@@ -1197,11 +1262,29 @@ impl Shell {
         // 1. Many sectors at once are the same bytes as one at a time.
         let mut window = Window::new(SECTORS_MAX).map_err(|_| "no memory for a window")?;
         let count = SECTORS_MAX.min(sectors as u32);
-        let many = disk.read_many(&mut window, 0, count).is_ok();
-        let mut same = many;
+        // The disk may be written meanwhile - these are the file system's
+        // own tables, and logd appends to the system log (K136): read them
+        // together again after, and only a try in which they did not
+        // change counts. A few tries; a disk that changes every time is
+        // not one to judge the driver by.
         let mut single = [0u8; SECTOR];
-        for n in 0..count as usize {
-            same = same && disk.read(n as u64, &mut single).is_ok() && window.bytes()[n * SECTOR..][..SECTOR] == single;
+        let mut again = Window::new(SECTORS_MAX).map_err(|_| "no memory for a window")?;
+        let mut same = false;
+        for _ in 0..5 {
+            let many = disk.read_many(&mut window, 0, count).is_ok();
+            let mut matched = many;
+            for n in 0..count as usize {
+                matched = matched && disk.read(n as u64, &mut single).is_ok() && window.bytes()[n * SECTOR..][..SECTOR] == single;
+            }
+            let length = count as usize * SECTOR;
+            let unchanged = disk.read_many(&mut again, 0, count).is_ok() && again.bytes()[..length] == window.bytes()[..length];
+            same = matched;
+            // The same: passed. Different, and the disk did not change
+            // meanwhile: the driver's fault. Else written meanwhile:
+            // once more.
+            if matched || unchanged {
+                break;
+            }
         }
         check(same, "sectors read together differ from sectors read one by one")?;
 
@@ -1481,6 +1564,9 @@ impl Shell {
             Grant::ReadOnly => &[("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev"), ("proc", "proc")],
             Grant::Usual if on_disk(CHANGE_PROGRAMS) => &[("files", "files"), ("tmp", "tmp"), ("dev", "dev"), ("proc", "proc")],
             Grant::Usual if on_disk(LOOK_PROGRAMS) => &[("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev"), ("proc", "proc")],
+            Grant::Usual if on_disk(SYSTEM_PROGRAMS) => &[("system", "system")],
+            Grant::Usual if on_disk(DEBUG_PROGRAMS) => &[("init", "init"), ("files", "files.look")],
+            Grant::Usual if on_disk(TRACE_PROGRAMS) => &[("trace", "trace"), ("trace.symbols", "trace.symbols"), ("system", "system")],
             Grant::Usual if on_disk(CARD_PROGRAMS) => &[("nic", "nic")],
             Grant::Usual if on_disk(NET_PROGRAMS) => &[("net", "net")],
             Grant::Usual if on_disk(WEB_PROGRAMS) => &[("net", "net"), ("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev"), ("proc", "proc")],

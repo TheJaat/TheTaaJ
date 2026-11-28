@@ -147,6 +147,10 @@ fn main() -> i64 {
                 }
             }
             Event::Focus(focused) => log!("{}", if focused { "has the focus" } else { "lost the focus" }),
+            Event::Wheel { x, y, clicks } => log!("wheel {clicks} at ({x}, {y})"),
+            Event::KeyCode { code, down, modifiers } => {
+                log!("key code {code} {} (modifiers {modifiers})", if down { "down" } else { "up" });
+            }
             Event::Close => {
                 log!("closed by its close box");
                 return 0;

@@ -41,7 +41,7 @@ Three places in `boot64-test` used a program as test data, by its root name:
 
 - `cwords -n 25 cwords long > cw1` counts the words in the `cwords` program itself. It is now `/bin/cwords`.
 - `cat ls ls > big`, `cat ls ls | cat | cat > big3` and the background job `cat ls ls | cat > big4 &` push the `ls` program through pipes as 50 KB of binary data. They now name `bin/ls`. The host-side check that makes the file to compare (`get ls; get ls`) also reads `bin/ls`.
-- The root listing's expected count: 39 files and 4 directories before, now 4 files and 5 directories.
+- The root listing's expected count: 39 files and 4 directories before, now 4 files and 5 directories - 6, with K136's `/var` (below).
 
 ## How I checked it
 
@@ -80,3 +80,14 @@ On a disk from before this change, the first `make run64` moves the programs. Yo
 The same on AArch64 with `make run-aarch64`.
 
 Automated: `make boot64-test`, and `make test64`.
+
+## Taken over by TheJat-WSL (2026-11-28)
+
+TheJat-VM became unavailable, and the user moved its lanes to TheJat-WSL. TheJat-WSL/files took this branch as it was - written, its quick checks run, "untested: test64 waits for the night" - and:
+
+- **merged in the queue of the day** (`night-7`, K198, K84, K60, and main with them: entries 141 to 175), so that it merges after them at night. The one conflict was the boot test's expectations in the `Makefile`: the root's count stays 4 (the programs those branches added - `log`, `top`, `trace`, `profile`, `debug` - go in `/bin` like the rest), the root has `var/` too (K136's log), so **6 directories**, and the shell's names include `trace trace.symbols` (K139, K140);
+- **`taaj::start`** (K60's, which `debug` and `ipcbench` start programs with) now looks for `/NAME`, then `/bin/NAME`, as the shell and libc do: `debug forever` found no `/forever` any more;
+- **checked:** `boot64-test`, `boot64-uefi-test`, `aarch64-keys-test`, `debug64-test`, `log64-test`, `kill64-test`, `crash64-test`, `top64-test`, `tcc64-test`, `aarch64-tcc-test`, `stick64-test`, `ipcbench64-test` - every part that reads programs from a disk. The full `make test64` is for the night.
+
+`j66-proc` (J66, `/proc`), TheJat-VM's next, stands on this branch; it is TheJat-WSL/files' next too.
+

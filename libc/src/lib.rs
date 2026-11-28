@@ -96,6 +96,7 @@ pub mod sh_system;
 pub mod signals;
 pub mod system;
 pub mod threads;
+pub mod timers;
 
 use alloc::string::String;
 use alloc::vec::Vec;

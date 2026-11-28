@@ -269,9 +269,12 @@ pub struct Dma {
 impl Dma {
     /// # Safety
     /// `base` must be a mapping of `size` bytes, writable, that nothing
-    /// else uses for as long as the `Dma` lives; `physical` is where
-    /// those bytes are for the controller (one unbroken range).
+    /// else uses for as long as the `Dma` lives, aligned to 8 bytes (it is
+    /// read and written in words: a page, as DMA memory always is);
+    /// `physical` is where those bytes are for the controller (one
+    /// unbroken range).
     pub unsafe fn new(base: *mut u8, physical: u64, size: usize) -> Dma {
+        assert!((base as usize).is_multiple_of(8), "DMA memory must be aligned to 8 bytes");
         Dma { base, physical, size }
     }
 

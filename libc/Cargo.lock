@@ -68,6 +68,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "syslog"
+version = "0.1.0"
+
+[[package]]
 name = "taaj-libc"
 version = "0.1.0"
 dependencies = [
@@ -100,6 +104,7 @@ dependencies = [
  "net",
  "nvme",
  "registry",
+ "syslog",
  "taajfs",
  "usb",
  "virtio",

@@ -258,13 +258,13 @@ impl Driver {
                     let mut report = [0u8; 8];
                     let n = data.len().min(8);
                     report[..n].copy_from_slice(&data[..n]);
-                    let (decoder, keys_out) = (&mut in_use.decoder, self.keys_out);
-                    in_use.keyboard.feed(&report[..n], |code, pressed| press(decoder, keys_out, code, pressed));
+                    let (decoder, keys_out, events) = (&mut in_use.decoder, self.keys_out, Some(self.pointer_out));
+                    in_use.keyboard.feed(&report[..n], |code, pressed| press(decoder, keys_out, events, code, pressed));
                     in_use.repeat.held(in_use.keyboard.held(), taaj::ticks());
                 }
                 Kind::Mouse => {
-                    if let Some(Report::Relative { dx, dy, buttons }) = boot_mouse(data) {
-                        let message = Pointer { absolute: false, x: dx, y: dy, buttons };
+                    if let Some(Report::Relative { dx, dy, buttons, wheel }) = boot_mouse(data) {
+                        let message = Pointer { absolute: false, x: dx, y: dy, buttons, wheel: wheel.clamp(-128, 127) as i8 };
                         let _ = taaj::send(self.pointer_out, &message.to_message(), &[]);
                     }
                 }
@@ -291,7 +291,10 @@ impl Driver {
         let mut next: Option<u64> = None;
         for in_use in self.devices.iter_mut().flatten() {
             if let Some(code) = in_use.repeat.due(now) {
-                press(&mut in_use.decoder, self.keys_out, code, true);
+                // A repeat: bytes again, for the serial terminal, but no
+                // new key event - with a display, the display repeats
+                // held keys itself (K116) and drops these bytes.
+                press(&mut in_use.decoder, self.keys_out, None, code, true);
             }
             if let Some(at) = in_use.repeat.next() {
                 next = Some(next.map_or(at, |n| n.min(at)));
@@ -359,11 +362,15 @@ impl Driver {
 }
 
 /// One key going down or up: through the PS/2 decoder, out as terminal
-/// bytes.
-fn press(decoder: &mut Decoder, keys_out: Handle, code: u16, pressed: bool) {
+/// bytes - and, given `events` (the display's channel), as the key itself
+/// for windows (K42).
+fn press(decoder: &mut Decoder, keys_out: Handle, events: Option<Handle>, code: u16, pressed: bool) {
     let Some((bytes, length)) = evdev::scancode(code, pressed) else { return };
     for &byte in &bytes[..length] {
         let Some(event) = decoder.feed(byte) else { continue };
+        if let Some(out) = events {
+            let _ = taaj::send(out, &abi::display::key_message(code, event.pressed), &[]);
+        }
         if let Some(text) = terminal_bytes(event, decoder.control_held()) {
             // A reader that lags loses keys, not the driver.
             let _ = taaj::send(keys_out, text.as_bytes(), &[]);

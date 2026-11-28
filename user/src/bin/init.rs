@@ -322,6 +322,14 @@ fn main() -> i64 {
     // description and its ports, DMA memory and interrupt.
     let mut framebuffer = None;
     let mut fb_memory = 0;
+    // The kernel's copy of the debug log, for logd (K136); 0 if none.
+    let mut log_memory = 0;
+    // Tracing's rings (K139): the handle for tracing, for the shell's
+    // `trace`, by name; 0 if none.
+    let mut trace_memory = 0;
+    // And the kernel's symbols that come with them, for the profiler
+    // (K140); 0 if none.
+    let mut trace_symbols = 0;
     let mut disk: Option<(Device, [Handle; 3], usize)> = None;
     let mut card: Option<(Device, [Handle; 3], usize)> = None;
     // A USB (xHCI) controller: its description, registers, DMA memory
@@ -370,6 +378,13 @@ fn main() -> i64 {
             } else {
                 println!("[init] no driver for PCI device {:04x}:{:04x}", info.vendor_id, info.device_id);
             }
+        } else if (message, count) == (&b"log"[..], 1) {
+            log_memory = handles[0];
+            used = true;
+        } else if message == b"trace" && (1..=2).contains(&count) {
+            trace_memory = handles[0];
+            trace_symbols = if count == 2 { handles[1] } else { 0 };
+            used = true;
         } else if let Some(info) = message.strip_prefix(b"power").and_then(PowerInfo::from_bytes) {
             if power.is_none() && count == info.handles() && count <= 5 {
                 let mut kept = [0; 5];
@@ -575,12 +590,15 @@ fn main() -> i64 {
         Grant { handle: tmp_look_out, rights: SEND | DELEGABLE }, // 54: read-only requests, to tmp
         Grant { handle: dev_in, rights: RECEIVE },            // 55: requests, for dev
         Grant { handle: dev_out, rights: SEND | DELEGABLE },  // 56: requests, to dev
-        Grant { handle: proc_in, rights: RECEIVE },           // 57: requests, for proc
-        Grant { handle: proc_out, rights: SEND | DELEGABLE }, // 58: requests, to proc
+        Grant { handle: log_memory, rights: READ },           // 57: the kernel's log ring, for logd (K136)
+        Grant { handle: trace_memory, rights: READ | WRITE }, // 58: tracing's rings (K139), by name
+        Grant { handle: trace_symbols, rights: READ },        // 59: the kernel's symbols (K140), by name
+        Grant { handle: proc_in, rights: RECEIVE },           // 60: requests, for proc
+        Grant { handle: proc_out, rights: SEND | DELEGABLE }, // 61: requests, to proc
     ];
     // Only the shell's screen and the files (the disk's, /tmp's, /dev's
     // and /proc's) can be copied and passed on.
-    debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21 | 52 | 54 | 56 | 58)));
+    debug_assert!(grants.iter().enumerate().all(|(n, g)| g.rights & DELEGABLE == 0 || matches!(n, 7 | 11 | 21 | 52 | 54 | 56 | 61)));
 
     // The watchdog's pings: for fs, "what does this channel allow?" on
     // the read-only channel; for blk, "what disk is this?". fs gets the
@@ -622,7 +640,7 @@ fn main() -> i64 {
     // services: a name, and which grant it means - the handle, and the
     // rights a client's copy gets. (The shell's old startup handles,
     // now asked for by name; and the disk, for fs.)
-    let registered: [(&str, usize); 15] = [
+    let registered: [(&str, usize); 17] = [
         // The keys come from the drivers straight to the shell where the
         // terminal is a serial port; from the window server where it is
         // a window.
@@ -635,12 +653,14 @@ fn main() -> i64 {
         ("tmp", 52),
         ("tmp.look", 54),
         ("dev", 56),
-        ("proc", 58),
+        ("proc", 61),
         ("disk", 16),
         ("disk.look", 19),
         ("nic", 32),
         ("net", 35),
         ("windows", 43),
+        ("trace", 58),
+        ("trace.symbols", 59),
     ];
     // And the namespaces: whose, the receiving end of its channel, and
     // the names that exist on it. This table is the system's policy,
@@ -648,7 +668,7 @@ fn main() -> i64 {
     let namespaces: [(&str, Handle, &[&str]); 3] = [
         // (The shell has the network card itself only for the program
         // that tests its driver. Everything else uses "net".)
-        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "tmp", "tmp.look", "dev", "proc", "disk.look", "nic", "net", "windows"]),
+        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "tmp", "tmp.look", "dev", "proc", "disk.look", "nic", "net", "windows", "trace", "trace.symbols"]),
         ("fs", fs_names_rx, &["disk"]),
         ("net", net_names_rx, &["nic"]),
     ];
@@ -697,9 +717,12 @@ fn main() -> i64 {
         Service { name: "tmp", grants: &[51, 53], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
         // /dev: its devices (dev.rs).
         Service { name: "dev", grants: &[55], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
+        // The system log (K136, TheJat-WSL/ci's): the kernel's ring, kept
+        // in a file through fs.
+        Service { name: "logd", grants: &[57, 11], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: log_memory == 0, watch: None },
         // /proc: the kernel's numbers as files (proc.rs), asked for with
         // the system handle.
-        Service { name: "proc", grants: &[57, 9], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
+        Service { name: "proc", grants: &[60, 9], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
         Service {
             name: disk_driver,
             grants: match disk {
@@ -852,6 +875,11 @@ fn main() -> i64 {
         if service.name == "registry" {
             let mut message = [0u8; 256];
             for &(name, grant) in &registered {
+                // Nothing to give (no tracing: the kernel had no memory
+                // for it): no such name.
+                if grants[grant].handle == 0 {
+                    continue;
+                }
                 let rights = grants[grant].rights;
                 let length = Admin::Register { name, rights }.encode(&mut message).ok_or(Error::InvalidArgument)?;
                 tell(&message[..length], grants[grant].handle, rights)?;
@@ -1266,7 +1294,7 @@ fn shut_down(services: &mut [Service], action: u8, power: Handle, files_look: Ha
     // usb stops with the keyboards - unless it is the disk's driver,
     // which waits for fs.
     let usb = if disk_driver == "usb" { "" } else { "usb" };
-    let order = ["shell", "hid", usb, "kbd", "serial", "net", card_driver, "proc", "dev", "tmp", "fs", disk_driver, "display", "registry"];
+    let order = ["shell", "hid", usb, "kbd", "serial", "net", card_driver, "logd", "proc", "dev", "tmp", "fs", disk_driver, "display", "registry"];
     for name in order {
         let Some(service) = services.iter_mut().find(|s| s.name == name && !s.given_up) else { continue };
         let between = name != "fs" || between_requests(files_look);

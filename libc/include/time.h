@@ -88,11 +88,33 @@ int clock_gettime(clockid_t clock, struct timespec *t);
 #define TIME_UTC 1
 int timespec_get(struct timespec *t, int base);
 
-/* Sleeps for at least *wanted: in whole ticks of the system's clock
- * (TICKS_PER_SECOND, 100 a second), rounded up. Nothing can wake the
- * sleeper early (there are no signals), so *left, if given, is set to
- * zero. */
+/* Sleeps for at least *wanted, to the nanosecond the kernel's one-shot
+ * timer gives (journal entry 128; it was whole 10 ms ticks before). A
+ * signal handler cuts it short: -1 with EINTR, the time not slept in
+ * *left if given. */
 int nanosleep(const struct timespec *wanted, struct timespec *left);
+
+/* nanosleep on CLOCK_MONOTONIC or CLOCK_REALTIME; with TIMER_ABSTIME,
+ * until *wanted on that clock. Returns an error number, not -1: EINTR
+ * (with *left set if relative), or EINVAL. */
+#define TIMER_ABSTIME 1
+int clock_nanosleep(clockid_t clock, int flags, const struct timespec *wanted, struct timespec *left);
+
+/* POSIX timers (libc's timers.rs). A program has one: timer_create's
+ * second is EAGAIN. It signals SIGALRM (event NULL, or SIGEV_SIGNAL with
+ * SIGALRM), and it is the same alarm as alarm() and setitimer(): setting
+ * one replaces the others. */
+typedef void *timer_t;
+struct sigevent;
+struct itimerspec {
+    struct timespec it_interval; /* then every this long; 0: once */
+    struct timespec it_value;    /* first after this long; 0: stopped */
+};
+int timer_create(clockid_t clock, struct sigevent *event, timer_t *timer);
+int timer_settime(timer_t timer, int flags, const struct itimerspec *new_value, struct itimerspec *old_value);
+int timer_gettime(timer_t timer, struct itimerspec *now);
+int timer_getoverrun(timer_t timer);
+int timer_delete(timer_t timer);
 
 #ifdef __cplusplus
 }
