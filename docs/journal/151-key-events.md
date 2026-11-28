@@ -1,6 +1,6 @@
 # Keys, not only bytes: a window is told when Shift goes down
 
-*Journal entry #NNN · a step, MaK-WSL/desktop's K42. Written on MaK-WSL/desktop. A window used to hear about the keyboard only in a terminal's bytes - "a", "\x1b[A" for Up - so a key that makes no byte never reached it: Shift alone, Control alone, any key going up. Now every key, down and up, reaches the window with the focus as a key event: which key (Linux's key codes), down or up, and the modifiers held. The terminal still gets its bytes, unchanged.*
+*Journal entry #151 · a step, MaK-WSL/desktop's K42. Written on MaK-WSL/desktop. A window used to hear about the keyboard only in a terminal's bytes - "a", "\x1b[A" for Up - so a key that makes no byte never reached it: Shift alone, Control alone, any key going up. Now every key, down and up, reaches the window with the focus as a key event: which key (Linux's key codes), down or up, and the modifiers held. The terminal still gets its bytes, unchanged.*
 
 ## Why
 

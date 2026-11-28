@@ -4833,3 +4833,50 @@ Automated: `make deskbench64-test` (part of `make test64`)
 | A night queue with two branches pointing at different TheBootloader commits, the second changing an `.inc` | The second builds TheBootloader from nothing and passes |
 
 Automated: not part of `make test64`.
+
+---
+
+## 149 · The night, faster and fairer: parts ordered by their times, a retry before a failure, --from, and the rehearsal's toolchain link
+
+[The entry](journal/149-night-speed.md)
+
+| Do | You should see |
+|---|---|
+| `make test64` twice | The second run's parts given longest first; `test64: the longest parts (s): ...` at the end; `build/test64-times` |
+| A night where a part fails once and passes again | `passed on a retry of PART (failed once: flaky?)` in the report |
+| `night-test.py --from BRANCH` | The branches before it `passed over`; those on main `on main already` |
+| `sh tools/merge-rehearsal.sh` | `toolchain/i686` in the sandbox's trees |
+
+Automated: not part of `make test64`.
+
+---
+
+## 150 · The second night: MaK-WSL's finished branches through TheJat-WSL's queue
+
+[The entry](journal/150-night-2.md)
+
+| Do | You should see |
+|---|---|
+| `git log --oneline origin/main` | entries 141 to 148, one commit each |
+| The night's reports, `~/.cache/taaj-night/reports/` | two: the first pass and the second |
+
+Automated: not part of `make test64`.
+
+---
+
+## 151 · Keys, not only bytes: a window is told when Shift goes down
+
+[The entry](journal/151-key-events.md)
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `counter &` | counter's window, with the focus |
+| Press and release Shift alone | In the log: `[counter] key code 42 down (modifiers 1)`, then `[counter] key code 42 up (modifiers 0)` |
+| Press and release Control alone | `[counter] key code 29 down (modifiers 2)`, then `up (modifiers 0)` |
+| Type `a` | `[counter] key a` (the byte, as before), and `key code 30 down` and `up` |
+
+Automated: `make gui64-test`, `make aarch64-gui-test` (both part of `make test64`)
