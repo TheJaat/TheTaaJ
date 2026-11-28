@@ -5146,3 +5146,16 @@ Automated: `make top64-test` (part of `make test64`).
 | Two `trace` at once | The second says tracing is on already |
 
 Automated: `make trace64-test` (part of `make test64`).
+
+---
+
+## 169 · A profiler: where the CPUs spend their time
+
+[The entry](journal/169-profiler.md)
+
+| Do | You should see |
+|---|---|
+| `forever spin &`, then `profile` | `forever` about half the time on two CPUs, at one or two addresses; `kernel64::threads::idle_loop` the other half |
+| `profile -s 10 -n 30` | Ten seconds, the 30 busiest places |
+
+Automated: `make profile64-test` (part of `make test64`).

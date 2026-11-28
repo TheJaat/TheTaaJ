@@ -176,6 +176,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 166 | [The sixth night: five branches merged, the 20-CPU boot fixed, and the first retry's finding (TheJat-WSL/ci, merged after its night test)](166-night-6.md) | written | `26a2e423` |
 | 167 | [top (TheJat-WSL/ci, merged after its night test)](167-top.md) | written | `cc1d0f8d` (TheKernel `177bb78`) |
 | 168 | [Tracing: what the kernel does, on every CPU, as it does it (TheJat-WSL/ci, merged after its night test)](168-tracing.md) | written | `7185eee7` (TheKernel `bbfd29a`) |
+| 169 | [A profiler: where the CPUs spend their time (TheJat-WSL/ci, merged after its night test)](169-profiler.md) | written | `6b7c2e5c` (TheKernel `f596c37`) |
 
 ## How to run what the entries describe
 
