@@ -1,6 +1,6 @@
 # Tracing: what the kernel does, on every CPU, as it does it
 
-*Journal entry #NNN · K139 (Era 22). Written on TheJat-WSL/ci, by day, with quick checks only. The item: "trace points in the kernel (system calls, IPC sends and receives, switches, faults, interrupts) written to a per-CPU ring that a tracing service maps, with a handle for it; a `trace` command that records a span and shows it". It is the data the benchmarks of Eras 13 and 17 want, and what K140's profiler will stand on.*
+*Journal entry #168 · K139 (Era 22). Written on TheJat-WSL/ci, by day, with quick checks only. The item: "trace points in the kernel (system calls, IPC sends and receives, switches, faults, interrupts) written to a per-CPU ring that a tracing service maps, with a handle for it; a `trace` command that records a span and shows it". It is the data the benchmarks of Eras 13 and 17 want, and what K140's profiler will stand on.*
 
 ## What it shows
 
