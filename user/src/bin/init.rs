@@ -121,6 +121,50 @@ enum Device {
     Mmio(MmioDeviceInfo),
 }
 
+/// Which of init's device slots a PCI device is taken for.
+enum DiskOrCard {
+    Disk,
+    Card,
+    Usb,
+}
+
+/// How many pages of DMA memory each driver's device gets (K75: the
+/// kernel's own table until then). Each says in its source where in
+/// them its queues and buffers lie.
+const DRIVER_DMA_PAGES: &[(&str, u64)] = &[
+    // The virtqueue and request buffers - 36 KiB - then room for
+    // abi::block::SECTORS_MAX sectors (128 KiB; user/src/bin/blk.rs).
+    ("blk", 48),
+    // Two queues, and forty buffers of a frame each (user/src/bin/nic.rs).
+    ("nic", 40),
+    // A page for one port's command list, received FISes and a command
+    // table, then 128 KiB of data (ahci/src/lib.rs, `layout`).
+    ("ahci", 1 + 32),
+    // A page each for the admin queues and one I/O queue pair, one for
+    // a PRP list, then 128 KiB of data (nvme/src/lib.rs, `layout`).
+    ("nvme", 5 + 32),
+    // Two descriptor rings (a page each), 32 receive and 16 transmit
+    // buffers of 2048 bytes (e1000/src/lib.rs, `layout`).
+    ("e1000", 2 + (32 + 16) / 2),
+    // Five pages of the controller's own, four for each of 8 devices, up
+    // to 32 scratchpad pages, then a USB stick's: a page for its
+    // commands and statuses, 32 for its data (usb/src/xhci.rs, `layout`).
+    ("usb", 5 + 8 * 4 + 32 + 1 + 32),
+    // One small queue of events (two pages), and the events (one).
+    ("hid", 3),
+];
+
+/// DMA memory for the device a handle names, as much as `driver` gets:
+/// the memory's handle, its physical address and its size. Kept by
+/// init, so that a restarted driver is given the same memory, and the
+/// device - which may still be writing it - never writes memory that
+/// went back to the system.
+fn device_dma(device: Handle, driver: &str) -> Option<(Handle, u64, u64)> {
+    let pages = DRIVER_DMA_PAGES.iter().find(|(name, _)| *name == driver)?.1;
+    let (memory, physical) = taaj::device::dma(device, pages).ok()?;
+    Some((memory, physical, pages * abi::PAGE_SIZE))
+}
+
 /// On a grant: the service may copy the handle and pass copies on - to
 /// the programs it has init start. Without these two rights a handle
 /// stays where init put it.
@@ -343,32 +387,43 @@ fn main() -> i64 {
             framebuffer = FramebufferInfo::from_bytes(rest);
             fb_memory = handles[0];
             used = true;
-        } else if let Some(info) = message.strip_prefix(b"pci").and_then(PciDeviceInfo::from_bytes) {
-            let is_ahci = (info.class, info.subclass, info.interface) == (ahci::CLASS, ahci::SUBCLASS, ahci::INTERFACE);
-            let is_nvme = (info.class, info.subclass, info.interface) == (nvme::CLASS, nvme::SUBCLASS, nvme::INTERFACE);
-            let is_virtio = info.vendor_id == virtio::PCI_VENDOR && !info.registers_in_memory();
-            let is_xhci = (info.class, info.subclass, info.interface) == (usb::xhci::CLASS, usb::xhci::SUBCLASS, usb::xhci::INTERFACE);
-            if is_virtio && info.device_id == virtio::PCI_DEVICE_BLOCK && disk.is_none() && (2..=3).contains(&count) {
-                disk = Some((Device::Pci(info), [handles[0], handles[1], handles[2]], count));
-                used = true;
-            } else if (is_ahci || is_nvme) && info.registers_in_memory() && disk.is_none() && (2..=3).contains(&count) {
-                // The first disk wins: a virtio one, a SATA controller
-                // or an NVMe one, whichever the bus has first.
-                disk = Some((Device::Pci(info), [handles[0], handles[1], handles[2]], count));
-                used = true;
-            } else if ((is_virtio && info.device_id == virtio::PCI_DEVICE_NETWORK)
-                || (e1000::model(info.vendor_id, info.device_id).is_some() && info.registers_in_memory()))
-                && card.is_none()
-                && (2..=3).contains(&count)
-            {
-                // The first card wins: a virtio one or an Intel one.
-                card = Some((Device::Pci(info), [handles[0], handles[1], handles[2]], count));
-                used = true;
-            } else if is_xhci && info.registers_in_memory() && usb_controller.is_none() && (2..=3).contains(&count) {
-                usb_controller = Some((info, [handles[0], handles[1], handles[2]], count));
-                used = true;
+        } else if let Some(mut info) = message.strip_prefix(b"pci").and_then(PciDeviceInfo::from_bytes) {
+            // Every PCI function comes here (K75), with its device handle:
+            // which ones get a driver is this table's choice, not the
+            // kernel's. The first of each kind wins.
+            let class = (info.class, info.subclass, info.interface);
+            let is_virtio = info.vendor_id == virtio::PCI_VENDOR;
+            let driver = if is_virtio && info.device_id == virtio::PCI_DEVICE_BLOCK && disk.is_none() {
+                Some(("blk", DiskOrCard::Disk))
+            } else if class == (ahci::CLASS, ahci::SUBCLASS, ahci::INTERFACE) && disk.is_none() {
+                Some(("ahci", DiskOrCard::Disk))
+            } else if class == (nvme::CLASS, nvme::SUBCLASS, nvme::INTERFACE) && disk.is_none() {
+                Some(("nvme", DiskOrCard::Disk))
+            } else if is_virtio && info.device_id == virtio::PCI_DEVICE_NETWORK && card.is_none() {
+                Some(("nic", DiskOrCard::Card))
+            } else if e1000::model(info.vendor_id, info.device_id).is_some() && card.is_none() {
+                Some(("e1000", DiskOrCard::Card))
+            } else if class == (usb::xhci::CLASS, usb::xhci::SUBCLASS, usb::xhci::INTERFACE) && usb_controller.is_none() {
+                Some(("usb", DiskOrCard::Usb))
             } else {
-                println!("[init] no driver for PCI device {:04x}:{:04x}", info.vendor_id, info.device_id);
+                None
+            };
+            match (driver, count) {
+                (Some((name, what)), 1) => match device_dma(handles[0], name) {
+                    Some((dma, physical, size)) => {
+                        info.dma_physical = physical;
+                        info.dma_size = size;
+                        let kept = [handles[0], dma, 0];
+                        match what {
+                            DiskOrCard::Disk => disk = Some((Device::Pci(info), kept, 2)),
+                            DiskOrCard::Card => card = Some((Device::Pci(info), kept, 2)),
+                            DiskOrCard::Usb => usb_controller = Some((info, kept, 2)),
+                        }
+                        used = true;
+                    }
+                    None => println!("[init] no DMA memory for {name}'s device {:04x}:{:04x}", info.vendor_id, info.device_id),
+                },
+                _ => {}
             }
         } else if let Some(info) = message.strip_prefix(b"power").and_then(PowerInfo::from_bytes) {
             if power.is_none() && count == info.handles() && count <= 5 {
@@ -377,20 +432,38 @@ fn main() -> i64 {
                 power = Some((info, kept, count));
                 used = true;
             }
-        } else if let Some(info) = message.strip_prefix(b"mmio").and_then(MmioDeviceInfo::from_bytes) {
-            if info.device == virtio::mmio::DEVICE_BLOCK && info.version == 1 && disk.is_none() && (2..=3).contains(&count) {
-                disk = Some((Device::Mmio(info), [handles[0], handles[1], handles[2]], count));
-                used = true;
-            } else if info.device == virtio::mmio::DEVICE_NETWORK && info.version == 1 && card.is_none() && (2..=3).contains(&count) {
-                card = Some((Device::Mmio(info), [handles[0], handles[1], handles[2]], count));
-                used = true;
-            } else if let (virtio::mmio::DEVICE_INPUT, 1, 2..=3, Some(slot)) =
-                (info.device, info.version, count, inputs.iter_mut().find(|slot| slot.is_none()))
-            {
-                *slot = Some((info, [handles[0], handles[1], handles[2]], count));
-                used = true;
-            } else {
-                println!("[init] no driver for the device at {:#x} (virtio kind {})", info.registers, info.device);
+        } else if let Some(mut info) = message.strip_prefix(b"mmio").and_then(MmioDeviceInfo::from_bytes) {
+            // Every virtio place with a device comes here (K75): the
+            // kinds this system has a driver for, of the legacy
+            // interface, the first of each (up to INPUTS_MAX inputs).
+            let input_slot = inputs.iter().position(Option::is_none);
+            let driver = match (info.device, info.version) {
+                (virtio::mmio::DEVICE_BLOCK, 1) if disk.is_none() => Some("blk"),
+                (virtio::mmio::DEVICE_NETWORK, 1) if card.is_none() => Some("nic"),
+                (virtio::mmio::DEVICE_INPUT, 1) if input_slot.is_some() => Some("hid"),
+                _ => None,
+            };
+            match (driver, count) {
+                (Some(name), 1) => match device_dma(handles[0], name) {
+                    Some((dma, physical, size)) => {
+                        info.dma_physical = physical;
+                        info.dma_size = size;
+                        let kept = [handles[0], dma, 0];
+                        match (name, input_slot) {
+                            ("blk", _) => disk = Some((Device::Mmio(info), kept, 2)),
+                            ("nic", _) => card = Some((Device::Mmio(info), kept, 2)),
+                            (_, Some(slot)) => inputs[slot] = Some((info, kept, 2)),
+                            _ => {}
+                        }
+                        used = true;
+                    }
+                    None => println!("[init] no DMA memory for {name}'s device at {:#x}", info.registers),
+                },
+                _ if info.version != 1 => println!(
+                    "[init] no driver for the device at {:#x} (virtio kind {}): the modern interface - no driver speaks it yet",
+                    info.registers, info.device
+                ),
+                _ => println!("[init] no driver for the device at {:#x} (virtio kind {})", info.registers, info.device),
             }
         }
         if !used {
@@ -462,7 +535,7 @@ fn main() -> i64 {
         // client's send fails with PeerClosed instead of waiting forever.
         let _ = (taaj::close(disk_in), taaj::close(disk_look_in));
     }
-    let [disk_ports, disk_dma, disk_interrupt] = disk.map_or([0; 3], |(_, handles, _)| handles);
+    let [disk_device, disk_dma, _] = disk.map_or([0; 3], |(_, handles, _)| handles);
     // The network card's, likewise: its description for each new
     // driver, and one channel of requests - whole frames, for whoever
     // is given it.
@@ -471,7 +544,7 @@ fn main() -> i64 {
     if card.is_none() {
         let _ = taaj::close(card_in);
     }
-    let [card_registers, card_dma, card_interrupt] = card.map_or([0; 3], |(_, handles, _)| handles);
+    let [card_device, card_dma, _] = card.map_or([0; 3], |(_, handles, _)| handles);
     // The network service: its requests, and its channel to the
     // registry (it asks for the card's driver by name, as fs asks for
     // the disk's). No card, no network: its clients are told at once.
@@ -485,7 +558,7 @@ fn main() -> i64 {
     // watchdog's pings (it answers no requests).
     let Ok((usb_info_tx, usb_info_rx)) = taaj::channel_create() else { return 2 };
     let Ok((usb_ping_tx, usb_ping_rx)) = taaj::channel_create() else { return 2 };
-    let [usb_registers, usb_dma, usb_interrupt] = usb_controller.map_or([0; 3], |(_, handles, _)| handles);
+    let [usb_device, usb_dma, _] = usb_controller.map_or([0; 3], |(_, handles, _)| handles);
     if card.is_none() {
         let _ = taaj::close(net_in);
     }
@@ -497,19 +570,6 @@ fn main() -> i64 {
     let Ok((shell_names_tx, shell_names_rx)) = taaj::channel_create() else { return 2 };
     let Ok((fs_names_tx, fs_names_rx)) = taaj::channel_create() else { return 2 };
 
-    // Whether a device's registers are memory, to be mapped (a
-    // virtio-mmio device's, an AHCI or NVMe controller's, an Intel
-    // card's), or I/O ports.
-    let disk_registers_in_memory = match disk {
-        Some((Device::Mmio(_), ..)) => true,
-        Some((Device::Pci(info), ..)) => info.registers_in_memory(),
-        None => false,
-    };
-    let card_registers_in_memory = match card {
-        Some((Device::Mmio(_), ..)) => true,
-        Some((Device::Pci(info), ..)) => info.registers_in_memory(),
-        None => false,
-    };
     // Everything a service may be given, and the rights it gets.
     let grants = [
         Grant { handle: interrupt, rights: RECEIVE },    // 0
@@ -524,14 +584,14 @@ fn main() -> i64 {
         Grant { handle: system, rights: 0 },             // 9: looking, not touching
         Grant { handle: files_in, rights: RECEIVE },     // 10: requests, for fs
         Grant { handle: files_out, rights: SEND | DELEGABLE }, // 11: requests, to fs
-        // 12: the disk's registers - ports, or memory to be mapped (a
-        // virtio-mmio disk's, or an AHCI controller's)
-        Grant { handle: disk_ports, rights: if disk_registers_in_memory { READ | WRITE } else { 0 } },
+        // 12: the disk's device handle: its driver asks it for the
+        // registers and the interrupt (K75)
+        Grant { handle: disk_device, rights: 0 },
         Grant { handle: disk_dma, rights: READ | WRITE }, // 13: its DMA memory
         Grant { handle: disk_info_rx, rights: RECEIVE },  // 14: its description
         Grant { handle: disk_in, rights: RECEIVE },       // 15: requests, for blk
         Grant { handle: disk_out, rights: SEND },         // 16: requests, to blk
-        Grant { handle: disk_interrupt, rights: RECEIVE }, // 17: its interrupt
+        Grant { handle: 0, rights: 0 },                   // 17: not used since K75 (the interrupt: asked for)
         Grant { handle: disk_look_in, rights: RECEIVE },  // 18: read-only requests, for blk
         Grant { handle: disk_look_out, rights: SEND },    // 19: read-only requests, to blk
         Grant { handle: files_look_in, rights: RECEIVE }, // 20: read-only requests, for fs
@@ -542,14 +602,13 @@ fn main() -> i64 {
         Grant { handle: admin_rx, rights: RECEIVE },          // 25: registrations, for registry
         Grant { handle: shell_names_tx, rights: SEND },       // 26: lookups, from the shell
         Grant { handle: fs_names_tx, rights: SEND },          // 27: lookups, from fs
-        // 28: the network card's registers - ports, or memory to be mapped
-        // (a virtio-mmio card's, or an Intel card's BAR 0)
-        Grant { handle: card_registers, rights: if card_registers_in_memory { READ | WRITE } else { 0 } },
+        // 28: the network card's device handle (K75)
+        Grant { handle: card_device, rights: 0 },
         Grant { handle: card_dma, rights: READ | WRITE },     // 29: its DMA memory
         Grant { handle: card_info_rx, rights: RECEIVE },      // 30: its description
         Grant { handle: card_in, rights: RECEIVE },           // 31: requests, for nic or e1000
         Grant { handle: card_out, rights: SEND },             // 32: requests, to nic or e1000
-        Grant { handle: card_interrupt, rights: RECEIVE },    // 33: its interrupt
+        Grant { handle: 0, rights: 0 },                       // 33: not used since K75
         Grant { handle: net_in, rights: RECEIVE },            // 34: requests, for net
         Grant { handle: net_out, rights: SEND },              // 35: requests, to net
         Grant { handle: net_names_tx, rights: SEND },         // 36: lookups, from net
@@ -562,11 +621,11 @@ fn main() -> i64 {
         Grant { handle: windows_out, rights: SEND },          // 43: windows to open, from programs
         Grant { handle: power_asked, rights: RECEIVE | SEND }, // 44: requests, for power (and its answers)
         Grant { handle: power_info_rx, rights: RECEIVE },     // 45: how to switch off, for power
-        Grant { handle: usb_registers, rights: READ | WRITE }, // 46: the USB controller's registers (BAR 0)
+        Grant { handle: usb_device, rights: 0 },              // 46: the USB controller's device handle (K75)
         Grant { handle: usb_dma, rights: READ | WRITE },      // 47: its DMA memory
         Grant { handle: usb_info_rx, rights: RECEIVE },       // 48: its description, for usb
         Grant { handle: usb_ping_rx, rights: RECEIVE },       // 49: pings, for usb
-        Grant { handle: usb_interrupt, rights: RECEIVE },     // 50: its interrupt
+        Grant { handle: 0, rights: 0 },                       // 50: not used since K75
         Grant { handle: tmp_in, rights: RECEIVE },            // 51: requests, for tmp
         Grant { handle: tmp_out, rights: SEND | DELEGABLE },  // 52: requests, to tmp
         Grant { handle: tmp_look_in, rights: RECEIVE },       // 53: read-only requests, for tmp
@@ -591,7 +650,7 @@ fn main() -> i64 {
     let disk_driver = match disk {
         None if usb_disk => "usb",
         Some((Device::Pci(info), _, _)) if (info.class, info.subclass) == (nvme::CLASS, nvme::SUBCLASS) => "nvme",
-        Some((Device::Pci(info), _, _)) if info.registers_in_memory() => "ahci",
+        Some((Device::Pci(info), _, _)) if (info.class, info.subclass) == (ahci::CLASS, ahci::SUBCLASS) => "ahci",
         _ => "blk",
     };
     // Which program drives the network card: the virtio one or the
@@ -694,10 +753,9 @@ fn main() -> i64 {
         Service { name: "dev", grants: &[55], process: 0, restarts: [0; MAX_RESTARTS], restart_count: 0, given_up: false, watch: None },
         Service {
             name: disk_driver,
-            grants: match disk {
-                Some((_, _, 3)) => &[12, 13, 14, 15, 18, 17],
-                _ => &[12, 13, 14, 15, 18], // no MSI-X: the driver polls
-            },
+            // The device, its DMA memory, its description, requests:
+            // the driver asks the device for its interrupt (K75).
+            grants: &[12, 13, 14, 15, 18],
             process: 0,
             restarts: [0; MAX_RESTARTS],
             restart_count: 0,
@@ -706,10 +764,7 @@ fn main() -> i64 {
         },
         Service {
             name: card_driver,
-            grants: match card {
-                Some((_, _, 3)) => &[28, 29, 30, 31, 33],
-                _ => &[28, 29, 30, 31], // no interrupt: the driver polls
-            },
+            grants: &[28, 29, 30, 31],
             process: 0,
             restarts: [0; MAX_RESTARTS],
             restart_count: 0,
@@ -757,10 +812,7 @@ fn main() -> i64 {
         // most.)
         Service {
             name: "usb",
-            grants: match usb_controller {
-                Some((_, _, 3)) => &[46, 47, 48, 3, 37, 49, 50],
-                _ => &[46, 47, 48, 3, 37, 49], // no MSI: the driver polls
-            },
+            grants: &[46, 47, 48, 3, 37, 49],
             process: 0,
             restarts: [0; MAX_RESTARTS],
             restart_count: 0,
@@ -792,16 +844,16 @@ fn main() -> i64 {
                 }
             }
             for (info, handles, count) in inputs.iter().flatten() {
-                // Copies that can be handed over, with the rights the
-                // driver needs: registers and DMA memory mapped to read
-                // and write, the interrupt to wait on.
+                // Copies that can be handed over: the device's handle
+                // (K75: hid asks it for the registers and the
+                // interrupt), and its DMA memory, mapped to read and
+                // write.
                 let mut copies = [0u64; 3];
                 let mut made = 0;
-                for (n, &handle) in handles[..*count].iter().enumerate() {
-                    let rights = if n == 2 { RECEIVE } else { READ | WRITE };
-                    match taaj::duplicate(handle, rights | TRANSFER) {
+                for &handle in &handles[..*count] {
+                    match taaj::duplicate(handle, READ | WRITE | TRANSFER) {
                         Ok(copy) => {
-                            copies[n] = copy;
+                            copies[made] = copy;
                             made += 1;
                         }
                         Err(_) => break,

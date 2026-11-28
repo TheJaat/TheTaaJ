@@ -58,7 +58,6 @@ What one lane waits for from another. When an item's dependency isn't merged yet
 | `taajfs` J76/J77 (owners, links) | the file protocol's new operations (J61) | `files` |
 | `ipc` K152 the file protocol on the IDL | J61 one file protocol | `files` |
 | `desktop` K123 virtio-gpu | K81 virtio 1.x | `devices` |
-| `arch` K167 PCIe on AArch64 | K75 every device handed out the same way | `devices` |
 | `arch` K161/K162 (page size, page-table shape) | `memory`'s K90/K91 merged (both change `paging.rs`) | `memory` |
 | `network` K37 TLS, `crypto` K106 signed programs, `boot` K107 | K176/K177 the crypto libraries; K106 also K105 | `crypto`, `services` |
 | `network` K156 NTP | K30 DHCP, K33 UDP (its own) | - |
@@ -228,7 +227,6 @@ The real-PC items need the user at the PC (U4): done whenever the user is there,
 
 | Item | Wave | Note |
 |---|---|---|
-| K75 | 1 | Every device handed out the same way; `arch`'s K167 waits for it |
 | K77 | 1 | Bus mastering tied to a handle |
 | K76 | 1 | The device manager |
 | K81 | 1 | virtio 1.x; `desktop`'s K123 waits for it |
@@ -395,7 +393,7 @@ Its files: `kernel/kernel64/src/arch/`, new `arch/` directories, the linker scri
 | K161 | 2 | The page size a parameter (after `memory`'s K90/K91) |
 | K162 | 2 | Page tables of any shape (with K161) |
 | K164 | 2 | Non-coherent DMA (with `devices`' K80) |
-| K167 | 2 | PCIe on AArch64 (after `devices`' K75) |
+| K167 | 2 | PCIe on AArch64 (`devices`' K75 done, entry NNN) |
 | K168 | 2 | Every Tier 1 test on both Tier 1 CPUs |
 | K170 | 3 | LoongArch64 |
 | K171 | 3 | PowerPC64 |

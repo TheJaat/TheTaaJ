@@ -202,7 +202,9 @@ fn start(info: &PciDeviceInfo, registers: Handle, dma: Handle, interrupt: Option
 }
 
 fn main() -> i64 {
-    let (Some(registers), Some(dma), Some(device), Some(writers), Some(readers)) = (
+    // The device's handle (K75: its registers and interrupt are asked
+    // of it), its DMA memory (init's), its description, and requests.
+    let (Some(handle), Some(dma), Some(device), Some(writers), Some(readers)) = (
         taaj::startup_handle(0),
         taaj::startup_handle(1),
         taaj::startup_handle(2),
@@ -212,16 +214,23 @@ fn main() -> i64 {
         println!("[nvme] started without its device");
         return 1;
     };
-    let interrupt = taaj::startup_handle(5);
 
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
     let described = match taaj::receive(device, &mut message, &mut []) {
         Ok((n, _)) => &message[..n],
         Err(_) => &[],
     };
-    let Some(info) = PciDeviceInfo::from_bytes(described) else {
+    let Some(mut info) = PciDeviceInfo::from_bytes(described) else {
         println!("[nvme] no usable device description");
         return 2;
+    };
+    // An NVMe controller: its registers in BAR 0, MSI-X if it has it, else MSI, else none.
+    let (registers, interrupt) = match taaj::device::claim_pci(handle, &mut info, 0, &[abi::device::MSIX, abi::device::MSI], "nvme") {
+        Ok(claimed) => claimed,
+        Err(error) => {
+            println!("[nvme] the controller's registers or interrupt: {error:?}");
+            return 2;
+        }
     };
     let mut nvme = match start(&info, registers, dma, interrupt) {
         Ok(nvme) => nvme,

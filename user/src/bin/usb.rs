@@ -427,7 +427,10 @@ fn start(info: &PciDeviceInfo, registers: Handle, dma: Handle, interrupt: Option
 }
 
 fn main() -> i64 {
-    let (Some(registers), Some(dma), Some(described), Some(keys_out), Some(pointer_out)) = (
+    // The controller's handle (K75: its registers and interrupt are
+    // asked of it), its DMA memory (init's), its description, and where
+    // keys and movements go.
+    let (Some(handle), Some(dma), Some(described), Some(keys_out), Some(pointer_out)) = (
         taaj::startup_handle(0),
         taaj::startup_handle(1),
         taaj::startup_handle(2),
@@ -438,7 +441,6 @@ fn main() -> i64 {
         return 1;
     };
     let mut pings = taaj::startup_handle(5);
-    let interrupt = taaj::startup_handle(6);
 
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
     let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
@@ -456,9 +458,23 @@ fn main() -> i64 {
             [None, None]
         }
     };
-    let Some(info) = PciDeviceInfo::from_bytes(description) else {
+    let Some(mut info) = PciDeviceInfo::from_bytes(description) else {
         println!("[usb] no usable device description");
         return 2;
+    };
+    // Its registers in BAR 0; MSI first, else MSI-X, else polled. MSI
+    // first: an xHCI controller's MSI-X table is usually in BAR 0 among
+    // its registers, and with MSI the kernel hands the whole BAR over
+    // (MSI-X then stays off for good). Only a controller without MSI
+    // (QEMU's `qemu-xhci`) gets MSI-X, and the BAR cut short at the
+    // table; `start` checks that its registers are all before the cut.
+    // (Until K75 the kernel knew this.)
+    let (registers, interrupt) = match taaj::device::claim_pci(handle, &mut info, 0, &[abi::device::MSI, abi::device::MSIX], "usb") {
+        Ok(claimed) => claimed,
+        Err(error) => {
+            println!("[usb] the controller's registers or interrupt: {error:?}");
+            return 2;
+        }
     };
     let controller = match start(&info, registers, dma, interrupt) {
         Ok(controller) => controller,

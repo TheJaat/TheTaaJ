@@ -537,24 +537,45 @@ fn start_in_memory(info: &MmioDeviceInfo, registers: Handle, dma: Handle, interr
 }
 
 fn main() -> i64 {
-    let (Some(registers), Some(dma), Some(device), Some(requests)) =
+    // The device's handle (K75: its registers and interrupt are asked
+    // of it), its DMA memory (init's), its description, and requests.
+    let (Some(handle), Some(dma), Some(device), Some(requests)) =
         (taaj::startup_handle(0), taaj::startup_handle(1), taaj::startup_handle(2), taaj::startup_handle(3))
     else {
         println!("[nic] started without its device");
         return 1;
     };
-    let interrupt = taaj::startup_handle(4);
 
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
     let described = match taaj::receive(device, &mut message, &mut []) {
         Ok((n, _)) => &message[..n],
         Err(_) => &[],
     };
-    // Which kind of device: the two descriptions differ in length.
-    let started = if let Some(info) = PciDeviceInfo::from_bytes(described) {
-        start_on_pci(&info, registers, dma, interrupt)
+    // Which kind of device: the two descriptions differ in length. A
+    // legacy virtio card: its ports in BAR 0, MSI-X or no interrupt.
+    let mut interrupt = None;
+    let started = if let Some(mut info) = PciDeviceInfo::from_bytes(described) {
+        match taaj::device::claim_pci(handle, &mut info, 0, &[abi::device::MSIX], "nic") {
+            Ok((ports, line)) => {
+                interrupt = line;
+                start_on_pci(&info, ports, dma, interrupt)
+            }
+            Err(error) => {
+                println!("[nic] the card's ports or interrupt: {error:?}");
+                Err(2)
+            }
+        }
     } else if let Some(info) = MmioDeviceInfo::from_bytes(described) {
-        start_in_memory(&info, registers, dma, interrupt)
+        match taaj::device::claim_mmio(handle, &info, "nic") {
+            Ok((registers, line)) => {
+                interrupt = line;
+                start_in_memory(&info, registers, dma, interrupt)
+            }
+            Err(error) => {
+                println!("[nic] the card's registers or interrupt: {error:?}");
+                Err(2)
+            }
+        }
     } else {
         println!("[nic] no usable device description");
         Err(2)

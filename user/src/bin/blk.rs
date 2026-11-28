@@ -441,7 +441,10 @@ fn map(memory: Handle, what: &str) -> Result<*mut u8, i64> {
 }
 
 fn main() -> i64 {
-    let (Some(registers), Some(dma), Some(device), Some(writers), Some(readers)) = (
+    // The device's handle (K75: its registers and interrupt are asked
+    // of it), its DMA memory (init's, kept across restarts), its
+    // description, and the two request channels.
+    let (Some(handle), Some(dma), Some(device), Some(writers), Some(readers)) = (
         taaj::startup_handle(0),
         taaj::startup_handle(1),
         taaj::startup_handle(2),
@@ -451,18 +454,31 @@ fn main() -> i64 {
         println!("[blk] started without its device");
         return 1;
     };
-    let interrupt = taaj::startup_handle(5);
 
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
     let described = match taaj::receive(device, &mut message, &mut []) {
         Ok((n, _)) => &message[..n],
         Err(_) => &[],
     };
-    // Which kind of device: the two descriptions differ in length.
-    let started = if let Some(info) = PciDeviceInfo::from_bytes(described) {
-        start_on_pci(&info, registers, dma, interrupt)
+    // Which kind of device: the two descriptions differ in length. A
+    // legacy virtio device: its ports in BAR 0, its interrupt MSI-X or
+    // none (it has no MSI).
+    let started = if let Some(mut info) = PciDeviceInfo::from_bytes(described) {
+        match taaj::device::claim_pci(handle, &mut info, 0, &[abi::device::MSIX], "blk") {
+            Ok((ports, interrupt)) => start_on_pci(&info, ports, dma, interrupt),
+            Err(error) => {
+                println!("[blk] the device's ports or interrupt: {error:?}");
+                Err(2)
+            }
+        }
     } else if let Some(info) = MmioDeviceInfo::from_bytes(described) {
-        start_in_memory(&info, registers, dma, interrupt)
+        match taaj::device::claim_mmio(handle, &info, "blk") {
+            Ok((registers, interrupt)) => start_in_memory(&info, registers, dma, interrupt),
+            Err(error) => {
+                println!("[blk] the device's registers or interrupt: {error:?}");
+                Err(2)
+            }
+        }
     } else {
         println!("[blk] no usable device description");
         Err(2)

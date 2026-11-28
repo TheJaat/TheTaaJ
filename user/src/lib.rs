@@ -11,6 +11,7 @@ extern crate alloc;
 
 mod allocator;
 pub mod block_service;
+pub mod device;
 pub mod disk;
 pub mod files;
 pub mod net;

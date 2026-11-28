@@ -316,10 +316,13 @@ fn main() -> i64 {
     while let Ok(Some(_)) = taaj::poll(&[arrivals]) {
         let mut handles = [0u64; abi::MESSAGE_HANDLES_MAX as usize];
         let Ok((n, given)) = taaj::receive(arrivals, &mut message, &mut handles) else { break };
+        // Each device: its handle (K75: its registers and interrupt are
+        // asked of it) and its DMA memory (init's).
         let started = match (MmioDeviceInfo::from_bytes(&message[..n]), given) {
-            (Some(info), 2 | 3) if count < DEVICES_MAX => {
-                Device::start(&info, handles[0], handles[1], (given == 3).then_some(handles[2])).map_err(|why| (info.registers, why))
-            }
+            (Some(info), 2) if count < DEVICES_MAX => match taaj::device::claim_mmio(handles[0], &info, "hid") {
+                Ok((registers, interrupt)) => Device::start(&info, registers, handles[1], interrupt).map_err(|why| (info.registers, why)),
+                Err(_) => Err((info.registers, "its registers or interrupt were refused")),
+            },
             _ => Err((0, "not a device description, or one too many")),
         };
         match started {

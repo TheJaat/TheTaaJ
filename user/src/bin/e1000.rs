@@ -153,22 +153,34 @@ fn start(info: &PciDeviceInfo, registers: Handle, dma: Handle, interrupt: Option
 }
 
 fn main() -> i64 {
-    let (Some(registers), Some(dma), Some(device), Some(requests)) =
+    // The device's handle (K75: its registers and interrupt are asked
+    // of it), its DMA memory (init's), its description, and requests.
+    let (Some(handle), Some(dma), Some(device), Some(requests)) =
         (taaj::startup_handle(0), taaj::startup_handle(1), taaj::startup_handle(2), taaj::startup_handle(3))
     else {
         println!("[e1000] started without its device");
         return 1;
     };
-    let interrupt = taaj::startup_handle(4);
 
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
     let described = match taaj::receive(device, &mut message, &mut []) {
         Ok((n, _)) => &message[..n],
         Err(_) => &[],
     };
-    let Some(info) = PciDeviceInfo::from_bytes(described) else {
+    let Some(mut info) = PciDeviceInfo::from_bytes(described) else {
         println!("[e1000] no usable device description");
         return 2;
+    };
+    // Its registers in BAR 0; MSI, or no interrupt. Not MSI-X, which an
+    // 82574L has: in MSI-X mode it routes each cause to a vector of its
+    // own (IVAR), which this driver does not set up; with MSI it
+    // behaves as the 82540EM does. (Until K75 the kernel knew this.)
+    let (registers, interrupt) = match taaj::device::claim_pci(handle, &mut info, 0, &[abi::device::MSI], "e1000") {
+        Ok(claimed) => claimed,
+        Err(error) => {
+            println!("[e1000] the card's registers or interrupt: {error:?}");
+            return 2;
+        }
     };
     let mut card = match start(&info, registers, dma, interrupt) {
         Ok(card) => card,
