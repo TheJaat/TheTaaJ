@@ -1,6 +1,6 @@
 # Drivers killed mid-I/O: the system recovers, and nothing acknowledged is lost
 
-*Journal entry #NNN · a step, MaK-WSL/devices' K82, Era 15's measure. Written on MaK-WSL/devices. Every driver here is a program that init restarts when it dies, and each test already made one hang while idle and checked that the next one works. None killed a driver while it was in the middle of writing - the moment a crash can lose data. Now `kill64-test` does, on five PCs at once: each disk driver (virtio, SATA, NVMe, USB) dies under three different writes, and the network card's driver dies in the middle of a download. Every write the system acknowledged is read back whole, in the running system and from the disk image afterwards; the download arrives byte for byte.*
+*Journal entry #160 · a step, MaK-WSL/devices' K82, Era 15's measure. Written on MaK-WSL/devices. Every driver here is a program that init restarts when it dies, and each test already made one hang while idle and checked that the next one works. None killed a driver while it was in the middle of writing - the moment a crash can lose data. Now `kill64-test` does, on five PCs at once: each disk driver (virtio, SATA, NVMe, USB) dies under three different writes, and the network card's driver dies in the middle of a download. Every write the system acknowledged is read back whole, in the running system and from the disk image afterwards; the download arrives byte for byte.*
 
 ## Why
 
