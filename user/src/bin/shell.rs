@@ -107,7 +107,7 @@ const TYPED_AHEAD_MAX: usize = 256;
 /// the ones whose whole job is files - and each only as much of it as
 /// that job takes. These read; they get the channel that cannot change
 /// anything.
-const LOOK_PROGRAMS: &[&str] = &["ls", "cat", "wc"];
+const LOOK_PROGRAMS: &[&str] = &["ls", "cat", "wc", "log"];
 /// And these change files - the C compiler too, which reads sources,
 /// headers and libraries and writes what it makes of them.
 const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp", "tcc"];

@@ -265,12 +265,12 @@ TAAJ_LDFLAGS = -static -nostdlib --gc-sections -s -T user/user.ld
 # as on any terminal. Under KVM this happens every time.
 ifeq ($(HAVE_CC),yes)
 C_PROGRAMS   = chello cmem cprint cfile cstdio cwords cask cprimes cnet cfloat clib sh
-ROOT_FILES   = 40
+ROOT_FILES   = 41
 C_KEYS       = c h e l l o ret c h e l l o spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c h e l l o spc f a i l ret c h e l l o spc e x i t ret c h e l l o spc f l o a t ret w i t h spc f i l e s spc c f i l e spc c h e c k ret c f i l e spc c a t spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc n o f i l e spc w e l c o m e ret w i t h spc r e a d o n l y spc c f i l e spc w r i t e spc c n o spc x ret w i t h spc f i l e s spc c f i l e spc w r i t e spc c n o t e spc m a d e spc b y spc c ret w i t h spc r e a d o n l y spc c f i l e spc c a t spc l o n g spc shift-dot spc c l o n g ret c f i l e spc c a t spc shift-comma spc l o n g spc shift-dot spc c l o n g 2 ret c f i l e ret c a s k ret a d a ret 4 0 ret x ret 2 ret ctrl-d c a s k spc o n e ret f i r s t ret e c h o spc a f t e r ret e c h o spc a d a spc shift-dot spc w h o ret c a s k spc o n e spc shift-comma spc w h o ret c a t spc l o n g spc shift-backslash spc c w o r d s spc minus n spc 3 ret w i t h spc r e a d o n l y spc c w o r d s spc minus n spc 2 5 spc c w o r d s spc l o n g spc shift-dot spc c w 1 ret c w o r d s spc minus n spc 5 spc shift-comma spc l o n g spc shift-dot spc c w 2 ret c w o r d s spc l o n g ret c w o r d s spc minus n spc n o n e ret c w o r d s spc minus x ret w i t h spc f i l e s spc c s t d i o spc c h e c k ret c s t d i o spc l i n e s spc w e l c o m e ret c s t d i o spc l i n e s spc shift-comma spc w e l c o m e ret w i t h spc r e a d o n l y spc c s t d i o spc l i n e s spc l o n g spc shift-dot spc c n u m ret w i t h spc f i l e s spc c s t d i o spc c o p y spc l o n g spc c c o p y ret c s t d i o spc o r d e r ret c s t d i o spc e n d spc shift-dot spc c e n d ret c s t d i o spc l o s t spc shift-dot spc c l o s t ret c s t d i o spc e n d ret c s t d i o ret c p r i n t spc o n e spc shift-apostrophe t w o spc w o r d s shift-apostrophe ret c p r i n t spc l o n g spc shift-backslash spc w c ret c p r i n t spc shift-dot spc p o u t ret c m e m ret c m e m spc s o r t spc p e a r spc a p p l e spc f i g spc a p p l e ret c m e m spc h u g e ret c h e l l o spc e r r spc shift-dot spc c e r r ret c h e l l o spc a spc b spc shift-dot spc c o u t ret c h e l l o spc x spc shift-backslash spc w c ret w i t h spc f i l e s spc c l i b ret c l i b spc a s s e r t ret c p r i m e s spc 1 0 0 ret ~ c p r i m e s spc $(call spell-keys,$(CPRIMES_LIMIT)) spc shift-7 ret c p r i m e s spc $(call spell-keys,$(CPRIMES_LIMIT)) spc shift-7 ret c p r i m e s spc $(call spell-keys,$(CPRIMES_LIMIT)) spc shift-7 ret c p r i m e s spc $(call spell-keys,$(CPRIMES_LIMIT)) spc shift-7 ret c f l o a t spc 1 spc shift-7 ret c f l o a t spc 2 spc shift-7 ret c f l o a t spc 3 spc shift-7 ret c f l o a t spc 4 spc shift-7 ret t i m e spc w a i t ret ~~
 EXPECT_C     = ;^Hello from C;^argc 1\s*$$;^argc 3\s*$$;^argv\[1\] one\s*$$;^argv\[2\] two words\s*$$;^chello exited with code 3;^chello exited with code 4;^7.0 / 2 \* 4 = 14\s*$$;^chello: this line is on standard error;^files: 48 checks, all passed;^cfile: welcome: this program was not given the files;^cfile: nofile: no such file or directory;^cno: the files are read-only here;^cnote: 10 bytes;^usage: cfile cat;^hello, ada \(typed\);^cask: not a number: x;^total: 42;^one line: first \(typed\);^after\s*$$;^one line: ada \(from a file or another program\);^ +301  300\s*$$;^ +300  line\s*$$;^1200 words, 302 different;^cwords: long: this program was not given the files;^0 words, 0 different;^cwords: -n needs a number from 1 up, not .none.;^usage: cwords \[-n COUNT\];^streams: 52 checks, all passed;^cstdio: welcome: this program was not given the files;^   1  Hello from the host;^ccopy: 4692 bytes;^write was called second - printf was called first\s*$$;^no new line, and still here;^usage: cstdio lines;^printf: 42 -7 ff 0X2A \[   hi\] \[hi   \] \[00042\] x 100.\s*$$;^sizes: 18446744073709551615 -9223372036854775808\s*$$;^printf returned 6\s*$$;^snprintf: wanted 12, kept <hello, >;^argument 2 of 2: two words\s*$$;^puts: a line of its own\s*$$;^fputs and putchar\s*$$;^cprint: 9 lines went to standard output;^cprint: 7 lines went to standard output;^1 line, 1 word, 601 bytes;^strings: 28 checks, all passed;^memory: 15 checks, all passed;^apple apple fig pear\s*$$;^cmem: no memory for a terabyte;^cmem exited with code 1;^3 lines, 7 words, 30 bytes;^library: [0-9]+ checks, all passed;^library: atexit ran its handlers, newest first;^libc/programs/clib.c:[0-9]+: main: assertion failed: number == 2;^clib was ended by signal 6 \(SIGABRT\);^cprimes: 25 primes below 100\s*$$;^\[4\] cprimes $(CPRIMES_LIMIT);cfloat 1: 30000000 rounds, 0 wrong;cfloat 2: 30000000 rounds, 0 wrong;cfloat 3: 30000000 rounds, 0 wrong;cfloat 4: 30000000 rounds, 0 wrong;^took [0-9]+\.[0-9][0-9] s; the 4 CPUs worked for [0-9]+\.[0-9][0-9] s in all
 else
 C_PROGRAMS   =
-ROOT_FILES   = 28
+ROOT_FILES   = 29
 C_KEYS       =
 EXPECT_C     =
 endif
@@ -385,7 +385,7 @@ TEST_TYPED   = Hi there
 # (Joined on one line: a continued line would start each pattern with a
 # space.)
 EXPECT_SHELL = unknown command: Hi;  PID  NAME;init +running +[0-9]+\.[0-9]{3} s;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
-EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^ +dir  dev/;^ +dir  docs/;^ +dir  tmp/;^4 directories, $(ROOT_FILES) files, [0-9]+ bytes;^cat: notes: no such file;^cat exited with code 1;^kept\s*$$;^Hello from the host;^saved: 5 bytes
+EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^ +dir  dev/;^ +dir  docs/;^ +dir  tmp/;^ +dir  var/;^5 directories, $(ROOT_FILES) files, [0-9]+ bytes;^cat: notes: no such file;^cat exited with code 1;^kept\s*$$;^Hello from the host;^saved: 5 bytes
 EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(4096 KiB\);^0000  4a 41 46 53 .*JAFS;^disk: sector 5: the disk is read-only;^disk: sector 99999: no such sector;^disk check: all 9 checks passed;^took [0-9]+\.[0-9][0-9] s;^line 300 of 300
 EXPECT_RUN   = \[init\] started primes for the shell, from a file;^primes below 50: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47;^primes exited with code 0;^error: welcome is not a program;^error: broken is not a program;^error: no such program;\[init\] started ls for the shell, from a file;^cat exited with code 0;^rm: notes: no such file;^rm: saved2: no such file;^rm exited with code 1;^usage: write FILE TEXT;^write exited with code 2;$(EXPECT_GIVEN);$(EXPECT_WATCH);$(EXPECT_KILL)
 EXPECT_DIRS  = ^ +23  readme;^1 file, 23 bytes;^Read me, from the host;^docs/deep/note: 7 bytes;^docs:;^ +dir  deep/;^1 directory, 1 file, 23 bytes;^docs/deep:;^ +7  note;^rm: docs: the directory is not empty;^mkdir: docs: there is already something with that name;^cat: docs: is a directory;^write: welcome/x: not a directory;^ls: work: no such file or directory;\[init\] started tools/given for the shell, from a file;^mkdir: x: the files are read-only here
@@ -457,7 +457,7 @@ TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EX
 # and what must not run, or must not write.
 USER_BIN     = user/target/x86_64-unknown-none/release
 TFSTOOL_RS   = tools/tfstool-rs/target/release/tfstool
-DISK_PROGRAMS = ls cat write append rm mkdir mv cp wc yes primes forever given niccheck ping netinfo udpecho udpsend tcpecho tcpsend httpd counter edit killcheck
+DISK_PROGRAMS = ls cat write append rm mkdir mv cp wc yes primes forever given niccheck ping netinfo udpecho udpsend tcpecho tcpsend httpd counter edit killcheck log
 # The web site httpd gives out (user/www), put in the directory www of a
 # disk: put-site DISK. Only the run disks and the HTTP test's disk have
 # it - the other test disks are counted, directory by directory.
@@ -827,6 +827,15 @@ endif
 	@TFSTOOL=$(TFSTOOL_RS) OVMF=$(OVMF) $(KERNEL64_DIR)/scripts/power-test.sh x86 $(ISO64_IMG) $(POWER64_LOG).disk $(POWER64_LOG)
 	@echo "power64-test passed"
 
+# The system log (K136): logd keeps what the kernel and the programs
+# write in /var/log/system.log, read with `log`, kept across a switch-off
+# (scripts/log-test.sh).
+LOG64_LOG = $(BUILD_DIR)/log64.log
+log64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(LOG64_LOG).disk)
+	@$(KERNEL64_DIR)/scripts/log-test.sh $(ISO64_IMG) $(LOG64_LOG).disk $(LOG64_LOG)
+	@echo "log64-test passed"
+
 # The same ISO, the same kernel, booted by UEFI firmware instead.
 boot64-uefi-test: iso64 cprogs64 tfstool-rs | smp64-test
 ifneq ($(HAVE_CLANG),yes)
@@ -939,6 +948,15 @@ unsafe-check: user64 user-aarch64
 miri:
 	@sh tools/miri-check.sh
 
+# The parsers of untrusted input fuzzed on the host (K189): every target
+# in fuzz/ for FUZZ_SECONDS each (tools/fuzz.sh says what it found). Not
+# part of make test64: it finds new inputs, and a crash it finds becomes
+# a host test beside the parser's others.
+FUZZ_SECONDS ?= 60
+.PHONY: fuzz
+fuzz:
+	tools/fuzz.sh run $(FUZZ_SECONDS)
+
 kernel64-test:
 	cd $(KERNEL64_DIR) && cargo test --lib --target $(HOST_TRIPLE)
 	cd kernel/abi && cargo test
@@ -955,6 +973,7 @@ kernel64-test:
 	cd e1000 && cargo test
 	cd usb && cargo test
 	cd net && cargo test
+	cd syslog && cargo test
 	cd gfx && cargo test
 	cd gui && cargo test
 	$(MAKE) libc-test
@@ -1102,6 +1121,14 @@ $(FAULT64_PARTS): fault64-%-test: build-bootloader user64
 	$(KERNEL64_DIR)/scripts/fault-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR) $*
 
 fault64-test: $(FAULT64_PARTS)
+
+# The crash record (K188): a kernel built to panic once, reset, and
+# find its last words at the next boot, in the system log
+# (scripts/crash-test.sh).
+crash64-test: build-bootloader user64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(BUILD_DIR)/crash64.disk)
+	@$(KERNEL64_DIR)/scripts/crash-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR)/crash64.disk $(BUILD_DIR)
+	@echo "crash64-test passed"
 
 # ---- AArch64 (Era 3) -------------------------------------------------
 #
@@ -2227,6 +2254,7 @@ TEST64_PARTS = \
 	nvme64-test \
 	kill64-test \
 	power64-test \
+	log64-test \
 	aarch64-power-test \
 	aarch64-keys-test \
 	clang64-test \
@@ -2248,6 +2276,7 @@ TEST64_PARTS = \
 	big64-test \
 	stage2-test \
 	$(FAULT64_PARTS) \
+	crash64-test \
 	aarch64-test \
 	aarch64-uefi-test \
 	net64-test \
