@@ -5107,3 +5107,69 @@ Automated: `make crash64-test` (part of `make test64`).
 | `cat /var/log/crashes/latest` | The newest report, with the last lines its program printed |
 
 Automated: `make log64-test` (part of `make test64`).
+
+---
+
+## 166 · The sixth night: five branches merged, the 20-CPU boot fixed, and the first retry's finding
+
+[The entry](journal/166-night-6.md)
+
+| Do | You should see |
+|---|---|
+| `make boot64-uefi-test` | `disk check: all 9 checks passed`, with logd writing the system log meanwhile |
+
+Automated: `boot64-test` and `boot64-uefi-test` (part of `make test64`).
+
+---
+
+## 167 · top
+
+[The entry](journal/167-top.md)
+
+| Do | You should see |
+|---|---|
+| `forever spin &`, then `top` | `forever` first, near 100%; Ctrl+C ends `top` (and `jobs` and `kill` the `forever` job) |
+| `top -n 1 -d 2` | One frame, its CPU% over two seconds |
+
+Automated: `make top64-test` (part of `make test64`).
+
+---
+
+## 168 · Tracing: what the kernel does, on every CPU, as it does it
+
+[The entry](journal/168-tracing.md)
+
+| Do | You should see |
+|---|---|
+| `trace` | One second: every kind counted, by CPU and by process, and the last 20 events |
+| `trace -s 2 &`, then `ls` | `ls` among the processes; sends and receives with `fs` |
+| Two `trace` at once | The second says tracing is on already |
+
+Automated: `make trace64-test` (part of `make test64`).
+
+---
+
+## 169 · A profiler: where the CPUs spend their time
+
+[The entry](journal/169-profiler.md)
+
+| Do | You should see |
+|---|---|
+| `forever spin &`, then `profile` | `forever` about half the time on two CPUs, at one or two addresses; `kernel64::threads::idle_loop` the other half |
+| `profile -s 10 -n 30` | Ten seconds, the 30 busiest places |
+
+Automated: `make profile64-test` (part of `make test64`).
+
+---
+
+## 170 · A debugger: stop a program, read its registers and memory, catch it at a breakpoint
+
+[The entry](journal/170-debugger.md)
+
+| Do | You should see |
+|---|---|
+| `debug forever spin`, then `stop`, `regs` | Where it is, its registers |
+| `break pc`, `cont`, `wait` | Stopped at the breakpoint |
+| `cont`, then `quit` | It goes on past it; then it ends |
+
+Automated: `make debug64-test` (part of `make test64`).

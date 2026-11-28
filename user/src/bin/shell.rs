@@ -108,6 +108,17 @@ const TYPED_AHEAD_MAX: usize = 256;
 /// that job takes. These read; they get the channel that cannot change
 /// anything.
 const LOOK_PROGRAMS: &[&str] = &["ls", "cat", "wc", "log"];
+/// And these look at the system - the processes, as `ps` does: `top`
+/// (K141). The system's handle, which can look and not touch.
+const SYSTEM_PROGRAMS: &[&str] = &["top"];
+/// And these are given tracing's handle (K139): who holds it can switch
+/// tracing on and read what the kernel does - and the kernel's symbols,
+/// for the profiler (K140).
+const TRACE_PROGRAMS: &[&str] = &["trace", "profile"];
+/// And this starts the program it debugs (K142): it reads the program's
+/// file and asks init, and so holds the handle with DEBUG that only a
+/// starter has.
+const DEBUG_PROGRAMS: &[&str] = &["debug"];
 /// And these change files - the C compiler too, which reads sources,
 /// headers and libraries and writes what it makes of them.
 const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp", "tcc"];
@@ -1249,28 +1260,29 @@ impl Shell {
         let full = u64::from(SECTORS_MAX) * SECTOR as u64;
 
         // 1. Many sectors at once are the same bytes as one at a time.
-        // The disk may be written meanwhile - the file service commits
-        // the system log to it in the background (logd, K136), and these
-        // first sectors are its superblock and what follows - so the
-        // many are read again after the ones: if they changed, the disk
-        // did, and it is tried again; if not, the ones must match them
-        // (K75's journal entry, bug 7).
         let mut window = Window::new(SECTORS_MAX).map_err(|_| "no memory for a window")?;
-        let mut again = Window::new(SECTORS_MAX).map_err(|_| "no memory for a window")?;
         let count = SECTORS_MAX.min(sectors as u32);
+        // The disk may be written meanwhile - these are the file system's
+        // own tables, and logd appends to the system log (K136): read them
+        // together again after, and only a try in which they did not
+        // change counts. A few tries; a disk that changes every time is
+        // not one to judge the driver by.
         let mut single = [0u8; SECTOR];
+        let mut again = Window::new(SECTORS_MAX).map_err(|_| "no memory for a window")?;
         let mut same = false;
         for _ in 0..5 {
             let many = disk.read_many(&mut window, 0, count).is_ok();
-            same = many;
+            let mut matched = many;
             for n in 0..count as usize {
-                same = same && disk.read(n as u64, &mut single).is_ok() && window.bytes()[n * SECTOR..][..SECTOR] == single;
+                matched = matched && disk.read(n as u64, &mut single).is_ok() && window.bytes()[n * SECTOR..][..SECTOR] == single;
             }
-            let bytes = count as usize * SECTOR;
-            let unchanged = disk.read_many(&mut again, 0, count).is_ok() && window.bytes()[..bytes] == again.bytes()[..bytes];
-            // Done if they match, or if they differ on a disk that did
-            // not change; written meanwhile, once more.
-            if same || unchanged {
+            let length = count as usize * SECTOR;
+            let unchanged = disk.read_many(&mut again, 0, count).is_ok() && again.bytes()[..length] == window.bytes()[..length];
+            same = matched;
+            // The same: passed. Different, and the disk did not change
+            // meanwhile: the driver's fault. Else written meanwhile:
+            // once more.
+            if matched || unchanged {
                 break;
             }
         }
@@ -1551,6 +1563,9 @@ impl Shell {
             Grant::ReadOnly => &[("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev")],
             Grant::Usual if on_disk(CHANGE_PROGRAMS) => &[("files", "files"), ("tmp", "tmp"), ("dev", "dev")],
             Grant::Usual if on_disk(LOOK_PROGRAMS) => &[("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev")],
+            Grant::Usual if on_disk(SYSTEM_PROGRAMS) => &[("system", "system")],
+            Grant::Usual if on_disk(DEBUG_PROGRAMS) => &[("init", "init"), ("files", "files.look")],
+            Grant::Usual if on_disk(TRACE_PROGRAMS) => &[("trace", "trace"), ("trace.symbols", "trace.symbols"), ("system", "system")],
             Grant::Usual if on_disk(CARD_PROGRAMS) => &[("nic", "nic")],
             Grant::Usual if on_disk(NET_PROGRAMS) => &[("net", "net")],
             Grant::Usual if on_disk(WEB_PROGRAMS) => &[("net", "net"), ("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev")],

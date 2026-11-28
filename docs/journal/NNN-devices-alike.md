@@ -10,7 +10,7 @@ Era 15's "Done when" begins: "the kernel holds no list of device kinds or vendor
 
 ### The device handle
 
-One new kernel object, `Object::Device` (`kernel/kernel64/src/device.rs`), and one system call, `DEVICE` (48), whose operations are `abi::device`'s:
+One new kernel object, `Object::Device` (`kernel/kernel64/src/device.rs`), and one system call, `DEVICE` (49: entry 170's debugger merged first, with 48), whose operations are `abi::device`'s:
 
 | Operation | What the caller gets | The kernel keeps |
 |---|---|---|
@@ -55,7 +55,7 @@ Their first startup handle is the device's handle, no longer its registers, and 
 
 **6. Not explained: once, two channels more at the session's end.** After bug 4's fix, one `aarch64-keys-test` run of ten on K75 had 33 channels at its *last* `ps` against 31 at its first; the other nine, and seven on plain main, matched. Nothing was being written then, no driver restarted in the seconds before; `ps` cannot say whose the channels are. Left open as K?-ps-channels in `sched`, with bug 5: a count of channels per process in `ps` is the tool it needs.
 
-**7. Another race since the system log: `disk check` on a disk being written.** The next `make test64`: `aarch64-keys-test` - "disk check: FAILED - sectors read together differ from sectors read one by one". The shell's check reads the disk's first 256 sectors at once, then one at a time, and compares. Those are TaajFS's superblock and the blocks after it, which every commit rewrites, and since K136 logd commits the system log in the background - here just after the test's serial stalls, which log a few lines. The check now reads the 256 sectors at once again after the single reads: if those changed, so did the disk, and it tries again (five times at most); if they did not, the single reads must match them - so a driver that really returns different bytes still fails it. Not K75's, but it is where it showed.
+**7. Another race since the system log: `disk check` on a disk being written.** The next `make test64`: `aarch64-keys-test` - "disk check: FAILED - sectors read together differ from sectors read one by one". The shell's check reads the disk's first 256 sectors at once, then one at a time, and compares. Those are TaajFS's superblock and the blocks after it, which every commit rewrites, and since K136 logd commits the system log in the background - here just after the test's serial stalls, which log a few lines. The check now reads the 256 sectors at once again after the single reads: if those changed, so did the disk, and it tries again (five times at most); if they did not, the single reads must match them - so a driver that really returns different bytes still fails it. Not K75's, but it is where it showed. Main fixed it the same way meanwhile, and at the next merge (entries 166-170) main's version was kept.
 
 **8. Not reproduced: the AArch64 disk self-test's interrupts, once.** The `make test64` after bug 7's fix: `aarch64-test`'s disk boot panicked, "the disk interrupted 8 and 101 times: the driver is not waiting for it" (at least 20 each). The disk itself was fine - 348 checks, twice. An interrupt that comes while the line is off shares the next one, so a starved emulated CPU sees far fewer; `aarch64-test` alone, twice, gave 340 each time, as plain main does. A load outlier, left as it is.
 

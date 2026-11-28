@@ -64,7 +64,7 @@ What one lane waits for from another. When an item's dependency isn't merged yet
 | `network` K156 NTP | K30 DHCP, K33 UDP (its own) | - |
 | `crypto` J102 system updates | K132 kernels A and B | `boot` |
 | `files` K108 users | J62 (its own), J76 owners | `taajfs` |
-| `ci` K141 `top` | K21 CPU time per process | `sched` |
+| ~~`ci` K141 `top`~~ | ~~K21 CPU time per process~~ | `sched` - done (entry 114); K141 done (entry 167) |
 | `desktop` K45 job control, `libc` J84/J85 | K44 pseudo-terminals | `desktop` |
 | **Every lane that adds kernel tests** | ~~J51 test programs out of the kernel image, or K130 a kernel of any size~~ - K130 (entry 146) ended the 3 MiB wall: the BIOS loader takes a kernel up to 1 GiB | `boot` - done; J51 is `ci`'s to order |
 
@@ -127,10 +127,7 @@ Its files: the test rules of the `Makefile`, `kernel/kernel64/scripts/*-test.sh`
 | J95 | 2 | No flaky tests (every part 50 times) |
 | K50 | 2 | `bigmem64-test` once did not finish under KVM |
 | K52 | 2 | `aarch64-tcp-test`'s late segment |
-| K141 | 3 | `top` (after `sched`'s K21) |
-| K139 | 3 | Tracing |
-| K140 | 3 | A profiler |
-| K142 | 3 | A debugger |
+| K198 | 3 | A gdb stub on the serial line for the kernel on a real PC (K142's third part) |
 
 ### `network` - TheJat-WSL/network · Era 12's network items
 
