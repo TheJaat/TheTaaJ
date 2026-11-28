@@ -4898,3 +4898,51 @@ make run64
 | Turn it over the terminal | Nothing: the terminal has nothing to scroll yet |
 
 Automated: `make gui64-test`, `make aarch64-gui-test` (both part of `make test64`)
+
+---
+
+## 153 · A lock per CPU's run queue: the switch stops waiting for the other CPUs
+
+[The entry](journal/153-cpu-locks.md)
+
+```
+make schedbench64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `yield (a switch)` | On 2 and 4 CPUs about 300-500 ns - about half of the 1-CPU number, where before K193 it was more |
+| `4 busy programs, 2 s: CPU each` | On 2 CPUs about 1000 ms each, all four |
+| `wake, every CPU busy at nice 0: median/worst` | On 4 CPUs a median of a few ms - not about 15 000 us (bug 6) |
+| `schedbench64-test passed` | |
+
+On the host, the policy's tests, CPUs at once among them:
+
+```
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu sched::
+```
+
+| Look for | You should see |
+|---|---|
+| `test result:` | `ok. 47 passed; 0 failed` |
+
+Automated: `make test64`
+
+---
+
+## 154 · TheBootloader rebuilds what an edited include file touches
+
+[The entry](journal/154-bootloader-deps.md)
+
+```
+make build-bootloader
+touch bootloader/headers/boot/stage2/asm_includes/datastructure.inc
+make build-bootloader
+```
+
+| Look for | You should see |
+|---|---|
+| The second build | `Assembling stage2.asm`, then `Linking .../stage2.bin` - and no other file assembled or compiled |
+| `make build-bootloader` once more, nothing touched | nothing assembled, compiled or linked |
+
+Automated: `make test64` builds TheBootloader; the replay above is by hand.
