@@ -327,6 +327,9 @@ fn main() -> i64 {
     // Tracing's rings (K139): the handle for tracing, for the shell's
     // `trace`, by name; 0 if none.
     let mut trace_memory = 0;
+    // And the kernel's symbols that come with them, for the profiler
+    // (K140); 0 if none.
+    let mut trace_symbols = 0;
     let mut disk: Option<(Device, [Handle; 3], usize)> = None;
     let mut card: Option<(Device, [Handle; 3], usize)> = None;
     // A USB (xHCI) controller: its description, registers, DMA memory
@@ -378,8 +381,9 @@ fn main() -> i64 {
         } else if (message, count) == (&b"log"[..], 1) {
             log_memory = handles[0];
             used = true;
-        } else if (message, count) == (&b"trace"[..], 1) {
+        } else if message == b"trace" && (1..=2).contains(&count) {
             trace_memory = handles[0];
+            trace_symbols = if count == 2 { handles[1] } else { 0 };
             used = true;
         } else if let Some(info) = message.strip_prefix(b"power").and_then(PowerInfo::from_bytes) {
             if power.is_none() && count == info.handles() && count <= 5 {
@@ -586,6 +590,7 @@ fn main() -> i64 {
         Grant { handle: dev_out, rights: SEND | DELEGABLE },  // 56: requests, to dev
         Grant { handle: log_memory, rights: READ },           // 57: the kernel's log ring, for logd (K136)
         Grant { handle: trace_memory, rights: READ | WRITE }, // 58: tracing's rings (K139), by name
+        Grant { handle: trace_symbols, rights: READ },        // 59: the kernel's symbols (K140), by name
     ];
     // Only the shell's screen and the files (the disk's, /tmp's and
     // /dev's) can be copied and passed on.
@@ -631,7 +636,7 @@ fn main() -> i64 {
     // services: a name, and which grant it means - the handle, and the
     // rights a client's copy gets. (The shell's old startup handles,
     // now asked for by name; and the disk, for fs.)
-    let registered: [(&str, usize); 15] = [
+    let registered: [(&str, usize); 16] = [
         // The keys come from the drivers straight to the shell where the
         // terminal is a serial port; from the window server where it is
         // a window.
@@ -650,6 +655,7 @@ fn main() -> i64 {
         ("net", 35),
         ("windows", 43),
         ("trace", 58),
+        ("trace.symbols", 59),
     ];
     // And the namespaces: whose, the receiving end of its channel, and
     // the names that exist on it. This table is the system's policy,
@@ -657,7 +663,7 @@ fn main() -> i64 {
     let namespaces: [(&str, Handle, &[&str]); 3] = [
         // (The shell has the network card itself only for the program
         // that tests its driver. Everything else uses "net".)
-        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "tmp", "tmp.look", "dev", "disk.look", "nic", "net", "windows", "trace"]),
+        ("shell", shell_names_rx, &["keys", "display", "init", "system", "files", "files.look", "tmp", "tmp.look", "dev", "disk.look", "nic", "net", "windows", "trace", "trace.symbols"]),
         ("fs", fs_names_rx, &["disk"]),
         ("net", net_names_rx, &["nic"]),
     ];

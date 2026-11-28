@@ -94,6 +94,7 @@ A program you start by name can open **no files at all**: it gets its arguments,
 | `log [-n LINES \| -a] [-l LEVEL] [-s WRITER] [-b]` | The system log (below) |
 | `top [-n TIMES] [-d SECONDS]` | The processes, refreshed: each one's CPU (the busiest first), memory, threads and handles; Ctrl+C ends it |
 | `trace [-s SECONDS] [-e EVENTS]` | What the kernel does for a while - system calls, messages, switches, page faults, interrupts - counted by kind, CPU and process, and the last events |
+| `profile [-s SECONDS] [-n PLACES]` | Where the CPUs spend their time, for a while (5 s): by program, and the busiest places - the kernel's functions by name, programs' addresses |
 
 ## Windows
 

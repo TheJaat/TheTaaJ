@@ -24,13 +24,13 @@ use taaj::{eprintln, println};
 
 taaj::program!(main);
 
-const KINDS: [u16; 6] = [kind::SYSCALL, kind::SEND, kind::RECEIVE, kind::SWITCH, kind::FAULT, kind::INTERRUPT];
+const KINDS: [u16; 7] = [kind::SYSCALL, kind::SEND, kind::RECEIVE, kind::SWITCH, kind::FAULT, kind::INTERRUPT, kind::SAMPLE];
 
 /// The span's events, counted.
 #[derive(Default)]
 struct Counts {
     events: u64,
-    by_kind: [u64; 6],
+    by_kind: [u64; 7],
     by_cpu: Vec<u64>,
     by_pid: Vec<(u32, u64)>,
 }
