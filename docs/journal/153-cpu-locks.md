@@ -1,6 +1,6 @@
 # A lock per CPU's run queue: the switch stops waiting for the other CPUs
 
-*Journal entry #NNN · a step, MaK-WSL/sched's K193 (K68's other half). Written on MaK-WSL/sched. Until now one lock covered every queue, every thread's state and the thread table, and every switch on every CPU held it - across the switch itself. Now each CPU's queue has its own lock, a CPU choosing reads the other queues' published first keys without their locks ("peek, then lock one"), and a switch holds no lock at all while it changes stacks: a flag per thread says when its registers are saved.*
+*Journal entry #153 · a step, MaK-WSL/sched's K193 (K68's other half). Written on MaK-WSL/sched. Until now one lock covered every queue, every thread's state and the thread table, and every switch on every CPU held it - across the switch itself. Now each CPU's queue has its own lock, a CPU choosing reads the other queues' published first keys without their locks ("peek, then lock one"), and a switch holds no lock at all while it changes stacks: a flag per thread says when its registers are saved.*
 
 ## Why
 
