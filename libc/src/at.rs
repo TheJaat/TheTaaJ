@@ -70,7 +70,7 @@ pub(crate) struct Place {
 /// is its file, anything else is under /proc/PID. None for any other
 /// name; ENOENT for the file of a program that has none (built into the
 /// kernel image).
-fn own(shown: &str) -> Option<Result<String, c_int>> {
+pub(crate) fn own(shown: &str) -> Option<Result<String, c_int>> {
     let rest = shown.strip_prefix("/proc/self")?;
     if !rest.is_empty() && !rest.starts_with('/') {
         return None; // /proc/selfish

@@ -231,6 +231,7 @@ impl Nodes {
             return Err(Status::BadRequest);
         }
         let (path, access) = self.resolve(id, request.name)?;
+        let access = if store.read_only() { Access::ReadOnly } else { access };
         let writes = flags & open::WRITE != 0;
         if (writes || flags & open::CREATE != 0) && access == Access::ReadOnly {
             return Err(Status::ReadOnly);

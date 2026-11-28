@@ -9,9 +9,10 @@
 //!                 HeapTotal (the kernel's own heap), as Linux spells its
 //!   cpuinfo       one "processor : N" line per CPU
 //!   stat          Processes, Threads, Channels: how many there are
-//!   PID/status    Name, Pid, State (running, or ended with its code)
-//!                 and CPU (nanoseconds its threads were on a CPU), for
-//!                 each process the kernel lists
+//!   PID/status    Name, Pid, State (running, or ended with its code),
+//!                 CPU (nanoseconds its threads were on a CPU), Memory
+//!                 (what is charged to it, in kB), Threads and Handles,
+//!                 for each process the kernel lists
 //!
 //! The text is made at each request, from what the kernel says then, so
 //! a program sees the state as it is. Nothing can be written, made,
@@ -22,7 +23,7 @@
 //! gives it: the `proc` service asks the kernel, a test makes them up.
 
 use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use abi::{ProcessEntry, SystemInfo};
@@ -126,7 +127,16 @@ impl<S: Source> ProcStore<S> {
                     None => String::from("running"),
                     Some(code) => format!("ended ({code})"),
                 };
-                Ok(format!("Name:\t{}\nPid:\t{}\nState:\t{}\nCPU:\t{} ns\n", process.name(), process.pid, state, process.cpu_ns))
+                Ok(format!(
+                    "Name:\t{}\nPid:\t{}\nState:\t{}\nCPU:\t{} ns\nMemory:\t{} kB\nThreads:\t{}\nHandles:\t{}\n",
+                    process.name(),
+                    process.pid,
+                    state,
+                    process.cpu_ns,
+                    process.memory / 1024,
+                    process.threads,
+                    process.handles
+                ))
             }
             _ => Err(Status::NotFound),
         }
@@ -182,6 +192,10 @@ impl<S: Source> Store for ProcStore<S> {
     }
 
     /// Everything here changes all the time: the stamp is the clock.
+    fn read_only(&self) -> bool {
+        true
+    }
+
     fn stamp(&mut self, path: &str) -> Result<u64, Status> {
         match self.find(path)? {
             Named::Root | Named::Process => Ok(0),
@@ -245,7 +259,7 @@ mod tests {
     struct Fake;
 
     fn entry(pid: u64, name: &str, exit_code: Option<i64>, cpu_ns: u64) -> ProcessEntry {
-        let mut entry = ProcessEntry { pid, name: [0; 16], exit_code, cpu_ns };
+        let mut entry = ProcessEntry { pid, name: [0; 16], exit_code, cpu_ns, memory: 48 * 1024, threads: 2, handles: 9 };
         entry.name[..name.len()].copy_from_slice(name.as_bytes());
         entry
     }
@@ -308,7 +322,7 @@ mod tests {
             true
         })
         .unwrap();
-        assert_eq!(inside, [(String::from("status"), Kind::File, 50)]);
+        assert_eq!(inside, [(String::from("status"), Kind::File, 86)]);
         assert_eq!(proc.list("uptime", 0, &mut |_, _, _| true), Err(Status::NotDirectory));
         assert_eq!(proc.list("99", 0, &mut |_, _, _| true), Err(Status::NotFound));
         assert_eq!(proc.stat(""), Ok((Kind::Directory, 0)));
@@ -322,11 +336,11 @@ mod tests {
         assert_eq!(read_all(&mut proc, "meminfo"), "MemTotal:        4000 kB\nMemFree:         2400 kB\nHeapUsed:          10 kB\nHeapTotal:         64 kB\n");
         assert_eq!(read_all(&mut proc, "cpuinfo"), "processor\t: 0\nprocessor\t: 1\n");
         assert_eq!(read_all(&mut proc, "stat"), "Processes:\t2\nThreads:\t3\nChannels:\t7\n");
-        assert_eq!(read_all(&mut proc, "7/status"), "Name:\tshell\nPid:\t7\nState:\trunning\nCPU:\t1500000 ns\n");
-        assert_eq!(read_all(&mut proc, "12/status"), "Name:\tls\nPid:\t12\nState:\tended (0)\nCPU:\t999 ns\n");
+        assert_eq!(read_all(&mut proc, "7/status"), "Name:\tshell\nPid:\t7\nState:\trunning\nCPU:\t1500000 ns\nMemory:\t48 kB\nThreads:\t2\nHandles:\t9\n");
+        assert_eq!(read_all(&mut proc, "12/status"), "Name:\tls\nPid:\t12\nState:\tended (0)\nCPU:\t999 ns\nMemory:\t48 kB\nThreads:\t2\nHandles:\t9\n");
         // stat's size is the text's, and a read past the end gives none.
-        assert_eq!(proc.stat("7/status"), Ok((Kind::File, 50)));
-        assert_eq!(proc.read("7/status", 50, &mut [0; 8]), Ok(0));
+        assert_eq!(proc.stat("7/status"), Ok((Kind::File, 86)));
+        assert_eq!(proc.read("7/status", 86, &mut [0; 8]), Ok(0));
         let mut piece = [0u8; 4];
         assert_eq!(proc.read("7/status", 6, &mut piece), Ok(4));
         assert_eq!(&piece, b"shel");

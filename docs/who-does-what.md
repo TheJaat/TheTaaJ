@@ -119,7 +119,7 @@ Each machine has its own table and changes only its own, so two machines never e
 | Step | Branch |
 |---|---|
 | E: LLVM 23 - **paused**: a work-in-progress commit on `llvm-23` in TheTaaJ and TheKernel, to be finished later (what is left is in its commit message) | `llvm-23` |
-| TheJat-VM is unavailable (2026-11-28): its lanes run from TheJat-WSL. TheJat-WSL/files: J55 `/bin` on `j55-bin` (the day's queue merged in, quick checks passed; test64 at night); then J66 `/proc` on `j66-proc` (from `j55-bin`; taken over work in progress, being finished) | `j55-bin`, `j66-proc` |
+| TheJat-VM is unavailable (2026-11-28): its lanes run from TheJat-WSL. TheJat-WSL/files: J55 `/bin` on `j55-bin` (the day's queue merged in, quick checks passed; test64 at night); then J66 `/proc` on `j66-proc` (from `j55-bin`; taken over as work in progress and finished, quick checks passed; test64 at night) | `j55-bin`, `j66-proc` |
 
 ### Now: MaK-WSL
 

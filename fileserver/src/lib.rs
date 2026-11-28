@@ -421,6 +421,12 @@ pub trait Store {
     ) -> Result<(), Status>;
     /// What `path` names, and its size (0 for a directory).
     fn stat(&mut self, path: &str) -> Result<(Kind, u64), Status>;
+    /// Whether nothing here can ever be changed, whoever asks (/proc,
+    /// J66): every channel to it is then read-only, so an open to write
+    /// is refused at once (EROFS), not at its first write.
+    fn read_only(&self) -> bool {
+        false
+    }
     /// When what `path` names last changed: a number that only grows
     /// (protocol::STAT). 0 for a directory.
     fn stamp(&mut self, path: &str) -> Result<u64, Status>;

@@ -373,6 +373,9 @@ pub unsafe extern "C" fn opendir(path: *const c_char) -> *mut Dir {
     };
     let listed = with(|state| {
         let files = state.files().ok_or(EACCES)?;
+        // /proc/self is /proc/PID, which only this program knows (J66).
+        let own = crate::at::own(&format!("/{}", files.resolve(name))).transpose()?;
+        let name = own.as_deref().unwrap_or(name);
         match files.stat(name).map_err(reason)? {
             (Kind::Directory, _) => {}
             (Kind::File, _) => return Err(ENOTDIR),
