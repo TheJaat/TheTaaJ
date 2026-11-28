@@ -804,12 +804,16 @@ endif
 # Each disk driver killed in the middle of its I/O (K82, Era 15's
 # measure): four PCs at once - virtio, SATA, NVMe and USB disks - each
 # driver made to die mid-write three times; every write acknowledged
-# must be read back whole, in the system and on the disk image
-# (scripts/kill-test.sh).
+# must be read back whole, in the system and on the disk image - and a
+# fifth with its network card's driver made to die in the middle of a
+# download, which must arrive whole (scripts/kill-test.sh).
 KILL64_LOG = $(BUILD_DIR)/kill64.log
 kill64-test: iso64 cprogs64 tfstool-rs
 	$(call make-test-disk,$(KILL64_LOG).disk)
-	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/kill-test.sh $(ISO64_IMG) $(KILL64_LOG).disk $(KILL64_LOG)
+	$(call make-test-disk,$(KILL64_LOG).net.disk)
+	$(call make-http-disk,$(KILL64_LOG).net.disk)
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/kill-test.sh $(ISO64_IMG) $(KILL64_LOG).disk $(KILL64_LOG) \
+	    $(KILL64_LOG).net.disk $(KILL64_LOG).net.disk.big
 	@echo "kill64-test passed"
 
 # poweroff and reboot: a PC and a q35 (ACPI), and a PC without ACPI

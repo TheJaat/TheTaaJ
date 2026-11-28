@@ -227,7 +227,6 @@ The real-PC items need the user at the PC (U4): done whenever the user is there,
 
 | Item | Wave | Note |
 |---|---|---|
-| K82 | 1 | A test that kills each driver mid-I/O: measures the era |
 | K75 | 1 | Every device handed out the same way; `arch`'s K167 waits for it |
 | K77 | 1 | Bus mastering tied to a handle |
 | K76 | 1 | The device manager |

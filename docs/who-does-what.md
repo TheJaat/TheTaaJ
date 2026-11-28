@@ -126,7 +126,7 @@ Each machine has its own table and changes only its own, so two machines never e
 | Step | Branch |
 |---|---|
 | MaK-WSL/sched: K192, K101, K194, K195 next (K193 merged, entry 153) | |
-| MaK-WSL/desktop: K116, real key events - the layout, repeat and bytes in the display, stray ups held back; built; `make test64` passed (2026-11-28); waits for the user's yes to merge | `k116-real-keys` |
+| MaK-WSL/devices: K82, drivers killed mid-I/O (`kill64-test`): built, its tests passed; `make test64` next (K116 merged, entry 157) | `k82-kill-drivers` |
 
 ### Now: TheJat-WSL
 
