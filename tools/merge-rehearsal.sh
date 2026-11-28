@@ -35,6 +35,8 @@ BGIT=$(cd "$CI/bootloader" && cd "$(git rev-parse --git-dir)" && pwd)
 git clone -q --bare "$BGIT" bootloader.git  # read only: no item here changes it
 # ...but an item may point at a TheBootloader commit that is only on its
 # branch (MaK-WSL's, entry 141): its branches come too.
+TGIT=$(cd "$CI/toolchain" && cd "$(git rev-parse --git-dir)" && pwd)
+git clone -q --bare "$TGIT" toolchain.git
 git -C "$CI/bootloader" fetch -q origin
 for b in $BRANCHES; do
     c=$(git -C "$CI/bootloader" rev-parse -q --verify "origin/$b") && git -C bootloader.git fetch -q "$BGIT" "$c" && git -C bootloader.git update-ref "refs/heads/$b" "$c"
@@ -55,9 +57,16 @@ git config user.email "$(git -C "$CI" config user.email)"
 git config protocol.file.allow always
 git config submodule.kernel.url "$S/kernel.git"
 git config submodule.bootloader.url "$S/bootloader.git"
+git config submodule.toolchain.url "$S/toolchain.git"
 git config merge.rows.name "work-list rows, one item at a time"
 git config merge.rows.driver 'if [ -f tools/merge-rows.py ]; then python3 tools/merge-rows.py %O %A %B %P; else git merge-file %A %O %B; fi'
-git -c protocol.file.allow=always submodule update -q --init kernel bootloader
+git -c protocol.file.allow=always submodule update -q --init kernel bootloader toolchain
+# The cross compiler's link, as in every real tree (new-session.sh): the
+# night tree gets one too, and a merge there must not see it as a change -
+# the first night's first merge did (" M toolchain", entry 139), and the
+# sandbox, without the link, could not (entry NNN). Not built with here.
+I686=$(readlink -f "$CI/toolchain/i686" 2>/dev/null) && [ -d "$I686" ] && ln -s "$I686" toolchain/i686 &&
+    echo /i686 >> "$(git -C toolchain rev-parse --path-format=absolute --git-path info/exclude)"
 git -C kernel config user.name The-Jat
 git -C kernel config user.email "$(git -C "$CI" config user.email)"
 git -C kernel config protocol.file.allow always
