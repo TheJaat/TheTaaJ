@@ -1,6 +1,6 @@
 # The night, faster and fairer: parts ordered by their times, a retry before a failure, --from, and the rehearsal's toolchain link
 
-*Journal entry #NNN · four fixes from the first two nights' notes (entries 139 and 149). Written on TheJat-WSL/ci, by day, with quick checks only; the next night is the first real run.*
+*Journal entry #NNN · four fixes from the first two nights' notes (entry 139, and the second night's entry, "The second night"). Written on TheJat-WSL/ci, by day, with quick checks only; the next night is the first real run.*
 
 ## 1. The parts ordered by their own times
 
