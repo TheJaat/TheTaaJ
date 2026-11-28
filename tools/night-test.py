@@ -65,6 +65,14 @@ the second time, and a real failure fails twice. Passed on that retry,
 the report says which parts needed it (flaky: J95's list). A failed
 shared build is not retried: it fails the same way. (entry 149)
 
+--hunt ROUNDS: after the queue, the race hunt (J95): main, as the
+queue left it, in the night tree; its shared builds; then ROUNDS rounds
+of every part (`ALL=1 tools/race-hunt.sh ROUNDS`), each round under the
+test64 lock. The hunt goes on from night to night where it stopped
+(build/race-hunt/summary.txt), and the report has the night's rounds
+and the tally of all of them: which parts ever failed, how often. A
+failed round's files are kept in build/race-hunt/round-N/. (entry 156)
+
 --from BRANCH: starts the queue at BRANCH - after a runner fault, the
 rest of the night's queue. The branches before it are passed over; one
 already on main counts as merged, for the branches stacked on it.
@@ -73,7 +81,8 @@ already on main counts as merged, for the branches stacked on it.
 NIGHT_TEST="make unsafe-check" (say) runs that instead of make test64, to
 try this script itself in minutes - and then nothing is pushed or
 posted: only a real make test64 makes a branch's merge fit to push.
-NIGHT_TEST_AGAIN, with it, stands in for make test64-again (the retry
+NIGHT_HUNT stands in for the race hunt (and with NIGHT_TEST, the shared
+builds before it are not built). NIGHT_TEST_AGAIN, with it, stands in for make test64-again (the retry
 is not tried without it).
 """
 import datetime
@@ -89,6 +98,7 @@ ALL = "--all" in sys.argv[1:]
 WAIT = 0  # --wait MINUTES
 MERGE = False  # --merge: the user's standing yes (rule 2)
 FROM = None  # --from BRANCH: the queue from that branch on
+HUNT = 0  # --hunt ROUNDS: the race hunt on main, after the queue (J95)
 ARGS = []
 _args = iter(sys.argv[1:])
 for _a in _args:
@@ -98,6 +108,8 @@ for _a in _args:
         MERGE = True
     elif _a == "--from":
         FROM = next(_args)
+    elif _a == "--hunt":
+        HUNT = int(next(_args))
     elif _a != "--all":
         ARGS.append(_a)
 QUEUE = ARGS[0] if ARGS else os.path.join(HOME, ".cache/taaj-night/queue")
@@ -254,10 +266,9 @@ def prepare(branch, base_taaj, base_kernel):
             run("git", "reset", "-q", "--hard", cwd=sub, check=False)
     git("checkout", "-q", "--detach", f"origin/{branch}")
     git("submodule", "update", "-q", "--init", "kernel", "bootloader")
-    if branch == "main":
-        # main as it is: its own pointer, nothing merged.
-        return git("ls-tree", "HEAD", "kernel").split()[2]
-    kernel_branch = git("ls-remote", "origin", f"refs/heads/{branch}", cwd=KERNEL)
+    # main as it is: its own pointer, nothing merged - but TheBootloader
+    # built from nothing all the same, if its commit is another (below).
+    kernel_branch = git("ls-remote", "origin", f"refs/heads/{branch}", cwd=KERNEL) if branch != "main" else ""
     kernel = None
     if kernel_branch:
         git("checkout", "-q", "--detach", f"origin/{branch}", cwd=KERNEL)
@@ -265,7 +276,7 @@ def prepare(branch, base_taaj, base_kernel):
             git("merge", "--abort", cwd=KERNEL, check=False)
             raise RuntimeError(f"TheKernel's {branch} does not merge with {base_kernel[:10]}")
         kernel = git("rev-parse", "HEAD", cwd=KERNEL)
-    merged = run("git", "merge", "-q", "--no-edit", base_taaj, check=False)
+    merged = run("git", "merge", "-q", "--no-edit", base_taaj, check=False) if branch != "main" else run("true", check=False)
     if merged.returncode != 0:
         conflicts = git("diff", "--name-only", "--diff-filter=U").split()
         if [c for c in conflicts if c != "kernel"] and os.path.exists(os.path.join(TREE, "tools/merge-main.py")):
@@ -511,6 +522,41 @@ def night_queue(logs, report, lines):
             write(report, lines)
 
 
+def hunt(lines):
+    """--hunt: ROUNDS rounds of every part on main (tools/race-hunt.sh)."""
+    lines += ["", f"## The race hunt (J95): {HUNT} rounds on main", ""]
+    try:
+        prepare("main", "origin/main", "origin/main")
+    except RuntimeError as error:
+        lines.append(f"- not run: main could not be checked out: {error}")
+        return
+    script = os.path.join(TREE, "tools/race-hunt.sh")
+    if not os.path.exists(script) or "tally.txt" not in open(script).read():
+        # The older one takes no test64 lock and starts at round 1 again.
+        lines.append("- not run: main's tools/race-hunt.sh is not J95's yet")
+        return
+    setup = f". {LLVM} && make_flags=\"LLVM_TBLGEN=$LLVM_TBLGEN\" || make_flags=" if os.path.isfile(LLVM) else "make_flags="
+    start = time.time()
+    shared = "true" if STAND_IN else "flock /tmp/taaj-test64.lock make --no-print-directory test64-shared $make_flags"
+    built = subprocess.run(["sh", "-c", f"{setup}; {shared}"],
+                           cwd=TREE, capture_output=True, text=True)
+    if built.returncode != 0:
+        lines.append(f"- not run: main's shared builds failed: {built.stdout[-300:]}{built.stderr[-300:]}")
+        return
+    summary = os.path.join(TREE, "build/race-hunt/summary.txt")
+    before = open(summary).read() if os.path.exists(summary) else ""
+    command = os.environ.get("NIGHT_HUNT", f"ALL=1 tools/race-hunt.sh {HUNT}")
+    done = subprocess.run(["sh", "-c", f"{setup}; {command}"], cwd=TREE, capture_output=True, text=True)
+    after = open(summary).read() if os.path.exists(summary) else ""
+    took = int(time.time() - start)
+    TOTALS["testing"] += took
+    tonight = [l for l in after[len(before):].splitlines() if l.startswith("round ") or l.startswith("    ")]
+    lines.append(f"- {minutes(took)}; tonight's rounds:")
+    lines += [f"    {l}" for l in tonight] or ["    (none)"]
+    lines += ["", "Every round so far (build/race-hunt/tally.txt in the night tree):", ""]
+    lines += [f"    {l}" for l in done.stdout.strip().splitlines()[-30:]]
+
+
 def rehearsal():
     """A stand-in test may merge only into a sandbox: origin a directory on
     this machine (tools/merge-rehearsal.sh), never the server."""
@@ -661,6 +707,9 @@ def main():
     record = tested_before()
     if not ALL:
         night_queue(logs, report, lines)
+        if HUNT:
+            hunt(lines)
+            write(report, lines)
     else:
         every_branch(logs, report, lines, taaj, kernel_heads, taaj_repository, kernel_repository, record)
     wall = int(time.time() - STARTED)

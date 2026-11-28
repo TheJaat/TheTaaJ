@@ -4946,3 +4946,30 @@ make build-bootloader
 | `make build-bootloader` once more, nothing touched | nothing assembled, compiled or linked |
 
 Automated: `make test64` builds TheBootloader; the replay above is by hand.
+
+---
+
+## 155 · The third night: four branches, four passes, and the first parts ordered by their times
+
+[The entry](journal/155-night-3.md)
+
+| Do | You should see |
+|---|---|
+| `cat ../TheTaaJ-night/build/test64-times` | Each part's seconds in the last run, longest first |
+
+Automated: not part of `make test64`.
+
+---
+
+## 156 · No flaky tests, part one: the q35's power test fixed, the TCP test's packets kept, and a race hunt night after night
+
+[The entry](journal/156-no-flaky.md)
+
+| Do | You should see |
+|---|---|
+| `make power64-test` | `power64-test passed`; in `build/power64.log.q35-off`, the give-up line before `poweroff` |
+| `make tcp64-test`, then `python3 kernel/kernel64/scripts/tcp-resets.py build/tcp64.log.pcap` | The test passes; the script prints nothing |
+| `ONLY=power64-test tools/race-hunt.sh 2`, twice | Rounds 1-2, then 3-4; `build/race-hunt/tally.txt` says 4 rounds |
+| `night-test.py --hunt 10` | After the queue, "The race hunt (J95)" in the report, with the night's rounds and the tally |
+
+Automated: `power64-test`, `tcp64-test` and `aarch64-tcp-test` are parts of `make test64`; the hunt is not.
