@@ -1,6 +1,6 @@
 # Fuzzing the parsers on the host: nine targets, LLVM's libFuzzer, and two bugs in the first minute
 
-*Journal entry #NNN · K189, K104's second half. Written on TheJat-WSL/ci, by day. K104 (entry 123) fuzzed TheTaaJ's system calls from inside the machine. This is the other half: each parser of untrusted input fuzzed on the host, by a fuzzer that steers by which branches of the parser an input reached.*
+*Journal entry #162 · K189, K104's second half. Written on TheJat-WSL/ci, by day. K104 (entry 123) fuzzed TheTaaJ's system calls from inside the machine. This is the other half: each parser of untrusted input fuzzed on the host, by a fuzzer that steers by which branches of the parser an input reached.*
 
 ## No crate from outside
 
@@ -45,8 +45,8 @@ What a target found interesting is kept in `build/fuzz/corpus/TARGET`, so a run 
 
 Two bugs, each within the first minute of its target:
 
-- **`devicetree.rs:541`, `gic_interrupt`**: `number + 16` (or `+ 32`) overflows for an interrupt number near 2³². The kernel's build wraps it round, which means a wrong interrupt, silently. Filed as **K?-gic-number**.
-- **`usb/src/descriptor.rs:135`, `configuration`**: a configuration that gives a total length under 6 has its bytes cut to that length, then `bytes[5]` is read. Any device plugged in can do that, and the `usb` program panics, again at every restart. The smallest input is `09 02 02 00 00 00 00 00 00`. Filed as **K?-usb-short-config**.
+- **`devicetree.rs:541`, `gic_interrupt`**: `number + 16` (or `+ 32`) overflows for an interrupt number near 2³². The kernel's build wraps it round, which means a wrong interrupt, silently. Filed as **K196**.
+- **`usb/src/descriptor.rs:135`, `configuration`**: a configuration that gives a total length under 6 has its bytes cut to that length, then `bytes[5]` is read. Any device plugged in can do that, and the `usb` program panics, again at every restart. The smallest input is `09 02 02 00 00 00 00 00 00`. Filed as **K197**.
 
 Both files are the `devices` lane's (MaK-WSL), so `ci` does not fix them. The items are in `docs/items/era-15.md`, with a line in `docs/lanes.md` for `devices` to take them into its table, as K186 went to `services`. When they are fixed, each input becomes a host test beside the parser's others, as K104 did.
 
@@ -71,7 +71,7 @@ ELF, ACPI tables and AML, the network formats, HTTP, the file server and TaajFS 
 | Do | You should see |
 |---|---|
 | `tools/fuzz.sh run 20 elf` | `fuzz: elf: 20 s, cov: ...` over 100, `crashes 0` |
-| `tools/fuzz.sh run 30 usb_descriptors` | `crashes` many, and one place: `usb/src/descriptor.rs:135:45: index out of bounds` (until K?-usb-short-config is fixed) |
+| `tools/fuzz.sh run 30 usb_descriptors` | `crashes` many, and one place: `usb/src/descriptor.rs:135:45: index out of bounds` (until K197 is fixed) |
 | `make fuzz FUZZ_SECONDS=10` | Each of the nine targets, its edges and corpus |
 
 Automated: not part of `make test64`.

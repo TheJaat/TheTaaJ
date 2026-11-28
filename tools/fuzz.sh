@@ -1,6 +1,6 @@
 #!/bin/sh
 # fuzz.sh - the parsers of untrusted input fuzzed on the host (K189,
-# journal entry NNN): fuzz/src/bin/*.rs, one target each, built with
+# journal entry 162): fuzz/src/bin/*.rs, one target each, built with
 # LLVM's coverage hooks and LLVM's libFuzzer - no crate from outside.
 #
 #   tools/fuzz.sh build             builds every target

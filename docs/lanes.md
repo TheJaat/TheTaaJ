@@ -42,7 +42,7 @@ A machine may run fewer sessions than it has lanes: then it starts them in the o
 - E6-E8, J50, J97, which come later or wait for the user.
 - J51 (test programs out of the kernel image): not needed if K130 comes - the user's decision (U7).
 - K186 (files after the disk driver is restarted), found by `ci` in entry 117: for the `services` lane to take into its table.
-- K?-gic-number and K?-usb-short-config (a device tree's interrupt numbers, a short USB configuration), found by `ci`'s fuzzing (K189, entry NNN): for the `devices` lane to take into its table.
+- K196 and K197 (a device tree's interrupt numbers, a short USB configuration), found by `ci`'s fuzzing (K189, entry 162): for the `devices` lane to take into its table.
 
 ## Across lanes
 

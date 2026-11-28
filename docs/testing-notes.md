@@ -5051,3 +5051,17 @@ Automated: `make kill64-test`, `make test64`
 | A race-hunt round | `fault64-page-20-test` a few seconds in `round-N.times` |
 
 Automated: the fault parts are parts of `make test64`.
+
+---
+
+## 162 · Fuzzing the parsers on the host: nine targets, LLVM's libFuzzer, and two bugs in the first minute
+
+[The entry](journal/162-fuzzing.md)
+
+| Do | You should see |
+|---|---|
+| `tools/fuzz.sh run 20 elf` | `fuzz: elf: 20 s, cov: ...` over 100, `crashes 0` |
+| `tools/fuzz.sh run 30 usb_descriptors` | `crashes` many, and one place: `usb/src/descriptor.rs:135:45: index out of bounds` (until K197 is fixed) |
+| `make fuzz FUZZ_SECONDS=10` | Each of the nine targets, its edges and corpus |
+
+Automated: not part of `make test64`.
