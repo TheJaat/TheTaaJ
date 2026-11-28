@@ -126,7 +126,7 @@ Each machine has its own table and changes only its own, so two machines never e
 | Step | Branch |
 |---|---|
 | MaK-WSL/sched: K192, K101, K194, K195 next (K193 merged, entry 153) | |
-| MaK-WSL/devices: K75, every device handed out the same way (a device handle; the kernel's lists of kinds gone): its device tests passed; `make test64` next (K82 merged, entry 160) | `k75-devices-alike` |
+| MaK-WSL/devices: K75, every device handed out the same way (a device handle; the kernel's lists of kinds gone): tested (journal: every part passed, intermittent AArch64 failures under load written up); waits for the user's yes (K82 merged, entry 160) | `k75-devices-alike` |
 
 ### Now: TheJat-WSL
 

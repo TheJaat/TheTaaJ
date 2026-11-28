@@ -57,12 +57,14 @@ Their first startup handle is the device's handle, no longer its registers, and 
 
 **7. Another race since the system log: `disk check` on a disk being written.** The next `make test64`: `aarch64-keys-test` - "disk check: FAILED - sectors read together differ from sectors read one by one". The shell's check reads the disk's first 256 sectors at once, then one at a time, and compares. Those are TaajFS's superblock and the blocks after it, which every commit rewrites, and since K136 logd commits the system log in the background - here just after the test's serial stalls, which log a few lines. The check now reads the 256 sectors at once again after the single reads: if those changed, so did the disk, and it tries again (five times at most); if they did not, the single reads must match them - so a driver that really returns different bytes still fails it. Not K75's, but it is where it showed.
 
+**8. Not reproduced: the AArch64 disk self-test's interrupts, once.** The `make test64` after bug 7's fix: `aarch64-test`'s disk boot panicked, "the disk interrupted 8 and 101 times: the driver is not waiting for it" (at least 20 each). The disk itself was fine - 348 checks, twice. An interrupt that comes while the line is off shares the next one, so a starved emulated CPU sees far fewer; `aarch64-test` alone, twice, gave 340 each time, as plain main does. A load outlier, left as it is.
+
 ## How I checked it
 
 - **Host**: `kernel/abi` (a `Bar` through its bytes, `config`'s argument), the PCI library's tests (`kind()` gone).
 - `make coverage` (`kernel/abi` 88.3%), `make unsafe-check`.
 - The device tests, each driver started and, in most, killed or stalled and restarted: `boot64-test`, `ahci64-test`, `nvme64-test`, `usb64-test`, `e1000-64-test` (its four cards), `net64-test`, `aarch64-test`, `aarch64-net-test`, `kill64-test` - all passed, after bugs 2 and 3.
-- `make test64`: RESULT.
+- `make test64`, before main moved: all passed (735 s). With entries 162-165 merged in, five runs, each failing one or two AArch64 parts, each time a different one: bugs 4 and 7 (races since the system log, fixed), 5, 6 and 8 (not reproduced alone: 4 of 4 bigmem, 6 of 6 keys, 2 of 2 `aarch64-test` passed; left open or as they are). Every part passed in at least one full run and when run alone.
 
 ## What is still missing
 
