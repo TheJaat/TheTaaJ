@@ -64,7 +64,7 @@ Their first startup handle is the device's handle, no longer its registers, and 
 - **Host**: `kernel/abi` (a `Bar` through its bytes, `config`'s argument), the PCI library's tests (`kind()` gone).
 - `make coverage` (`kernel/abi` 88.3%), `make unsafe-check`.
 - The device tests, each driver started and, in most, killed or stalled and restarted: `boot64-test`, `ahci64-test`, `nvme64-test`, `usb64-test`, `e1000-64-test` (its four cards), `net64-test`, `aarch64-test`, `aarch64-net-test`, `kill64-test` - all passed, after bugs 2 and 3.
-- `make test64`, before main moved: all passed (735 s). With entries 162-165 merged in, five runs, each failing one or two AArch64 parts, each time a different one: bugs 4 and 7 (races since the system log, fixed), 5, 6 and 8 (not reproduced alone: 4 of 4 bigmem, 6 of 6 keys, 2 of 2 `aarch64-test` passed; left open or as they are). Every part passed in at least one full run and when run alone.
+- `make test64`, before main moved: all passed (735 s). With entries 162-165 merged in, five runs, each failing one or two AArch64 parts, each time a different one: bugs 4 and 7 (races since the system log, fixed), 5, 6 and 8 (not reproduced alone: 4 of 4 bigmem, 6 of 6 keys, 2 of 2 `aarch64-test` passed; left open or as they are). Every part passed in at least one full run and when run alone. With entries 166-170 merged in too, the user asked for a run with nothing failed: the first failed `aarch64-keys-test`'s channel count again (bug 6), the second passed whole - 757 s, every part.
 
 ## What is still missing
 
