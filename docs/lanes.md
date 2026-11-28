@@ -42,6 +42,7 @@ A machine may run fewer sessions than it has lanes: then it starts them in the o
 - E6-E8, J50, J97, which come later or wait for the user.
 - J51 (test programs out of the kernel image): not needed if K130 comes - the user's decision (U7).
 - K186 (files after the disk driver is restarted), found by `ci` in entry 117: for the `services` lane to take into its table.
+- K196 and K197 (a device tree's interrupt numbers, a short USB configuration), found by `ci`'s fuzzing (K189, entry 162): for the `devices` lane to take into its table.
 
 ## Across lanes
 
@@ -127,7 +128,6 @@ Its files: the test rules of the `Makefile`, `kernel/kernel64/scripts/*-test.sh`
 | J95 | 2 | No flaky tests (every part 50 times) |
 | K50 | 2 | `bigmem64-test` once did not finish under KVM |
 | K52 | 2 | `aarch64-tcp-test`'s late segment |
-| K189 | 2 | `cargo fuzz` on the host for every parser (K104's second half) |
 | K188 | 3 | A crash record the next boot finds (K137's second half) |
 | K138 | 3 | A crash report per program |
 | K141 | 3 | `top` (after `sched`'s K21) |
