@@ -4833,3 +4833,18 @@ Automated: `make deskbench64-test` (part of `make test64`)
 | A night queue with two branches pointing at different TheBootloader commits, the second changing an `.inc` | The second builds TheBootloader from nothing and passes |
 
 Automated: not part of `make test64`.
+
+---
+
+## 149 · The night, faster and fairer: parts ordered by their times, a retry before a failure, --from, and the rehearsal's toolchain link
+
+[The entry](journal/149-night-speed.md)
+
+| Do | You should see |
+|---|---|
+| `make test64` twice | The second run's parts given longest first; `test64: the longest parts (s): ...` at the end; `build/test64-times` |
+| A night where a part fails once and passes again | `passed on a retry of PART (failed once: flaky?)` in the report |
+| `night-test.py --from BRANCH` | The branches before it `passed over`; those on main `on main already` |
+| `sh tools/merge-rehearsal.sh` | `toolchain/i686` in the sandbox's trees |
+
+Automated: not part of `make test64`.

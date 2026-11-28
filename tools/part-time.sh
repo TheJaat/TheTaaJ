@@ -1,6 +1,6 @@
 #!/bin/sh
 # part-time.sh TARGET -c COMMAND - the shell make runs a test64 part's
-# recipe lines with (tools/test64.sh sets it, journal entry NNN): runs
+# recipe lines with (tools/test64.sh sets it, journal entry 149): runs
 # the line as /bin/sh would, and writes down when it started and ended,
 #
 #   TARGET START END

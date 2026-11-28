@@ -63,12 +63,12 @@ that failed) before the branch is called failed: a boot that missed its
 timing window - k114-desktop-bench's power64-test, on night 2 - passes
 the second time, and a real failure fails twice. Passed on that retry,
 the report says which parts needed it (flaky: J95's list). A failed
-shared build is not retried: it fails the same way. (entry NNN)
+shared build is not retried: it fails the same way. (entry 149)
 
 --from BRANCH: starts the queue at BRANCH - after a runner fault, the
 rest of the night's queue. The branches before it are passed over; one
 already on main counts as merged, for the branches stacked on it.
-(entry NNN)
+(entry 149)
 
 NIGHT_TEST="make unsafe-check" (say) runs that instead of make test64, to
 try this script itself in minutes - and then nothing is pushed or

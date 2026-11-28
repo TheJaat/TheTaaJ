@@ -30,7 +30,7 @@
 # given, TEST_JOBS at a time: a long part given late is still running
 # when the rest are done - aarch64-keys-test, times64-test and
 # schedbench64-test ended the first nights' runs a minute after the
-# others (journal entry NNN). So the parts are given longest first by
+# others (journal entry 149). So the parts are given longest first by
 # those times, and a part with none yet (a new one) before them all. The
 # Makefile's order is the first run's.
 set -u

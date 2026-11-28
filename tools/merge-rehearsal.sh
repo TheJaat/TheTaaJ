@@ -64,7 +64,7 @@ git -c protocol.file.allow=always submodule update -q --init kernel bootloader t
 # The cross compiler's link, as in every real tree (new-session.sh): the
 # night tree gets one too, and a merge there must not see it as a change -
 # the first night's first merge did (" M toolchain", entry 139), and the
-# sandbox, without the link, could not (entry NNN). Not built with here.
+# sandbox, without the link, could not (entry 149). Not built with here.
 I686=$(readlink -f "$CI/toolchain/i686" 2>/dev/null) && [ -d "$I686" ] && ln -s "$I686" toolchain/i686 &&
     echo /i686 >> "$(git -C toolchain rev-parse --path-format=absolute --git-path info/exclude)"
 git -C kernel config user.name The-Jat
