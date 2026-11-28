@@ -5159,3 +5159,17 @@ Automated: `make trace64-test` (part of `make test64`).
 | `profile -s 10 -n 30` | Ten seconds, the 30 busiest places |
 
 Automated: `make profile64-test` (part of `make test64`).
+
+---
+
+## 170 · A debugger: stop a program, read its registers and memory, catch it at a breakpoint
+
+[The entry](journal/170-debugger.md)
+
+| Do | You should see |
+|---|---|
+| `debug forever spin`, then `stop`, `regs` | Where it is, its registers |
+| `break pc`, `cont`, `wait` | Stopped at the breakpoint |
+| `cont`, then `quit` | It goes on past it; then it ends |
+
+Automated: `make debug64-test` (part of `make test64`).

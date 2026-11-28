@@ -1,6 +1,6 @@
 # A debugger: stop a program, read its registers and memory, catch it at a breakpoint
 
-*Journal entry #NNN · K142 (Era 22), its first two parts. Written on TheJat-WSL/ci, by day, with quick checks only. The item has three: "a debug capability over another process (stop, read and write its memory and registers, breakpoints), given only by its launcher; a small debugger program; a gdb stub on the serial line for the kernel on a real PC". The third, for the kernel itself on a machine no QEMU runs, is a new item of its own: K?-gdb-stub.*
+*Journal entry #170 · K142 (Era 22), its first two parts. Written on TheJat-WSL/ci, by day, with quick checks only. The item has three: "a debug capability over another process (stop, read and write its memory and registers, breakpoints), given only by its launcher; a small debugger program; a gdb stub on the serial line for the kernel on a real PC". The third, for the kernel itself on a machine no QEMU runs, is a new item of its own: K198.*
 
 ## A session
 
@@ -89,7 +89,7 @@ A program on the disk. It reads the program's file, as libc's `spawn` does: init
 - **A debugger that ends leaves its program stopped.** `kill` from the shell still ends it.
 - **No single-stepping.** To go past a breakpoint and keep it, set it again after.
 - **Programs have no symbols** (K140's note), so addresses are numbers.
-- **The gdb stub** for the kernel on a real PC: K?-gdb-stub.
+- **The gdb stub** for the kernel on a real PC: K198.
 
 ## Testing note
 
