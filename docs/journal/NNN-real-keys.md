@@ -50,7 +50,7 @@ Entry 151 (K42) gave windows the keys themselves - codes, down and up, modifiers
   - **No stray up**: `counter` is not told Enter (28) came up.
   - **Dvorak and back**: `display layout dvorak`, then the keys d i j s spc h . s o a v - the shell runs `echo dvorak`; `display layout us` typed on Dvorak's keys (h g ; r p a t ...); then `echo done` in US.
 - `usb64-test` (a USB keyboard, its bytes through the display now), `edit64-test`, `deskbench64-test` (key to screen, timed from the KEY now), `screen64-test`, `aarch64-screen-test`, `boot64-test`, `aarch64-keys-test`: passed.
-- `make test64`: RESULT.
+- `make test64` (MaK-WSL, KVM, 2026-11-28): all passed, 799 s.
 - **Not tested**: a real keyboard (K1); a USB keyboard at a window (the USB test types in the terminal).
 
 ## What is still missing
