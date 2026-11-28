@@ -161,6 +161,7 @@ Entries are numbered in the order the work happened. Entries 002–015 were writ
 | 151 | [Keys, not only bytes: a window is told when Shift goes down (MaK-WSL/desktop, merged after its night test)](151-key-events.md) | written | `8f2dab41` (TheKernel `ea502e4`) |
 | 152 | [The scroll wheel, and two more buttons (MaK-WSL/desktop, merged after its night test)](152-wheel.md) | written | `96948410` (TheKernel `50ab775`) |
 | 153 | [A lock per CPU's run queue: the switch stops waiting for the other CPUs (MaK-WSL/sched, merged after its night test)](153-cpu-locks.md) | written | `30f24e64` (TheKernel `c21c947`) |
+| 154 | [TheBootloader rebuilds what an edited include file touches: the cause of entry 148's stale build (MaK-WSL/boot, merged after its night test)](154-bootloader-deps.md) | written | `2ec8be26` |
 
 ## How to run what the entries describe
 

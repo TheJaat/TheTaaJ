@@ -4927,3 +4927,22 @@ cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu sched::
 | `test result:` | `ok. 47 passed; 0 failed` |
 
 Automated: `make test64`
+
+---
+
+## 154 · TheBootloader rebuilds what an edited include file touches
+
+[The entry](journal/154-bootloader-deps.md)
+
+```
+make build-bootloader
+touch bootloader/headers/boot/stage2/asm_includes/datastructure.inc
+make build-bootloader
+```
+
+| Look for | You should see |
+|---|---|
+| The second build | `Assembling stage2.asm`, then `Linking .../stage2.bin` - and no other file assembled or compiled |
+| `make build-bootloader` once more, nothing touched | nothing assembled, compiled or linked |
+
+Automated: `make test64` builds TheBootloader; the replay above is by hand.

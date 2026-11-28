@@ -1,6 +1,6 @@
 # TheBootloader rebuilds what an edited include file touches
 
-*Journal entry #NNN · a fix to TheBootloader's build, asked for in entry 148. Written on MaK-WSL/boot. The night tree's `k130-any-size` failed to link stage 2 - `undefined reference to 'BootHeader'` - because its `stage2.o` had been assembled for the branch before, and TheBootloader's Makefiles did not know that `stage2.asm` includes `datastructure.inc`, where K130 added `global BootHeader`. Now every object depends on the files it includes, as the assembler and the compiler list them.*
+*Journal entry #154 · a fix to TheBootloader's build, asked for in entry 148. Written on MaK-WSL/boot. The night tree's `k130-any-size` failed to link stage 2 - `undefined reference to 'BootHeader'` - because its `stage2.o` had been assembled for the branch before, and TheBootloader's Makefiles did not know that `stage2.asm` includes `datastructure.inc`, where K130 added `global BootHeader`. Now every object depends on the files it includes, as the assembler and the compiler list them.*
 
 ## Why
 
