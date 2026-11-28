@@ -194,6 +194,7 @@ Its files: `kernel/kernel64/src/sched.rs`, `smp.rs`, `futex.rs`, `alarms.rs`, `c
 | K70 | 2 | Futexes without one shared list |
 | K194 | 2 | Wake-ups without the directory lock (after K193) |
 | K195 | 2 | The join counter per CPU (after K193) |
+| K?-slow-kill | 2 | The self-test's kill that takes too long, three times in one boot: entry 153's bug 10 (x86, one CPU, a race hunt), again in K82's `make test64` (AArch64, emulated, 12 ticks) |
 | K72 | 2 | Idle CPUs that sleep |
 | K74 | 2 | More than 16 CPUs (with `devices`' K7) |
 | K102 | 2 | More than 64 CPUs |

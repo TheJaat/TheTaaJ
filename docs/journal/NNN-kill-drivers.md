@@ -51,6 +51,12 @@ Already covered: `boot64-test`, `boot64-uefi-test` and `aarch64-test` press F12 
 
 **3. Mine, in passing: an edit that did not apply.** My script for bug 1's fix stopped at its first replacement (the comment's lines were broken differently than I wrote them), changed nothing, and I ran the test again on the old code: the same failure, 31 s lost. A script of edits now prints that it applied them all.
 
+**4. A test of mine: the downloads tried before the PC was up.** In the first `make test64`, and again in `make test64-again`, the network PC failed: "the steps did not all run", httpd waiting for connections that never came. curl's `-s` said only `000 0`; with `-S` it said `Failed to connect to 127.0.0.1 port 33037 after 0 ms` - nothing listening yet. The host's side waits for "httpd: serving" in `kill64.log.net`, and `kill-test.sh` did not delete the last run's log: the old line was already there, and the downloads ran before QEMU had started. The first run ever (no old log) passed, every later one would fail. The logs are deleted first now (by name - the test disks are `kill64.log.disk` and `kill64.log.net.disk`), and curl's errors and wait are in the log. `kill64-test` then passed twice in a row - and failed again in `make test64`, the same way, the log fresh. The second cause: `qemu-boot.sh` first waits for free CPUs (`boot-slots.sh`), and under test64's load the net PC waited more than the host's fixed 120 s - the downloads ran with no QEMU yet. Alone there is always a slot, so it passed. The host's side has no time limit of its own now: it waits for httpd's line, or for that boot to end. Proof: `make test64` (below).
+
+**5. Mine: the file count.** `killcheck` is one more program on the test disk, so `ls` there says 40 files, not 39: `boot64-test`, `boot64-uefi-test` and `aarch64-keys-test` failed on `EXPECT_FILES`. `ROOT_FILES` is 40 now (28 with no C compiler).
+
+**6. Not mine, and not explained: a kill too slow on AArch64.** The same `make test64` (bug 4's second run): `aarch64-thread-test` panicked in the kernel's self-test, "forever sleep took 12 ticks to end, three times over" (src/selftest/user.rs:183). K82 changes nothing in the kernel or on AArch64. It is entry 153's bug 10 come back - there on x86, one CPU, during a race hunt; here on emulated AArch64 while test64 ran twelve parts at once (`e1000-64-test` took 646 s this time, 370 s the run before). That entry left it open unless it came back; it has, so it has a row now: K?-slow-kill in the `sched` lane.
+
 ## How I checked it
 
 - **Host**: `kernel/abi` 40 tests (both CRASH requests: their counts, the limits, a STALL or a short request not taken for one). `make coverage` (`kernel/abi` 88.0%), `make unsafe-check`.
@@ -62,7 +68,7 @@ blk: killed mid-write 3 times and restarted; 36 writes acked, 3 tried again; all
 ahci: ... nvme: ... usb: ... (the same)
 ```
 
-- `make test64`: RESULT.
+- `make test64`: all passed, 811 s (after bugs 4 and 5; the run before failed only on bug 4's second cause and bug 6). `kill64-test` in it, with test64's load: every disk driver as above, and the downloads `200 1048576` both.
 - **Not tested**: the e1000 driver killed (the same `nic_service`, its own card code); a driver killed while *reading* (nothing is acknowledged by a read; the program reading is told, and reads again); real hardware (K1-K3).
 
 ## What is still missing
