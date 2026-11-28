@@ -66,6 +66,8 @@ struct Service {
     listeners: Listeners<Handle, { nic::LISTENERS_MAX }>,
     /// The frame a client is sending, as its pieces arrive.
     outgoing: Assembler,
+    /// Frames to send until the driver dies in one (K82), 0 for never.
+    crash_in: u64,
 }
 
 impl Service {
@@ -125,14 +127,25 @@ impl Service {
         }
     }
 
-    /// One message with no handle: a piece of a frame to send.
-    fn piece(&mut self, card: &mut impl Card, message: &[u8]) {
+    /// One message with no handle: a piece of a frame to send. True if
+    /// that made the frame the driver is to die in (K82, CRASH): it is
+    /// not sent, and the caller dies.
+    fn piece(&mut self, card: &mut impl Card, message: &[u8]) -> bool {
         let frame = match self.outgoing.feed(message) {
-            Fed::Frame(whole) => whole,
-            Fed::More => return,
+            Fed::Frame(whole) => {
+                // The frame the driver is to die in (K82): not sent.
+                if self.crash_in > 0 {
+                    self.crash_in -= 1;
+                    if self.crash_in == 0 {
+                        return true;
+                    }
+                }
+                whole
+            }
+            Fed::More => return false,
             Fed::TooLong | Fed::NotAFrame => {
                 self.stats.refused += 1;
-                return;
+                return false;
             }
         };
         if (nic::FRAME_MIN..=nic::FRAME_MAX).contains(&frame.len()) && card.send(frame) {
@@ -140,6 +153,7 @@ impl Service {
         } else {
             self.stats.refused += 1;
         }
+        false
     }
 
     /// Answers one request that came with a reply channel; returns the
@@ -180,7 +194,7 @@ impl core::fmt::Display for Address {
 /// it is polled, a tick at a time. `name` is the driver's, for its log
 /// lines.
 pub fn serve(card: &mut impl Card, name: &str, requests: Handle, interrupt: Option<Handle>) -> i64 {
-    let mut service = Service { stats: Stats::default(), listeners: Listeners::new(), outgoing: Assembler::new() };
+    let mut service = Service { stats: Stats::default(), listeners: Listeners::new(), outgoing: Assembler::new(), crash_in: 0 };
     let address = card.address();
     let mut message = [0u8; abi::MESSAGE_MAX as usize];
     let mut reply = [0u8; abi::MESSAGE_MAX as usize];
@@ -232,7 +246,19 @@ pub fn serve(card: &mut impl Card, name: &str, requests: Handle, interrupt: Opti
         let request = &message[..n];
         match (request.first().copied(), count) {
             // A piece of a frame to send: no handle, no answer.
-            (_, 0) => service.piece(card, request),
+            (_, 0) => {
+                if service.piece(card, request) {
+                    // The test of a driver killed mid-I/O (K82): a frame
+                    // whole and not sent, frames before it perhaps still
+                    // in the card's ring, no goodbye. init restarts the
+                    // driver; the stack's frames meanwhile are lost, as
+                    // on any wire, and TCP sends them again.
+                    println!("[{name}] dying mid-send, as asked: a frame not sent");
+                    // SAFETY: none - this is the test: a driver that
+                    // faults mid-I/O. Address 0 is never mapped.
+                    unsafe { core::ptr::read_volatile(core::ptr::null::<u8>()) };
+                }
+            }
             // A new listener: for the frame types it names, in place
             // of whoever listened for them. (Closing a channel is how a
             // listener is told that it is one no longer.)
@@ -254,6 +280,11 @@ pub fn serve(card: &mut impl Card, name: &str, requests: Handle, interrupt: Opti
                     stall = u64::from_le_bytes(request[1..9].try_into().unwrap_or([0; 8]));
                 }
                 let length = if (1..=abi::STALL_MAX).contains(&stall) {
+                    reply[0] = nic::OK;
+                    1
+                } else if let Some(frames) = nic::crash_count(request) {
+                    service.crash_in = frames;
+                    println!("[{name}] asked to die in the middle of sending frame {frames} from now");
                     reply[0] = nic::OK;
                     1
                 } else {

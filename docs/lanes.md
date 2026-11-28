@@ -4,7 +4,7 @@ Fourteen **lanes**, each worked by one session on one machine, so that the eras 
 
 A new session reads `docs/start-here.md` first; it says how to work. This file says **what** each lane does, in which order, which files are its own, and what it waits for from other lanes.
 
-**Status lives in `docs/who-does-what.md`, not here.** An item's Notes there say when it is done ("**Done (entry NNN)**"). This file holds each lane's order, and a lane's table is changed only by that lane's session (rule 6). `python3 tools/lanes-check.py` says which open items are in no lane, or in two.
+**Status lives in the work list (`docs/items/*.md`, indexed in `docs/who-does-what.md`), not here.** An item's Notes there say when it is done ("**Done (entry 132)**"). This file holds each lane's order, and a lane's table is changed only by that lane's session (rule 6). `python3 tools/lanes-check.py` says which open items are in no lane, or in two.
 
 ## The week (from 2026-11-27)
 
@@ -22,7 +22,7 @@ The second and later waves follow on the same lanes in the weeks after, in the s
 |---|---|---|
 | **TheJat-WSL** (KVM, 24 CPUs, 15 GiB; `make test64` 389 s, entry 109) | `ipc`, `memory`, `ci`, `network`, `services` | The kernel's hot paths and the network need fast, real-time boots; the most CPUs for five sessions; Era 25's CI suits it |
 | **MaK-WSL** (KVM, laptop, the real PC, owns TheBootloader) | `sched`, `boot`, `devices`, `desktop` | `sched` continues step A (K20); `boot` is TheBootloader's (rule 7); `devices` and `desktop` need the real PC now and then |
-| **TheJat-VM** (no KVM, 16 CPUs, 15 GB, the reference host versions) | `files`, `taajfs`, `libc`, `crypto`, `arch` | Mostly user space and host-tested crates, where emulated boots cost least; `arch`'s new CPUs are emulated on every machine |
+| **TheJat-VM** (no KVM, 16 CPUs, 15 GB, the reference host versions) - **unavailable from 2026-11-28: its lanes are run from TheJat-WSL** (the user's choice), as `TheJat-WSL/files` and so on, until it is back | `files`, `taajfs`, `libc`, `crypto`, `arch` | Mostly user space and host-tested crates, where emulated boots cost least; `arch`'s new CPUs are emulated on every machine |
 
 **Starting a session.** Open a new session on the machine, in its first TheTaaJ checkout, and type one line:
 
@@ -40,7 +40,9 @@ A machine may run fewer sessions than it has lanes: then it starts them in the o
 - Era 10 and 11 (sound and voice), apart from the two sound items in `devices`' last wave;
 - Era 30 (the assistant);
 - E6-E8, J50, J97, which come later or wait for the user.
+- J51 (test programs out of the kernel image): not needed if K130 comes - the user's decision (U7).
 - K186 (files after the disk driver is restarted), found by `ci` in entry 117: for the `services` lane to take into its table.
+- K196 and K197 (a device tree's interrupt numbers, a short USB configuration), found by `ci`'s fuzzing (K189, entry 162): for the `devices` lane to take into its table.
 
 ## Across lanes
 
@@ -50,7 +52,6 @@ What one lane waits for from another. When an item's dependency isn't merged yet
 |---|---|---|
 | `sched` K98 (and K65) | K61 `channel_call` | `ipc` |
 | `ipc` K73 services with several threads; `taajfs` J78 | K61; then K10 (disk queue, `devices`) and J71 (`taajfs`) | `ipc`, `devices`, `taajfs` |
-| `devices` K79 MSI-X queues per CPU | K68 run queue per CPU | `sched` |
 | `network` K54 shared rings | K63 bigger messages or rings | `ipc` |
 | `taajfs` J79 a shared page cache | K88 a generic pager, J58 sealed objects | `memory` |
 | `libc` J90 a shared libc | J29, K87 (shared code pages) | `memory` |
@@ -64,9 +65,9 @@ What one lane waits for from another. When an item's dependency isn't merged yet
 | `network` K156 NTP | K30 DHCP, K33 UDP (its own) | - |
 | `crypto` J102 system updates | K132 kernels A and B | `boot` |
 | `files` K108 users | J62 (its own), J76 owners | `taajfs` |
-| `ci` K141 `top` | K21 CPU time per process | `sched` |
+| ~~`ci` K141 `top`~~ | ~~K21 CPU time per process~~ | `sched` - done (entry 114); K141 done (entry 167) |
 | `desktop` K45 job control, `libc` J84/J85 | K44 pseudo-terminals | `desktop` |
-| **Every lane that adds kernel tests** | J51 test programs out of the kernel image, or K130 a kernel of any size: the image has about 680 KiB left under its 3 MiB limit | `ci`, `boot` - both first wave |
+| **Every lane that adds kernel tests** | ~~J51 test programs out of the kernel image, or K130 a kernel of any size~~ - K130 (entry 146) ended the 3 MiB wall: the BIOS loader takes a kernel up to 1 GiB | `boot` - done; J51 is `ci`'s to order |
 
 ## Lanes
 
@@ -78,7 +79,6 @@ Its files: `kernel/kernel64/src/channel.rs`, `ipc.rs`, `cap.rs`, the channel and
 
 | Item | Wave | Note |
 |---|---|---|
-| K60 | 1 | The IPC benchmark: first |
 | K64 | 1 | Waiting until a channel is writable |
 | K66 | 1 | The cycle leak |
 | K61 | 1 | `channel_call`: `sched`'s K98 and this lane's K73 wait for it |
@@ -99,7 +99,6 @@ Its files: `kernel/kernel64/src/memory/`, `mm.rs`, `memory_object.rs`, `paging.r
 
 | Item | Wave | Note |
 |---|---|---|
-| K84 | 1 | SMEP, SMAP, PAN: small, first |
 | K85 | 1 | No kernel panic for want of memory |
 | K103 | 1 | Kernel objects counted against their creator (Era 18's milestone; with K85) |
 | K86 | 1 | The memory-pressure signal |
@@ -124,23 +123,9 @@ Its files: the test rules of the `Makefile`, `kernel/kernel64/scripts/*-test.sh`
 
 | Item | Wave | Note |
 |---|---|---|
-| J51 | 1 | Test programs out of the kernel image: every lane's new tests need room |
-| J92 | 1 | A clean build from a fresh clone, in a container (is J54) |
-| J54 | 1 | Done by J92 |
-| J93 | 1 | Our own CI: `main` built and tested after every merge |
 | J95 | 2 | No flaky tests (every part 50 times) |
 | K50 | 2 | `bigmem64-test` once did not finish under KVM |
 | K52 | 2 | `aarch64-tcp-test`'s late segment |
-| J96 | 2 | Coverage of the host tests |
-| K189 | 2 | `cargo fuzz` on the host for every parser (K104's second half) |
-| K187 | 2 | Miri over the host tests (K112's second half) |
-| K136 | 3 | The log service |
-| K188 | 3 | A crash record the next boot finds (K137's second half) |
-| K138 | 3 | A crash report per program |
-| K141 | 3 | `top` (after `sched`'s K21) |
-| K139 | 3 | Tracing |
-| K140 | 3 | A profiler |
-| K142 | 3 | A debugger |
 
 ### `network` - TheJat-WSL/network · Era 12's network items
 
@@ -194,13 +179,13 @@ Its files: `kernel/kernel64/src/sched.rs`, `smp.rs`, `futex.rs`, `alarms.rs`, `c
 
 | Item | Wave | Note |
 |---|---|---|
-| K24 | 1 | Fine timers |
-| K190 | 2 | A child takes its parent's `nice` (after K20) |
-| J53 | 1 | The ticks mutation test |
-| K96 | 1 | Sleepers in a sorted timer queue |
-| K68 | 1 | A run queue per CPU; `devices`' K79 waits for it |
+| K191 | 2 | More POSIX timers, fine timeouts (after K24) |
+| K192 | 1 | Cross-CPU wake-ups under KVM (entry 128's bug 5) |
 | K101 | 2 | A thread prefers its last CPU |
 | K70 | 2 | Futexes without one shared list |
+| K194 | 2 | Wake-ups without the directory lock (after K193) |
+| K195 | 2 | The join counter per CPU (after K193) |
+| K?-slow-kill | 2 | The self-test's kill that takes too long, three times in one boot: entry 153's bug 10 (x86, one CPU, a race hunt), again in K82's `make test64` (AArch64, emulated, 12 ticks) |
 | K72 | 2 | Idle CPUs that sleep |
 | K74 | 2 | More than 16 CPUs (with `devices`' K7) |
 | K102 | 2 | More than 64 CPUs |
@@ -218,12 +203,6 @@ Its files: all of TheBootloader; `kernel/kernel64/src/bootinfo.rs`, `elf.rs`, th
 
 | Item | Wave | Note |
 |---|---|---|
-| K128 | 1 | `abc.txt` and `random.txt` removed |
-| K129 | 1 | Host tests for the ISO reader, the ELF loader, the page tables |
-| K131 | 1 | A fast BIOS read (is K51) |
-| K51 | 1 | Done by K131 |
-| K130 | 1 | A kernel of any size: ends the 3 MiB wall every lane is near |
-| K23 | 1 | Boot time measured and cut |
 | K135 | 2 | A relocatable kernel |
 | K25 | 2 | ASLR (the kernel's half after K135) |
 | K133 | 2 | A boot menu |
@@ -240,7 +219,6 @@ The real-PC items need the user at the PC (U4): done whenever the user is there,
 
 | Item | Wave | Note |
 |---|---|---|
-| K82 | 1 | A test that kills each driver mid-I/O: measures the era |
 | K75 | 1 | Every device handed out the same way; `arch`'s K167 waits for it |
 | K77 | 1 | Bus mastering tied to a handle |
 | K76 | 1 | The device manager |
@@ -258,7 +236,7 @@ The real-PC items need the user at the PC (U4): done whenever the user is there,
 | K78 | 2 | USB as a bus |
 | K5 | 2 | Intel I219 |
 | K6 | 2 | Realtek |
-| K79 | 2 | MSI-X queues (after `sched`'s K68) |
+| K79 | 2 | MSI-X queues (K68 done, entry 129) |
 | K22 | 2 | A transmit-interrupt serial writer |
 | K13 | 2 | The AML interpreter |
 | K14 | 2 | `_PRT` |
@@ -281,11 +259,8 @@ Its files: `gui/`, `gfx/`, `input/`, `console/`, `user/src/window.rs`, `user/src
 
 | Item | Wave | Note |
 |---|---|---|
-| K114 | 1 | The desktop benchmark: first |
 | K115 | 1 | `display` split: compositor, window manager, terminal |
 | K44 | 1 | The terminal as its own program; pseudo-terminals; `libc`'s J85 waits for it |
-| K116 | 1 | Real key events (with K42) |
-| K42 | 1 | Key up and down, lone Shift and Control |
 | K120 | 1 | Copy and paste (with K41) |
 | K41 | 1 | Copy and paste between windows |
 | K119 | 2 | A panel (with K40) |

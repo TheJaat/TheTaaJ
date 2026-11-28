@@ -54,6 +54,21 @@ mkdir -p "$OUT/cross" "$OUT/native" "$OUT/helpers" "$OUT/lib/tcc"
 OUT=$(cd "$OUT" && pwd)
 LIBC_DIR=$(cd "$(dirname "$LIBC_A")" && pwd)
 
+# Nothing to do when nothing it is made of is newer than its last build
+# (OUT/.built, which also keeps the arguments it was built with): TCC's
+# sources, the C library and its headers, this script. libc.a keeps its
+# time when it comes out the same (the Makefile's replace-if-changed),
+# so make test64 no longer builds TCC twice, 11 seconds, every run
+# (journal entry 138).
+STAMP="$OUT/.built"
+SAID="$ARCH $LIBC_A $CFLAGS $LDFLAGS ${HOST_CC:-cc}"
+if [ -f "$OUT/tcc" ] && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$SAID" ] \
+   && [ -z "$(find "$SRC" "$ROOT/libc/include" "$LIBC_A" "$0" -newer "$STAMP" -print -quit)" ]; then
+    echo "  tcc ($ARCH) is up to date"
+    exit 0
+fi
+rm -f "$STAMP"
+
 # The configuration upstream's configure script would write. Both say
 # TARGETOS_TheTaaJ (the paths, no crt files, static only, __TAAJ__ and
 # not __linux__: ports/tcc/tcc.h, tccpp.c); the cross compiler's paths
@@ -114,3 +129,4 @@ clang $(echo " $CFLAGS " | sed -e 's/ -Wall / /' -e 's/ -Wextra / /' -e 's/ -Wer
     -D$TARGET -I"$OUT/native" -c "$SRC/tcc.c" -o "$OUT/native/tcc.o"
 # shellcheck disable=SC2086
 ld.lld $LDFLAGS "$OUT/native/tcc.o" "$LIBC_A" -o "$OUT/tcc"
+echo "$SAID" > "$STAMP"

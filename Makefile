@@ -3,7 +3,7 @@ BOOTLOADER_DIR = bootloader
 KERNEL_DIR = kernel
 
 .PHONY: all clean run iso ramdisk modules servers librt disk tfstool tfsdisk tfstool-rs tfscheck \
-        kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test fault64-test test64 \
+        kernel64 iso64 run64 run-disk boot64-test smp64-test big64-test kernel64-test coverage coverage-raise fault64-test test64 test64-again \
         uefi-loader run64-uefi boot64-uefi-test aarch64-esp run-aarch64-uefi aarch64-uefi-test user64 libc64 cprogs64 cput libc-test \
         tcc64 tcc-aarch64 tcc64-test aarch64-tcc-test cxx64 cxx-aarch64 cxx64-test aarch64-cxx-test \
         pdpmake64 pdpmake-aarch64 make64-test aarch64-make-test libmake64-test aarch64-libmake-test pipe64-test aarch64-pipe-test thread64-test aarch64-thread-test bigmem64-test aarch64-bigmem-test basics64-test aarch64-basics-test ground64-test aarch64-ground-test ground2-64-test aarch64-ground2-test handles64-test aarch64-handles-test times64-test aarch64-times-test pages64-test aarch64-pages-test zlib64 zlib-aarch64 \
@@ -385,7 +385,7 @@ TEST_TYPED   = Hi there
 # (Joined on one line: a continued line would start each pattern with a
 # space.)
 EXPECT_SHELL = unknown command: Hi;  PID  NAME;init +running +[0-9]+\.[0-9]{3} s;^memory: [0-9]+ MiB used;^hello exited with code 42;^peek was killed
-EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^ +dir  bin/;^ +dir  dev/;^ +dir  docs/;^ +dir  tmp/;^5 directories, $(ROOT_FILES) files, [0-9]+ bytes;^cat: notes: no such file;^cat exited with code 1;^kept\s*$$;^Hello from the host;^saved: 5 bytes
+EXPECT_FILES = \[fs\] ready: TaajFS on the disk;^notes: 6 bytes;^notes: 12 bytes;^hello\s*$$;^world\s*$$;^ +12  notes;^ +20  welcome;^ +dir  bin/;^ +dir  dev/;^ +dir  docs/;^ +dir  tmp/;^ +dir  var/;^6 directories, $(ROOT_FILES) files, [0-9]+ bytes;^cat: notes: no such file;^cat exited with code 1;^kept\s*$$;^Hello from the host;^saved: 5 bytes
 EXPECT_DISK  = \[blk\] virtio disk.*MSI-X;^disk: 8192 sectors of 512 bytes \(4096 KiB\);^0000  4a 41 46 53 .*JAFS;^disk: sector 5: the disk is read-only;^disk: sector 99999: no such sector;^disk check: all 9 checks passed;^took [0-9]+\.[0-9][0-9] s;^line 300 of 300
 EXPECT_RUN   = \[init\] started primes for the shell, from a file;^primes below 50: 2 3 5 7 11 13 17 19 23 29 31 37 41 43 47;^primes exited with code 0;^error: welcome is not a program;^error: broken is not a program;^error: no such program;\[init\] started ls for the shell, from a file;^cat exited with code 0;^rm: notes: no such file;^rm: saved2: no such file;^rm exited with code 1;^usage: write FILE TEXT;^write exited with code 2;$(EXPECT_GIVEN);$(EXPECT_WATCH);$(EXPECT_KILL)
 EXPECT_DIRS  = ^ +23  readme;^1 file, 23 bytes;^Read me, from the host;^docs/deep/note: 7 bytes;^docs:;^ +dir  deep/;^1 directory, 1 file, 23 bytes;^docs/deep:;^ +7  note;^rm: docs: the directory is not empty;^mkdir: docs: there is already something with that name;^cat: docs: is a directory;^write: welcome/x: not a directory;^ls: work: no such file or directory;\[init\] started tools/given for the shell, from a file;^mkdir: x: the files are read-only here
@@ -398,7 +398,7 @@ EXPECT_WATCH = \[blk\] asked to stall;\[init\] blk has not answered for 2 s - st
 EXPECT_KILL  = ^forever: spin until stopped;^forever: wait until stopped;^forever: sleep until stopped;\[process\] [0-9]+ .forever. ended by signal 2 \(SIGINT\);^\^C;^forever was stopped
 EXPECT_PIPE  = ^1 line, 3 words, 14 bytes;^301 lines, 1212 words;^given: arguments .xpipe.;^p . q\s*$$;^there is a . with no command on one side of it;^cd is one of the shell.s own commands;^unknown command: nosuch2;^only the last command of a pipeline
 EXPECT_JOBS  = ^\[1\] cat bin/ls bin/ls . cat > big4;^\[2\] forever sleep > flog;^\[3\] forever yield;^forever: yield until stopped;^\[2\] running  forever sleep > flog;^\[3\] running  forever yield;^\[3\] stopped  forever yield;^\[2\] stopped  forever sleep > flog;^kill: no job 9;^\[1\] done  cat bin/ls bin/ls . cat > big4;^no jobs;^echo is one of the shell.s own commands: it cannot run in the background;^a & can only end the line;^x & y\s*$$
-EXPECT_NAMES = \[registry\] ready;\[registry\] fs may ask for: disk\s*$$;\[registry\] shell may ask for: keys display init system files files.look tmp tmp.look dev disk.look;^keys display init system files files.look tmp tmp.look dev disk.look nic net windows\s*$$;^files: there for the shell;^disk: no such service - for the shell;\[registry\] shell asked for .disk.: it is not in its namespace;^nosuch: no such service - for the shell;\[registry\] asked to crash;\[init\] registry ended with code 1 - restarting it;^files.look: there for the shell
+EXPECT_NAMES = \[registry\] ready;\[registry\] fs may ask for: disk\s*$$;\[registry\] shell may ask for: keys display init system files files.look tmp tmp.look dev disk.look;^keys display init system files files.look tmp tmp.look dev disk.look nic net windows trace trace.symbols\s*$$;^files: there for the shell;^disk: no such service - for the shell;\[registry\] shell asked for .disk.: it is not in its namespace;^nosuch: no such service - for the shell;\[registry\] asked to crash;\[init\] registry ended with code 1 - restarting it;^files.look: there for the shell
 EXPECT_GIVE  = \[registry\] shell gave ls: files=files.look tmp=tmp.look dev;\[registry\] shell gave write: files tmp dev\s*$$;\[registry\] shell gave given: files tmp dev\s*$$;\[registry\] shell gave given: files=files.look tmp=tmp.look dev;^given: it may ask for: files tmp dev\s*$$
 # The keyboard as a program's standard input: lines typed to wc and to
 # cat (into a file) and ended with Ctrl+D; and a program stopped with
@@ -457,7 +457,7 @@ TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EX
 # and what must not run, or must not write.
 USER_BIN     = user/target/x86_64-unknown-none/release
 TFSTOOL_RS   = tools/tfstool-rs/target/release/tfstool
-DISK_PROGRAMS = ls cat write append rm mkdir mv cp wc yes primes forever given niccheck ping netinfo udpecho udpsend tcpecho tcpsend httpd counter edit
+DISK_PROGRAMS = ls cat write append rm mkdir mv cp wc yes primes forever given niccheck ping netinfo udpecho udpsend tcpecho tcpsend httpd counter edit killcheck log top trace profile debug
 # The web site httpd gives out (user/www), put in the directory www of a
 # disk: put-site DISK. Only the run disks and the HTTP test's disk have
 # it - the other test disks are counted, directory by directory.
@@ -602,6 +602,17 @@ user64:
 	@echo "Building the user programs..."
 	cd user && cargo build --release
 
+# libc.a is built again only when something it is made of is newer than
+# its last build (FILE.stamp): the Rust half (cargo decides that), the C
+# files and headers, this Makefile (the flags), thin-archive.py. And
+# FILE.new replaces FILE only if it differs, so that a library that comes
+# out byte for byte the same keeps its old time, and nothing linked with
+# it - LLVM's tools, tcc, every C program - is linked again. Before,
+# every make test64 built both libraries again, 8 and 16 seconds, and
+# relinked all that (journal entry 138).
+libc-stale = [ ! -f $(1).stamp ] || [ -n "$$(find $(LIBC_DIR)/c $(LIBC_DIR)/include $(2) Makefile tools/thin-archive.py -newer $(1).stamp -print -quit)" ]
+replace-if-changed = if cmp -s $(1).new $(1); then rm -f $(1).new; else mv -f $(1).new $(1); fi; touch $(1).stamp
+
 # The C library, and the C programs in libc/programs: each one file,
 # compiled and linked with libc.a. To build one of your own:
 #   make cprogs64 C_PROGRAMS=name      (with libc/programs/name.c)
@@ -610,15 +621,18 @@ libc64:
 	@echo "Building the C library..."
 	cd $(LIBC_DIR) && cargo build --release
 ifeq ($(HAVE_CC),yes)
-	@mkdir -p $(C_BIN)/lib/libm
-	@for part in $(LIBC_C); do \
-	    echo "  CC      libc/c/$$part.c"; \
-	    clang $(TAAJ_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -c $(LIBC_DIR)/c/$$part.c -o $(C_BIN)/lib/$$part.o || exit 1; \
-	done
-	@cp $(LIBC_RUST_A) $(LIBC_A)
-	@$(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(LIBC_A)
-	@ar rs $(LIBC_A) $(addprefix $(C_BIN)/lib/,$(addsuffix .o,$(LIBC_C)))
-	@python3 -I tools/thin-archive.py $(LLVM_NM) $(LLVM_AR) $(LIBC_A)
+	@if $(call libc-stale,$(LIBC_A),$(LIBC_RUST_A)); then \
+	    mkdir -p $(C_BIN)/lib/libm && \
+	    for part in $(LIBC_C); do \
+	        echo "  CC      libc/c/$$part.c"; \
+	        clang $(TAAJ_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -c $(LIBC_DIR)/c/$$part.c -o $(C_BIN)/lib/$$part.o || exit 1; \
+	    done && \
+	    cp $(LIBC_RUST_A) $(LIBC_A).new && \
+	    $(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(LIBC_A).new && \
+	    ar rs $(LIBC_A).new $(addprefix $(C_BIN)/lib/,$(addsuffix .o,$(LIBC_C))) && \
+	    python3 -I tools/thin-archive.py $(LLVM_NM) $(LLVM_AR) $(LIBC_A).new && \
+	    { $(call replace-if-changed,$(LIBC_A)); }; \
+	else echo "  libc.a is up to date"; fi
 endif
 
 cprogs64: libc64
@@ -793,6 +807,21 @@ endif
 	@TFSTOOL=$(TFSTOOL_RS) OVMF=$(OVMF) $(KERNEL64_DIR)/scripts/nvme-test.sh $(ISO64_IMG) $(NVME64_LOG).disk $(NVME64_LOG)
 	@echo "nvme64-test passed"
 
+# Each disk driver killed in the middle of its I/O (K82, Era 15's
+# measure): four PCs at once - virtio, SATA, NVMe and USB disks - each
+# driver made to die mid-write three times; every write acknowledged
+# must be read back whole, in the system and on the disk image - and a
+# fifth with its network card's driver made to die in the middle of a
+# download, which must arrive whole (scripts/kill-test.sh).
+KILL64_LOG = $(BUILD_DIR)/kill64.log
+kill64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(KILL64_LOG).disk)
+	$(call make-test-disk,$(KILL64_LOG).net.disk)
+	$(call make-http-disk,$(KILL64_LOG).net.disk)
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/kill-test.sh $(ISO64_IMG) $(KILL64_LOG).disk $(KILL64_LOG) \
+	    $(KILL64_LOG).net.disk $(KILL64_LOG).net.disk.big
+	@echo "kill64-test passed"
+
 # poweroff and reboot: a PC and a q35 (ACPI), and a PC without ACPI
 # (scripts/power-test.sh).
 POWER64_LOG = $(BUILD_DIR)/power64.log
@@ -803,6 +832,47 @@ endif
 	$(call make-test-disk,$(POWER64_LOG).disk)
 	@TFSTOOL=$(TFSTOOL_RS) OVMF=$(OVMF) $(KERNEL64_DIR)/scripts/power-test.sh x86 $(ISO64_IMG) $(POWER64_LOG).disk $(POWER64_LOG)
 	@echo "power64-test passed"
+
+# The system log (K136): logd keeps what the kernel and the programs
+# write in /var/log/system.log, read with `log`, kept across a switch-off
+# (scripts/log-test.sh).
+LOG64_LOG = $(BUILD_DIR)/log64.log
+log64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(LOG64_LOG).disk)
+	@$(KERNEL64_DIR)/scripts/log-test.sh $(ISO64_IMG) $(LOG64_LOG).disk $(LOG64_LOG)
+	@echo "log64-test passed"
+
+# `top` (K141): the processes' CPU, memory, threads and handles,
+# refreshed (scripts/top-test.sh).
+TOP64_LOG = $(BUILD_DIR)/top64.log
+top64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(TOP64_LOG).disk)
+	@$(KERNEL64_DIR)/scripts/top-test.sh $(ISO64_IMG) $(TOP64_LOG).disk $(TOP64_LOG)
+	@echo "top64-test passed"
+
+# Tracing (K139): `trace` records the kernel's events on every CPU for a
+# span, and shows them (scripts/trace-test.sh).
+TRACE64_LOG = $(BUILD_DIR)/trace64.log
+trace64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(TRACE64_LOG).disk)
+	@$(KERNEL64_DIR)/scripts/trace-test.sh $(ISO64_IMG) $(TRACE64_LOG).disk $(TRACE64_LOG)
+	@echo "trace64-test passed"
+
+# The profiler (K140): the timer's samples of where each CPU is, by the
+# kernel's functions and the programs' addresses (scripts/profile-test.sh).
+PROFILE64_LOG = $(BUILD_DIR)/profile64.log
+profile64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(PROFILE64_LOG).disk)
+	@$(KERNEL64_DIR)/scripts/profile-test.sh $(ISO64_IMG) $(PROFILE64_LOG).disk $(PROFILE64_LOG)
+	@echo "profile64-test passed"
+
+# The debugger (K142): stop a program, its registers and memory, a
+# breakpoint caught and gone past (scripts/debug-test.sh).
+DEBUG64_LOG = $(BUILD_DIR)/debug64.log
+debug64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(DEBUG64_LOG).disk)
+	@$(KERNEL64_DIR)/scripts/debug-test.sh $(ISO64_IMG) $(DEBUG64_LOG).disk $(DEBUG64_LOG)
+	@echo "debug64-test passed"
 
 # The same ISO, the same kernel, booted by UEFI firmware instead.
 boot64-uefi-test: iso64 cprogs64 tfstool-rs | smp64-test
@@ -849,7 +919,7 @@ BIG64_DIR = $(BUILD_DIR)/big64
 BIG64_ISO = $(BUILD_DIR)/big64.iso
 BIG64_ELF = $(KERNEL64_DIR)/target/big-image/x86_64-unknown-none/release/kernel64
 BIG64_LOG = $(BUILD_DIR)/big64
-BIG64_SAID = \[test\] big image: the kernel ends at 0x[0-9a-f]+, above 2 MiB; 256 KiB of it at 0x[0-9a-f]+-0x[0-9a-f]+ is byte for byte what was built
+BIG64_SAID = \[test\] big image: the kernel ends at 0x[0-9a-f]+, above 3 MiB; 4096 KiB of it at 0x[0-9a-f]+-0x[0-9a-f]+ is byte for byte what was built
 big64-test: build-bootloader user64 uefi-loader
 	@echo "Building a kernel that ends above 2 MiB..."
 	cd $(KERNEL64_DIR) && cargo build --release --quiet --features big-image --target-dir target/big-image
@@ -876,8 +946,11 @@ endif
 	@$(KERNEL64_DIR)/scripts/qemu-boot.sh $(BIG64_ISO) $(BIG64_LOG)-bios.log 40
 	@grep -qE "$(BIG64_SAID)" $(BIG64_LOG)-bios.log \
 	    || { tail -5 $(BIG64_LOG)-bios.log; echo "FAIL: BIOS: the big kernel did not boot, or was not loaded whole"; exit 1; }
-	@grep -q "ramdisk        0x2000 bytes at 0x300000" $(BIG64_LOG)-bios.log \
-	    || { grep "ramdisk" $(BIG64_LOG)-bios.log; echo "FAIL: BIOS: the ramdisk is not at 3 MiB, above the kernel"; exit 1; }
+	@# Since K130 the ramdisk goes on the page after the kernel's end -
+	@# not at 3 MiB, where the whole kernel file used to be staged.
+	@addr=$$(grep -ao 'ramdisk *0x2000 bytes at 0x[0-9a-f]*' $(BIG64_LOG)-bios.log | awk '{print $$NF}'); \
+	    [ -n "$$addr" ] && [ $$(($$addr)) -ge $$((0x600000)) ] \
+	    || { grep -a "ramdisk" $(BIG64_LOG)-bios.log; echo "FAIL: BIOS: the ramdisk is not after the big kernel (near 7 MiB)"; exit 1; }
 	@! grep -q "FAILED\|PANIC\|EXCEPTION" $(BIG64_LOG)-bios.log || { echo "FAIL: BIOS: the big kernel reported a failure"; exit 1; }
 ifeq ($(HAVE_CLANG),yes)
 	@echo "Booting it via UEFI (serial log: $(BIG64_LOG)-uefi.log)..."
@@ -892,10 +965,35 @@ endif
 # locks), compiled for and run on this machine rather than in a VM.
 HOST_TRIPLE = $(shell PATH="$(PATH)" rustc -vV | sed -n 's/^host: //p')
 
+# How much of each crate's code its host tests run, and a floor per crate
+# that may only rise (J96, journal entry 137): tools/coverage-floor. In
+# make test64: about 20 s, its own build in build/coverage.
+coverage:
+	@python3 tools/coverage.py
+
+coverage-raise:
+	@python3 tools/coverage.py --raise
+
 # Every unsafe block, impl and public unsafe fn says why it is sound
 # (K112): clippy's two lints for it, as errors, over every crate and CPU.
-unsafe-check:
+# The kernel embeds the user programs (programs.rs), so linting it needs
+# them built - in a fresh tree too, not only inside test64 (entry 135).
+unsafe-check: user64 user-aarch64
 	@USER_A64_BINS="$(USER_A64_BINS)" sh tools/unsafe-check.sh
+
+# The host tests under Miri, every crate with unsafe in it (K187): a
+# nightly job - minutes to an hour - not part of test64.
+miri:
+	@sh tools/miri-check.sh
+
+# The parsers of untrusted input fuzzed on the host (K189): every target
+# in fuzz/ for FUZZ_SECONDS each (tools/fuzz.sh says what it found). Not
+# part of make test64: it finds new inputs, and a crash it finds becomes
+# a host test beside the parser's others.
+FUZZ_SECONDS ?= 60
+.PHONY: fuzz
+fuzz:
+	tools/fuzz.sh run $(FUZZ_SECONDS)
 
 kernel64-test:
 	cd $(KERNEL64_DIR) && cargo test --lib --target $(HOST_TRIPLE)
@@ -913,6 +1011,7 @@ kernel64-test:
 	cd e1000 && cargo test
 	cd usb && cargo test
 	cd net && cargo test
+	cd syslog && cargo test
 	cd gfx && cargo test
 	cd gui && cargo test
 	$(MAKE) libc-test
@@ -1035,8 +1134,56 @@ endif
 
 # One boot per deliberate fault: unmapped read, double fault, write to
 # rodata, executing data, stack overflow. Each must be caught and named.
-fault64-test: build-bootloader user64
-	$(KERNEL64_DIR)/scripts/fault-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR)
+# Stage 2's C code on the host (K129): the ISO reader, the ELF loader and
+# the long-mode page tables, run as 32-bit programs at stage 2's own
+# addresses (bootloader/tests/harness.h) - on images made by the tests,
+# and on this build's ISO and the kernel stage 2 loads from it. The
+# compiler's warnings about stage 2's own files go to the log only.
+STAGE2_TEST_LOG = $(BUILD_DIR)/stage2-test.log
+stage2-test: iso64
+	@$(MAKE) --no-print-directory -C $(BOOTLOADER_DIR) test ISO=$(abspath $(ISO64_IMG)) \
+	    KERNEL=$(abspath $(ISO64_DIR)/kernel/kernel.elf) > $(STAGE2_TEST_LOG) 2>&1 \
+	    || { grep -E "FAILED|error|checks," $(STAGE2_TEST_LOG); echo "FAIL: stage 2's host tests (log: $(STAGE2_TEST_LOG))"; exit 1; }
+	@grep -E "^stage2 host tests:" $(STAGE2_TEST_LOG)
+	@echo "stage2-test passed"
+
+# One part per fault (journal entry 159): each is a kernel built with
+# its own feature and a boot of its own, independent of the others, and
+# one after another they were the second longest part of make test64
+# (354 s). In parallel, make test64 runs them TEST_JOBS at a time.
+# page-20: the page fault with 20 CPUs. fault64-test runs them all.
+FAULT64_CASES = page page-20 double rodata nx stack thread-stack init smep smap
+FAULT64_PARTS = $(FAULT64_CASES:%=fault64-%-test)
+.PHONY: $(FAULT64_PARTS)
+$(FAULT64_PARTS): fault64-%-test: build-bootloader user64
+	$(KERNEL64_DIR)/scripts/fault-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR) $*
+
+fault64-test: $(FAULT64_PARTS)
+
+# SMEP and SMAP on a PC, PAN on AArch64 (K84): with a CPU that has them,
+# on, and the system runs as before (scripts/protect-test.sh); that they
+# catch what they must is fault64-smep-test's and fault64-smap-test's.
+PROTECT64_LOG = $(BUILD_DIR)/protect64.log
+protect64-test: iso64 cprogs64 tfstool-rs aarch64-test-disk kernel-aarch64
+	$(call make-test-disk,$(PROTECT64_LOG).disk)
+	@cp $(A64_TEST_DISK) $(PROTECT64_LOG).a64.disk
+	@$(KERNEL64_DIR)/scripts/protect-test.sh $(ISO64_IMG) $(PROTECT64_LOG).disk $(KERNEL_A64_IMAGE) $(PROTECT64_LOG).a64.disk $(PROTECT64_LOG)
+	@echo "protect64-test passed"
+
+# The crash record (K188): a kernel built to panic once, reset, and
+# find its last words at the next boot, in the system log
+# (scripts/crash-test.sh).
+crash64-test: build-bootloader user64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(BUILD_DIR)/crash64.disk)
+	@$(KERNEL64_DIR)/scripts/crash-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR)/crash64.disk $(BUILD_DIR)
+	@echo "crash64-test passed"
+
+# The gdb stub (K198): a kernel built for gdb waits for it on COM2; gdb
+# here reads its registers, stack and memory, stops it at a breakpoint
+# and lets it go (scripts/gdb-test.sh).
+gdb64-test: build-bootloader user64
+	@$(KERNEL64_DIR)/scripts/gdb-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR)
+	@echo "gdb64-test passed"
 
 # ---- AArch64 (Era 3) -------------------------------------------------
 #
@@ -1083,14 +1230,17 @@ TAAJ_A64_LDFLAGS = $(TAAJ_LDFLAGS) -z max-page-size=4096
 cprogs-aarch64:
 ifeq ($(HAVE_CC),yes)
 	cd $(LIBC_DIR) && cargo build --release --target $(KERNEL_A64_TARGET)
-	@mkdir -p $(C_A64_BIN)/lib/libm
-	@for part in $(LIBC_C); do \
-	    clang $(TAAJ_A64_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -c $(LIBC_DIR)/c/$$part.c -o $(C_A64_BIN)/lib/$$part.o || exit 1; \
-	done
-	@cp $(LIBC_A64_RUST) $(C_A64_BIN)/libc.a
-	@$(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(C_A64_BIN)/libc.a
-	@ar rs $(C_A64_BIN)/libc.a $(addprefix $(C_A64_BIN)/lib/,$(addsuffix .o,$(LIBC_C)))
-	@python3 -I tools/thin-archive.py $(LLVM_NM) $(LLVM_AR) $(C_A64_BIN)/libc.a
+	@if $(call libc-stale,$(C_A64_BIN)/libc.a,$(LIBC_A64_RUST)); then \
+	    mkdir -p $(C_A64_BIN)/lib/libm && \
+	    for part in $(LIBC_C); do \
+	        clang $(TAAJ_A64_CFLAGS) -ffp-contract=off -Wno-shift-op-parentheses -c $(LIBC_DIR)/c/$$part.c -o $(C_A64_BIN)/lib/$$part.o || exit 1; \
+	    done && \
+	    cp $(LIBC_A64_RUST) $(C_A64_BIN)/libc.a.new && \
+	    $(LLVM_OBJCOPY) --strip-debug $(LIBC_RUST_PRIVATE) $(C_A64_BIN)/libc.a.new && \
+	    ar rs $(C_A64_BIN)/libc.a.new $(addprefix $(C_A64_BIN)/lib/,$(addsuffix .o,$(LIBC_C))) && \
+	    python3 -I tools/thin-archive.py $(LLVM_NM) $(LLVM_AR) $(C_A64_BIN)/libc.a.new && \
+	    { $(call replace-if-changed,$(C_A64_BIN)/libc.a); }; \
+	else echo "  libc.a (AArch64) is up to date"; fi
 	@for program in $(C_A64_PROGRAMS); do \
 	    echo "  CC      $$program.c (AArch64)"; \
 	    clang $(TAAJ_A64_CFLAGS) -c $(LIBC_DIR)/programs/$$program.c -o $(C_A64_BIN)/$$program.o || exit 1; \
@@ -1325,13 +1475,36 @@ stick64-test: iso64 cprogs64 tfstool-rs
 	@OVMF=$(OVMF) $(KERNEL64_DIR)/scripts/stick-test.sh $(ISO64_IMG) $(STICK64_LOG).img $(STICK64_LOG).disk $(STICK64_LOG)
 	@echo "stick64-test passed"
 
+# Four boots, one part each (journal entry 159): one after another they
+# were the longest part of make test64 (377 s). The test disk is made
+# once; each boot has a copy of its own, as two QEMUs may not share one.
 E1000_64_LOG = $(BUILD_DIR)/e1000-64
-e1000-64-test: iso64 cprogs64 tfstool-rs
+E1000_64_PARTS = e1000-64-82540em-test e1000-64-82574l-test e1000-64-ip-test e1000-64-tcp-test
+.PHONY: e1000-64-disk $(E1000_64_PARTS)
+e1000-64-disk: iso64 cprogs64 tfstool-rs
 	$(call make-test-disk,$(E1000_64_LOG).disk)
-	@NIC=e1000 $(KERNEL64_DIR)/scripts/net-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).disk $(E1000_64_LOG).82540em
-	@NIC=e1000e $(KERNEL64_DIR)/scripts/net-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).disk $(E1000_64_LOG).82574l
-	@NIC=e1000 $(KERNEL64_DIR)/scripts/ip-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).disk $(E1000_64_LOG).ip
-	@NIC=e1000e $(KERNEL64_DIR)/scripts/tcp-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).disk $(E1000_64_LOG).tcp
+
+e1000-64-82540em-test: e1000-64-disk
+	@cp $(E1000_64_LOG).disk $(E1000_64_LOG).82540em.disk
+	@NIC=e1000 $(KERNEL64_DIR)/scripts/net-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).82540em.disk $(E1000_64_LOG).82540em
+	@echo "$@ passed"
+
+e1000-64-82574l-test: e1000-64-disk
+	@cp $(E1000_64_LOG).disk $(E1000_64_LOG).82574l.disk
+	@NIC=e1000e $(KERNEL64_DIR)/scripts/net-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).82574l.disk $(E1000_64_LOG).82574l
+	@echo "$@ passed"
+
+e1000-64-ip-test: e1000-64-disk
+	@cp $(E1000_64_LOG).disk $(E1000_64_LOG).ip.disk
+	@NIC=e1000 $(KERNEL64_DIR)/scripts/ip-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).ip.disk $(E1000_64_LOG).ip
+	@echo "$@ passed"
+
+e1000-64-tcp-test: e1000-64-disk
+	@cp $(E1000_64_LOG).disk $(E1000_64_LOG).tcp.disk
+	@NIC=e1000e $(KERNEL64_DIR)/scripts/tcp-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).tcp.disk $(E1000_64_LOG).tcp
+	@echo "$@ passed"
+
+e1000-64-test: $(E1000_64_PARTS)
 	@echo "e1000-64-test passed"
 
 aarch64-net-test: kernel-aarch64 user-aarch64 cprogs-aarch64 tfstool-rs
@@ -1448,6 +1621,16 @@ endif
 # the PS/2 mouse, on AArch64 with a virtio tablet.
 GUI64_LOG   = $(BUILD_DIR)/gui64.log
 GUI_A64_LOG = $(BUILD_DIR)/aarch64/gui.log
+
+# The desktop benchmark (K114): one composition of the screen, a window
+# dragged a pixel at a time, and key to screen with four busy programs -
+# on 1 CPU and on 4. The numbers are printed; the test checks they were
+# measured, not how fast (deskbench-test.sh).
+DESKBENCH64_LOG = $(BUILD_DIR)/deskbench64.log
+deskbench64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(DESKBENCH64_LOG).disk)
+	@$(KERNEL64_DIR)/scripts/deskbench-test.sh $(ISO64_IMG) $(DESKBENCH64_LOG).disk $(DESKBENCH64_LOG)
+	@echo "deskbench64-test passed"
 
 gui64-test: iso64 cprogs64 tfstool-rs
 	$(call make-test-disk,$(GUI64_LOG).disk)
@@ -1612,6 +1795,16 @@ endif
 # numbers are in $(SCHEDBENCH64_LOG).summary, for the journal.
 SCHEDBENCH64_LOG = $(BUILD_DIR)/schedbench64.log
 SCHEDBENCH_C     = $(KERNEL64_DIR)/scripts/schedbench.c
+# The IPC benchmark (K60): round trips between programs and threads,
+# bulk data through messages and through shared memory, on 1 and 2 CPUs,
+# on a PC and on AArch64; the numbers in build/ipcbench64.log.summary
+# (scripts/ipcbench-test.sh).
+IPCBENCH64_LOG = $(BUILD_DIR)/ipcbench64.log
+ipcbench64-test: iso64 user64 user-aarch64 kernel-aarch64 tfstool-rs
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/ipcbench-test.sh $(ISO64_IMG) $(KERNEL_A64_IMAGE) $(IPCBENCH64_LOG).disk $(IPCBENCH64_LOG) \
+	    $(USER_BIN)/ipcbench $(A64_USER_BIN)/ipcbench
+	@echo "ipcbench64-test passed"
+
 schedbench64-test: iso64 user64 libc64 tfstool-rs
 ifeq ($(HAVE_CC),yes)
 	@clang $(TAAJ_CFLAGS) -c $(SCHEDBENCH_C) -o $(C_BIN)/schedbench.o && ld.lld $(TAAJ_LDFLAGS) $(C_BIN)/schedbench.o $(LIBC_A) -o $(C_BIN)/schedbench
@@ -2109,7 +2302,9 @@ endif
 #
 # The parts are listed longest first - make starts them in this order -
 # so the boots that take minutes (the typed sessions, clang) are not
-# left to begin when the short ones are done (journal entry 080).
+# left to begin when the short ones are done (journal entry 080). That is
+# the first run's order only: after it, tools/test64.sh orders them by
+# their times in the last run (build/test64-times), longest first.
 #
 #   make test64 TEST_JOBS=1         one test after another, as before
 #   TAAJ_BOOT_SLOTS=4 make test64   as if the host had 5 CPUs
@@ -2119,7 +2314,13 @@ TEST64_PARTS = \
 	boot64-uefi-test \
 	ahci64-test \
 	nvme64-test \
+	kill64-test \
 	power64-test \
+	log64-test \
+	top64-test \
+	trace64-test \
+	profile64-test \
+	debug64-test \
 	aarch64-power-test \
 	aarch64-keys-test \
 	clang64-test \
@@ -2133,16 +2334,21 @@ TEST64_PARTS = \
 	libmake64-test \
 	aarch64-libmake-test \
 	kernel64-test \
+	coverage \
 	unsafe-check \
 	fuzz64-test \
 	aarch64-fuzz-test \
 	smp64-test \
 	big64-test \
-	fault64-test \
+	stage2-test \
+	$(FAULT64_PARTS) \
+	protect64-test \
+	crash64-test \
+	gdb64-test \
 	aarch64-test \
 	aarch64-uefi-test \
 	net64-test \
-	e1000-64-test \
+	$(E1000_64_PARTS) \
 	usb64-test \
 	stick64-test \
 	aarch64-net-test \
@@ -2156,6 +2362,7 @@ TEST64_PARTS = \
 	aarch64-screen-test \
 	gui64-test \
 	aarch64-gui-test \
+	deskbench64-test \
 	edit64-test \
 	aarch64-edit-test \
 	cxx64-test \
@@ -2164,6 +2371,7 @@ TEST64_PARTS = \
 	aarch64-pipe-test \
 	thread64-test \
 	schedbench64-test \
+	ipcbench64-test \
 	aarch64-thread-test \
 	bigmem64-test \
 	aarch64-bigmem-test \
@@ -2180,11 +2388,14 @@ TEST64_PARTS = \
 	pages64-test \
 	aarch64-pages-test
 
+# The steps are in tools/test64.sh: a failing part does not stop the
+# others (smp64-test included), and what failed is written down for
+# make test64-again, which runs only that (journal entry 137).
 test64:
-	@$(MAKE) --no-print-directory test64-shared
-	@$(MAKE) --no-print-directory smp64-test
-	@$(MAKE) --no-print-directory -j$(TEST_JOBS) --output-sync=target $(addprefix -o ,$(TEST64_SHARED) smp64-test) test64-parts
-	@echo "test64: all passed"
+	@MAKE="$(MAKE)" TEST_JOBS="$(TEST_JOBS)" TEST64_SHARED="$(TEST64_SHARED)" TEST64_PARTS="$(TEST64_PARTS)" sh tools/test64.sh
+
+test64-again:
+	@MAKE="$(MAKE)" TEST_JOBS="$(TEST_JOBS)" TEST64_SHARED="$(TEST64_SHARED)" TEST64_PARTS="$(TEST64_PARTS)" sh tools/test64.sh again
 
 # What test64-shared builds is then not built again: the second step is
 # told it is up to date (make -o). Most of it is .PHONY, so make would

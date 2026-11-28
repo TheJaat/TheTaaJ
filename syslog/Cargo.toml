@@ -1,0 +1,8 @@
+[package]
+name = "syslog"
+version = "0.1.0"
+edition = "2021"
+description = "The system log (K136): pieces from the kernel's ring put back into lines, named, given a level, and the log file's line format"
+publish = false
+
+[dependencies]

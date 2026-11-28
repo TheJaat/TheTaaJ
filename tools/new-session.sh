@@ -47,6 +47,13 @@ else
     git -C "$TREE" submodule update --init
 fi
 
+# The work list's rows are merged one item at a time (.gitattributes,
+# tools/merge-rows.py, journal entry 132). The setting is in the
+# repository's own config, which every tree of this machine shares. In a
+# tree whose branch has no merge-rows.py yet, git's own merge.
+git config merge.rows.name "work-list rows, one item at a time"
+git config merge.rows.driver 'if [ -f tools/merge-rows.py ]; then python3 tools/merge-rows.py %O %A %B %P; else git merge-file %A %O %B; fi'
+
 # The cross compiler is big (1.4 GB) and built once per machine; every
 # tree reads the same one.
 if [ -d "$ROOT/toolchain/i686" ] && [ ! -e "$TREE/toolchain/i686" ]; then

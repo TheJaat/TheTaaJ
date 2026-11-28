@@ -17,6 +17,7 @@ pub mod net;
 pub mod nic;
 pub mod nic_service;
 pub mod services;
+pub mod start;
 pub mod sync;
 pub mod thread;
 pub mod window;
@@ -405,6 +406,13 @@ pub fn sleep_unless_signalled(ticks: u64) -> bool {
     abi::decode(syscall(call::SLEEP, ticks, 0, 0)).is_ok()
 }
 
+/// Sleeps until the monotonic clock (`monotonic_ns`) reads at least
+/// `nanoseconds`, to the nanosecond the timer gives (journal entry 128).
+/// False if a signal cut it short (its handler has run by now).
+pub fn sleep_until_ns(nanoseconds: u64) -> bool {
+    abi::decode(syscall(call::SLEEP_UNTIL, nanoseconds, 0, 0)).is_ok()
+}
+
 /// A call that waits, made again for as long as a signal cuts it short.
 ///
 /// A signal a program catches ends whatever wait one of its threads is
@@ -721,6 +729,12 @@ pub fn wait_any(processes: &[Handle]) -> Result<(usize, i64), Error> {
 /// Asks the kernel to end `process` (the handle needs the KILL right).
 /// It ends soon, not at once: wait for it, as for any other. Its exit
 /// code will be abi::STOPPED.
+/// The debugger's call (K142, abi::debug): `op` on `process`, a handle
+/// with DEBUG - which only whoever started it holds.
+pub fn process_debug(process: Handle, op: u64, a: u64, b: u64, c: u64) -> Result<u64, Error> {
+    abi::decode(syscall5(call::PROCESS_DEBUG, process, op, a, b, c))
+}
+
 pub fn kill(process: Handle) -> Result<(), Error> {
     abi::decode(syscall(call::PROCESS_KILL, process, 0, 0)).map(|_| ())
 }
@@ -761,6 +775,17 @@ pub fn process_notify(process: Handle, signal: u64) -> Result<(), Error> {
 /// set before (0: none); the nanoseconds the one before had left.
 pub fn alarm(nanoseconds: u64) -> Result<u64, Error> {
     abi::decode(syscall(call::ALARM, nanoseconds, 0, 0))
+}
+
+/// `alarm`, and then again every `interval` nanoseconds if that is not 0
+/// (journal entry 128); the nanoseconds the one before had left.
+pub fn alarm_every(nanoseconds: u64, interval: u64) -> Result<u64, Error> {
+    abi::decode(syscall(call::ALARM, nanoseconds, interval, 0))
+}
+
+/// The nanoseconds this process's alarm has left, or 0: nothing changes.
+pub fn alarm_left() -> u64 {
+    abi::decode(syscall(call::ALARM, 0, 0, 1)).unwrap_or(0)
 }
 
 /// Sends `signal` to `process` (a handle with the KILL right, or

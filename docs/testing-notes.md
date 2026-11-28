@@ -4439,3 +4439,737 @@ make run64
 The same on AArch64 with `make run-aarch64`: `with programs devtest` gives the same line.
 
 Automated: `cargo test` in `fileserver`, `make handles64-test aarch64-handles-test`, and `make test64`.
+
+---
+
+## 128 · Timers finer than a tick: one-shot timers, sorted sleepers, and late interrupts
+
+[The entry](journal/128-timers.md)
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `with files clib` | Among the checks: `clib: nanosleep(1 ms) took 1... us at least, of twenty` (about a millisecond, not ten), `clib: setitimer every 5 ms rang 12 times in 60 ms` (about twelve), and `library: 156 checks, all passed` |
+
+```
+make smp64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `[selftest] late interrupts` in `build/smp64-*.out` | `35 ms without any, then 1 came; the tick count moved on by 3` (or 4): the time kept, however late the interrupt |
+
+Automated: `make test64`
+
+---
+
+## 129 · A run queue per CPU (part 1): where a thread waits, and who takes it
+
+[The entry](journal/129-run-queues.md)
+
+```
+make schedbench64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `4 busy programs, 2 s: CPU each` | On 2 CPUs about 1000 ms each, all four - not three at about 830 and one at 1500 |
+| `schedbench64-test passed` | |
+
+Automated: `make test64`
+
+---
+
+## 130 · A child takes its parent's nice
+
+[The entry](journal/130-nice-inherit.md)
+
+```
+make schedbench64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `schedbench: inherit:` | `a child of a program at nice 7 runs at nice 7` |
+
+Automated: `make test64`
+
+---
+
+## 131 · One commit per merge: the README row's commits written in the merge itself
+
+[The entry](journal/131-one-merge-commit.md)
+
+From a session's tree:
+
+| Do | You should see |
+|---|---|
+| `sh tools/merge-item-test.sh /tmp/mit` | A and D `exit 0`; `second commits: 0`; `the row's commit ... is in main: yes`; B and C stopped as before |
+
+Automated: not part of `make test64` - it is the merge script's own test.
+
+---
+
+## 132 · The work list split: the rules in one file, the items a file per era, rows merged one at a time
+
+[The entry](journal/132-work-list-split.md)
+
+In a session's tree:
+
+| Do | You should see |
+|---|---|
+| `wc -l docs/who-does-what.md docs/items/*.md` | The hub about 173 lines; an era file 15 to 51 |
+| `python3 tools/lanes-check.py` | `every open item is in one lane` |
+| Two branches marking two neighbouring items done, merged | No conflict (with the driver set up: `git config --get merge.rows.driver`) |
+| A branch from before the split: `git merge origin/main`, then `python3 tools/work-list-move.py` | `changed docs/items/...`, `every change made`; `git diff --cached` shows the rows in their era files |
+
+Automated: not part of `make test64`; `merge-item-test.sh` covers the merge script on it.
+
+---
+
+## 133 · A clean build from a fresh clone, in a container, with one command
+
+[The entry](journal/133-clean-build.md)
+
+From any directory (it needs `uidmap`, `curl`, `gpgv`, and a range in `/etc/subuid`; about 35 minutes):
+
+| Do | You should see |
+|---|---|
+| `sh tools/clean-build.sh` | `ubuntu-base-24.04.5-base-amd64.tar.gz: signature and checksum good`, then after about 35 minutes `test64: all passed` and `a fresh clone of main builds and passes on a clean Ubuntu 24.04` |
+| `ls ~/.cache/taaj-clean-build/logs` | The run's log; `grep "LLVM:\|QEMU:" it` shows `18.1.3` and `-accel kvm` |
+
+Automated: not part of `make test64` - it runs `make test64` itself, in the clean machine.
+
+---
+
+## 134 · Miri over the host tests: undefined behaviour in three simulators
+
+[The entry](journal/134-miri.md)
+
+From the root of TheTaaJ (the first run installs the nightly; then 20 to 30 minutes):
+
+| Do | You should see |
+|---|---|
+| `make miri` | A table: the eight crates with `unsafe` and `ok. N passed; 0 failed; M ignored`, the others `skipped: no unsafe` |
+| In `usb/src/tests/mod.rs`, `start`, hand the driver a misaligned base: `(s.memory.base().wrapping_add(1), s.memory.len() - 1)`; then `cd usb && cargo test` | The tests that start the controller (23 of 25) panic: `DMA memory must be aligned to 8 bytes` - the check `Dma::new` now makes. Put it back |
+
+Automated: not part of `make test64`; `make miri` is a night job.
+
+---
+
+## 135 · Night tests: develop by day, run the full test at night
+
+[The entry](journal/135-night-test.md)
+
+From a session's tree (`~/Projects/TheTaaJ-ci`, say), with a queue in `~/.cache/taaj-night/queue`:
+
+| Do | You should see |
+|---|---|
+| `NIGHT_TEST=true python3 tools/night-test.py` | `night-test: BRANCH on main` for each, and a report table, every branch **passed** (nothing is pushed) |
+| `python3 tools/night-test.py` | The same with `make test64`, about 7 minutes a branch on TheJat-WSL; the report in `~/.cache/taaj-night/reports/` |
+
+Automated: not part of `make test64` - it runs `make test64` itself.
+
+## Files
+
+- `tools/night-test.py`: the runner.
+- `Makefile`: `unsafe-check: user64 user-aarch64`.
+
+---
+
+## 136 · Our own CI: every branch of ours tested, the result beside it on GitHub; night tests that wait for the fix
+
+[The entry](journal/136-ci.md)
+
+From a session's tree (`~/Projects/TheTaaJ-ci`, say), logged in with `gh`:
+
+| Do | You should see |
+|---|---|
+| `NIGHT_TEST=true python3 tools/night-test.py --all` | A report headed `CI`: `main`, then each branch `main` does not contain - passed, or `does not merge`; nothing posted |
+| `TAAJ_MACHINE=TheJat-WSL python3 tools/night-test.py --all` | `make test64` on each; on GitHub, each branch's newest commit shows `TheJat-WSL test64` - success or failure; a second run right after tests nothing |
+
+And for part two, the wait for a fix:
+
+From a session's tree, with a queue of stacked branches:
+
+| Do | You should see |
+|---|---|
+| `NIGHT_TEST="sh -c 'exit 1' -" python3 tools/night-test.py --wait 1` | The first branch FAILED, `waiting for a fix (up to 1 min)`, then `no fix pushed for 1 min`, and the branches after it `not run` |
+| `python3 tools/night-test.py --wait 60`, a branch failing; push a fix to it | Within a minute `BRANCH on ... (try 2)`; when it passes, the next branch starts |
+
+Automated: not part of `make test64` - it runs `make test64` itself.
+
+---
+
+## 137 · Coverage of the host tests, and a floor that only rises; make test64 reports every failure, make test64-again runs only those
+
+[The entry](journal/137-coverage.md)
+
+From a session's tree, with rustup (the first run installs `llvm-tools` for Rust 1.100.0):
+
+| Do | You should see |
+|---|---|
+| `make coverage` | A table of 17 crates - lines, functions, lines counted, floor - and `coverage: every crate at or above its floor`, in about 20 seconds |
+| Set a crate's floor in `tools/coverage-floor` above its number, `python3 tools/coverage.py CRATE` | `BELOW ITS FLOOR` and `coverage: FAILED`, exit 1; put the floor back |
+
+And for part two, `make test64-again`:
+
+In a session's tree, after a `make test64`:
+
+| Do | You should see |
+|---|---|
+| `make test64` with a part failing | Every other part still run, then `test64: FAILED: PART - after fixing, make test64-again runs only these`; `cat build/test64-failed` lists it |
+| `make test64-again` | `test64-again: PART`, the shared builds, only that part, and `test64: all passed` once it does |
+| `make test64-again` again | `test64-again: nothing failed in the last make test64` |
+
+Automated: a part of `make test64` (`coverage`); part two is `make test64` itself.
+
+---
+
+## 138 · make test64 no longer rebuilds what has not changed: 51 s to 17 s
+
+[The entry](journal/138-no-rebuild.md)
+
+In a session's tree:
+
+| Do | You should see |
+|---|---|
+| `make test64-shared` twice | The second: `libc.a is up to date`, `libc.a (AArch64) is up to date`, `tcc (x86_64) is up to date`, `tcc (aarch64) is up to date`, no `LD` lines, about 17 s on TheJat-WSL |
+| `touch libc/c/stdio.c`, `make libc64` | `CC libc/c/...` and thin-archive again; `stat build/c/libc.a` shows its old time |
+
+Automated: `make test64` runs it first.
+
+---
+
+## 139 · Stacks kept stacked, merges rehearsed by day, and the night runner merges what passed
+
+[The entry](journal/139-merge-tools.md)
+
+From a session's tree:
+
+| Do | You should see |
+|---|---|
+| `sh tools/merge-rehearsal.sh` | A row per queued branch, `passed`, then `merged: merge-item: entry N merged`; at the end `N of N merged; second commits 0; unnumbered entries on main 0` |
+| `python3 tools/restack.py --check` | `stacked` for every branch, or what each would take in |
+| `TAAJ_SESSION=TheJat-WSL/ci python3 tools/night-test.py --wait 60 --merge` | The night: each branch tested, `merged`, the next on `main` |
+
+Automated: not part of `make test64`.
+
+---
+
+## 140 · The first night: nine items tested and merged, and what it found
+
+[The entry](journal/140-night-2026-11-27.md)
+
+From a session's tree, on a branch not in the queue:
+
+| Do | You should see |
+|---|---|
+| `python3 tools/night-test.py --merge QUEUE` with a queued branch checked out in another tree | `night-test: --merge, but these queued branches are checked out in other trees:` and the branch and tree; exit 1; nothing tested |
+| `sh tools/merge-rehearsal.sh` | Each queued branch `passed`, then `merged`; `N of N merged` |
+
+Automated: not part of `make test64`.
+
+---
+
+## 141 · Other sessions' finished branches in the night queue
+
+[The entry](journal/141-queue-sessions.md)
+
+| Do | You should see |
+|---|---|
+| A queue line `BRANCH session=MaK-WSL/LANE`, `sh tools/merge-rehearsal.sh` | `BRANCH ... merged`; in the sandbox's main, the README row ends `(MaK-WSL/LANE, merged after its night test)` |
+
+Automated: not part of `make test64`.
+
+---
+
+## 142 · Stage 2 on the host: tests for the ISO reader, the ELF loader and the page tables
+
+[The entry](journal/142-stage2-tests.md)
+
+```
+make stage2-test
+```
+
+| Look for | You should see |
+|---|---|
+| `stage2 host tests:` | `152 checks, 0 failed` |
+| `stage2-test passed` | |
+
+On their own, without TheTaaJ's build (no real ISO or kernel: their checks are skipped and say so):
+
+```
+make -C bootloader test
+```
+
+| Look for | You should see |
+|---|---|
+| `iso: no real ISO given, its checks skipped` | |
+| `stage2 host tests:` | `142 checks, 0 failed` |
+
+Automated: `make test64`
+
+---
+
+## 143 · A fast BIOS read: sixteen sectors per trip to real mode
+
+[The entry](journal/143-fast-bios-read.md)
+
+```
+tools/boot-time.sh build/image64.iso tcg
+```
+
+| Look for | You should see |
+|---|---|
+| `boot-time (tcg): median` | About half of what the same command gives on the ISO of `main` before this change |
+
+```
+make stage2-test
+```
+
+| Look for | You should see |
+|---|---|
+| `stage2 host tests:` | `167 checks, 0 failed` (with the build's ISO and kernel) |
+
+Automated: `make test64`
+
+---
+
+## 144 · Boot time, measured and cut: the loader was copying a byte at a time and talking to the screen
+
+[The entry](journal/144-boot-time.md)
+
+```
+python3 -I tools/boot-timeline.py build/image64.iso --accel tcg
+```
+
+| Look for | You should see |
+|---|---|
+| `[stage2] started` ... `Hello from TheTaaJ!` | Each of the loader's steps with its time; the kernel's first line well under a second after `[stage2] started` |
+| `tcg:` | The whole boot to the shell, in seconds |
+
+```
+make run64
+```
+
+| Do | You should see |
+|---|---|
+| Watch the screen while it boots | Stage 2's few lines - the mount, the kernel loading - not a scroll of file names |
+
+Automated: `make test64`
+
+---
+
+## 145 · Using TheTaaJ: a page for the people who run it
+
+[The entry](journal/145-using-taaj.md)
+
+```
+make run64
+```
+
+| Do | You should see |
+|---|---|
+| Follow `docs/using-taaj.md` from the top | Each command doing what the page says |
+
+Automated: none - a document. `make test64` checks the commands it shows, among much else.
+
+---
+
+## 146 · A kernel of any size: the 3 MiB wall is gone
+
+[The entry](journal/146-any-size-kernel.md)
+
+```
+make big64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `[test] big image:` | `the kernel ends at 0x69c000, above 3 MiB; 4096 KiB of it ... is byte for byte what was built`, in both the BIOS and the UEFI log |
+| `ramdisk` (BIOS log) | `0x2000 bytes at 0x69c000` - on the page after the kernel |
+| `big64-test passed` | |
+
+```
+make stage2-test
+```
+
+| Look for | You should see |
+|---|---|
+| `stage2 host tests:` | `181 checks, 0 failed` |
+
+Automated: `make test64`
+
+---
+
+## 147 · The desktop benchmark: what a frame costs, and how long a key takes to show
+
+[The entry](journal/147-desktop-bench.md)
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `display bench` | `[display] one composition of the 1024x768 screen: median ... us` and `[display] dragging a window a pixel at a time: 200 frames in ... ms, ... frames/s` in the log; on the screen, the terminal slides right and back |
+| `display keys 5`, then `abcde` | `[display] key to screen: timing the next 5 keys`, then `[display] key to screen: 5 keys, median ... us, worst ... us` |
+| `display keys 0` | `usage: display keys COUNT (1 to 200)` |
+
+Automated: `make deskbench64-test` (part of `make test64`)
+
+---
+
+## 148 · The night tree builds TheBootloader from nothing when its commit changes
+
+[The entry](journal/148-bootloader-fresh.md)
+
+| Do | You should see |
+|---|---|
+| A night queue with two branches pointing at different TheBootloader commits, the second changing an `.inc` | The second builds TheBootloader from nothing and passes |
+
+Automated: not part of `make test64`.
+
+---
+
+## 149 · The night, faster and fairer: parts ordered by their times, a retry before a failure, --from, and the rehearsal's toolchain link
+
+[The entry](journal/149-night-speed.md)
+
+| Do | You should see |
+|---|---|
+| `make test64` twice | The second run's parts given longest first; `test64: the longest parts (s): ...` at the end; `build/test64-times` |
+| A night where a part fails once and passes again | `passed on a retry of PART (failed once: flaky?)` in the report |
+| `night-test.py --from BRANCH` | The branches before it `passed over`; those on main `on main already` |
+| `sh tools/merge-rehearsal.sh` | `toolchain/i686` in the sandbox's trees |
+
+Automated: not part of `make test64`.
+
+---
+
+## 150 · The second night: MaK-WSL's finished branches through TheJat-WSL's queue
+
+[The entry](journal/150-night-2.md)
+
+| Do | You should see |
+|---|---|
+| `git log --oneline origin/main` | entries 141 to 148, one commit each |
+| The night's reports, `~/.cache/taaj-night/reports/` | two: the first pass and the second |
+
+Automated: not part of `make test64`.
+
+---
+
+## 151 · Keys, not only bytes: a window is told when Shift goes down
+
+[The entry](journal/151-key-events.md)
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| `counter &` | counter's window, with the focus |
+| Press and release Shift alone | In the log: `[counter] key code 42 down (modifiers 1)`, then `[counter] key code 42 up (modifiers 0)` |
+| Press and release Control alone | `[counter] key code 29 down (modifiers 2)`, then `up (modifiers 0)` |
+| Type `a` | `[counter] key a` (the byte, as before), and `key code 30 down` and `up` |
+
+Automated: `make gui64-test`, `make aarch64-gui-test` (both part of `make test64`)
+
+---
+
+## 152 · The scroll wheel, and two more buttons
+
+[The entry](journal/152-wheel.md)
+
+```
+make run64
+```
+
+| Do | You should see |
+|---|---|
+| Watch the log as it boots | `[kbd] PS/2 keyboard ready ...; the mouse too, with a wheel and five buttons` |
+| `counter &`, then turn the mouse's wheel over its window | `[counter] wheel 1 at (...)` for each click up, `wheel -1` down |
+| Turn it over the terminal | Nothing: the terminal has nothing to scroll yet |
+
+Automated: `make gui64-test`, `make aarch64-gui-test` (both part of `make test64`)
+
+---
+
+## 153 · A lock per CPU's run queue: the switch stops waiting for the other CPUs
+
+[The entry](journal/153-cpu-locks.md)
+
+```
+make schedbench64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `yield (a switch)` | On 2 and 4 CPUs about 300-500 ns - about half of the 1-CPU number, where before K193 it was more |
+| `4 busy programs, 2 s: CPU each` | On 2 CPUs about 1000 ms each, all four |
+| `wake, every CPU busy at nice 0: median/worst` | On 4 CPUs a median of a few ms - not about 15 000 us (bug 6) |
+| `schedbench64-test passed` | |
+
+On the host, the policy's tests, CPUs at once among them:
+
+```
+cd kernel/kernel64 && cargo test --lib --target x86_64-unknown-linux-gnu sched::
+```
+
+| Look for | You should see |
+|---|---|
+| `test result:` | `ok. 47 passed; 0 failed` |
+
+Automated: `make test64`
+
+---
+
+## 154 · TheBootloader rebuilds what an edited include file touches
+
+[The entry](journal/154-bootloader-deps.md)
+
+```
+make build-bootloader
+touch bootloader/headers/boot/stage2/asm_includes/datastructure.inc
+make build-bootloader
+```
+
+| Look for | You should see |
+|---|---|
+| The second build | `Assembling stage2.asm`, then `Linking .../stage2.bin` - and no other file assembled or compiled |
+| `make build-bootloader` once more, nothing touched | nothing assembled, compiled or linked |
+
+Automated: `make test64` builds TheBootloader; the replay above is by hand.
+
+---
+
+## 155 · The third night: four branches, four passes, and the first parts ordered by their times
+
+[The entry](journal/155-night-3.md)
+
+| Do | You should see |
+|---|---|
+| `cat ../TheTaaJ-night/build/test64-times` | Each part's seconds in the last run, longest first |
+
+Automated: not part of `make test64`.
+
+---
+
+## 156 · No flaky tests, part one: the q35's power test fixed, the TCP test's packets kept, and a race hunt night after night
+
+[The entry](journal/156-no-flaky.md)
+
+| Do | You should see |
+|---|---|
+| `make power64-test` | `power64-test passed`; in `build/power64.log.q35-off`, the give-up line before `poweroff` |
+| `make tcp64-test`, then `python3 kernel/kernel64/scripts/tcp-resets.py build/tcp64.log.pcap` | The test passes; the script prints nothing |
+| `ONLY=power64-test tools/race-hunt.sh 2`, twice | Rounds 1-2, then 3-4; `build/race-hunt/tally.txt` says 4 rounds |
+| `night-test.py --hunt 10` | After the queue, "The race hunt (J95)" in the report, with the night's rounds and the tally |
+
+Automated: `power64-test`, `tcp64-test` and `aarch64-tcp-test` are parts of `make test64`; the hunt is not.
+
+---
+
+## 157 · Real keys: one keyboard, its layout and its repeat, in the display
+
+[The entry](journal/157-real-keys.md)
+
+```
+make run64
+```
+
+| Type | You should see |
+|---|---|
+| Hold a letter key | It types once, then after half a second repeats steadily, about 25 a second |
+| `display layout` | `usage: display layout NAME - the layouts: us dvorak` |
+| `display layout dvorak`, then type on the keys labelled `dijs h.soav` | The line reads `echo dvorak`; Enter prints `dvorak` |
+| On the keys labelled `hg;rpat patsfk f;`, then Enter | `display: keyboard layout us`: the keys type as labelled again |
+
+Automated: `make gui64-test`, `make aarch64-gui-test`, `make test64`
+
+---
+
+## 158 · The fourth night: two branches merged, and the race hunt's first ten rounds, all passed
+
+[The entry](journal/158-night-4.md)
+
+| Do | You should see |
+|---|---|
+| `cat ../TheTaaJ-night/build/race-hunt/tally.txt` | `race-hunt: 10 rounds in all`, and no part failed |
+
+Automated: not part of `make test64`.
+
+---
+
+## 159 · The two longest parts split into twelve, and the race hunt measured
+
+[The entry](journal/159-split-long-parts.md)
+
+| Do | You should see |
+|---|---|
+| `make -j12 fault64-test e1000-64-test` | Eight `fault-...: ok` lines and four `e1000-64-...-test passed`, then `e1000-64-test passed`, in about a minute |
+| `make test64` | The twelve new parts among the others; `build/test64-times` has their seconds |
+| `ONLY=fault64-nx-test tools/race-hunt.sh 1` | `build/race-hunt/round-N.times`; a `longest:` line in the summary |
+
+Automated: the twelve parts are parts of `make test64`.
+
+---
+
+## 160 · Drivers killed mid-I/O: the system recovers, and nothing acknowledged is lost
+
+[The entry](journal/160-kill-drivers.md)
+
+```
+make kill64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `blk:`, `ahci:`, `nvme:`, `usb:` | `killed mid-write 3 times and restarted; 36 writes acked, 3 tried again; all on the disk as written` |
+| `net:` | `nic killed mid-send and restarted while a download was under way; it and the next arrived whole (1048576 bytes each)` |
+| `kill64-test passed` | |
+
+By hand, in `make run64` with a disk: `disk crash 5`, then `with files killcheck write x 10` - one write fails, is tried again, and all ten are acked; `with files killcheck check x 10` says all as written.
+
+Automated: `make kill64-test`, `make test64`
+
+---
+
+## 161 · The fifth night: the split parts merged, a 20-CPU boot that held up the others, and race-hunt rounds 11 to 20
+
+[The entry](journal/161-night-5.md)
+
+| Do | You should see |
+|---|---|
+| `make fault64-page-20-test` | `fault-page-20: ok` in a few seconds |
+| A race-hunt round | `fault64-page-20-test` a few seconds in `round-N.times` |
+
+Automated: the fault parts are parts of `make test64`.
+
+---
+
+## 162 · Fuzzing the parsers on the host: nine targets, LLVM's libFuzzer, and two bugs in the first minute
+
+[The entry](journal/162-fuzzing.md)
+
+| Do | You should see |
+|---|---|
+| `tools/fuzz.sh run 20 elf` | `fuzz: elf: 20 s, cov: ...` over 100, `crashes 0` |
+| `tools/fuzz.sh run 30 usb_descriptors` | `crashes` many, and one place: `usb/src/descriptor.rs:135:45: index out of bounds` (until K197 is fixed) |
+| `make fuzz FUZZ_SECONDS=10` | Each of the nine targets, its edges and corpus |
+
+Automated: not part of `make test64`.
+
+---
+
+## 163 · The system log: the kernel's ring, logd, and a `log` command
+
+[The entry](journal/163-log-service.md)
+
+| Do | You should see |
+|---|---|
+| Boot with a disk, then `log` | The last 20 lines: date, writer, level, text |
+| `log -l warn` after F12 (the keyboard driver crashes) | `init ... kbd ended ... - restarting it` as `warn` |
+| `log -s kernel -n 5` | The kernel's last five lines |
+| `poweroff`, boot again, `log -a -s logd` | `--- the system started ---` once for each boot |
+
+Automated: `make log64-test` (part of `make test64`).
+
+---
+
+## 164 · The crash record: a kernel's last words, found by the next boot
+
+[The entry](journal/164-crash-record.md)
+
+| Do | You should see |
+|---|---|
+| `make crash64-test` | `crash64-test passed`; in `build/crash64.log`, the panic, `[test] resetting...`, then `[kernel] the boot before this one stopped: ...` and the `crash` lines from `log -s crash` |
+| After any panic, a warm reset (QEMU: `system_reset` in the monitor), then `log -s crash` | The last boot's last words, `crit` |
+
+Automated: `make crash64-test` (part of `make test64`).
+
+---
+
+## 165 · A crash report per program
+
+[The entry](journal/165-crash-report.md)
+
+| Do | You should see |
+|---|---|
+| Boot, then `ls /var/log/crashes` | A report for each program the self-test made break a rule |
+| `log -s peek` | Its report as `error` lines: what it did, its registers, its stack, its memory |
+| `cat /var/log/crashes/latest` | The newest report, with the last lines its program printed |
+
+Automated: `make log64-test` (part of `make test64`).
+
+---
+
+## 166 · The sixth night: five branches merged, the 20-CPU boot fixed, and the first retry's finding
+
+[The entry](journal/166-night-6.md)
+
+| Do | You should see |
+|---|---|
+| `make boot64-uefi-test` | `disk check: all 9 checks passed`, with logd writing the system log meanwhile |
+
+Automated: `boot64-test` and `boot64-uefi-test` (part of `make test64`).
+
+---
+
+## 167 · top
+
+[The entry](journal/167-top.md)
+
+| Do | You should see |
+|---|---|
+| `forever spin &`, then `top` | `forever` first, near 100%; Ctrl+C ends `top` (and `jobs` and `kill` the `forever` job) |
+| `top -n 1 -d 2` | One frame, its CPU% over two seconds |
+
+Automated: `make top64-test` (part of `make test64`).
+
+---
+
+## 168 · Tracing: what the kernel does, on every CPU, as it does it
+
+[The entry](journal/168-tracing.md)
+
+| Do | You should see |
+|---|---|
+| `trace` | One second: every kind counted, by CPU and by process, and the last 20 events |
+| `trace -s 2 &`, then `ls` | `ls` among the processes; sends and receives with `fs` |
+| Two `trace` at once | The second says tracing is on already |
+
+Automated: `make trace64-test` (part of `make test64`).
+
+---
+
+## 169 · A profiler: where the CPUs spend their time
+
+[The entry](journal/169-profiler.md)
+
+| Do | You should see |
+|---|---|
+| `forever spin &`, then `profile` | `forever` about half the time on two CPUs, at one or two addresses; `kernel64::threads::idle_loop` the other half |
+| `profile -s 10 -n 30` | Ten seconds, the 30 busiest places |
+
+Automated: `make profile64-test` (part of `make test64`).
+
+---
+
+## 170 · A debugger: stop a program, read its registers and memory, catch it at a breakpoint
+
+[The entry](journal/170-debugger.md)
+
+| Do | You should see |
+|---|---|
+| `debug forever spin`, then `stop`, `regs` | Where it is, its registers |
+| `break pc`, `cont`, `wait` | Stopped at the breakpoint |
+| `cont`, then `quit` | It goes on past it; then it ends |
+
+Automated: `make debug64-test` (part of `make test64`).

@@ -109,6 +109,7 @@ pub extern "C" fn __taaj_signal_self(signal: c_int) -> c_int {
 #[no_mangle]
 pub extern "C" fn alarm(seconds: c_uint) -> c_uint {
     let left = taaj::alarm(u64::from(seconds) * 1_000_000_000).unwrap_or(0);
+    crate::timers::forget_interval(); // one alarm per process: this one is once
     left.div_ceil(1_000_000_000) as c_uint
 }
 

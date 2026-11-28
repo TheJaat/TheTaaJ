@@ -27,6 +27,7 @@ e1000 = { path = "../e1000" }
 usb = { path = "../usb" }
 acpi = { path = "../acpi" }
 net = { path = "../net" }
+syslog = { path = "../syslog" }
 
 [profile.dev]
 panic = "abort"
