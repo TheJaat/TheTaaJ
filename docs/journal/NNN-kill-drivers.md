@@ -68,7 +68,7 @@ blk: killed mid-write 3 times and restarted; 36 writes acked, 3 tried again; all
 ahci: ... nvme: ... usb: ... (the same)
 ```
 
-- `make test64`: all passed, 811 s (after bugs 4 and 5; the run before failed only on bug 4's second cause and bug 6). `kill64-test` in it, with test64's load: every disk driver as above, and the downloads `200 1048576` both.
+- `make test64`: all passed, 811 s (after bugs 4 and 5; the run before failed only on bug 4's second cause and bug 6). `kill64-test` in it, with test64's load: every disk driver as above, and the downloads `200 1048576` both. Again with main merged in (entries 158, 159 - the Makefile on both sides, so rule 15): all passed, 812 s.
 - **Not tested**: the e1000 driver killed (the same `nic_service`, its own card code); a driver killed while *reading* (nothing is acknowledged by a read; the program reading is told, and reads again); real hardware (K1-K3).
 
 ## What is still missing
