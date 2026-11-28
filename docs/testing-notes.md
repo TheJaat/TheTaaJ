@@ -5119,3 +5119,16 @@ Automated: `make log64-test` (part of `make test64`).
 | `make boot64-uefi-test` | `disk check: all 9 checks passed`, with logd writing the system log meanwhile |
 
 Automated: `boot64-test` and `boot64-uefi-test` (part of `make test64`).
+
+---
+
+## 167 · top
+
+[The entry](journal/167-top.md)
+
+| Do | You should see |
+|---|---|
+| `forever spin &`, then `top` | `forever` first, near 100%; Ctrl+C ends `top` (and `jobs` and `kill` the `forever` job) |
+| `top -n 1 -d 2` | One frame, its CPU% over two seconds |
+
+Automated: `make top64-test` (part of `make test64`).

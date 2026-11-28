@@ -65,7 +65,7 @@ What one lane waits for from another. When an item's dependency isn't merged yet
 | `network` K156 NTP | K30 DHCP, K33 UDP (its own) | - |
 | `crypto` J102 system updates | K132 kernels A and B | `boot` |
 | `files` K108 users | J62 (its own), J76 owners | `taajfs` |
-| ~~`ci` K141 `top`~~ | ~~K21 CPU time per process~~ | `sched` - done (entry 114); K141 done (entry NNN) |
+| ~~`ci` K141 `top`~~ | ~~K21 CPU time per process~~ | `sched` - done (entry 114); K141 done (entry 167) |
 | `desktop` K45 job control, `libc` J84/J85 | K44 pseudo-terminals | `desktop` |
 | **Every lane that adds kernel tests** | ~~J51 test programs out of the kernel image, or K130 a kernel of any size~~ - K130 (entry 146) ended the 3 MiB wall: the BIOS loader takes a kernel up to 1 GiB | `boot` - done; J51 is `ci`'s to order |
 
