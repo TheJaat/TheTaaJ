@@ -18,6 +18,7 @@
 extern crate alloc;
 
 use abi::log::{kind, Next, Reader, Ring};
+use alloc::string::String;
 use alloc::vec::Vec;
 use syslog::{Level, Line, Lines, Source};
 use taaj::files::Files;
@@ -25,7 +26,10 @@ use taaj::println;
 
 taaj::program!(main);
 
-const DIRECTORIES: [&str; 2] = ["/var", "/var/log"];
+const DIRECTORIES: [&str; 3] = ["/var", "/var/log", "/var/log/crashes"];
+/// Where each program's crash report goes, a file each (K138).
+const REPORTS: &str = "/var/log/crashes";
+const LATEST: &str = "/var/log/crashes/latest";
 const FILE: &str = "/var/log/system.log";
 const OLDER: &str = "/var/log/system.log.1";
 /// The file's size before it is turned over.
@@ -56,6 +60,8 @@ fn main() -> i64 {
     // The boots in the file, told apart.
     out.push(Line { time: taaj::realtime_ns(), source: "logd".into(), level: Level::Info, text: "--- the system started ---".into() });
     let mut kept_error = false;
+    // Crash reports waiting to be written, each to its own file.
+    let mut reports: Vec<(String, String)> = Vec::new();
     loop {
         loop {
             match reader.next() {
@@ -63,6 +69,11 @@ fn main() -> i64 {
                     kind::STARTED => lines.started(record.pid, core::str::from_utf8(record.name).unwrap_or("?")),
                     kind::KERNEL => lines.piece(Source::Kernel, record.time, record.text, &mut out),
                     kind::CRASH => lines.piece(Source::Crash, record.time, record.text, &mut out),
+                    kind::REPORT => {
+                        let report = lines.report(record.pid, record.time, record.text, &mut out);
+                        let name = syslog::report_name(record.time, &out.last().map_or(String::new(), |l| l.source.clone()), record.pid);
+                        reports.push((alloc::format!("{REPORTS}/{name}"), report));
+                    }
                     _ => lines.piece(Source::Program(record.pid), record.time, record.text, &mut out),
                 },
                 Next::Lost(bytes) => out.push(Line {
@@ -75,6 +86,18 @@ fn main() -> i64 {
             }
         }
         lines.flush_older(OPEN_FOR, &mut out);
+        reports.retain(|(path, report)| {
+            for directory in DIRECTORIES {
+                let _ = files.make_directory(directory);
+            }
+            // And the newest as `latest`, a name to remember. Kept to be
+            // tried again if the disk is not there yet.
+            let written = files.write(path, report.as_bytes()).is_ok();
+            if written {
+                let _ = files.write(LATEST, report.as_bytes());
+            }
+            !written
+        });
         if !out.is_empty() {
             let mut text = Vec::new();
             for line in out.drain(..) {

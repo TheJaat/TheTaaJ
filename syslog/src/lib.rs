@@ -25,6 +25,7 @@
 
 extern crate alloc;
 
+use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -103,6 +104,10 @@ pub const LINE_MAX: usize = 1024;
 /// programs' names are kept.
 const OPEN_MAX: usize = 64;
 const NAMES_MAX: usize = 256;
+/// The last lines kept of each program, for its crash report (K138);
+/// and of how many programs.
+pub const RECENT: usize = 10;
+const RECENT_PROGRAMS: usize = 64;
 
 struct Open {
     source: Source,
@@ -116,6 +121,9 @@ struct Open {
 pub struct Lines {
     open: Vec<Open>,
     names: Vec<(u32, String)>,
+    /// Each program's last lines, the newest last; the programs that
+    /// printed last, last.
+    recent: Vec<(u32, VecDeque<String>)>,
     /// The latest time any piece had: what `flush_older` compares with.
     now: u64,
 }
@@ -128,7 +136,7 @@ impl Default for Lines {
 
 impl Lines {
     pub fn new() -> Lines {
-        Lines { open: Vec::new(), names: Vec::new(), now: 0 }
+        Lines { open: Vec::new(), names: Vec::new(), recent: Vec::new(), now: 0 }
     }
 
     /// Program `pid` started, called `name`.
@@ -149,6 +157,63 @@ impl Lines {
                 None => format!("pid {pid}"),
             },
         }
+    }
+
+    fn remember(&mut self, line: &Line, source: Source) {
+        let Source::Program(pid) = source else { return };
+        let at = match self.recent.iter().position(|(p, _)| *p == pid) {
+            Some(at) => at,
+            None => {
+                if self.recent.len() == RECENT_PROGRAMS {
+                    self.recent.remove(0);
+                }
+                self.recent.push((pid, VecDeque::new()));
+                self.recent.len() - 1
+            }
+        };
+        let (_, lines) = &mut self.recent[at];
+        if lines.len() == RECENT {
+            lines.pop_front();
+        }
+        lines.push_back(line.text.clone());
+    }
+
+    /// The last lines program `pid` printed (at most `RECENT`), oldest
+    /// first.
+    pub fn recent(&self, pid: u32) -> Vec<String> {
+        self.recent.iter().find(|(p, _)| *p == pid).map_or(Vec::new(), |(_, lines)| lines.iter().cloned().collect())
+    }
+
+    /// Program `pid` broke a rule and was ended; `text` is the kernel's
+    /// report of it (K138). Its unfinished line comes out first, then
+    /// the report, a line each, under the program's name, all `error`;
+    /// returned, the report for its file: the program, the time, the
+    /// kernel's report and the last lines it printed.
+    pub fn report(&mut self, pid: u32, time: u64, text: &[u8], out: &mut Vec<Line>) -> String {
+        let source = Source::Program(pid);
+        if let Some(at) = self.open.iter().position(|open| open.source == source) {
+            let open = self.open.remove(at);
+            let line = self.line(open.source, open.time, &open.text);
+            self.remember(&line, source);
+            out.push(line);
+        }
+        let name = self.name(source);
+        let text = String::from_utf8_lossy(text);
+        let mut file = format!("crash report: {name} (pid {pid}), {}\n", date(time).trim_end());
+        out.push(Line { time, source: name.clone(), level: Level::Error, text: format!("crash report: {name} (pid {pid})") });
+        for line in text.lines() {
+            file.push_str(line);
+            file.push('\n');
+            out.push(Line { time, source: name.clone(), level: Level::Error, text: line.to_string() });
+        }
+        let recent = self.recent(pid);
+        file.push_str(&format!("the last lines it printed ({}):\n", recent.len()));
+        for line in &recent {
+            file.push_str("   ");
+            file.push_str(line);
+            file.push('\n');
+        }
+        file
     }
 
     fn line(&self, source: Source, time: u64, text: &[u8]) -> Line {
@@ -183,7 +248,9 @@ impl Lines {
                             // Too many open lines: the one left longest goes.
                             let oldest = (0..self.open.len()).min_by_key(|&n| self.open[n].touched).unwrap_or(0);
                             let open = self.open.remove(oldest);
-                            out.push(self.line(open.source, open.time, &open.text));
+                            let line = self.line(open.source, open.time, &open.text);
+                            self.remember(&line, open.source);
+                            out.push(line);
                         }
                         self.open.push(Open { source, time, touched: now, text: Vec::new() });
                         self.open.len() - 1
@@ -203,7 +270,9 @@ impl Lines {
                     let open = self.open.remove(at);
                     // The last words' blank lines say nothing.
                     if !(source == Source::Crash && open.text.is_empty()) {
-                        out.push(self.line(open.source, open.time, &open.text));
+                        let line = self.line(open.source, open.time, &open.text);
+                        self.remember(&line, source);
+                        out.push(line);
                     }
                     index = None;
                 } else {
@@ -224,7 +293,9 @@ impl Lines {
         while n < self.open.len() {
             if now.saturating_sub(self.open[n].touched) > age && !self.open[n].text.is_empty() {
                 let open = self.open.remove(n);
-                out.push(self.line(open.source, open.time, &open.text));
+                let line = self.line(open.source, open.time, &open.text);
+                self.remember(&line, open.source);
+                out.push(line);
             } else {
                 n += 1;
             }
@@ -262,6 +333,21 @@ fn civil(days: i64) -> (i64, u32, u32) {
     let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     let year = yoe + era * 400 + i64::from(month <= 2);
     (year, month, day)
+}
+
+/// A crash report's file name: when, which program, which process -
+/// "2026-11-28-123456-oops-41", sorting by time; "early-boot" before
+/// the clock ran. Only letters, digits and "-" from the program's name.
+pub fn report_name(time: u64, program: &str, pid: u32) -> String {
+    let when: String = date(time).trim_end().chars().filter_map(|c| match c {
+        ' ' => Some('-'),
+        ':' => None,
+        '.' => Some('.'),
+        c => Some(c),
+    }).collect();
+    let when = when.split('.').next().unwrap_or("").to_string();
+    let program: String = program.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    format!("{when}-{program}-{pid}")
 }
 
 /// The width of the source's column; a longer name is not cut.

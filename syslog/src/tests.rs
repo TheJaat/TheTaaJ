@@ -130,3 +130,43 @@ fn the_last_boots_words_are_crash_lines_every_one_crit() {
     let got: Vec<(&str, u64, Level, &str)> = out.iter().map(|l| (l.source.as_str(), l.time, l.level, l.text.as_str())).collect();
     assert_eq!(got, [("crash", 77, Level::Crit, "*** KERNEL PANIC: at x.rs:1"), ("crash", 77, Level::Crit, "  backtrace:")]);
 }
+
+#[test]
+fn a_crash_report_comes_with_the_programs_last_lines() {
+    let mut lines = Lines::new();
+    lines.started(41, "oops");
+    let mut out = Vec::new();
+    for n in 0..12 {
+        lines.piece(Source::Program(41), 10, format!("line {n}\n").as_bytes(), &mut out);
+    }
+    lines.piece(Source::Program(41), 11, b"half a lin", &mut out);
+    lines.piece(Source::Program(9), 11, b"another program\n", &mut out);
+    out.clear();
+    let file = lines.report(41, 1_795_869_296_789_000_000, b"broke a rule: page fault at 0x401000\nregisters:\n", &mut out);
+    let got: Vec<(&str, Level, &str)> = out.iter().map(|l| (l.source.as_str(), l.level, l.text.as_str())).collect();
+    assert_eq!(
+        got,
+        [
+            ("oops", Level::Info, "half a lin"),
+            ("oops", Level::Error, "crash report: oops (pid 41)"),
+            ("oops", Level::Error, "broke a rule: page fault at 0x401000"),
+            ("oops", Level::Error, "registers:"),
+        ]
+    );
+    assert!(file.starts_with("crash report: oops (pid 41), 2026-11-28 12:34:56.789\nbroke a rule: page fault at 0x401000\nregisters:\n"));
+    assert!(file.contains("the last lines it printed (10):\n   line 3\n"));
+    assert!(file.ends_with("   line 11\n   half a lin\n"));
+    assert!(!file.contains("another program"));
+    assert_eq!(lines.recent(9), ["another program"]);
+    assert!(lines.recent(77).is_empty());
+    for pid in 100..200 {
+        lines.piece(Source::Program(pid), 12, b"x\n", &mut out);
+    }
+    assert_eq!(lines.recent.len(), RECENT_PROGRAMS);
+}
+
+#[test]
+fn a_report_is_named_by_when_what_and_which() {
+    assert_eq!(report_name(1_795_869_296_789_000_000, "oops", 41), "2026-11-28-123456-oops-41");
+    assert_eq!(report_name(0, "pid 7", 7), "early-boot-pid-7-7");
+}

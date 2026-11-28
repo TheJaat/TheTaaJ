@@ -128,7 +128,6 @@ Its files: the test rules of the `Makefile`, `kernel/kernel64/scripts/*-test.sh`
 | K50 | 2 | `bigmem64-test` once did not finish under KVM |
 | K52 | 2 | `aarch64-tcp-test`'s late segment |
 | K189 | 2 | `cargo fuzz` on the host for every parser (K104's second half) |
-| K138 | 3 | A crash report per program |
 | K141 | 3 | `top` (after `sched`'s K21) |
 | K139 | 3 | Tracing |
 | K140 | 3 | A profiler |
