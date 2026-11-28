@@ -95,6 +95,10 @@ fn main() -> i64 {
             let written = files.write(path, report.as_bytes()).is_ok();
             if written {
                 let _ = files.write(LATEST, report.as_bytes());
+                // Said once it is on the disk: the boot tests wait for
+                // this before counting channels with `ps` - a write still
+                // under way holds one open (TheTaaJ K75's entry NNN, bug 4).
+                taaj::println!("[logd] crash report: {path}");
             }
             !written
         });

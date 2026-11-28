@@ -275,7 +275,15 @@ C_KEYS       =
 EXPECT_C     =
 endif
 
-TEST_KEYS    = f12 / shift-h i spc t h e r x backspace e ret \
+# After F12's crash, logd writes the crash report (K138) - see: waits
+# until it says it has written the crashed driver's, before the first
+# `ps` counts channels: a write still under way holds one, and the two
+# counts must match (K75's entry NNN, bug 4). Its report comes after
+# those of the programs the kernel's self-tests crash at boot, in the
+# order logd writes them. The keyboard's driver is kbd on a PC, serial
+# on AArch64 (aarch64-keys-test sets it).
+CRASHED_DRIVER = kbd
+TEST_KEYS    = f12 / see:-$(CRASHED_DRIVER)- shift-h i spc t h e r x backspace e ret \
                p s ret m e m ret r u n spc h e l l o ret r u n spc p e e k ret \
                w r i t e spc n o t e s spc h e l l o ret \
                a p p e n d spc n o t e s spc w o r l d ret \
@@ -1326,6 +1334,7 @@ A64_BUSY_KEYS   = f o r e v e r spc shift-7 ret e c h o spc s t i l l spc h e r 
 # kernel-aarch64 too: the image it boots carries the user programs (the
 # shell among them), and without it, run on its own, this booted the last
 # image built - an old shell (journal entry 114).
+aarch64-keys-test: CRASHED_DRIVER = serial
 aarch64-keys-test: aarch64-test-disk kernel-aarch64
 ifeq ($(HAVE_A64),yes)
 	@echo "Booting the AArch64 kernel and typing at its serial port (log: $(A64_KEYS_LOG))..."
