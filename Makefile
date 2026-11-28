@@ -457,7 +457,7 @@ TEST_EXPECT  = $(EXPECT_SHELL);$(EXPECT_FILES);$(EXPECT_DISK);$(EXPECT_RUN);$(EX
 # and what must not run, or must not write.
 USER_BIN     = user/target/x86_64-unknown-none/release
 TFSTOOL_RS   = tools/tfstool-rs/target/release/tfstool
-DISK_PROGRAMS = ls cat write append rm mkdir mv cp wc yes primes forever given niccheck ping netinfo udpecho udpsend tcpecho tcpsend httpd counter edit
+DISK_PROGRAMS = ls cat write append rm mkdir mv cp wc yes primes forever given niccheck ping netinfo udpecho udpsend tcpecho tcpsend httpd counter edit killcheck
 # The web site httpd gives out (user/www), put in the directory www of a
 # disk: put-site DISK. Only the run disks and the HTTP test's disk have
 # it - the other test disks are counted, directory by directory.
@@ -800,6 +800,17 @@ endif
 	$(call make-test-disk,$(NVME64_LOG).disk)
 	@TFSTOOL=$(TFSTOOL_RS) OVMF=$(OVMF) $(KERNEL64_DIR)/scripts/nvme-test.sh $(ISO64_IMG) $(NVME64_LOG).disk $(NVME64_LOG)
 	@echo "nvme64-test passed"
+
+# Each disk driver killed in the middle of its I/O (K82, Era 15's
+# measure): four PCs at once - virtio, SATA, NVMe and USB disks - each
+# driver made to die mid-write three times; every write acknowledged
+# must be read back whole, in the system and on the disk image
+# (scripts/kill-test.sh).
+KILL64_LOG = $(BUILD_DIR)/kill64.log
+kill64-test: iso64 cprogs64 tfstool-rs
+	$(call make-test-disk,$(KILL64_LOG).disk)
+	@TFSTOOL=$(TFSTOOL_RS) $(KERNEL64_DIR)/scripts/kill-test.sh $(ISO64_IMG) $(KILL64_LOG).disk $(KILL64_LOG)
+	@echo "kill64-test passed"
 
 # poweroff and reboot: a PC and a q35 (ACPI), and a PC without ACPI
 # (scripts/power-test.sh).
@@ -2177,6 +2188,7 @@ TEST64_PARTS = \
 	boot64-uefi-test \
 	ahci64-test \
 	nvme64-test \
+	kill64-test \
 	power64-test \
 	aarch64-power-test \
 	aarch64-keys-test \
