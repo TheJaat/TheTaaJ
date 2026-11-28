@@ -530,8 +530,10 @@ def hunt(lines):
     except RuntimeError as error:
         lines.append(f"- not run: main could not be checked out: {error}")
         return
-    if not os.path.exists(os.path.join(TREE, "tools/race-hunt.sh")):
-        lines.append("- not run: main has no tools/race-hunt.sh")
+    script = os.path.join(TREE, "tools/race-hunt.sh")
+    if not os.path.exists(script) or "tally.txt" not in open(script).read():
+        # The older one takes no test64 lock and starts at round 1 again.
+        lines.append("- not run: main's tools/race-hunt.sh is not J95's yet")
         return
     setup = f". {LLVM} && make_flags=\"LLVM_TBLGEN=$LLVM_TBLGEN\" || make_flags=" if os.path.isfile(LLVM) else "make_flags="
     start = time.time()
