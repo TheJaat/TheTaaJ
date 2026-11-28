@@ -1162,6 +1162,13 @@ crash64-test: build-bootloader user64 cprogs64 tfstool-rs
 	@$(KERNEL64_DIR)/scripts/crash-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR)/crash64.disk $(BUILD_DIR)
 	@echo "crash64-test passed"
 
+# The gdb stub (K198): a kernel built for gdb waits for it on COM2; gdb
+# here reads its registers, stack and memory, stops it at a breakpoint
+# and lets it go (scripts/gdb-test.sh).
+gdb64-test: build-bootloader user64
+	@$(KERNEL64_DIR)/scripts/gdb-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR)
+	@echo "gdb64-test passed"
+
 # ---- AArch64 (Era 3) -------------------------------------------------
 #
 # The same kernel crate, built for a second architecture. There is no
@@ -2313,6 +2320,7 @@ TEST64_PARTS = \
 	stage2-test \
 	$(FAULT64_PARTS) \
 	crash64-test \
+	gdb64-test \
 	aarch64-test \
 	aarch64-uefi-test \
 	net64-test \
