@@ -131,6 +131,7 @@ Each machine has its own table and changes only its own, so two machines never e
 | MaK-WSL/boot: K131, a fast BIOS read (on top of K129: merged after it); waits for the user's yes to merge | `k131-fast-bios-read` |
 | MaK-WSL/boot: K23, boot time measured and cut, with K128 (on top of K131: merged after it); waits for the user's yes to merge | `k23-boot-time` |
 | MaK-WSL/boot: K130, a kernel of any size (on top of K23: merged after it); waits for the user's yes to merge | `k130-any-size` |
+| MaK-WSL/boot: TheBootloader's objects depend on the files they include (`nasm -MD`, `gcc -MMD`), the cause of entry 148's stale build; in the next night's queue | `bootloader-deps` |
 
 ### Now: TheJat-WSL
 
