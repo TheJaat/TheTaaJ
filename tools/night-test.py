@@ -546,12 +546,19 @@ def hunt(lines):
     summary = os.path.join(TREE, "build/race-hunt/summary.txt")
     before = open(summary).read() if os.path.exists(summary) else ""
     command = os.environ.get("NIGHT_HUNT", f"ALL=1 tools/race-hunt.sh {HUNT}")
-    done = subprocess.run(["sh", "-c", f"{setup}; {command}"], cwd=TREE, capture_output=True, text=True)
+    # Measured as test() measures make test64: the report's "CPUs busy"
+    # counted the hunt's minutes but not its CPU time (night 4, entry 159).
+    measured = "/usr/bin/time -f 'night-test: CPU %U s user, %S s system' " if os.path.exists("/usr/bin/time") else ""
+    done = subprocess.run(["sh", "-c", f"{setup}; {measured}sh -c '{command}'" if measured else f"{setup}; {command}"],
+                          cwd=TREE, capture_output=True, text=True)
+    cpu = re.search(r"night-test: CPU ([\d.]+) s user, ([\d.]+) s system", done.stderr)
+    if cpu:
+        TOTALS["cpu"] += float(cpu.group(1)) + float(cpu.group(2))
     after = open(summary).read() if os.path.exists(summary) else ""
     took = int(time.time() - start)
     TOTALS["testing"] += took
     tonight = [l for l in after[len(before):].splitlines() if l.startswith("round ") or l.startswith("    ")]
-    lines.append(f"- {minutes(took)}; tonight's rounds:")
+    lines.append(f"- {minutes(took)}{f' (CPU {minutes(int(float(cpu.group(1)) + float(cpu.group(2))))})' if cpu else ''}; tonight's rounds:")
     lines += [f"    {l}" for l in tonight] or ["    (none)"]
     lines += ["", "Every round so far (build/race-hunt/tally.txt in the night tree):", ""]
     lines += [f"    {l}" for l in done.stdout.strip().splitlines()[-30:]]

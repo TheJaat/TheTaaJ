@@ -25,7 +25,10 @@
 # As make test64 runs them (J95): TEST_JOBS at a time, the longest first
 # by build/test64-times, and each round under the machine's test64 lock
 # (rule 13) - taken per round, so a session's own test can come between
-# two rounds. At the end, build/race-hunt/tally.txt: each part that ever
+# two rounds. Each part's seconds in a round go to round-N.times
+# (tools/part-time.sh, as make test64 measures them), and the summary
+# names the round's five longest: a round slower than the others says
+# which part was. At the end, build/race-hunt/tally.txt: each part that ever
 # failed, in how many of all the rounds in summary.txt.
 set -u
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -55,8 +58,15 @@ for i in $(seq "$FIRST" $((FIRST + ROUNDS - 1))); do
     flock /tmp/taaj-test64.lock bash -c '
         touch "$1/.round-start"
         date +%s > "$1/.round-began"
-        make -k --no-print-directory -j"${TEST_JOBS:-12}" --output-sync=target $5 TEST64_PARTS="$2" $3 test64-parts > "$4" 2>&1
-        echo $? > "$1/.round-code"' - "$D" "$PARTS" "$ACCEL" "$log" "$SKIP"
+        : > "$6.raw"
+        TAAJ_PART_TIMES=$(pwd)/$6.raw make -k --no-print-directory -j"${TEST_JOBS:-12}" --output-sync=target $5 \
+            --eval "$(echo $2): SHELL = $(pwd)/tools/part-time.sh \$@" TEST64_PARTS="$2" $3 test64-parts > "$4" 2>&1
+        echo $? > "$1/.round-code"' - "$D" "$PARTS" "$ACCEL" "$log" "$SKIP" "$D/round-$i.times"
+    # Each part: its first line's start to its last line's end.
+    awk -v parts=" $(echo $PARTS) " '
+        index(parts, " " $1 " ") { if (!($1 in a) || $2 < a[$1]) a[$1] = $2; if ($3 > b[$1]) b[$1] = $3 }
+        END { for (p in a) printf "%s %d\n", p, b[p] - a[p] + 0.5 }' "$D/round-$i.times.raw" | sort -k2,2nr > "$D/round-$i.times"
+    rm -f "$D/round-$i.times.raw"
     code=$(cat "$D/.round-code")
     failed=$(for p in $PARTS; do grep -q "\[Makefile:[0-9]*: $p\] Error" "$log" && printf '%s ' "$p"; done)
     if [ -n "$failed" ]; then
@@ -65,6 +75,7 @@ for i in $(seq "$FIRST" $((FIRST + ROUNDS - 1))); do
             -exec cp -a {} "$D/round-$i/" \; 2>/dev/null
     fi
     echo "round $i: exit $code, $(( $(date +%s) - $(cat "$D/.round-began") )) s, failed: ${failed:-none}" >> "$D/summary.txt"
+    echo "    longest: $(head -5 "$D/round-$i.times" | tr '\n' ' ')" >> "$D/summary.txt"
     grep -h "^FAIL\|KERNEL PANIC\|panicked at" "$log" | sort | uniq -c | head -5 | sed 's/^/    /' >> "$D/summary.txt"
 done
 echo "race-hunt: done" >> "$D/summary.txt"

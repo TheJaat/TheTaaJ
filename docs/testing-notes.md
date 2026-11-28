@@ -4992,3 +4992,29 @@ make run64
 | On the keys labelled `hg;rpat patsfk f;`, then Enter | `display: keyboard layout us`: the keys type as labelled again |
 
 Automated: `make gui64-test`, `make aarch64-gui-test`, `make test64`
+
+---
+
+## 158 · The fourth night: two branches merged, and the race hunt's first ten rounds, all passed
+
+[The entry](journal/158-night-4.md)
+
+| Do | You should see |
+|---|---|
+| `cat ../TheTaaJ-night/build/race-hunt/tally.txt` | `race-hunt: 10 rounds in all`, and no part failed |
+
+Automated: not part of `make test64`.
+
+---
+
+## 159 · The two longest parts split into twelve, and the race hunt measured
+
+[The entry](journal/159-split-long-parts.md)
+
+| Do | You should see |
+|---|---|
+| `make -j12 fault64-test e1000-64-test` | Eight `fault-...: ok` lines and four `e1000-64-...-test passed`, then `e1000-64-test passed`, in about a minute |
+| `make test64` | The twelve new parts among the others; `build/test64-times` has their seconds |
+| `ONLY=fault64-nx-test tools/race-hunt.sh 1` | `build/race-hunt/round-N.times`; a `longest:` line in the summary |
+
+Automated: the twelve parts are parts of `make test64`.

@@ -1090,8 +1090,18 @@ stage2-test: iso64
 	@grep -E "^stage2 host tests:" $(STAGE2_TEST_LOG)
 	@echo "stage2-test passed"
 
-fault64-test: build-bootloader user64
-	$(KERNEL64_DIR)/scripts/fault-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR)
+# One part per fault (journal entry 159): each is a kernel built with
+# its own feature and a boot of its own, independent of the others, and
+# one after another they were the second longest part of make test64
+# (354 s). In parallel, make test64 runs them TEST_JOBS at a time.
+# page-20: the page fault with 20 CPUs. fault64-test runs them all.
+FAULT64_CASES = page page-20 double rodata nx stack thread-stack init
+FAULT64_PARTS = $(FAULT64_CASES:%=fault64-%-test)
+.PHONY: $(FAULT64_PARTS)
+$(FAULT64_PARTS): fault64-%-test: build-bootloader user64
+	$(KERNEL64_DIR)/scripts/fault-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR) $*
+
+fault64-test: $(FAULT64_PARTS)
 
 # ---- AArch64 (Era 3) -------------------------------------------------
 #
@@ -1386,13 +1396,36 @@ stick64-test: iso64 cprogs64 tfstool-rs
 	@OVMF=$(OVMF) $(KERNEL64_DIR)/scripts/stick-test.sh $(ISO64_IMG) $(STICK64_LOG).img $(STICK64_LOG).disk $(STICK64_LOG)
 	@echo "stick64-test passed"
 
+# Four boots, one part each (journal entry 159): one after another they
+# were the longest part of make test64 (377 s). The test disk is made
+# once; each boot has a copy of its own, as two QEMUs may not share one.
 E1000_64_LOG = $(BUILD_DIR)/e1000-64
-e1000-64-test: iso64 cprogs64 tfstool-rs
+E1000_64_PARTS = e1000-64-82540em-test e1000-64-82574l-test e1000-64-ip-test e1000-64-tcp-test
+.PHONY: e1000-64-disk $(E1000_64_PARTS)
+e1000-64-disk: iso64 cprogs64 tfstool-rs
 	$(call make-test-disk,$(E1000_64_LOG).disk)
-	@NIC=e1000 $(KERNEL64_DIR)/scripts/net-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).disk $(E1000_64_LOG).82540em
-	@NIC=e1000e $(KERNEL64_DIR)/scripts/net-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).disk $(E1000_64_LOG).82574l
-	@NIC=e1000 $(KERNEL64_DIR)/scripts/ip-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).disk $(E1000_64_LOG).ip
-	@NIC=e1000e $(KERNEL64_DIR)/scripts/tcp-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).disk $(E1000_64_LOG).tcp
+
+e1000-64-82540em-test: e1000-64-disk
+	@cp $(E1000_64_LOG).disk $(E1000_64_LOG).82540em.disk
+	@NIC=e1000 $(KERNEL64_DIR)/scripts/net-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).82540em.disk $(E1000_64_LOG).82540em
+	@echo "$@ passed"
+
+e1000-64-82574l-test: e1000-64-disk
+	@cp $(E1000_64_LOG).disk $(E1000_64_LOG).82574l.disk
+	@NIC=e1000e $(KERNEL64_DIR)/scripts/net-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).82574l.disk $(E1000_64_LOG).82574l
+	@echo "$@ passed"
+
+e1000-64-ip-test: e1000-64-disk
+	@cp $(E1000_64_LOG).disk $(E1000_64_LOG).ip.disk
+	@NIC=e1000 $(KERNEL64_DIR)/scripts/ip-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).ip.disk $(E1000_64_LOG).ip
+	@echo "$@ passed"
+
+e1000-64-tcp-test: e1000-64-disk
+	@cp $(E1000_64_LOG).disk $(E1000_64_LOG).tcp.disk
+	@NIC=e1000e $(KERNEL64_DIR)/scripts/tcp-test.sh x86_64 $(ISO64_IMG) $(E1000_64_LOG).tcp.disk $(E1000_64_LOG).tcp
+	@echo "$@ passed"
+
+e1000-64-test: $(E1000_64_PARTS)
 	@echo "e1000-64-test passed"
 
 aarch64-net-test: kernel-aarch64 user-aarch64 cprogs-aarch64 tfstool-rs
@@ -2214,11 +2247,11 @@ TEST64_PARTS = \
 	smp64-test \
 	big64-test \
 	stage2-test \
-	fault64-test \
+	$(FAULT64_PARTS) \
 	aarch64-test \
 	aarch64-uefi-test \
 	net64-test \
-	e1000-64-test \
+	$(E1000_64_PARTS) \
 	usb64-test \
 	stick64-test \
 	aarch64-net-test \
