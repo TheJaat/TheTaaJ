@@ -108,6 +108,9 @@ const TYPED_AHEAD_MAX: usize = 256;
 /// that job takes. These read; they get the channel that cannot change
 /// anything.
 const LOOK_PROGRAMS: &[&str] = &["ls", "cat", "wc", "log"];
+/// And these look at the system - the processes, as `ps` does: `top`
+/// (K141). The system's handle, which can look and not touch.
+const SYSTEM_PROGRAMS: &[&str] = &["top"];
 /// And these change files - the C compiler too, which reads sources,
 /// headers and libraries and writes what it makes of them.
 const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp", "tcc"];
@@ -1534,6 +1537,7 @@ impl Shell {
             Grant::ReadOnly => &[("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev")],
             Grant::Usual if on_disk(CHANGE_PROGRAMS) => &[("files", "files"), ("tmp", "tmp"), ("dev", "dev")],
             Grant::Usual if on_disk(LOOK_PROGRAMS) => &[("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev")],
+            Grant::Usual if on_disk(SYSTEM_PROGRAMS) => &[("system", "system")],
             Grant::Usual if on_disk(CARD_PROGRAMS) => &[("nic", "nic")],
             Grant::Usual if on_disk(NET_PROGRAMS) => &[("net", "net")],
             Grant::Usual if on_disk(WEB_PROGRAMS) => &[("net", "net"), ("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev")],
