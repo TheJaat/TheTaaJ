@@ -5018,3 +5018,23 @@ Automated: not part of `make test64`.
 | `ONLY=fault64-nx-test tools/race-hunt.sh 1` | `build/race-hunt/round-N.times`; a `longest:` line in the summary |
 
 Automated: the twelve parts are parts of `make test64`.
+
+---
+
+## 160 · Drivers killed mid-I/O: the system recovers, and nothing acknowledged is lost
+
+[The entry](journal/160-kill-drivers.md)
+
+```
+make kill64-test
+```
+
+| Look for | You should see |
+|---|---|
+| `blk:`, `ahci:`, `nvme:`, `usb:` | `killed mid-write 3 times and restarted; 36 writes acked, 3 tried again; all on the disk as written` |
+| `net:` | `nic killed mid-send and restarted while a download was under way; it and the next arrived whole (1048576 bytes each)` |
+| `kill64-test passed` | |
+
+By hand, in `make run64` with a disk: `disk crash 5`, then `with files killcheck write x 10` - one write fails, is tried again, and all ten are acked; `with files killcheck check x 10` says all as written.
+
+Automated: `make kill64-test`, `make test64`

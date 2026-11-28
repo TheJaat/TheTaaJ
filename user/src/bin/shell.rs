@@ -890,6 +890,7 @@ impl Shell {
                   \x20 services [NAME]   the services the shell can ask for; ask for one\n\
                   \x20 disk, disk read N, disk write N TEXT   size; show sector N; set it\n\
                   \x20 disk check        test the disk driver\n\
+                  \x20 disk crash N      a test: the disk driver dies in the middle of its Nth write\n\
                   \x20 poweroff, reboot  stop the services, then switch the machine off or reset it\n",
             ),
             "echo" => say!(self, "{rest}\n"),
@@ -1197,11 +1198,20 @@ impl Shell {
                     Err(error) => say!(self, "disk: {}\n", error.describe()),
                 }
             }
+            // The test of a driver killed mid-I/O (K82): it dies in the
+            // middle of its Nth write from now, half of it written.
+            ("crash", Some(Ok(writes)), None) => match abi::block::crash_request(writes) {
+                Some(request) => match disk.raw(&request, None) {
+                    Ok(()) => say!(self, "disk: the driver will die in the middle of write {writes} from now\n"),
+                    Err(error) => say!(self, "disk: {}\n", error.describe()),
+                },
+                None => say!(self, "usage: disk crash WRITES (1 to {})\n", abi::block::CRASH_MAX),
+            },
             ("check", None, None) => match self.disk_check(disk) {
                 Ok(checks) => say!(self, "disk check: all {checks} checks passed\n"),
                 Err(failed) => say!(self, "disk check: FAILED - {failed}\n"),
             },
-            _ => self.write(b"usage: disk, disk read N, disk write N TEXT, disk check, disk stall SECONDS\n"),
+            _ => self.write(b"usage: disk, disk read N, disk write N TEXT, disk check, disk stall SECONDS, disk crash WRITES\n"),
         }
     }
 
