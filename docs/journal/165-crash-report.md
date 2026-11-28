@@ -1,6 +1,6 @@
 # A crash report per program
 
-*Journal entry #NNN · K138 (Era 22). Written on TheJat-WSL/ci, by day, with quick checks only; it stands on K136 (the system log) and K188 (the crash record).*
+*Journal entry #165 · K138 (Era 22). Written on TheJat-WSL/ci, by day, with quick checks only; it stands on K136 (the system log) and K188 (the crash record).*
 
 ## Before
 

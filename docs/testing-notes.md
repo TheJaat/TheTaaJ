@@ -5093,3 +5093,17 @@ Automated: `make log64-test` (part of `make test64`).
 | After any panic, a warm reset (QEMU: `system_reset` in the monitor), then `log -s crash` | The last boot's last words, `crit` |
 
 Automated: `make crash64-test` (part of `make test64`).
+
+---
+
+## 165 · A crash report per program
+
+[The entry](journal/165-crash-report.md)
+
+| Do | You should see |
+|---|---|
+| Boot, then `ls /var/log/crashes` | A report for each program the self-test made break a rule |
+| `log -s peek` | Its report as `error` lines: what it did, its registers, its stack, its memory |
+| `cat /var/log/crashes/latest` | The newest report, with the last lines its program printed |
+
+Automated: `make log64-test` (part of `make test64`).
