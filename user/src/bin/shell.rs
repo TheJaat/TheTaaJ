@@ -115,6 +115,10 @@ const SYSTEM_PROGRAMS: &[&str] = &["top"];
 /// tracing on and read what the kernel does - and the kernel's symbols,
 /// for the profiler (K140).
 const TRACE_PROGRAMS: &[&str] = &["trace", "profile"];
+/// And this starts the program it debugs (K142): it reads the program's
+/// file and asks init, and so holds the handle with DEBUG that only a
+/// starter has.
+const DEBUG_PROGRAMS: &[&str] = &["debug"];
 /// And these change files - the C compiler too, which reads sources,
 /// headers and libraries and writes what it makes of them.
 const CHANGE_PROGRAMS: &[&str] = &["write", "append", "rm", "mkdir", "mv", "cp", "tcc"];
@@ -1542,6 +1546,7 @@ impl Shell {
             Grant::Usual if on_disk(CHANGE_PROGRAMS) => &[("files", "files"), ("tmp", "tmp"), ("dev", "dev")],
             Grant::Usual if on_disk(LOOK_PROGRAMS) => &[("files", "files.look"), ("tmp", "tmp.look"), ("dev", "dev")],
             Grant::Usual if on_disk(SYSTEM_PROGRAMS) => &[("system", "system")],
+            Grant::Usual if on_disk(DEBUG_PROGRAMS) => &[("init", "init"), ("files", "files.look")],
             Grant::Usual if on_disk(TRACE_PROGRAMS) => &[("trace", "trace"), ("trace.symbols", "trace.symbols"), ("system", "system")],
             Grant::Usual if on_disk(CARD_PROGRAMS) => &[("nic", "nic")],
             Grant::Usual if on_disk(NET_PROGRAMS) => &[("net", "net")],

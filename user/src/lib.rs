@@ -728,6 +728,12 @@ pub fn wait_any(processes: &[Handle]) -> Result<(usize, i64), Error> {
 /// Asks the kernel to end `process` (the handle needs the KILL right).
 /// It ends soon, not at once: wait for it, as for any other. Its exit
 /// code will be abi::STOPPED.
+/// The debugger's call (K142, abi::debug): `op` on `process`, a handle
+/// with DEBUG - which only whoever started it holds.
+pub fn process_debug(process: Handle, op: u64, a: u64, b: u64, c: u64) -> Result<u64, Error> {
+    abi::decode(syscall5(call::PROCESS_DEBUG, process, op, a, b, c))
+}
+
 pub fn kill(process: Handle) -> Result<(), Error> {
     abi::decode(syscall(call::PROCESS_KILL, process, 0, 0)).map(|_| ())
 }
