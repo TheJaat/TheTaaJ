@@ -100,7 +100,6 @@ Its files: `kernel/kernel64/src/memory/`, `mm.rs`, `memory_object.rs`, `paging.r
 
 | Item | Wave | Note |
 |---|---|---|
-| K84 | 1 | SMEP, SMAP, PAN: small, first |
 | K85 | 1 | No kernel panic for want of memory |
 | K103 | 1 | Kernel objects counted against their creator (Era 18's milestone; with K85) |
 | K86 | 1 | The memory-pressure signal |

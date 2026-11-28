@@ -1146,13 +1146,23 @@ stage2-test: iso64
 # one after another they were the second longest part of make test64
 # (354 s). In parallel, make test64 runs them TEST_JOBS at a time.
 # page-20: the page fault with 20 CPUs. fault64-test runs them all.
-FAULT64_CASES = page page-20 double rodata nx stack thread-stack init
+FAULT64_CASES = page page-20 double rodata nx stack thread-stack init smep smap
 FAULT64_PARTS = $(FAULT64_CASES:%=fault64-%-test)
 .PHONY: $(FAULT64_PARTS)
 $(FAULT64_PARTS): fault64-%-test: build-bootloader user64
 	$(KERNEL64_DIR)/scripts/fault-test.sh $(STAGE1_BIN) $(STAGE2_BIN) $(BUILD_DIR) $*
 
 fault64-test: $(FAULT64_PARTS)
+
+# SMEP and SMAP on a PC, PAN on AArch64 (K84): with a CPU that has them,
+# on, and the system runs as before (scripts/protect-test.sh); that they
+# catch what they must is fault64-smep-test's and fault64-smap-test's.
+PROTECT64_LOG = $(BUILD_DIR)/protect64.log
+protect64-test: iso64 cprogs64 tfstool-rs aarch64-test-disk kernel-aarch64
+	$(call make-test-disk,$(PROTECT64_LOG).disk)
+	@cp $(A64_TEST_DISK) $(PROTECT64_LOG).a64.disk
+	@$(KERNEL64_DIR)/scripts/protect-test.sh $(ISO64_IMG) $(PROTECT64_LOG).disk $(KERNEL_A64_IMAGE) $(PROTECT64_LOG).a64.disk $(PROTECT64_LOG)
+	@echo "protect64-test passed"
 
 # The crash record (K188): a kernel built to panic once, reset, and
 # find its last words at the next boot, in the system log
@@ -2319,6 +2329,7 @@ TEST64_PARTS = \
 	big64-test \
 	stage2-test \
 	$(FAULT64_PARTS) \
+	protect64-test \
 	crash64-test \
 	gdb64-test \
 	aarch64-test \

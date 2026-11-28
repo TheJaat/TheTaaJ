@@ -132,7 +132,7 @@ Each machine has its own table and changes only its own, so two machines never e
 
 | Step | Branch |
 |---|---|
-| TheJat-WSL/ci: J92, K187 and the night runner, waiting for the night test; next J93 | `j92-clean-build`, `k187-miri`, `night-test` |
+| TheJat-WSL/ci: its own items done but J95 (the race hunt, by night: 20 of 50 rounds); K84 for `memory`, with the user's OK | `k84-smep-smap` |
 
 ## Where the items are
 
